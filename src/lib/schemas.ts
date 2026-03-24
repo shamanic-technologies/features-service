@@ -102,5 +102,12 @@ export const batchUpsertFeaturesSchema = z.object({
   features: z.array(upsertFeatureSchema).min(1),
 });
 
+// ── Prefill request ────────────────────────────────────────────────────────
+
+export const prefillRequestSchema = z.object({
+  brandId: z.string().uuid(),
+});
+
 export type UpsertFeatureBody = z.infer<typeof upsertFeatureSchema>;
 export type BatchUpsertFeaturesBody = z.infer<typeof batchUpsertFeaturesSchema>;
+export type PrefillRequestBody = z.infer<typeof prefillRequestSchema>;

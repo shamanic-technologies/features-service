@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { upsertFeatureSchema, batchUpsertFeaturesSchema } from "../src/lib/schemas.js";
+import { upsertFeatureSchema, batchUpsertFeaturesSchema, prefillRequestSchema } from "../src/lib/schemas.js";
 
 const validInput = {
   key: "targetAudience",
@@ -253,6 +253,23 @@ describe("batchUpsertFeaturesSchema", () => {
 
   it("rejects empty batch", () => {
     const result = batchUpsertFeaturesSchema.safeParse({ features: [] });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("prefillRequestSchema", () => {
+  it("accepts a valid brandId UUID", () => {
+    const result = prefillRequestSchema.safeParse({ brandId: "550e8400-e29b-41d4-a716-446655440000" });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects non-UUID brandId", () => {
+    const result = prefillRequestSchema.safeParse({ brandId: "not-a-uuid" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects missing brandId", () => {
+    const result = prefillRequestSchema.safeParse({});
     expect(result.success).toBe(false);
   });
 });
