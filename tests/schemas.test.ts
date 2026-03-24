@@ -65,7 +65,6 @@ const validBreakdownChart = {
 };
 
 const validFeature = {
-  slug: "sales-email-cold-outreach",
   name: "Sales Cold Email Outreach",
   description: "Automated cold email campaigns targeting prospects matching your ICP.",
   icon: "envelope",
@@ -87,11 +86,6 @@ describe("upsertFeatureSchema", () => {
   it("accepts a valid feature with all 6 blocks", () => {
     const result = upsertFeatureSchema.safeParse(validFeature);
     expect(result.success).toBe(true);
-  });
-
-  it("rejects invalid slug format", () => {
-    const result = upsertFeatureSchema.safeParse({ ...validFeature, slug: "Sales Cold Email" });
-    expect(result.success).toBe(false);
   });
 
   it("rejects empty inputs", () => {
@@ -189,7 +183,7 @@ describe("upsertFeatureSchema", () => {
         type: "funnel-bar",
         title: "Funnel",
         displayOrder: 1,
-        steps: [], // empty steps should fail
+        steps: [],
       }],
     });
     expect(result.success).toBe(false);
@@ -203,7 +197,7 @@ describe("upsertFeatureSchema", () => {
         type: "breakdown-bar",
         title: "Breakdown",
         displayOrder: 1,
-        segments: [], // empty segments should fail
+        segments: [],
       }],
     });
     expect(result.success).toBe(false);
@@ -240,6 +234,14 @@ describe("upsertFeatureSchema", () => {
       resultComponent: "discovered-outlets",
     });
     expect(result.success).toBe(true);
+  });
+
+  it("does not require slug (auto-generated)", () => {
+    const result = upsertFeatureSchema.safeParse(validFeature);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect((result.data as Record<string, unknown>).slug).toBeUndefined();
+    }
   });
 });
 

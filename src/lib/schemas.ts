@@ -80,7 +80,7 @@ export const featureChartSchema = z.discriminatedUnion("type", [
 // ── Feature upsert ──────────────────────────────────────────────────────────
 
 export const upsertFeatureSchema = z.object({
-  slug: z.string().min(1).regex(/^[a-z0-9-]+$/, "slug must be lowercase alphanumeric with hyphens"),
+  // No slug — auto-generated from name
   name: z.string().min(1),
   description: z.string().min(1),
   icon: z.string().min(1),
