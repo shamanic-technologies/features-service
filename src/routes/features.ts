@@ -1,10 +1,11 @@
 import { Router } from "express";
-import { eq, or } from "drizzle-orm";
+import { eq, or, and } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { batchUpsertFeaturesSchema, UpsertFeatureBody } from "../lib/schemas.js";
+import { batchUpsertFeaturesSchema, prefillRequestSchema } from "../lib/schemas.js";
 import { computeSignature, slugify, versionedName, versionedSlug } from "../lib/signature.js";
+import { extractBrandFields } from "../lib/brand-client.js";
 
 const router = Router();
 
@@ -117,14 +118,24 @@ router.put("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
 
 /**
  * GET /features — List all features.
- * Query params: status (filter by status, defaults to "active")
+ * Query params: status, category, channel, audienceType, implemented
  */
 router.get("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const status = (req.query.status as string) || "active";
+    const category = req.query.category as string | undefined;
+    const channel = req.query.channel as string | undefined;
+    const audienceType = req.query.audienceType as string | undefined;
+    const implemented = req.query.implemented as string | undefined;
+
+    const conditions = [eq(features.status, status)];
+    if (category) conditions.push(eq(features.category, category));
+    if (channel) conditions.push(eq(features.channel, channel));
+    if (audienceType) conditions.push(eq(features.audienceType, audienceType));
+    if (implemented !== undefined) conditions.push(eq(features.implemented, implemented === "true"));
 
     const results = await db.query.features.findMany({
-      where: eq(features.status, status),
+      where: and(...conditions),
     });
 
     res.json({ features: results });
@@ -179,6 +190,74 @@ router.get("/features/:slug/inputs", apiKeyAuth, async (req: AuthenticatedReques
     });
   } catch (error) {
     console.error("Get feature inputs error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
+ * POST /features/:slug/prefill — Pre-fill input values for a feature.
+ *
+ * Takes a brandId, looks up the feature's inputs, calls brand-service
+ * to extract values via AI (cached 30 days), and returns prefilled values
+ * mapped to each input key.
+ *
+ * The dashboard calls this instead of brand-service directly — features-service
+ * owns the routing logic (brand-service today, other sources tomorrow).
+ */
+router.post("/features/:slug/prefill", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { slug } = req.params;
+
+    const parsed = prefillRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+
+    const { brandId } = parsed.data;
+
+    const feature = await db.query.features.findFirst({
+      where: eq(features.slug, slug),
+    });
+
+    if (!feature) {
+      return res.status(404).json({ error: "Feature not found" });
+    }
+
+    // Build extract-fields request from the feature's inputs
+    const fields = feature.inputs.map((input) => ({
+      key: input.extractKey,
+      description: input.description,
+    }));
+
+    const extractedResults = await extractBrandFields(brandId, fields, {
+      orgId: req.orgId,
+      userId: req.userId,
+      runId: req.runId,
+    });
+
+    // Map extracted values back to input keys
+    const extractedByKey = new Map(extractedResults.map((r) => [r.key, r]));
+    const prefilled: Record<string, { value: unknown; cached: boolean; sourceUrls: string[] | null }> = {};
+
+    for (const input of feature.inputs) {
+      const result = extractedByKey.get(input.extractKey);
+      prefilled[input.key] = {
+        value: result?.value ?? null,
+        cached: result?.cached ?? false,
+        sourceUrls: result?.sourceUrls ?? null,
+      };
+    }
+
+    res.json({
+      slug: feature.slug,
+      brandId,
+      prefilled,
+    });
+  } catch (error) {
+    console.error("Prefill feature error:", error);
+    if (error instanceof Error && error.message.includes("brand-service")) {
+      return res.status(502).json({ error: error.message });
+    }
     res.status(500).json({ error: "Internal server error" });
   }
 });
