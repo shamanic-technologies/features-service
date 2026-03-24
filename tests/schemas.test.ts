@@ -1,85 +1,113 @@
 import { describe, it, expect } from "vitest";
 import { upsertFeatureSchema, batchUpsertFeaturesSchema } from "../src/lib/schemas.js";
 
+const validInput = {
+  key: "targetAudience",
+  label: "Target Audience",
+  type: "textarea" as const,
+  placeholder: "CTOs at SaaS startups with 10-50 employees",
+  description:
+    "The specific audience segment this campaign targets. Be precise about demographics, job titles, industry, and company size.",
+  extractKey: "targetAudience",
+};
+
+const validOutput = {
+  key: "leadsServed",
+  label: "Leads",
+  type: "count" as const,
+  displayOrder: 1,
+  showInCampaignRow: true,
+  showInFunnel: true,
+  funnelOrder: 1,
+};
+
+const validRateOutput = {
+  key: "positiveReplyRate",
+  label: "Positive Reply Rate",
+  type: "rate" as const,
+  displayOrder: 7,
+  showInCampaignRow: false,
+  showInFunnel: false,
+  numeratorKey: "repliesWillingToMeet",
+  denominatorKey: "emailsContacted",
+};
+
+const validWorkflowColumn = {
+  key: "openRate",
+  label: "% Opens",
+  type: "rate" as const,
+  numeratorKey: "opened",
+  denominatorKey: "sent",
+  sortDirection: "desc" as const,
+  displayOrder: 1,
+};
+
+const validFunnelChart = {
+  key: "funnel",
+  type: "funnel-bar" as const,
+  title: "Campaign Funnel",
+  displayOrder: 1,
+  steps: [
+    { key: "leadsServed", label: "Leads", statsField: "leadsServed", rateBasedOn: null },
+    { key: "emailsGenerated", label: "Generated", statsField: "emailsGenerated", rateBasedOn: "leadsServed" },
+  ],
+};
+
+const validBreakdownChart = {
+  key: "replyBreakdown",
+  type: "breakdown-bar" as const,
+  title: "Reply Breakdown",
+  displayOrder: 2,
+  segments: [
+    { key: "willingToMeet", label: "Willing to meet", statsField: "repliesWillingToMeet", color: "green" as const, sentiment: "positive" as const },
+    { key: "notInterested", label: "Not interested", statsField: "repliesNotInterested", color: "red" as const, sentiment: "negative" as const },
+  ],
+};
+
 const validFeature = {
-  slug: "sales-cold-email",
+  slug: "sales-email-cold-outreach",
   name: "Sales Cold Email Outreach",
   description: "Automated cold email campaigns targeting prospects matching your ICP.",
-  icon: "mail-check",
+  icon: "envelope",
+  category: "sales",
+  channel: "email",
+  audienceType: "cold-outreach",
+  implemented: true,
+  displayOrder: 1,
   status: "active" as const,
-  inputs: [
-    {
-      key: "target_audience",
-      label: "Target Audience",
-      type: "textarea" as const,
-      description:
-        "The specific audience segment this campaign targets. Be precise about demographics, job titles, industry, and company size. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'.",
-    },
-    {
-      key: "value_proposition",
-      label: "Value Proposition",
-      type: "textarea" as const,
-      description:
-        "The core value your product or service provides to the target audience. Focus on the outcome, not the features. Example: 'We help marketing teams generate 3x more qualified leads by automating personalized outreach'.",
-    },
-  ],
-  outputs: [
-    {
-      key: "emails_sent",
-      label: "Emails Sent",
-      type: "count" as const,
-    },
-    {
-      key: "positive_reply_rate",
-      label: "Positive Reply Rate",
-      type: "percentage" as const,
-      description: "Percentage of replies classified as interested or positive",
-    },
-  ],
+  inputs: [validInput],
+  outputs: [validOutput, validRateOutput],
+  workflowColumns: [validWorkflowColumn],
+  charts: [validFunnelChart, validBreakdownChart],
+  resultComponent: null,
   defaultWorkflowName: "sales-cold-email-v1",
 };
 
 describe("upsertFeatureSchema", () => {
-  it("accepts a valid feature", () => {
+  it("accepts a valid feature with all 6 blocks", () => {
     const result = upsertFeatureSchema.safeParse(validFeature);
     expect(result.success).toBe(true);
   });
 
   it("rejects invalid slug format", () => {
-    const result = upsertFeatureSchema.safeParse({
-      ...validFeature,
-      slug: "Sales Cold Email",
-    });
+    const result = upsertFeatureSchema.safeParse({ ...validFeature, slug: "Sales Cold Email" });
     expect(result.success).toBe(false);
   });
 
   it("rejects empty inputs", () => {
-    const result = upsertFeatureSchema.safeParse({
-      ...validFeature,
-      inputs: [],
-    });
+    const result = upsertFeatureSchema.safeParse({ ...validFeature, inputs: [] });
     expect(result.success).toBe(false);
   });
 
   it("rejects empty outputs", () => {
-    const result = upsertFeatureSchema.safeParse({
-      ...validFeature,
-      outputs: [],
-    });
+    const result = upsertFeatureSchema.safeParse({ ...validFeature, outputs: [] });
     expect(result.success).toBe(false);
   });
 
   it("rejects invalid input type", () => {
     const result = upsertFeatureSchema.safeParse({
       ...validFeature,
-      inputs: [
-        {
-          key: "test",
-          label: "Test",
-          type: "invalid",
-          description: "Test field",
-        },
-      ],
+      inputs: [{ ...validInput, type: "invalid" }],
     });
     expect(result.success).toBe(false);
   });
@@ -87,70 +115,142 @@ describe("upsertFeatureSchema", () => {
   it("rejects invalid output type", () => {
     const result = upsertFeatureSchema.safeParse({
       ...validFeature,
-      outputs: [
-        {
-          key: "test",
-          label: "Test",
-          type: "invalid",
-        },
-      ],
+      outputs: [{ ...validOutput, type: "invalid" }],
     });
     expect(result.success).toBe(false);
   });
 
-  it("defaults status to active when not provided", () => {
-    const { status, ...withoutStatus } = validFeature;
-    const result = upsertFeatureSchema.safeParse(withoutStatus);
+  it("defaults status to active, implemented to true, displayOrder to 0", () => {
+    const { status, implemented, displayOrder, ...minimal } = validFeature;
+    const result = upsertFeatureSchema.safeParse(minimal);
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.status).toBe("active");
+      expect(result.data.implemented).toBe(true);
+      expect(result.data.displayOrder).toBe(0);
     }
   });
 
   it("accepts select type with options", () => {
     const result = upsertFeatureSchema.safeParse({
       ...validFeature,
-      inputs: [
-        {
-          key: "tone",
-          label: "Email Tone",
-          type: "select",
-          description: "The tone of the email outreach",
-          options: ["professional", "casual", "friendly"],
-        },
-      ],
+      inputs: [{
+        ...validInput,
+        key: "tone",
+        label: "Email Tone",
+        type: "select",
+        options: ["professional", "casual", "friendly"],
+      }],
     });
     expect(result.success).toBe(true);
   });
 
-  it("requires description on inputs", () => {
+  it("requires placeholder and description on inputs", () => {
+    const { placeholder, description, ...missingFields } = validInput;
     const result = upsertFeatureSchema.safeParse({
       ...validFeature,
-      inputs: [
-        {
-          key: "test",
-          label: "Test",
-          type: "text",
-          // missing description
-        },
-      ],
+      inputs: [missingFields],
     });
     expect(result.success).toBe(false);
+  });
+
+  it("requires extractKey on inputs", () => {
+    const { extractKey, ...missingExtract } = validInput;
+    const result = upsertFeatureSchema.safeParse({
+      ...validFeature,
+      inputs: [missingExtract],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts feature without optional workflowColumns and charts", () => {
+    const { workflowColumns, charts, ...minimal } = validFeature;
+    const result = upsertFeatureSchema.safeParse(minimal);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.workflowColumns).toEqual([]);
+      expect(result.data.charts).toEqual([]);
+    }
+  });
+
+  it("rejects invalid chart type", () => {
+    const result = upsertFeatureSchema.safeParse({
+      ...validFeature,
+      charts: [{ key: "x", type: "pie", title: "X", displayOrder: 1 }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("validates funnel chart steps", () => {
+    const result = upsertFeatureSchema.safeParse({
+      ...validFeature,
+      charts: [{
+        key: "funnel",
+        type: "funnel-bar",
+        title: "Funnel",
+        displayOrder: 1,
+        steps: [], // empty steps should fail
+      }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("validates breakdown chart segments", () => {
+    const result = upsertFeatureSchema.safeParse({
+      ...validFeature,
+      charts: [{
+        key: "breakdown",
+        type: "breakdown-bar",
+        title: "Breakdown",
+        displayOrder: 1,
+        segments: [], // empty segments should fail
+      }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("requires category, channel, and audienceType", () => {
+    const { category, channel, audienceType, ...missing } = validFeature;
+    const result = upsertFeatureSchema.safeParse(missing);
+    expect(result.success).toBe(false);
+  });
+
+  it("validates workflow column sortDirection", () => {
+    const result = upsertFeatureSchema.safeParse({
+      ...validFeature,
+      workflowColumns: [{ ...validWorkflowColumn, sortDirection: "invalid" }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("validates breakdown segment color", () => {
+    const result = upsertFeatureSchema.safeParse({
+      ...validFeature,
+      charts: [{
+        ...validBreakdownChart,
+        segments: [{ ...validBreakdownChart.segments[0], color: "purple" }],
+      }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts resultComponent string", () => {
+    const result = upsertFeatureSchema.safeParse({
+      ...validFeature,
+      resultComponent: "discovered-outlets",
+    });
+    expect(result.success).toBe(true);
   });
 });
 
 describe("batchUpsertFeaturesSchema", () => {
   it("accepts a batch of valid features", () => {
-    const result = batchUpsertFeaturesSchema.safeParse({
-      features: [validFeature],
-    });
+    const result = batchUpsertFeaturesSchema.safeParse({ features: [validFeature] });
     expect(result.success).toBe(true);
   });
 
   it("rejects empty batch", () => {
-    const result = batchUpsertFeaturesSchema.safeParse({
-      features: [],
-    });
+    const result = batchUpsertFeaturesSchema.safeParse({ features: [] });
     expect(result.success).toBe(false);
   });
 });

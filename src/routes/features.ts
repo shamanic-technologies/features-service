@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { upsertFeatureSchema, batchUpsertFeaturesSchema } from "../lib/schemas.js";
+import { batchUpsertFeaturesSchema } from "../lib/schemas.js";
 
 const router = Router();
 
@@ -19,40 +19,40 @@ router.put("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
     }
 
     const results = [];
-    for (const featureData of parsed.data.features) {
+    for (const f of parsed.data.features) {
       const existing = await db.query.features.findFirst({
-        where: eq(features.slug, featureData.slug),
+        where: eq(features.slug, f.slug),
       });
+
+      const values = {
+        name: f.name,
+        description: f.description,
+        icon: f.icon,
+        category: f.category,
+        channel: f.channel,
+        audienceType: f.audienceType,
+        implemented: f.implemented,
+        displayOrder: f.displayOrder,
+        status: f.status,
+        inputs: f.inputs,
+        outputs: f.outputs,
+        workflowColumns: f.workflowColumns,
+        charts: f.charts,
+        resultComponent: f.resultComponent ?? null,
+        defaultWorkflowName: f.defaultWorkflowName ?? null,
+      };
 
       if (existing) {
         const [updated] = await db
           .update(features)
-          .set({
-            name: featureData.name,
-            description: featureData.description,
-            icon: featureData.icon,
-            status: featureData.status,
-            inputs: featureData.inputs,
-            outputs: featureData.outputs,
-            defaultWorkflowName: featureData.defaultWorkflowName ?? null,
-            updatedAt: new Date(),
-          })
-          .where(eq(features.slug, featureData.slug))
+          .set({ ...values, updatedAt: new Date() })
+          .where(eq(features.slug, f.slug))
           .returning();
         results.push(updated);
       } else {
         const [created] = await db
           .insert(features)
-          .values({
-            slug: featureData.slug,
-            name: featureData.name,
-            description: featureData.description,
-            icon: featureData.icon,
-            status: featureData.status,
-            inputs: featureData.inputs,
-            outputs: featureData.outputs,
-            defaultWorkflowName: featureData.defaultWorkflowName ?? null,
-          })
+          .values({ slug: f.slug, ...values })
           .returning();
         results.push(created);
       }
