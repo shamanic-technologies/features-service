@@ -195,11 +195,33 @@ router.get("/features/:slug/inputs", apiKeyAuth, async (req: AuthenticatedReques
 });
 
 /**
+ * Flatten a brand-service extracted value to a plain string.
+ * Used when format=text to return clean strings for form inputs.
+ */
+function flattenValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.filter((v) => typeof v === "string").join(", ");
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.text === "string") return obj.text;
+    if (typeof obj.value === "string") return obj.value;
+    const strings = Object.values(obj).filter((v) => typeof v === "string");
+    if (strings.length > 0) return strings.join(", ");
+  }
+  return String(value);
+}
+
+/**
  * POST /features/:slug/prefill — Pre-fill input values for a feature.
  *
  * Takes a brandId, looks up the feature's inputs, calls brand-service
  * to extract values via AI (cached 30 days), and returns prefilled values
  * mapped to each input key.
+ *
+ * Query param ?format=text|full (default: full)
+ *   - text: returns { value: string | null } — flat strings for form inputs
+ *   - full: returns { value: unknown, cached, sourceUrls } — complete data from brand-service
  *
  * The dashboard calls this instead of brand-service directly — features-service
  * owns the routing logic (brand-service today, other sources tomorrow).
@@ -207,6 +229,11 @@ router.get("/features/:slug/inputs", apiKeyAuth, async (req: AuthenticatedReques
 router.post("/features/:slug/prefill", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const { slug } = req.params;
+    const format = (req.query.format as string) || "full";
+
+    if (format !== "text" && format !== "full") {
+      return res.status(400).json({ error: "format must be 'text' or 'full'" });
+    }
 
     const parsed = prefillRequestSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -237,8 +264,18 @@ router.post("/features/:slug/prefill", apiKeyAuth, async (req: AuthenticatedRequ
 
     // Map extracted values back to input keys
     const extractedByKey = new Map(extractedResults.map((r) => [r.key, r]));
-    const prefilled: Record<string, { value: unknown; cached: boolean; sourceUrls: string[] | null }> = {};
 
+    if (format === "text") {
+      const prefilled: Record<string, string | null> = {};
+      for (const input of feature.inputs) {
+        const result = extractedByKey.get(input.extractKey);
+        prefilled[input.key] = flattenValue(result?.value ?? null);
+      }
+      return res.json({ slug: feature.slug, brandId, format: "text", prefilled });
+    }
+
+    // format === "full"
+    const prefilled: Record<string, { value: unknown; cached: boolean; sourceUrls: string[] | null }> = {};
     for (const input of feature.inputs) {
       const result = extractedByKey.get(input.extractKey);
       prefilled[input.key] = {
@@ -251,6 +288,7 @@ router.post("/features/:slug/prefill", apiKeyAuth, async (req: AuthenticatedRequ
     res.json({
       slug: feature.slug,
       brandId,
+      format: "full",
       prefilled,
     });
   } catch (error) {
