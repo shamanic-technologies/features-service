@@ -195,19 +195,32 @@ router.get("/features/:slug/inputs", apiKeyAuth, async (req: AuthenticatedReques
 });
 
 /**
- * Flatten a brand-service extracted value to a plain string.
- * Used when format=text to return clean strings for form inputs.
+ * Recursively flatten any value to a plain string.
+ * Handles brand-service response shapes:
+ *   - strings → pass through
+ *   - arrays → recursively flatten each element, join with ". "
+ *   - { elements: [...] } → flatten the elements array
+ *   - { text: "..." } or { value: "..." } → extract the string
+ *   - objects with mixed keys → collect non-null values recursively
  */
 function flattenValue(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.filter((v) => typeof v === "string").join(", ");
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    const parts = value.map(flattenValue).filter((v): v is string => v !== null);
+    return parts.length > 0 ? parts.join(". ") : null;
+  }
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
+    // Common wrapper: { elements: [...] }
+    if (Array.isArray(obj.elements)) return flattenValue(obj.elements);
+    // Direct string fields
     if (typeof obj.text === "string") return obj.text;
     if (typeof obj.value === "string") return obj.value;
-    const strings = Object.values(obj).filter((v) => typeof v === "string");
-    if (strings.length > 0) return strings.join(", ");
+    // Collect all non-null leaf values
+    const parts = Object.values(obj).map(flattenValue).filter((v): v is string => v !== null);
+    return parts.length > 0 ? parts.join(". ") : null;
   }
   return String(value);
 }
