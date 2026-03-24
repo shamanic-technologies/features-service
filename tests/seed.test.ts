@@ -32,10 +32,10 @@ describe("SEED_FEATURES", () => {
     expect(new Set(sigs).size).toBe(sigs.length);
   });
 
-  it("Sales Cold Email has 3 inputs and 6 outputs", () => {
+  it("Sales Cold Email has 7 inputs and 6 outputs", () => {
     const sales = SEED_FEATURES.find((f) => f.name === "Sales Cold Email Outreach");
     expect(sales).toBeDefined();
-    expect(sales!.inputs).toHaveLength(3);
+    expect(sales!.inputs).toHaveLength(7);
     expect(sales!.outputs).toHaveLength(6);
   });
 
@@ -46,10 +46,10 @@ describe("SEED_FEATURES", () => {
     expect(sales!.charts![1].type).toBe("breakdown-bar");
   });
 
-  it("Outlet Database Discovery has 4 inputs and resultComponent", () => {
+  it("Outlet Database Discovery has 3 inputs and resultComponent", () => {
     const outlets = SEED_FEATURES.find((f) => f.name === "Outlet Database Discovery");
     expect(outlets).toBeDefined();
-    expect(outlets!.inputs).toHaveLength(4);
+    expect(outlets!.inputs).toHaveLength(3);
     expect(outlets!.resultComponent).toBe("discovered-outlets");
     expect(outlets!.charts).toHaveLength(0);
   });
