@@ -108,11 +108,11 @@ export const features = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
 
-    /** Unique machine-readable identifier, e.g. "sales-email-cold-outreach" */
+    /** Unique machine-readable identifier, auto-generated from name (e.g. "sales-cold-email-v2") */
     slug: text("slug").notNull().unique(),
 
-    /** Display name, e.g. "Sales Cold Email Outreach" */
-    name: text("name").notNull(),
+    /** Display name, e.g. "Sales Cold Email v2" — must be unique */
+    name: text("name").notNull().unique(),
 
     /** Short description of what this feature does */
     description: text("description").notNull(),
@@ -138,6 +138,13 @@ export const features = pgTable(
     /** Feature lifecycle status */
     status: text("status").notNull().default("active"),
 
+    /**
+     * Signature = deterministic hash of sorted(input keys) + sorted(output keys).
+     * Two features with the same signature are the same feature (upsert).
+     * Two features with different signatures but the same name get auto-suffixed (v2, v3…).
+     */
+    signature: text("signature").notNull().unique(),
+
     /** Input fields for campaign creation form (pre-filled by LLM) */
     inputs: jsonb("inputs").notNull().$type<FeatureInput[]>(),
 
@@ -161,6 +168,8 @@ export const features = pgTable(
   },
   (table) => [
     uniqueIndex("idx_features_slug").on(table.slug),
+    uniqueIndex("idx_features_signature").on(table.signature),
+    uniqueIndex("idx_features_name").on(table.name),
   ]
 );
 

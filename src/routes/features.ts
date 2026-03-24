@@ -1,15 +1,60 @@
 import { Router } from "express";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { batchUpsertFeaturesSchema } from "../lib/schemas.js";
+import { batchUpsertFeaturesSchema, UpsertFeatureBody } from "../lib/schemas.js";
+import { computeSignature, slugify, versionedName, versionedSlug } from "../lib/signature.js";
 
 const router = Router();
 
 /**
+ * Resolve a unique name + slug for a feature.
+ * If the signature already exists → upsert (return existing slug/name).
+ * If the name collides but signature differs → auto-suffix v2, v3, etc.
+ */
+async function resolveNameAndSlug(
+  name: string,
+  signature: string
+): Promise<{ name: string; slug: string; existingId: string | null }> {
+  // Check if this exact signature already exists
+  const bySignature = await db.query.features.findFirst({
+    where: eq(features.signature, signature),
+  });
+  if (bySignature) {
+    return { name: bySignature.name, slug: bySignature.slug, existingId: bySignature.id };
+  }
+
+  // Signature is new — find a unique name/slug
+  const baseSlug = slugify(name);
+  let version = 1;
+  let candidateName = name;
+  let candidateSlug = baseSlug;
+
+  while (true) {
+    const collision = await db.query.features.findFirst({
+      where: or(
+        eq(features.name, candidateName),
+        eq(features.slug, candidateSlug),
+      ),
+    });
+
+    if (!collision) {
+      return { name: candidateName, slug: candidateSlug, existingId: null };
+    }
+
+    version++;
+    candidateName = versionedName(name, version);
+    candidateSlug = versionedSlug(baseSlug, version);
+  }
+}
+
+/**
  * PUT /features — Batch upsert features (idempotent, for cold-start registration).
- * Apps call this at startup to declare their features.
+ *
+ * Signature = hash of sorted input keys + sorted output keys.
+ * - Same signature → upsert metadata (labels, descriptions, charts, etc.)
+ * - Same name but different signature → auto-suffix name/slug with v2, v3, etc.
  */
 router.put("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
   try {
@@ -20,12 +65,15 @@ router.put("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
 
     const results = [];
     for (const f of parsed.data.features) {
-      const existing = await db.query.features.findFirst({
-        where: eq(features.slug, f.slug),
-      });
+      const signature = computeSignature(
+        f.inputs.map((i) => i.key),
+        f.outputs.map((o) => o.key),
+      );
+
+      const resolved = await resolveNameAndSlug(f.name, signature);
 
       const values = {
-        name: f.name,
+        name: resolved.existingId ? resolved.name : resolved.name,
         description: f.description,
         icon: f.icon,
         category: f.category,
@@ -42,17 +90,19 @@ router.put("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
         defaultWorkflowName: f.defaultWorkflowName ?? null,
       };
 
-      if (existing) {
+      if (resolved.existingId) {
+        // Same signature → upsert metadata
         const [updated] = await db
           .update(features)
           .set({ ...values, updatedAt: new Date() })
-          .where(eq(features.slug, f.slug))
+          .where(eq(features.id, resolved.existingId))
           .returning();
         results.push(updated);
       } else {
+        // New feature
         const [created] = await db
           .insert(features)
-          .values({ slug: f.slug, ...values })
+          .values({ slug: resolved.slug, signature, ...values })
           .returning();
         results.push(created);
       }
