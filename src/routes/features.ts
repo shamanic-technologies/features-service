@@ -6,7 +6,6 @@ import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { batchUpsertFeaturesSchema, prefillRequestSchema } from "../lib/schemas.js";
 import { computeSignature, slugify, versionedName, versionedSlug } from "../lib/signature.js";
 import { extractBrandFields } from "../lib/brand-client.js";
-import { flattenValue } from "../lib/flatten.js";
 
 const router = Router();
 
@@ -236,14 +235,14 @@ router.post("/features/:slug/prefill", apiKeyAuth, async (req: AuthenticatedRequ
       runId: req.runId,
     });
 
-    // Map extracted values back to input keys, flattening to strings
+    // Map extracted values back to input keys
     const extractedByKey = new Map(extractedResults.map((r) => [r.key, r]));
-    const prefilled: Record<string, { value: string | null; cached: boolean; sourceUrls: string[] | null }> = {};
+    const prefilled: Record<string, { value: unknown; cached: boolean; sourceUrls: string[] | null }> = {};
 
     for (const input of feature.inputs) {
       const result = extractedByKey.get(input.extractKey);
       prefilled[input.key] = {
-        value: flattenValue(result?.value ?? null),
+        value: result?.value ?? null,
         cached: result?.cached ?? false,
         sourceUrls: result?.sourceUrls ?? null,
       };
