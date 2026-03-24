@@ -23,29 +23,65 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
       {
         key: "targetAudience",
         label: "Target Audience",
-        type: "textarea",
+        type: "text",
         placeholder: "CTOs at SaaS startups with 10-50 employees",
         description:
-          "The specific audience segment this campaign targets. Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize outreach.",
+          "Who the campaign targets — ICP description (role, company size, industry). Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize outreach.",
         extractKey: "targetAudience",
       },
       {
         key: "targetOutcome",
         label: "Target Outcome",
         type: "text",
-        placeholder: "Book a product demo",
+        placeholder: "Book sales demos",
         description:
-          "The desired action you want the prospect to take after reading the email. Should be a single, clear call-to-action. Examples: 'Book a 15-min demo call', 'Start a free trial', 'Schedule a discovery call'. The LLM uses this to craft the email CTA.",
-        extractKey: "targetOutcome",
+          "The desired action from the recipient (book a call, sign up, reply, etc.). Should be a single, clear call-to-action. Examples: 'Book a 15-min demo call', 'Start a free trial', 'Schedule a discovery call'. The LLM uses this to craft the email CTA.",
+        extractKey: "callToAction",
       },
       {
         key: "valueForTarget",
         label: "Value for Target",
-        type: "textarea",
-        placeholder: "Reduce hiring time by 50% with AI-powered screening",
+        type: "text",
+        placeholder: "What do they gain from responding?",
         description:
           "The core value proposition for the target audience — what they gain by engaging. Should be specific and quantified when possible. Examples: 'Cut infrastructure costs by 40%', 'Ship features 3x faster with our CI/CD platform'. The LLM uses this as the main selling point in the email body.",
         extractKey: "valueProposition",
+      },
+      {
+        key: "urgency",
+        label: "Urgency",
+        type: "text",
+        placeholder: "Limited-time offer ending March 1st",
+        description:
+          "Time pressure to act — a deadline, event date, or expiring offer that motivates the recipient to respond quickly. Examples: 'Beta access closes Friday', 'Event is in 2 weeks', 'Pricing increases April 1st'. Leave empty if no urgency applies.",
+        extractKey: "urgency",
+      },
+      {
+        key: "scarcity",
+        label: "Scarcity",
+        type: "text",
+        placeholder: "Only 10 spots available",
+        description:
+          "Limited availability that creates FOMO — spots, seats, inventory, or capacity constraints. Examples: 'Only 5 pilot slots left', 'Limited to 20 beta customers', 'First 50 sign-ups get lifetime pricing'. Leave empty if no scarcity applies.",
+        extractKey: "scarcity",
+      },
+      {
+        key: "riskReversal",
+        label: "Risk Reversal",
+        type: "text",
+        placeholder: "Free trial, no commitment",
+        description:
+          "What reduces the perceived risk of responding — guarantees, free trials, or no-commitment offers. Examples: 'Free 14-day trial', '30-day money-back guarantee', 'No credit card required', 'Cancel anytime'. Helps overcome objections in the email.",
+        extractKey: "riskReversal",
+      },
+      {
+        key: "socialProof",
+        label: "Social Proof",
+        type: "text",
+        placeholder: "500+ companies already onboarded",
+        description:
+          "Trust signals that build credibility — customer count, notable logos, testimonials, awards, or metrics. Examples: 'Trusted by 500+ SaaS companies', 'Featured in TechCrunch', 'NPS score of 72'. The LLM uses this to add credibility to the outreach.",
+        extractKey: "socialProof",
       },
     ],
 
@@ -178,37 +214,28 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
         key: "industry",
         label: "Industry",
         type: "text",
-        placeholder: "B2B SaaS, Developer Tools",
+        placeholder: "SaaS, AI, Fintech, Healthcare...",
         description:
-          "The industry or vertical the brand operates in. Be specific — this drives which media outlets are searched. Examples: 'Enterprise cybersecurity', 'Consumer fintech', 'Climate tech / clean energy'. The discovery engine uses this to generate targeted search queries.",
+          "The industry vertical to target for discovery. Be specific — this drives which media outlets are searched. Examples: 'Enterprise cybersecurity', 'Consumer fintech', 'Climate tech / clean energy'. The discovery engine uses this to generate targeted search queries.",
         extractKey: "industry",
-      },
-      {
-        key: "targetGeo",
-        label: "Target Geography",
-        type: "text",
-        placeholder: "United States, Europe",
-        description:
-          "The geographic regions where the brand wants press coverage. Can be countries, regions, or cities. Examples: 'US and UK', 'DACH region', 'San Francisco Bay Area'. Determines whether to search local, national, or international outlets.",
-        extractKey: "targetGeo",
-      },
-      {
-        key: "targetAudience",
-        label: "Target Audience",
-        type: "textarea",
-        placeholder: "Technical decision-makers at mid-market companies",
-        description:
-          "Who the brand wants to reach through press coverage. This helps identify outlets whose readership matches. Examples: 'Enterprise CTOs evaluating security tools', 'Startup founders raising Series A-B', 'HR leaders at Fortune 500 companies'.",
-        extractKey: "targetAudience",
       },
       {
         key: "angles",
         label: "PR Angles",
-        type: "textarea",
-        placeholder: "Product launch, funding announcement, thought leadership on AI in hiring",
+        type: "text",
+        placeholder: "Fundraising announcement, product launch, thought leadership...",
         description:
-          "The editorial angles or story hooks the brand wants to pitch. Comma-separated or one per line. Examples: 'Series B funding announcement', 'New product launch for SMBs', 'Thought leadership on AI regulation'. Helps match outlets that cover these topics.",
-        extractKey: "prAngles",
+          "Story hooks or editorial angles the outreach should pitch. Comma-separated. Examples: 'Series B funding announcement', 'New product launch for SMBs', 'Thought leadership on AI regulation'. Helps match outlets that cover these topics.",
+        extractKey: "suggestedAngles",
+      },
+      {
+        key: "targetGeo",
+        label: "Geographic Focus",
+        type: "text",
+        placeholder: "US, Europe, Global...",
+        description:
+          "Geographic scope for finding targets — countries, regions, or cities. Examples: 'US and UK', 'DACH region', 'San Francisco Bay Area'. Determines whether to search local, national, or international outlets.",
+        extractKey: "suggestedGeo",
       },
     ],
 
