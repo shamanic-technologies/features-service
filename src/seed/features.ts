@@ -200,7 +200,7 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     name: "Outlet Database Discovery",
     description: "Discover relevant press outlets for your brand via AI-powered search and scoring.",
     icon: "globe",
-    category: "pr",
+    category: "outlets",
     channel: "database",
     audienceType: "discovery",
     implemented: true,
