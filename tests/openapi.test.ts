@@ -5,6 +5,7 @@ describe("openApiDocument", () => {
   it("has correct metadata", () => {
     expect(openApiDocument.openapi).toBe("3.0.3");
     expect(openApiDocument.info.title).toBe("Features Service API");
+    expect(openApiDocument.info.version).toBe("2.0.0");
   });
 
   it("exposes all feature endpoints", () => {
@@ -13,6 +14,13 @@ describe("openApiDocument", () => {
     expect(paths).toContain("/features/{slug}");
     expect(paths).toContain("/features/{slug}/inputs");
     expect(paths).toContain("/features/{slug}/prefill");
+  });
+
+  it("exposes stats endpoints", () => {
+    const paths = Object.keys(openApiDocument.paths ?? {});
+    expect(paths).toContain("/stats/registry");
+    expect(paths).toContain("/features/{featureSlug}/stats");
+    expect(paths).toContain("/stats");
   });
 
   it("has POST /features (create single)", () => {
@@ -50,5 +58,7 @@ describe("openApiDocument", () => {
     expect(schemas?.UpdateFeature).toBeDefined();
     expect(schemas?.FeatureInput).toBeDefined();
     expect(schemas?.FeatureOutput).toBeDefined();
+    expect(schemas?.FeatureStatsResponse).toBeDefined();
+    expect(schemas?.RegistryResponse).toBeDefined();
   });
 });

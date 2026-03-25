@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Features Service API",
-    "version": "1.0.0",
-    "description": "Manages feature definitions for the dashboard — inputs, outputs, charts, and metadata.\n\n## Key Concepts\n\n**Features** define what campaigns can do: their input form, output metrics, charts, and workflow columns. Each feature has a unique slug (e.g. `outlet-database-discovery`) auto-generated from its name.\n\n**Inputs** define the fields shown in the campaign creation form. Each input has an `extractKey` that maps to brand-service's extract-fields API, enabling AI-powered pre-fill from brand data.\n\n**Pre-fill flow** (for LLMs and workflows):\n1. Call `GET /features/{slug}/inputs` to see what fields a feature needs and their extractKeys\n2. Call `POST /features/{slug}/prefill` with a brandId to get AI-extracted values keyed by input key\n3. Pass the prefilled values to downstream services (e.g. outlets-service discover endpoint)\n\nThe prefill endpoint returns **named keys** (not positional arrays), so workflows can reference fields by name (e.g. `$ref:prefill.output.prefilled.industry`) instead of fragile index-based mapping.\n\n## Available Features\n\n| Slug | Category | Channel | Description |\n|------|----------|---------|-------------|\n| `outlet-database-discovery` | pr | database | Discover relevant press outlets via AI search + scoring |\n| *(more via GET /features)* | | | |"
+    "version": "2.0.0",
+    "description": "Manages feature definitions and computes output stats.\n\n## Key Concepts\n\n**Features** define what campaigns can do: inputs (form), outputs (metrics), charts (funnel/breakdown), and entities (detail tabs).\n\n**Stats Registry** (`GET /stats/registry`) — the finite universe of known stats keys. Each key has a label and type (count, rate, currency). Features reference these keys in outputs and charts.\n\n**Stats Endpoints** — features-service computes stats by calling downstream services (email-gateway, runs-service, outlets-service) and returns computed values.\n\n## Feature Definition\n\n```typescript\n{\n  inputs:   [{ key, label, type, ... }],           // campaign form\n  outputs:  [{ key, displayOrder }],                // metrics (validated against registry)\n  charts:   [{ type: \"funnel-bar\", steps: [...] }], // visualizations\n  entities: [\"leads\", \"companies\", \"emails\"],       // campaign detail tabs\n}\n```"
   },
   "servers": [
     {
@@ -79,71 +79,11 @@
             "type": "string",
             "minLength": 1
           },
-          "label": {
-            "type": "string",
-            "minLength": 1
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "count",
-              "rate",
-              "currency",
-              "percentage"
-            ]
-          },
           "displayOrder": {
             "type": "integer"
           },
-          "showInCampaignRow": {
+          "defaultSort": {
             "type": "boolean"
-          },
-          "showInFunnel": {
-            "type": "boolean"
-          },
-          "funnelOrder": {
-            "type": "integer"
-          },
-          "numeratorKey": {
-            "type": "string"
-          },
-          "denominatorKey": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "key",
-          "label",
-          "type",
-          "displayOrder",
-          "showInCampaignRow",
-          "showInFunnel"
-        ]
-      },
-      "WorkflowColumn": {
-        "type": "object",
-        "properties": {
-          "key": {
-            "type": "string",
-            "minLength": 1
-          },
-          "label": {
-            "type": "string",
-            "minLength": 1
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "rate",
-              "currency",
-              "count"
-            ]
-          },
-          "numeratorKey": {
-            "type": "string"
-          },
-          "denominatorKey": {
-            "type": "string"
           },
           "sortDirection": {
             "type": "string",
@@ -151,19 +91,10 @@
               "asc",
               "desc"
             ]
-          },
-          "displayOrder": {
-            "type": "integer"
-          },
-          "defaultSort": {
-            "type": "boolean"
           }
         },
         "required": [
           "key",
-          "label",
-          "type",
-          "sortDirection",
           "displayOrder"
         ]
       },
@@ -197,28 +128,13 @@
                     "key": {
                       "type": "string",
                       "minLength": 1
-                    },
-                    "label": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "statsField": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "rateBasedOn": {
-                      "type": "string",
-                      "nullable": true
                     }
                   },
                   "required": [
-                    "key",
-                    "label",
-                    "statsField",
-                    "rateBasedOn"
+                    "key"
                   ]
                 },
-                "minItems": 1
+                "minItems": 2
               }
             },
             "required": [
@@ -258,14 +174,6 @@
                       "type": "string",
                       "minLength": 1
                     },
-                    "label": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "statsField": {
-                      "type": "string",
-                      "minLength": 1
-                    },
                     "color": {
                       "type": "string",
                       "enum": [
@@ -287,13 +195,11 @@
                   },
                   "required": [
                     "key",
-                    "label",
-                    "statsField",
                     "color",
                     "sentiment"
                   ]
                 },
-                "minItems": 1
+                "minItems": 2
               }
             },
             "required": [
@@ -411,75 +317,11 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "label": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "count",
-                    "rate",
-                    "currency",
-                    "percentage"
-                  ]
-                },
                 "displayOrder": {
                   "type": "integer"
                 },
-                "showInCampaignRow": {
+                "defaultSort": {
                   "type": "boolean"
-                },
-                "showInFunnel": {
-                  "type": "boolean"
-                },
-                "funnelOrder": {
-                  "type": "integer"
-                },
-                "numeratorKey": {
-                  "type": "string"
-                },
-                "denominatorKey": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "key",
-                "label",
-                "type",
-                "displayOrder",
-                "showInCampaignRow",
-                "showInFunnel"
-              ]
-            },
-            "minItems": 1
-          },
-          "workflowColumns": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "key": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "label": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "rate",
-                    "currency",
-                    "count"
-                  ]
-                },
-                "numeratorKey": {
-                  "type": "string"
-                },
-                "denominatorKey": {
-                  "type": "string"
                 },
                 "sortDirection": {
                   "type": "string",
@@ -487,23 +329,14 @@
                     "asc",
                     "desc"
                   ]
-                },
-                "displayOrder": {
-                  "type": "integer"
-                },
-                "defaultSort": {
-                  "type": "boolean"
                 }
               },
               "required": [
                 "key",
-                "label",
-                "type",
-                "sortDirection",
                 "displayOrder"
               ]
             },
-            "default": []
+            "minItems": 1
           },
           "charts": {
             "type": "array",
@@ -537,28 +370,13 @@
                           "key": {
                             "type": "string",
                             "minLength": 1
-                          },
-                          "label": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "statsField": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "rateBasedOn": {
-                            "type": "string",
-                            "nullable": true
                           }
                         },
                         "required": [
-                          "key",
-                          "label",
-                          "statsField",
-                          "rateBasedOn"
+                          "key"
                         ]
                       },
-                      "minItems": 1
+                      "minItems": 2
                     }
                   },
                   "required": [
@@ -598,14 +416,6 @@
                             "type": "string",
                             "minLength": 1
                           },
-                          "label": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "statsField": {
-                            "type": "string",
-                            "minLength": 1
-                          },
                           "color": {
                             "type": "string",
                             "enum": [
@@ -627,13 +437,11 @@
                         },
                         "required": [
                           "key",
-                          "label",
-                          "statsField",
                           "color",
                           "sentiment"
                         ]
                       },
-                      "minItems": 1
+                      "minItems": 2
                     }
                   },
                   "required": [
@@ -646,15 +454,15 @@
                 }
               ]
             },
-            "default": []
+            "minItems": 1
           },
-          "resultComponent": {
-            "type": "string",
-            "nullable": true
-          },
-          "defaultWorkflowName": {
-            "type": "string",
-            "nullable": true
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
           }
         },
         "required": [
@@ -665,7 +473,9 @@
           "channel",
           "audienceType",
           "inputs",
-          "outputs"
+          "outputs",
+          "charts",
+          "entities"
         ]
       },
       "CreateFeature": {
@@ -773,75 +583,11 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "label": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "count",
-                    "rate",
-                    "currency",
-                    "percentage"
-                  ]
-                },
                 "displayOrder": {
                   "type": "integer"
                 },
-                "showInCampaignRow": {
+                "defaultSort": {
                   "type": "boolean"
-                },
-                "showInFunnel": {
-                  "type": "boolean"
-                },
-                "funnelOrder": {
-                  "type": "integer"
-                },
-                "numeratorKey": {
-                  "type": "string"
-                },
-                "denominatorKey": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "key",
-                "label",
-                "type",
-                "displayOrder",
-                "showInCampaignRow",
-                "showInFunnel"
-              ]
-            },
-            "minItems": 1
-          },
-          "workflowColumns": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "key": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "label": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "rate",
-                    "currency",
-                    "count"
-                  ]
-                },
-                "numeratorKey": {
-                  "type": "string"
-                },
-                "denominatorKey": {
-                  "type": "string"
                 },
                 "sortDirection": {
                   "type": "string",
@@ -849,23 +595,14 @@
                     "asc",
                     "desc"
                   ]
-                },
-                "displayOrder": {
-                  "type": "integer"
-                },
-                "defaultSort": {
-                  "type": "boolean"
                 }
               },
               "required": [
                 "key",
-                "label",
-                "type",
-                "sortDirection",
                 "displayOrder"
               ]
             },
-            "default": []
+            "minItems": 1
           },
           "charts": {
             "type": "array",
@@ -899,28 +636,13 @@
                           "key": {
                             "type": "string",
                             "minLength": 1
-                          },
-                          "label": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "statsField": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "rateBasedOn": {
-                            "type": "string",
-                            "nullable": true
                           }
                         },
                         "required": [
-                          "key",
-                          "label",
-                          "statsField",
-                          "rateBasedOn"
+                          "key"
                         ]
                       },
-                      "minItems": 1
+                      "minItems": 2
                     }
                   },
                   "required": [
@@ -960,14 +682,6 @@
                             "type": "string",
                             "minLength": 1
                           },
-                          "label": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "statsField": {
-                            "type": "string",
-                            "minLength": 1
-                          },
                           "color": {
                             "type": "string",
                             "enum": [
@@ -989,13 +703,11 @@
                         },
                         "required": [
                           "key",
-                          "label",
-                          "statsField",
                           "color",
                           "sentiment"
                         ]
                       },
-                      "minItems": 1
+                      "minItems": 2
                     }
                   },
                   "required": [
@@ -1008,15 +720,15 @@
                 }
               ]
             },
-            "default": []
+            "minItems": 1
           },
-          "resultComponent": {
-            "type": "string",
-            "nullable": true
-          },
-          "defaultWorkflowName": {
-            "type": "string",
-            "nullable": true
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
           },
           "slug": {
             "type": "string",
@@ -1031,7 +743,9 @@
           "channel",
           "audienceType",
           "inputs",
-          "outputs"
+          "outputs",
+          "charts",
+          "entities"
         ]
       },
       "UpdateFeature": {
@@ -1136,75 +850,11 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "label": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "count",
-                    "rate",
-                    "currency",
-                    "percentage"
-                  ]
-                },
                 "displayOrder": {
                   "type": "integer"
                 },
-                "showInCampaignRow": {
+                "defaultSort": {
                   "type": "boolean"
-                },
-                "showInFunnel": {
-                  "type": "boolean"
-                },
-                "funnelOrder": {
-                  "type": "integer"
-                },
-                "numeratorKey": {
-                  "type": "string"
-                },
-                "denominatorKey": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "key",
-                "label",
-                "type",
-                "displayOrder",
-                "showInCampaignRow",
-                "showInFunnel"
-              ]
-            },
-            "minItems": 1
-          },
-          "workflowColumns": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "key": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "label": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "rate",
-                    "currency",
-                    "count"
-                  ]
-                },
-                "numeratorKey": {
-                  "type": "string"
-                },
-                "denominatorKey": {
-                  "type": "string"
                 },
                 "sortDirection": {
                   "type": "string",
@@ -1212,22 +862,14 @@
                     "asc",
                     "desc"
                   ]
-                },
-                "displayOrder": {
-                  "type": "integer"
-                },
-                "defaultSort": {
-                  "type": "boolean"
                 }
               },
               "required": [
                 "key",
-                "label",
-                "type",
-                "sortDirection",
                 "displayOrder"
               ]
-            }
+            },
+            "minItems": 1
           },
           "charts": {
             "type": "array",
@@ -1261,28 +903,13 @@
                           "key": {
                             "type": "string",
                             "minLength": 1
-                          },
-                          "label": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "statsField": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "rateBasedOn": {
-                            "type": "string",
-                            "nullable": true
                           }
                         },
                         "required": [
-                          "key",
-                          "label",
-                          "statsField",
-                          "rateBasedOn"
+                          "key"
                         ]
                       },
-                      "minItems": 1
+                      "minItems": 2
                     }
                   },
                   "required": [
@@ -1322,14 +949,6 @@
                             "type": "string",
                             "minLength": 1
                           },
-                          "label": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "statsField": {
-                            "type": "string",
-                            "minLength": 1
-                          },
                           "color": {
                             "type": "string",
                             "enum": [
@@ -1351,13 +970,11 @@
                         },
                         "required": [
                           "key",
-                          "label",
-                          "statsField",
                           "color",
                           "sentiment"
                         ]
                       },
-                      "minItems": 1
+                      "minItems": 2
                     }
                   },
                   "required": [
@@ -1369,15 +986,16 @@
                   ]
                 }
               ]
-            }
+            },
+            "minItems": 1
           },
-          "resultComponent": {
-            "type": "string",
-            "nullable": true
-          },
-          "defaultWorkflowName": {
-            "type": "string",
-            "nullable": true
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
           }
         }
       },
@@ -1482,7 +1100,7 @@
                 "extractKey"
               ]
             },
-            "description": "Input fields for the campaign creation form. Each input has an extractKey that maps to brand-service's extract-fields API for AI pre-fill."
+            "description": "Input fields for the campaign creation form."
           },
           "outputs": {
             "type": "array",
@@ -1493,75 +1111,11 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "label": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "count",
-                    "rate",
-                    "currency",
-                    "percentage"
-                  ]
-                },
                 "displayOrder": {
                   "type": "integer"
                 },
-                "showInCampaignRow": {
+                "defaultSort": {
                   "type": "boolean"
-                },
-                "showInFunnel": {
-                  "type": "boolean"
-                },
-                "funnelOrder": {
-                  "type": "integer"
-                },
-                "numeratorKey": {
-                  "type": "string"
-                },
-                "denominatorKey": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "key",
-                "label",
-                "type",
-                "displayOrder",
-                "showInCampaignRow",
-                "showInFunnel"
-              ]
-            },
-            "description": "Output metrics displayed on the dashboard"
-          },
-          "workflowColumns": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "key": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "label": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "rate",
-                    "currency",
-                    "count"
-                  ]
-                },
-                "numeratorKey": {
-                  "type": "string"
-                },
-                "denominatorKey": {
-                  "type": "string"
                 },
                 "sortDirection": {
                   "type": "string",
@@ -1569,23 +1123,14 @@
                     "asc",
                     "desc"
                   ]
-                },
-                "displayOrder": {
-                  "type": "integer"
-                },
-                "defaultSort": {
-                  "type": "boolean"
                 }
               },
               "required": [
                 "key",
-                "label",
-                "type",
-                "sortDirection",
                 "displayOrder"
               ]
             },
-            "description": "Column definitions for the workflow performance table"
+            "description": "Output metrics — stats keys from the registry with display config. Use GET /stats/registry for labels and types."
           },
           "charts": {
             "type": "array",
@@ -1619,28 +1164,13 @@
                           "key": {
                             "type": "string",
                             "minLength": 1
-                          },
-                          "label": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "statsField": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "rateBasedOn": {
-                            "type": "string",
-                            "nullable": true
                           }
                         },
                         "required": [
-                          "key",
-                          "label",
-                          "statsField",
-                          "rateBasedOn"
+                          "key"
                         ]
                       },
-                      "minItems": 1
+                      "minItems": 2
                     }
                   },
                   "required": [
@@ -1680,14 +1210,6 @@
                             "type": "string",
                             "minLength": 1
                           },
-                          "label": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "statsField": {
-                            "type": "string",
-                            "minLength": 1
-                          },
                           "color": {
                             "type": "string",
                             "enum": [
@@ -1709,13 +1231,11 @@
                         },
                         "required": [
                           "key",
-                          "label",
-                          "statsField",
                           "color",
                           "sentiment"
                         ]
                       },
-                      "minItems": 1
+                      "minItems": 2
                     }
                   },
                   "required": [
@@ -1728,17 +1248,14 @@
                 }
               ]
             },
-            "description": "Chart definitions (funnel, breakdown, etc.)"
+            "description": "Chart definitions (funnel-bar, breakdown-bar). At least one of each required."
           },
-          "resultComponent": {
-            "type": "string",
-            "nullable": true,
-            "description": "Specialized result component slug (e.g. 'discovered-outlets'), null for standard features"
-          },
-          "defaultWorkflowName": {
-            "type": "string",
-            "nullable": true,
-            "description": "Default workflow name in workflow-service, null if no default"
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
           },
           "createdAt": {
             "type": "string",
@@ -1764,12 +1281,352 @@
           "signature",
           "inputs",
           "outputs",
-          "workflowColumns",
           "charts",
-          "resultComponent",
-          "defaultWorkflowName",
+          "entities",
           "createdAt",
           "updatedAt"
+        ]
+      },
+      "SystemStats": {
+        "type": "object",
+        "properties": {
+          "totalCostInUsdCents": {
+            "type": "number"
+          },
+          "completedRuns": {
+            "type": "number"
+          },
+          "activeCampaigns": {
+            "type": "number"
+          },
+          "firstRunAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          },
+          "lastRunAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "totalCostInUsdCents",
+          "completedRuns",
+          "activeCampaigns",
+          "firstRunAt",
+          "lastRunAt"
+        ]
+      },
+      "StatsGroup": {
+        "type": "object",
+        "properties": {
+          "workflowName": {
+            "type": "string",
+            "nullable": true
+          },
+          "brandId": {
+            "type": "string",
+            "nullable": true
+          },
+          "campaignId": {
+            "type": "string",
+            "nullable": true
+          },
+          "systemStats": {
+            "type": "object",
+            "properties": {
+              "totalCostInUsdCents": {
+                "type": "number"
+              },
+              "completedRuns": {
+                "type": "number"
+              },
+              "activeCampaigns": {
+                "type": "number"
+              },
+              "firstRunAt": {
+                "type": "string",
+                "nullable": true,
+                "format": "date-time"
+              },
+              "lastRunAt": {
+                "type": "string",
+                "nullable": true,
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "totalCostInUsdCents",
+              "completedRuns",
+              "activeCampaigns",
+              "firstRunAt",
+              "lastRunAt"
+            ]
+          },
+          "stats": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "nullable": true
+            }
+          }
+        },
+        "required": [
+          "systemStats",
+          "stats"
+        ]
+      },
+      "FeatureStatsResponse": {
+        "type": "object",
+        "properties": {
+          "featureSlug": {
+            "type": "string"
+          },
+          "groupBy": {
+            "type": "string"
+          },
+          "systemStats": {
+            "type": "object",
+            "properties": {
+              "totalCostInUsdCents": {
+                "type": "number"
+              },
+              "completedRuns": {
+                "type": "number"
+              },
+              "activeCampaigns": {
+                "type": "number"
+              },
+              "firstRunAt": {
+                "type": "string",
+                "nullable": true,
+                "format": "date-time"
+              },
+              "lastRunAt": {
+                "type": "string",
+                "nullable": true,
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "totalCostInUsdCents",
+              "completedRuns",
+              "activeCampaigns",
+              "firstRunAt",
+              "lastRunAt"
+            ]
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "workflowName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "brandId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "campaignId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "systemStats": {
+                  "type": "object",
+                  "properties": {
+                    "totalCostInUsdCents": {
+                      "type": "number"
+                    },
+                    "completedRuns": {
+                      "type": "number"
+                    },
+                    "activeCampaigns": {
+                      "type": "number"
+                    },
+                    "firstRunAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "format": "date-time"
+                    },
+                    "lastRunAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "totalCostInUsdCents",
+                    "completedRuns",
+                    "activeCampaigns",
+                    "firstRunAt",
+                    "lastRunAt"
+                  ]
+                },
+                "stats": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "nullable": true
+                  }
+                }
+              },
+              "required": [
+                "systemStats",
+                "stats"
+              ]
+            }
+          },
+          "stats": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "nullable": true
+            }
+          }
+        },
+        "required": [
+          "featureSlug",
+          "systemStats"
+        ]
+      },
+      "GlobalStatsResponse": {
+        "type": "object",
+        "properties": {
+          "groupBy": {
+            "type": "string"
+          },
+          "systemStats": {
+            "type": "object",
+            "properties": {
+              "totalCostInUsdCents": {
+                "type": "number"
+              },
+              "completedRuns": {
+                "type": "number"
+              },
+              "activeCampaigns": {
+                "type": "number"
+              },
+              "firstRunAt": {
+                "type": "string",
+                "nullable": true,
+                "format": "date-time"
+              },
+              "lastRunAt": {
+                "type": "string",
+                "nullable": true,
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "totalCostInUsdCents",
+              "completedRuns",
+              "activeCampaigns",
+              "firstRunAt",
+              "lastRunAt"
+            ]
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "workflowName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "brandId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "campaignId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "systemStats": {
+                  "type": "object",
+                  "properties": {
+                    "totalCostInUsdCents": {
+                      "type": "number"
+                    },
+                    "completedRuns": {
+                      "type": "number"
+                    },
+                    "activeCampaigns": {
+                      "type": "number"
+                    },
+                    "firstRunAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "format": "date-time"
+                    },
+                    "lastRunAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "totalCostInUsdCents",
+                    "completedRuns",
+                    "activeCampaigns",
+                    "firstRunAt",
+                    "lastRunAt"
+                  ]
+                },
+                "stats": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "nullable": true
+                  }
+                }
+              },
+              "required": [
+                "systemStats",
+                "stats"
+              ]
+            }
+          },
+          "stats": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "nullable": true
+            }
+          }
+        },
+        "required": [
+          "systemStats"
+        ]
+      },
+      "RegistryResponse": {
+        "type": "object",
+        "properties": {
+          "registry": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "label"
+              ]
+            }
+          }
+        },
+        "required": [
+          "registry"
         ]
       },
       "PrefillTextResponse": {
@@ -1796,7 +1653,7 @@
               "type": "string",
               "nullable": true
             },
-            "description": "Map of input key → flattened text value (or null if extraction failed). Keys match the feature's inputs[].key. Example: { industry: 'Enterprise SaaS', angles: 'Series B funding, AI product launch', targetGeo: 'US and UK' }"
+            "description": "Map of input key → flattened text value (or null if extraction failed)."
           }
         },
         "required": [
@@ -1836,7 +1693,7 @@
                 },
                 "cached": {
                   "type": "boolean",
-                  "description": "Whether the value was served from cache (brand-service caches extractions for 30 days)"
+                  "description": "Whether the value was served from cache"
                 },
                 "sourceUrls": {
                   "type": "array",
@@ -1844,7 +1701,7 @@
                   "items": {
                     "type": "string"
                   },
-                  "description": "URLs from the brand's website that were used to extract this value"
+                  "description": "URLs from the brand's website used to extract this value"
                 }
               },
               "required": [
@@ -1852,7 +1709,7 @@
                 "sourceUrls"
               ]
             },
-            "description": "Map of input key → full extraction result. Keys match the feature's inputs[].key. Example: { industry: { value: 'Enterprise SaaS', cached: true, sourceUrls: ['https://example.com/about'] } }"
+            "description": "Map of input key → full extraction result."
           }
         },
         "required": [
@@ -1924,7 +1781,7 @@
                 "extractKey"
               ]
             },
-            "description": "Input definitions. Each input's extractKey maps to a brand-service extract-fields key. Use these extractKeys when calling POST /brands/{brandId}/extract-fields, or call POST /features/{slug}/prefill to let the service handle extraction automatically."
+            "description": "Input definitions."
           }
         },
         "required": [
@@ -1940,7 +1797,7 @@
     "/features": {
       "put": {
         "summary": "Batch upsert features (cold-start registration)",
-        "description": "Idempotent — safe to call on every cold start. Uses a signature (hash of sorted input+output keys) to detect duplicates: same signature → upsert metadata, same name but different signature → auto-suffix with v2, v3, etc.",
+        "description": "Idempotent — safe to call on every cold start. Uses a signature (hash of sorted input+output keys) to detect duplicates.",
         "tags": [
           "Features"
         ],
@@ -2057,75 +1914,11 @@
                                 "type": "string",
                                 "minLength": 1
                               },
-                              "label": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "count",
-                                  "rate",
-                                  "currency",
-                                  "percentage"
-                                ]
-                              },
                               "displayOrder": {
                                 "type": "integer"
                               },
-                              "showInCampaignRow": {
+                              "defaultSort": {
                                 "type": "boolean"
-                              },
-                              "showInFunnel": {
-                                "type": "boolean"
-                              },
-                              "funnelOrder": {
-                                "type": "integer"
-                              },
-                              "numeratorKey": {
-                                "type": "string"
-                              },
-                              "denominatorKey": {
-                                "type": "string"
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "label",
-                              "type",
-                              "displayOrder",
-                              "showInCampaignRow",
-                              "showInFunnel"
-                            ]
-                          },
-                          "minItems": 1
-                        },
-                        "workflowColumns": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "label": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "rate",
-                                  "currency",
-                                  "count"
-                                ]
-                              },
-                              "numeratorKey": {
-                                "type": "string"
-                              },
-                              "denominatorKey": {
-                                "type": "string"
                               },
                               "sortDirection": {
                                 "type": "string",
@@ -2133,23 +1926,14 @@
                                   "asc",
                                   "desc"
                                 ]
-                              },
-                              "displayOrder": {
-                                "type": "integer"
-                              },
-                              "defaultSort": {
-                                "type": "boolean"
                               }
                             },
                             "required": [
                               "key",
-                              "label",
-                              "type",
-                              "sortDirection",
                               "displayOrder"
                             ]
                           },
-                          "default": []
+                          "minItems": 1
                         },
                         "charts": {
                           "type": "array",
@@ -2183,28 +1967,13 @@
                                         "key": {
                                           "type": "string",
                                           "minLength": 1
-                                        },
-                                        "label": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
-                                        "statsField": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
-                                        "rateBasedOn": {
-                                          "type": "string",
-                                          "nullable": true
                                         }
                                       },
                                       "required": [
-                                        "key",
-                                        "label",
-                                        "statsField",
-                                        "rateBasedOn"
+                                        "key"
                                       ]
                                     },
-                                    "minItems": 1
+                                    "minItems": 2
                                   }
                                 },
                                 "required": [
@@ -2244,14 +2013,6 @@
                                           "type": "string",
                                           "minLength": 1
                                         },
-                                        "label": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
-                                        "statsField": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
                                         "color": {
                                           "type": "string",
                                           "enum": [
@@ -2273,13 +2034,11 @@
                                       },
                                       "required": [
                                         "key",
-                                        "label",
-                                        "statsField",
                                         "color",
                                         "sentiment"
                                       ]
                                     },
-                                    "minItems": 1
+                                    "minItems": 2
                                   }
                                 },
                                 "required": [
@@ -2292,15 +2051,15 @@
                               }
                             ]
                           },
-                          "default": []
+                          "minItems": 1
                         },
-                        "resultComponent": {
-                          "type": "string",
-                          "nullable": true
-                        },
-                        "defaultWorkflowName": {
-                          "type": "string",
-                          "nullable": true
+                        "entities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "minItems": 1
                         }
                       },
                       "required": [
@@ -2311,7 +2070,9 @@
                         "channel",
                         "audienceType",
                         "inputs",
-                        "outputs"
+                        "outputs",
+                        "charts",
+                        "entities"
                       ]
                     },
                     "minItems": 1
@@ -2435,7 +2196,7 @@
                                 "extractKey"
                               ]
                             },
-                            "description": "Input fields for the campaign creation form. Each input has an extractKey that maps to brand-service's extract-fields API for AI pre-fill."
+                            "description": "Input fields for the campaign creation form."
                           },
                           "outputs": {
                             "type": "array",
@@ -2446,75 +2207,11 @@
                                   "type": "string",
                                   "minLength": 1
                                 },
-                                "label": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "type": {
-                                  "type": "string",
-                                  "enum": [
-                                    "count",
-                                    "rate",
-                                    "currency",
-                                    "percentage"
-                                  ]
-                                },
                                 "displayOrder": {
                                   "type": "integer"
                                 },
-                                "showInCampaignRow": {
+                                "defaultSort": {
                                   "type": "boolean"
-                                },
-                                "showInFunnel": {
-                                  "type": "boolean"
-                                },
-                                "funnelOrder": {
-                                  "type": "integer"
-                                },
-                                "numeratorKey": {
-                                  "type": "string"
-                                },
-                                "denominatorKey": {
-                                  "type": "string"
-                                }
-                              },
-                              "required": [
-                                "key",
-                                "label",
-                                "type",
-                                "displayOrder",
-                                "showInCampaignRow",
-                                "showInFunnel"
-                              ]
-                            },
-                            "description": "Output metrics displayed on the dashboard"
-                          },
-                          "workflowColumns": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "key": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "label": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "type": {
-                                  "type": "string",
-                                  "enum": [
-                                    "rate",
-                                    "currency",
-                                    "count"
-                                  ]
-                                },
-                                "numeratorKey": {
-                                  "type": "string"
-                                },
-                                "denominatorKey": {
-                                  "type": "string"
                                 },
                                 "sortDirection": {
                                   "type": "string",
@@ -2522,23 +2219,14 @@
                                     "asc",
                                     "desc"
                                   ]
-                                },
-                                "displayOrder": {
-                                  "type": "integer"
-                                },
-                                "defaultSort": {
-                                  "type": "boolean"
                                 }
                               },
                               "required": [
                                 "key",
-                                "label",
-                                "type",
-                                "sortDirection",
                                 "displayOrder"
                               ]
                             },
-                            "description": "Column definitions for the workflow performance table"
+                            "description": "Output metrics — stats keys from the registry with display config. Use GET /stats/registry for labels and types."
                           },
                           "charts": {
                             "type": "array",
@@ -2572,28 +2260,13 @@
                                           "key": {
                                             "type": "string",
                                             "minLength": 1
-                                          },
-                                          "label": {
-                                            "type": "string",
-                                            "minLength": 1
-                                          },
-                                          "statsField": {
-                                            "type": "string",
-                                            "minLength": 1
-                                          },
-                                          "rateBasedOn": {
-                                            "type": "string",
-                                            "nullable": true
                                           }
                                         },
                                         "required": [
-                                          "key",
-                                          "label",
-                                          "statsField",
-                                          "rateBasedOn"
+                                          "key"
                                         ]
                                       },
-                                      "minItems": 1
+                                      "minItems": 2
                                     }
                                   },
                                   "required": [
@@ -2633,14 +2306,6 @@
                                             "type": "string",
                                             "minLength": 1
                                           },
-                                          "label": {
-                                            "type": "string",
-                                            "minLength": 1
-                                          },
-                                          "statsField": {
-                                            "type": "string",
-                                            "minLength": 1
-                                          },
                                           "color": {
                                             "type": "string",
                                             "enum": [
@@ -2662,13 +2327,11 @@
                                         },
                                         "required": [
                                           "key",
-                                          "label",
-                                          "statsField",
                                           "color",
                                           "sentiment"
                                         ]
                                       },
-                                      "minItems": 1
+                                      "minItems": 2
                                     }
                                   },
                                   "required": [
@@ -2681,17 +2344,14 @@
                                 }
                               ]
                             },
-                            "description": "Chart definitions (funnel, breakdown, etc.)"
+                            "description": "Chart definitions (funnel-bar, breakdown-bar). At least one of each required."
                           },
-                          "resultComponent": {
-                            "type": "string",
-                            "nullable": true,
-                            "description": "Specialized result component slug (e.g. 'discovered-outlets'), null for standard features"
-                          },
-                          "defaultWorkflowName": {
-                            "type": "string",
-                            "nullable": true,
-                            "description": "Default workflow name in workflow-service, null if no default"
+                          "entities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
                           },
                           "createdAt": {
                             "type": "string",
@@ -2717,10 +2377,8 @@
                           "signature",
                           "inputs",
                           "outputs",
-                          "workflowColumns",
                           "charts",
-                          "resultComponent",
-                          "defaultWorkflowName",
+                          "entities",
                           "createdAt",
                           "updatedAt"
                         ]
@@ -2867,75 +2525,11 @@
                           "type": "string",
                           "minLength": 1
                         },
-                        "label": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "type": {
-                          "type": "string",
-                          "enum": [
-                            "count",
-                            "rate",
-                            "currency",
-                            "percentage"
-                          ]
-                        },
                         "displayOrder": {
                           "type": "integer"
                         },
-                        "showInCampaignRow": {
+                        "defaultSort": {
                           "type": "boolean"
-                        },
-                        "showInFunnel": {
-                          "type": "boolean"
-                        },
-                        "funnelOrder": {
-                          "type": "integer"
-                        },
-                        "numeratorKey": {
-                          "type": "string"
-                        },
-                        "denominatorKey": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "key",
-                        "label",
-                        "type",
-                        "displayOrder",
-                        "showInCampaignRow",
-                        "showInFunnel"
-                      ]
-                    },
-                    "minItems": 1
-                  },
-                  "workflowColumns": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "key": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "label": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "type": {
-                          "type": "string",
-                          "enum": [
-                            "rate",
-                            "currency",
-                            "count"
-                          ]
-                        },
-                        "numeratorKey": {
-                          "type": "string"
-                        },
-                        "denominatorKey": {
-                          "type": "string"
                         },
                         "sortDirection": {
                           "type": "string",
@@ -2943,23 +2537,14 @@
                             "asc",
                             "desc"
                           ]
-                        },
-                        "displayOrder": {
-                          "type": "integer"
-                        },
-                        "defaultSort": {
-                          "type": "boolean"
                         }
                       },
                       "required": [
                         "key",
-                        "label",
-                        "type",
-                        "sortDirection",
                         "displayOrder"
                       ]
                     },
-                    "default": []
+                    "minItems": 1
                   },
                   "charts": {
                     "type": "array",
@@ -2993,28 +2578,13 @@
                                   "key": {
                                     "type": "string",
                                     "minLength": 1
-                                  },
-                                  "label": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  },
-                                  "statsField": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  },
-                                  "rateBasedOn": {
-                                    "type": "string",
-                                    "nullable": true
                                   }
                                 },
                                 "required": [
-                                  "key",
-                                  "label",
-                                  "statsField",
-                                  "rateBasedOn"
+                                  "key"
                                 ]
                               },
-                              "minItems": 1
+                              "minItems": 2
                             }
                           },
                           "required": [
@@ -3054,14 +2624,6 @@
                                     "type": "string",
                                     "minLength": 1
                                   },
-                                  "label": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  },
-                                  "statsField": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  },
                                   "color": {
                                     "type": "string",
                                     "enum": [
@@ -3083,13 +2645,11 @@
                                 },
                                 "required": [
                                   "key",
-                                  "label",
-                                  "statsField",
                                   "color",
                                   "sentiment"
                                 ]
                               },
-                              "minItems": 1
+                              "minItems": 2
                             }
                           },
                           "required": [
@@ -3102,15 +2662,15 @@
                         }
                       ]
                     },
-                    "default": []
+                    "minItems": 1
                   },
-                  "resultComponent": {
-                    "type": "string",
-                    "nullable": true
-                  },
-                  "defaultWorkflowName": {
-                    "type": "string",
-                    "nullable": true
+                  "entities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1
                   },
                   "slug": {
                     "type": "string",
@@ -3125,7 +2685,9 @@
                   "channel",
                   "audienceType",
                   "inputs",
-                  "outputs"
+                  "outputs",
+                  "charts",
+                  "entities"
                 ]
               }
             }
@@ -3240,7 +2802,7 @@
                               "extractKey"
                             ]
                           },
-                          "description": "Input fields for the campaign creation form. Each input has an extractKey that maps to brand-service's extract-fields API for AI pre-fill."
+                          "description": "Input fields for the campaign creation form."
                         },
                         "outputs": {
                           "type": "array",
@@ -3251,75 +2813,11 @@
                                 "type": "string",
                                 "minLength": 1
                               },
-                              "label": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "count",
-                                  "rate",
-                                  "currency",
-                                  "percentage"
-                                ]
-                              },
                               "displayOrder": {
                                 "type": "integer"
                               },
-                              "showInCampaignRow": {
+                              "defaultSort": {
                                 "type": "boolean"
-                              },
-                              "showInFunnel": {
-                                "type": "boolean"
-                              },
-                              "funnelOrder": {
-                                "type": "integer"
-                              },
-                              "numeratorKey": {
-                                "type": "string"
-                              },
-                              "denominatorKey": {
-                                "type": "string"
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "label",
-                              "type",
-                              "displayOrder",
-                              "showInCampaignRow",
-                              "showInFunnel"
-                            ]
-                          },
-                          "description": "Output metrics displayed on the dashboard"
-                        },
-                        "workflowColumns": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "label": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "rate",
-                                  "currency",
-                                  "count"
-                                ]
-                              },
-                              "numeratorKey": {
-                                "type": "string"
-                              },
-                              "denominatorKey": {
-                                "type": "string"
                               },
                               "sortDirection": {
                                 "type": "string",
@@ -3327,23 +2825,14 @@
                                   "asc",
                                   "desc"
                                 ]
-                              },
-                              "displayOrder": {
-                                "type": "integer"
-                              },
-                              "defaultSort": {
-                                "type": "boolean"
                               }
                             },
                             "required": [
                               "key",
-                              "label",
-                              "type",
-                              "sortDirection",
                               "displayOrder"
                             ]
                           },
-                          "description": "Column definitions for the workflow performance table"
+                          "description": "Output metrics — stats keys from the registry with display config. Use GET /stats/registry for labels and types."
                         },
                         "charts": {
                           "type": "array",
@@ -3377,28 +2866,13 @@
                                         "key": {
                                           "type": "string",
                                           "minLength": 1
-                                        },
-                                        "label": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
-                                        "statsField": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
-                                        "rateBasedOn": {
-                                          "type": "string",
-                                          "nullable": true
                                         }
                                       },
                                       "required": [
-                                        "key",
-                                        "label",
-                                        "statsField",
-                                        "rateBasedOn"
+                                        "key"
                                       ]
                                     },
-                                    "minItems": 1
+                                    "minItems": 2
                                   }
                                 },
                                 "required": [
@@ -3438,14 +2912,6 @@
                                           "type": "string",
                                           "minLength": 1
                                         },
-                                        "label": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
-                                        "statsField": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
                                         "color": {
                                           "type": "string",
                                           "enum": [
@@ -3467,13 +2933,11 @@
                                       },
                                       "required": [
                                         "key",
-                                        "label",
-                                        "statsField",
                                         "color",
                                         "sentiment"
                                       ]
                                     },
-                                    "minItems": 1
+                                    "minItems": 2
                                   }
                                 },
                                 "required": [
@@ -3486,17 +2950,14 @@
                               }
                             ]
                           },
-                          "description": "Chart definitions (funnel, breakdown, etc.)"
+                          "description": "Chart definitions (funnel-bar, breakdown-bar). At least one of each required."
                         },
-                        "resultComponent": {
-                          "type": "string",
-                          "nullable": true,
-                          "description": "Specialized result component slug (e.g. 'discovered-outlets'), null for standard features"
-                        },
-                        "defaultWorkflowName": {
-                          "type": "string",
-                          "nullable": true,
-                          "description": "Default workflow name in workflow-service, null if no default"
+                        "entities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
                         },
                         "createdAt": {
                           "type": "string",
@@ -3522,10 +2983,8 @@
                         "signature",
                         "inputs",
                         "outputs",
-                        "workflowColumns",
                         "charts",
-                        "resultComponent",
-                        "defaultWorkflowName",
+                        "entities",
                         "createdAt",
                         "updatedAt"
                       ]
@@ -3557,7 +3016,7 @@
             }
           },
           "409": {
-            "description": "Conflict — slug, name, or signature already exists",
+            "description": "Conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -3581,48 +3040,39 @@
       },
       "get": {
         "summary": "List all features",
-        "description": "Returns all features, optionally filtered by status, category, channel, audienceType, or implemented flag.",
         "tags": [
           "Features"
         ],
         "parameters": [
           {
             "schema": {
-              "type": "string",
-              "description": "Filter by status: 'active', 'draft', 'deprecated'"
+              "type": "string"
             },
             "required": false,
-            "description": "Filter by status: 'active', 'draft', 'deprecated'",
             "name": "status",
             "in": "query"
           },
           {
             "schema": {
-              "type": "string",
-              "description": "Filter by category: 'sales', 'pr', etc."
+              "type": "string"
             },
             "required": false,
-            "description": "Filter by category: 'sales', 'pr', etc.",
             "name": "category",
             "in": "query"
           },
           {
             "schema": {
-              "type": "string",
-              "description": "Filter by channel: 'email', 'database', etc."
+              "type": "string"
             },
             "required": false,
-            "description": "Filter by channel: 'email', 'database', etc.",
             "name": "channel",
             "in": "query"
           },
           {
             "schema": {
-              "type": "string",
-              "description": "Filter by audience type: 'cold-outreach', 'discovery', etc."
+              "type": "string"
             },
             "required": false,
-            "description": "Filter by audience type: 'cold-outreach', 'discovery', etc.",
             "name": "audienceType",
             "in": "query"
           },
@@ -3632,11 +3082,9 @@
               "enum": [
                 "true",
                 "false"
-              ],
-              "description": "Filter by implementation status"
+              ]
             },
             "required": false,
-            "description": "Filter by implementation status",
             "name": "implemented",
             "in": "query"
           }
@@ -3752,7 +3200,7 @@
                                 "extractKey"
                               ]
                             },
-                            "description": "Input fields for the campaign creation form. Each input has an extractKey that maps to brand-service's extract-fields API for AI pre-fill."
+                            "description": "Input fields for the campaign creation form."
                           },
                           "outputs": {
                             "type": "array",
@@ -3763,75 +3211,11 @@
                                   "type": "string",
                                   "minLength": 1
                                 },
-                                "label": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "type": {
-                                  "type": "string",
-                                  "enum": [
-                                    "count",
-                                    "rate",
-                                    "currency",
-                                    "percentage"
-                                  ]
-                                },
                                 "displayOrder": {
                                   "type": "integer"
                                 },
-                                "showInCampaignRow": {
+                                "defaultSort": {
                                   "type": "boolean"
-                                },
-                                "showInFunnel": {
-                                  "type": "boolean"
-                                },
-                                "funnelOrder": {
-                                  "type": "integer"
-                                },
-                                "numeratorKey": {
-                                  "type": "string"
-                                },
-                                "denominatorKey": {
-                                  "type": "string"
-                                }
-                              },
-                              "required": [
-                                "key",
-                                "label",
-                                "type",
-                                "displayOrder",
-                                "showInCampaignRow",
-                                "showInFunnel"
-                              ]
-                            },
-                            "description": "Output metrics displayed on the dashboard"
-                          },
-                          "workflowColumns": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "key": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "label": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "type": {
-                                  "type": "string",
-                                  "enum": [
-                                    "rate",
-                                    "currency",
-                                    "count"
-                                  ]
-                                },
-                                "numeratorKey": {
-                                  "type": "string"
-                                },
-                                "denominatorKey": {
-                                  "type": "string"
                                 },
                                 "sortDirection": {
                                   "type": "string",
@@ -3839,23 +3223,14 @@
                                     "asc",
                                     "desc"
                                   ]
-                                },
-                                "displayOrder": {
-                                  "type": "integer"
-                                },
-                                "defaultSort": {
-                                  "type": "boolean"
                                 }
                               },
                               "required": [
                                 "key",
-                                "label",
-                                "type",
-                                "sortDirection",
                                 "displayOrder"
                               ]
                             },
-                            "description": "Column definitions for the workflow performance table"
+                            "description": "Output metrics — stats keys from the registry with display config. Use GET /stats/registry for labels and types."
                           },
                           "charts": {
                             "type": "array",
@@ -3889,28 +3264,13 @@
                                           "key": {
                                             "type": "string",
                                             "minLength": 1
-                                          },
-                                          "label": {
-                                            "type": "string",
-                                            "minLength": 1
-                                          },
-                                          "statsField": {
-                                            "type": "string",
-                                            "minLength": 1
-                                          },
-                                          "rateBasedOn": {
-                                            "type": "string",
-                                            "nullable": true
                                           }
                                         },
                                         "required": [
-                                          "key",
-                                          "label",
-                                          "statsField",
-                                          "rateBasedOn"
+                                          "key"
                                         ]
                                       },
-                                      "minItems": 1
+                                      "minItems": 2
                                     }
                                   },
                                   "required": [
@@ -3950,14 +3310,6 @@
                                             "type": "string",
                                             "minLength": 1
                                           },
-                                          "label": {
-                                            "type": "string",
-                                            "minLength": 1
-                                          },
-                                          "statsField": {
-                                            "type": "string",
-                                            "minLength": 1
-                                          },
                                           "color": {
                                             "type": "string",
                                             "enum": [
@@ -3979,13 +3331,11 @@
                                         },
                                         "required": [
                                           "key",
-                                          "label",
-                                          "statsField",
                                           "color",
                                           "sentiment"
                                         ]
                                       },
-                                      "minItems": 1
+                                      "minItems": 2
                                     }
                                   },
                                   "required": [
@@ -3998,17 +3348,14 @@
                                 }
                               ]
                             },
-                            "description": "Chart definitions (funnel, breakdown, etc.)"
+                            "description": "Chart definitions (funnel-bar, breakdown-bar). At least one of each required."
                           },
-                          "resultComponent": {
-                            "type": "string",
-                            "nullable": true,
-                            "description": "Specialized result component slug (e.g. 'discovered-outlets'), null for standard features"
-                          },
-                          "defaultWorkflowName": {
-                            "type": "string",
-                            "nullable": true,
-                            "description": "Default workflow name in workflow-service, null if no default"
+                          "entities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
                           },
                           "createdAt": {
                             "type": "string",
@@ -4034,10 +3381,8 @@
                           "signature",
                           "inputs",
                           "outputs",
-                          "workflowColumns",
                           "charts",
-                          "resultComponent",
-                          "defaultWorkflowName",
+                          "entities",
                           "createdAt",
                           "updatedAt"
                         ]
@@ -4057,18 +3402,15 @@
     "/features/{slug}": {
       "get": {
         "summary": "Get a single feature by slug",
-        "description": "Returns the full feature definition including inputs, outputs, charts, and workflow columns. The inputs array contains extractKey fields that map to brand-service for AI-powered pre-fill.",
         "tags": [
           "Features"
         ],
         "parameters": [
           {
             "schema": {
-              "type": "string",
-              "description": "Feature slug, e.g. 'outlet-database-discovery'"
+              "type": "string"
             },
             "required": true,
-            "description": "Feature slug, e.g. 'outlet-database-discovery'",
             "name": "slug",
             "in": "path"
           }
@@ -4182,7 +3524,7 @@
                               "extractKey"
                             ]
                           },
-                          "description": "Input fields for the campaign creation form. Each input has an extractKey that maps to brand-service's extract-fields API for AI pre-fill."
+                          "description": "Input fields for the campaign creation form."
                         },
                         "outputs": {
                           "type": "array",
@@ -4193,75 +3535,11 @@
                                 "type": "string",
                                 "minLength": 1
                               },
-                              "label": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "count",
-                                  "rate",
-                                  "currency",
-                                  "percentage"
-                                ]
-                              },
                               "displayOrder": {
                                 "type": "integer"
                               },
-                              "showInCampaignRow": {
+                              "defaultSort": {
                                 "type": "boolean"
-                              },
-                              "showInFunnel": {
-                                "type": "boolean"
-                              },
-                              "funnelOrder": {
-                                "type": "integer"
-                              },
-                              "numeratorKey": {
-                                "type": "string"
-                              },
-                              "denominatorKey": {
-                                "type": "string"
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "label",
-                              "type",
-                              "displayOrder",
-                              "showInCampaignRow",
-                              "showInFunnel"
-                            ]
-                          },
-                          "description": "Output metrics displayed on the dashboard"
-                        },
-                        "workflowColumns": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "label": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "rate",
-                                  "currency",
-                                  "count"
-                                ]
-                              },
-                              "numeratorKey": {
-                                "type": "string"
-                              },
-                              "denominatorKey": {
-                                "type": "string"
                               },
                               "sortDirection": {
                                 "type": "string",
@@ -4269,23 +3547,14 @@
                                   "asc",
                                   "desc"
                                 ]
-                              },
-                              "displayOrder": {
-                                "type": "integer"
-                              },
-                              "defaultSort": {
-                                "type": "boolean"
                               }
                             },
                             "required": [
                               "key",
-                              "label",
-                              "type",
-                              "sortDirection",
                               "displayOrder"
                             ]
                           },
-                          "description": "Column definitions for the workflow performance table"
+                          "description": "Output metrics — stats keys from the registry with display config. Use GET /stats/registry for labels and types."
                         },
                         "charts": {
                           "type": "array",
@@ -4319,28 +3588,13 @@
                                         "key": {
                                           "type": "string",
                                           "minLength": 1
-                                        },
-                                        "label": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
-                                        "statsField": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
-                                        "rateBasedOn": {
-                                          "type": "string",
-                                          "nullable": true
                                         }
                                       },
                                       "required": [
-                                        "key",
-                                        "label",
-                                        "statsField",
-                                        "rateBasedOn"
+                                        "key"
                                       ]
                                     },
-                                    "minItems": 1
+                                    "minItems": 2
                                   }
                                 },
                                 "required": [
@@ -4380,14 +3634,6 @@
                                           "type": "string",
                                           "minLength": 1
                                         },
-                                        "label": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
-                                        "statsField": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
                                         "color": {
                                           "type": "string",
                                           "enum": [
@@ -4409,13 +3655,11 @@
                                       },
                                       "required": [
                                         "key",
-                                        "label",
-                                        "statsField",
                                         "color",
                                         "sentiment"
                                       ]
                                     },
-                                    "minItems": 1
+                                    "minItems": 2
                                   }
                                 },
                                 "required": [
@@ -4428,17 +3672,14 @@
                               }
                             ]
                           },
-                          "description": "Chart definitions (funnel, breakdown, etc.)"
+                          "description": "Chart definitions (funnel-bar, breakdown-bar). At least one of each required."
                         },
-                        "resultComponent": {
-                          "type": "string",
-                          "nullable": true,
-                          "description": "Specialized result component slug (e.g. 'discovered-outlets'), null for standard features"
-                        },
-                        "defaultWorkflowName": {
-                          "type": "string",
-                          "nullable": true,
-                          "description": "Default workflow name in workflow-service, null if no default"
+                        "entities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
                         },
                         "createdAt": {
                           "type": "string",
@@ -4464,10 +3705,8 @@
                         "signature",
                         "inputs",
                         "outputs",
-                        "workflowColumns",
                         "charts",
-                        "resultComponent",
-                        "defaultWorkflowName",
+                        "entities",
                         "createdAt",
                         "updatedAt"
                       ]
@@ -4502,7 +3741,6 @@
       },
       "put": {
         "summary": "Update a single feature by slug",
-        "description": "Partial update — only provided fields are changed. If name changes, slug is re-generated.",
         "tags": [
           "Features"
         ],
@@ -4621,75 +3859,11 @@
                           "type": "string",
                           "minLength": 1
                         },
-                        "label": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "type": {
-                          "type": "string",
-                          "enum": [
-                            "count",
-                            "rate",
-                            "currency",
-                            "percentage"
-                          ]
-                        },
                         "displayOrder": {
                           "type": "integer"
                         },
-                        "showInCampaignRow": {
+                        "defaultSort": {
                           "type": "boolean"
-                        },
-                        "showInFunnel": {
-                          "type": "boolean"
-                        },
-                        "funnelOrder": {
-                          "type": "integer"
-                        },
-                        "numeratorKey": {
-                          "type": "string"
-                        },
-                        "denominatorKey": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "key",
-                        "label",
-                        "type",
-                        "displayOrder",
-                        "showInCampaignRow",
-                        "showInFunnel"
-                      ]
-                    },
-                    "minItems": 1
-                  },
-                  "workflowColumns": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "key": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "label": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "type": {
-                          "type": "string",
-                          "enum": [
-                            "rate",
-                            "currency",
-                            "count"
-                          ]
-                        },
-                        "numeratorKey": {
-                          "type": "string"
-                        },
-                        "denominatorKey": {
-                          "type": "string"
                         },
                         "sortDirection": {
                           "type": "string",
@@ -4697,22 +3871,14 @@
                             "asc",
                             "desc"
                           ]
-                        },
-                        "displayOrder": {
-                          "type": "integer"
-                        },
-                        "defaultSort": {
-                          "type": "boolean"
                         }
                       },
                       "required": [
                         "key",
-                        "label",
-                        "type",
-                        "sortDirection",
                         "displayOrder"
                       ]
-                    }
+                    },
+                    "minItems": 1
                   },
                   "charts": {
                     "type": "array",
@@ -4746,28 +3912,13 @@
                                   "key": {
                                     "type": "string",
                                     "minLength": 1
-                                  },
-                                  "label": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  },
-                                  "statsField": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  },
-                                  "rateBasedOn": {
-                                    "type": "string",
-                                    "nullable": true
                                   }
                                 },
                                 "required": [
-                                  "key",
-                                  "label",
-                                  "statsField",
-                                  "rateBasedOn"
+                                  "key"
                                 ]
                               },
-                              "minItems": 1
+                              "minItems": 2
                             }
                           },
                           "required": [
@@ -4807,14 +3958,6 @@
                                     "type": "string",
                                     "minLength": 1
                                   },
-                                  "label": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  },
-                                  "statsField": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  },
                                   "color": {
                                     "type": "string",
                                     "enum": [
@@ -4836,13 +3979,11 @@
                                 },
                                 "required": [
                                   "key",
-                                  "label",
-                                  "statsField",
                                   "color",
                                   "sentiment"
                                 ]
                               },
-                              "minItems": 1
+                              "minItems": 2
                             }
                           },
                           "required": [
@@ -4854,15 +3995,16 @@
                           ]
                         }
                       ]
-                    }
+                    },
+                    "minItems": 1
                   },
-                  "resultComponent": {
-                    "type": "string",
-                    "nullable": true
-                  },
-                  "defaultWorkflowName": {
-                    "type": "string",
-                    "nullable": true
+                  "entities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1
                   }
                 }
               }
@@ -4978,7 +4120,7 @@
                               "extractKey"
                             ]
                           },
-                          "description": "Input fields for the campaign creation form. Each input has an extractKey that maps to brand-service's extract-fields API for AI pre-fill."
+                          "description": "Input fields for the campaign creation form."
                         },
                         "outputs": {
                           "type": "array",
@@ -4989,75 +4131,11 @@
                                 "type": "string",
                                 "minLength": 1
                               },
-                              "label": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "count",
-                                  "rate",
-                                  "currency",
-                                  "percentage"
-                                ]
-                              },
                               "displayOrder": {
                                 "type": "integer"
                               },
-                              "showInCampaignRow": {
+                              "defaultSort": {
                                 "type": "boolean"
-                              },
-                              "showInFunnel": {
-                                "type": "boolean"
-                              },
-                              "funnelOrder": {
-                                "type": "integer"
-                              },
-                              "numeratorKey": {
-                                "type": "string"
-                              },
-                              "denominatorKey": {
-                                "type": "string"
-                              }
-                            },
-                            "required": [
-                              "key",
-                              "label",
-                              "type",
-                              "displayOrder",
-                              "showInCampaignRow",
-                              "showInFunnel"
-                            ]
-                          },
-                          "description": "Output metrics displayed on the dashboard"
-                        },
-                        "workflowColumns": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "label": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "rate",
-                                  "currency",
-                                  "count"
-                                ]
-                              },
-                              "numeratorKey": {
-                                "type": "string"
-                              },
-                              "denominatorKey": {
-                                "type": "string"
                               },
                               "sortDirection": {
                                 "type": "string",
@@ -5065,23 +4143,14 @@
                                   "asc",
                                   "desc"
                                 ]
-                              },
-                              "displayOrder": {
-                                "type": "integer"
-                              },
-                              "defaultSort": {
-                                "type": "boolean"
                               }
                             },
                             "required": [
                               "key",
-                              "label",
-                              "type",
-                              "sortDirection",
                               "displayOrder"
                             ]
                           },
-                          "description": "Column definitions for the workflow performance table"
+                          "description": "Output metrics — stats keys from the registry with display config. Use GET /stats/registry for labels and types."
                         },
                         "charts": {
                           "type": "array",
@@ -5115,28 +4184,13 @@
                                         "key": {
                                           "type": "string",
                                           "minLength": 1
-                                        },
-                                        "label": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
-                                        "statsField": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
-                                        "rateBasedOn": {
-                                          "type": "string",
-                                          "nullable": true
                                         }
                                       },
                                       "required": [
-                                        "key",
-                                        "label",
-                                        "statsField",
-                                        "rateBasedOn"
+                                        "key"
                                       ]
                                     },
-                                    "minItems": 1
+                                    "minItems": 2
                                   }
                                 },
                                 "required": [
@@ -5176,14 +4230,6 @@
                                           "type": "string",
                                           "minLength": 1
                                         },
-                                        "label": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
-                                        "statsField": {
-                                          "type": "string",
-                                          "minLength": 1
-                                        },
                                         "color": {
                                           "type": "string",
                                           "enum": [
@@ -5205,13 +4251,11 @@
                                       },
                                       "required": [
                                         "key",
-                                        "label",
-                                        "statsField",
                                         "color",
                                         "sentiment"
                                       ]
                                     },
-                                    "minItems": 1
+                                    "minItems": 2
                                   }
                                 },
                                 "required": [
@@ -5224,17 +4268,14 @@
                               }
                             ]
                           },
-                          "description": "Chart definitions (funnel, breakdown, etc.)"
+                          "description": "Chart definitions (funnel-bar, breakdown-bar). At least one of each required."
                         },
-                        "resultComponent": {
-                          "type": "string",
-                          "nullable": true,
-                          "description": "Specialized result component slug (e.g. 'discovered-outlets'), null for standard features"
-                        },
-                        "defaultWorkflowName": {
-                          "type": "string",
-                          "nullable": true,
-                          "description": "Default workflow name in workflow-service, null if no default"
+                        "entities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
                         },
                         "createdAt": {
                           "type": "string",
@@ -5260,10 +4301,8 @@
                         "signature",
                         "inputs",
                         "outputs",
-                        "workflowColumns",
                         "charts",
-                        "resultComponent",
-                        "defaultWorkflowName",
+                        "entities",
                         "createdAt",
                         "updatedAt"
                       ]
@@ -5339,18 +4378,15 @@
     "/features/{slug}/inputs": {
       "get": {
         "summary": "Get input definitions for a feature",
-        "description": "Returns the input schema for a feature. Each input has:\n- **key**: machine-readable identifier used in prefill responses and workflow inputMapping\n- **extractKey**: the key passed to brand-service's POST /brands/{brandId}/extract-fields for AI extraction\n- **description**: rich context used by the LLM during extraction — describes what a good value looks like\n\n**Workflow integration**: Use these inputs to build extract-fields requests, or call POST /features/{slug}/prefill which handles extraction automatically and returns values keyed by input key.\n\n**Example** for 'outlet-database-discovery':\n```json\n{\n  \"slug\": \"outlet-database-discovery\",\n  \"name\": \"Outlet Database Discovery\",\n  \"inputs\": [\n    { \"key\": \"industry\", \"extractKey\": \"industry\", \"type\": \"text\", ... },\n    { \"key\": \"angles\", \"extractKey\": \"suggestedAngles\", \"type\": \"text\", ... },\n    { \"key\": \"targetGeo\", \"extractKey\": \"suggestedGeo\", \"type\": \"text\", ... }\n  ]\n}\n```",
         "tags": [
           "Features"
         ],
         "parameters": [
           {
             "schema": {
-              "type": "string",
-              "description": "Feature slug, e.g. 'outlet-database-discovery'"
+              "type": "string"
             },
             "required": true,
-            "description": "Feature slug, e.g. 'outlet-database-discovery'",
             "name": "slug",
             "in": "path"
           }
@@ -5421,7 +4457,7 @@
                           "extractKey"
                         ]
                       },
-                      "description": "Input definitions. Each input's extractKey maps to a brand-service extract-fields key. Use these extractKeys when calling POST /brands/{brandId}/extract-fields, or call POST /features/{slug}/prefill to let the service handle extraction automatically."
+                      "description": "Input definitions."
                     }
                   },
                   "required": [
@@ -5457,18 +4493,15 @@
     "/features/{slug}/prefill": {
       "post": {
         "summary": "Pre-fill input values for a feature from brand data",
-        "description": "Takes a brandId, looks up the feature's inputs, calls brand-service to extract values via AI (cached 30 days per field), and returns pre-filled values mapped to each input key.\n\n**How it works internally**:\n1. Reads the feature's inputs[].extractKey to build the extract-fields request\n2. Calls brand-service POST /brands/{brandId}/extract-fields with those keys\n3. Maps results back to input keys and returns a named object (not a positional array)\n\n**format=text** (recommended for workflows): Returns `{ prefilled: { industry: 'SaaS', angles: 'Series B funding', targetGeo: 'US' } }` — flat string values ready to pass directly as workflow inputs or form values.\n\n**format=full** (default): Returns `{ prefilled: { industry: { value: 'SaaS', cached: true, sourceUrls: [...] } } }` — includes cache status and source URLs for UI display.\n\n**Workflow pattern**: In a workflow DAG, use this endpoint instead of calling brand-service extract-fields directly. This ensures the extracted fields always match what the feature expects, with no index-based mapping fragility:\n```\nprefill-node → downstream-service\n  inputMapping: { body.industry: '$ref:prefill-node.output.prefilled.industry' }\n```",
         "tags": [
           "Features"
         ],
         "parameters": [
           {
             "schema": {
-              "type": "string",
-              "description": "Feature slug, e.g. 'outlet-database-discovery'"
+              "type": "string"
             },
             "required": true,
-            "description": "Feature slug, e.g. 'outlet-database-discovery'",
             "name": "slug",
             "in": "path"
           },
@@ -5478,11 +4511,9 @@
               "enum": [
                 "text",
                 "full"
-              ],
-              "description": "Response format: 'text' for flat strings (best for workflows), 'full' for values + metadata (default)"
+              ]
             },
             "required": false,
-            "description": "Response format: 'text' for flat strings (best for workflows), 'full' for values + metadata (default)",
             "name": "format",
             "in": "query"
           }
@@ -5507,7 +4538,7 @@
         },
         "responses": {
           "200": {
-            "description": "Pre-filled values. Response shape depends on ?format= query param.",
+            "description": "Pre-filled values",
             "content": {
               "application/json": {
                 "schema": {
@@ -5536,7 +4567,7 @@
                             "type": "string",
                             "nullable": true
                           },
-                          "description": "Map of input key → flattened text value (or null if extraction failed). Keys match the feature's inputs[].key. Example: { industry: 'Enterprise SaaS', angles: 'Series B funding, AI product launch', targetGeo: 'US and UK' }"
+                          "description": "Map of input key → flattened text value (or null if extraction failed)."
                         }
                       },
                       "required": [
@@ -5576,7 +4607,7 @@
                               },
                               "cached": {
                                 "type": "boolean",
-                                "description": "Whether the value was served from cache (brand-service caches extractions for 30 days)"
+                                "description": "Whether the value was served from cache"
                               },
                               "sourceUrls": {
                                 "type": "array",
@@ -5584,7 +4615,7 @@
                                 "items": {
                                   "type": "string"
                                 },
-                                "description": "URLs from the brand's website that were used to extract this value"
+                                "description": "URLs from the brand's website used to extract this value"
                               }
                             },
                             "required": [
@@ -5592,7 +4623,7 @@
                               "sourceUrls"
                             ]
                           },
-                          "description": "Map of input key → full extraction result. Keys match the feature's inputs[].key. Example: { industry: { value: 'Enterprise SaaS', cached: true, sourceUrls: ['https://example.com/about'] } }"
+                          "description": "Map of input key → full extraction result."
                         }
                       },
                       "required": [
@@ -5627,7 +4658,434 @@
             }
           },
           "502": {
-            "description": "Brand-service unavailable or extraction failed",
+            "description": "Brand-service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stats/registry": {
+      "get": {
+        "summary": "Get the stats key registry",
+        "description": "Returns the complete dictionary of known stats keys with their label and type. Used by the front-end to format and label output columns dynamically.",
+        "tags": [
+          "Stats"
+        ],
+        "responses": {
+          "200": {
+            "description": "Stats registry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "registry": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "label"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "registry"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/{featureSlug}/stats": {
+      "get": {
+        "summary": "Get computed stats for a feature",
+        "description": "Returns computed stats for a feature's outputs and charts. Optionally grouped by workflowName, brandId, or campaignId. System stats (cost, runs, campaigns, dates) are always included.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "featureSlug",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "workflowName",
+                "brandId",
+                "campaignId"
+              ]
+            },
+            "required": false,
+            "name": "groupBy",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "campaignId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "workflowName",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Feature stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "groupBy": {
+                      "type": "string"
+                    },
+                    "systemStats": {
+                      "type": "object",
+                      "properties": {
+                        "totalCostInUsdCents": {
+                          "type": "number"
+                        },
+                        "completedRuns": {
+                          "type": "number"
+                        },
+                        "activeCampaigns": {
+                          "type": "number"
+                        },
+                        "firstRunAt": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "date-time"
+                        },
+                        "lastRunAt": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "totalCostInUsdCents",
+                        "completedRuns",
+                        "activeCampaigns",
+                        "firstRunAt",
+                        "lastRunAt"
+                      ]
+                    },
+                    "groups": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "workflowName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "brandId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "campaignId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "systemStats": {
+                            "type": "object",
+                            "properties": {
+                              "totalCostInUsdCents": {
+                                "type": "number"
+                              },
+                              "completedRuns": {
+                                "type": "number"
+                              },
+                              "activeCampaigns": {
+                                "type": "number"
+                              },
+                              "firstRunAt": {
+                                "type": "string",
+                                "nullable": true,
+                                "format": "date-time"
+                              },
+                              "lastRunAt": {
+                                "type": "string",
+                                "nullable": true,
+                                "format": "date-time"
+                              }
+                            },
+                            "required": [
+                              "totalCostInUsdCents",
+                              "completedRuns",
+                              "activeCampaigns",
+                              "firstRunAt",
+                              "lastRunAt"
+                            ]
+                          },
+                          "stats": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number",
+                              "nullable": true
+                            }
+                          }
+                        },
+                        "required": [
+                          "systemStats",
+                          "stats"
+                        ]
+                      }
+                    },
+                    "stats": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "number",
+                        "nullable": true
+                      }
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "systemStats"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing org ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stats": {
+      "get": {
+        "summary": "Global stats across all features",
+        "description": "Cross-feature stats endpoint for performance dashboards and org overview. Supports groupBy: featureSlug, workflowName, brandId, campaignId.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated dimensions: featureSlug, workflowName, brandId, campaignId"
+            },
+            "required": false,
+            "description": "Comma-separated dimensions: featureSlug, workflowName, brandId, campaignId",
+            "name": "groupBy",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "brandId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Global stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "groupBy": {
+                      "type": "string"
+                    },
+                    "systemStats": {
+                      "type": "object",
+                      "properties": {
+                        "totalCostInUsdCents": {
+                          "type": "number"
+                        },
+                        "completedRuns": {
+                          "type": "number"
+                        },
+                        "activeCampaigns": {
+                          "type": "number"
+                        },
+                        "firstRunAt": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "date-time"
+                        },
+                        "lastRunAt": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "totalCostInUsdCents",
+                        "completedRuns",
+                        "activeCampaigns",
+                        "firstRunAt",
+                        "lastRunAt"
+                      ]
+                    },
+                    "groups": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "workflowName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "brandId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "campaignId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "systemStats": {
+                            "type": "object",
+                            "properties": {
+                              "totalCostInUsdCents": {
+                                "type": "number"
+                              },
+                              "completedRuns": {
+                                "type": "number"
+                              },
+                              "activeCampaigns": {
+                                "type": "number"
+                              },
+                              "firstRunAt": {
+                                "type": "string",
+                                "nullable": true,
+                                "format": "date-time"
+                              },
+                              "lastRunAt": {
+                                "type": "string",
+                                "nullable": true,
+                                "format": "date-time"
+                              }
+                            },
+                            "required": [
+                              "totalCostInUsdCents",
+                              "completedRuns",
+                              "activeCampaigns",
+                              "firstRunAt",
+                              "lastRunAt"
+                            ]
+                          },
+                          "stats": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number",
+                              "nullable": true
+                            }
+                          }
+                        },
+                        "required": [
+                          "systemStats",
+                          "stats"
+                        ]
+                      }
+                    },
+                    "stats": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "number",
+                        "nullable": true
+                      }
+                    }
+                  },
+                  "required": [
+                    "systemStats"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing org ID",
             "content": {
               "application/json": {
                 "schema": {

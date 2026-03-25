@@ -75,7 +75,7 @@ router.put("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
       const resolved = await resolveNameAndSlug(f.name, signature);
 
       const values = {
-        name: resolved.existingId ? resolved.name : resolved.name,
+        name: resolved.name,
         description: f.description,
         icon: f.icon,
         category: f.category,
@@ -86,10 +86,8 @@ router.put("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
         status: f.status,
         inputs: f.inputs,
         outputs: f.outputs,
-        workflowColumns: f.workflowColumns,
         charts: f.charts,
-        resultComponent: f.resultComponent ?? null,
-        defaultWorkflowName: f.defaultWorkflowName ?? null,
+        entities: f.entities,
       };
 
       if (resolved.existingId) {
@@ -178,10 +176,8 @@ router.post("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
         status: f.status,
         inputs: f.inputs,
         outputs: f.outputs,
-        workflowColumns: f.workflowColumns,
         charts: f.charts,
-        resultComponent: f.resultComponent ?? null,
-        defaultWorkflowName: f.defaultWorkflowName ?? null,
+        entities: f.entities,
       })
       .returning();
 
@@ -229,10 +225,8 @@ router.put("/features/:slug", apiKeyAuth, async (req: AuthenticatedRequest, res)
     if (data.status !== undefined) updates.status = data.status;
     if (data.inputs !== undefined) updates.inputs = data.inputs;
     if (data.outputs !== undefined) updates.outputs = data.outputs;
-    if (data.workflowColumns !== undefined) updates.workflowColumns = data.workflowColumns;
     if (data.charts !== undefined) updates.charts = data.charts;
-    if (data.resultComponent !== undefined) updates.resultComponent = data.resultComponent;
-    if (data.defaultWorkflowName !== undefined) updates.defaultWorkflowName = data.defaultWorkflowName;
+    if (data.entities !== undefined) updates.entities = data.entities;
 
     // Recompute signature if inputs or outputs changed
     if (data.inputs || data.outputs) {

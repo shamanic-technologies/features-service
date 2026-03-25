@@ -8,6 +8,13 @@
       "when": 1774334517681,
       "tag": "0000_pretty_black_cat",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1774431200000,
+      "tag": "0001_dynamic_column_stats",
+      "breakpoints": true
     }
   ]
 }

@@ -16,8 +16,6 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     implemented: true,
     displayOrder: 1,
     status: "active",
-    defaultWorkflowName: "sales-email-cold-outreach",
-    resultComponent: null,
 
     inputs: [
       {
@@ -86,61 +84,13 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     ],
 
     outputs: [
-      {
-        key: "leadsServed",
-        label: "Leads",
-        type: "count",
-        displayOrder: 1,
-        showInCampaignRow: true,
-        showInFunnel: true,
-        funnelOrder: 1,
-      },
-      {
-        key: "emailsGenerated",
-        label: "Generated",
-        type: "count",
-        displayOrder: 2,
-        showInCampaignRow: true,
-        showInFunnel: true,
-        funnelOrder: 2,
-      },
-      {
-        key: "emailsSent",
-        label: "Sent",
-        type: "count",
-        displayOrder: 3,
-        showInCampaignRow: true,
-        showInFunnel: true,
-        funnelOrder: 3,
-      },
-      {
-        key: "emailsOpened",
-        label: "Opened",
-        type: "count",
-        displayOrder: 4,
-        showInCampaignRow: false,
-        showInFunnel: true,
-        funnelOrder: 4,
-      },
-      {
-        key: "emailsReplied",
-        label: "Replied",
-        type: "count",
-        displayOrder: 5,
-        showInCampaignRow: true,
-        showInFunnel: true,
-        funnelOrder: 5,
-      },
-      {
-        key: "positiveReplyRate",
-        label: "Positive Reply Rate",
-        type: "rate",
-        displayOrder: 6,
-        showInCampaignRow: false,
-        showInFunnel: false,
-        numeratorKey: "repliesWillingToMeet",
-        denominatorKey: "emailsSent",
-      },
+      { key: "leadsServed",       displayOrder: 1 },
+      { key: "emailsGenerated",   displayOrder: 2 },
+      { key: "emailsSent",        displayOrder: 3 },
+      { key: "emailsOpened",      displayOrder: 4 },
+      { key: "emailsReplied",     displayOrder: 5 },
+      { key: "replyRate",         displayOrder: 6 },
+      { key: "costPerReplyCents", displayOrder: 7, defaultSort: true, sortDirection: "asc" },
     ],
 
     charts: [
@@ -150,11 +100,11 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
         title: "Campaign Funnel",
         displayOrder: 1,
         steps: [
-          { key: "leadsServed", label: "Leads", statsField: "leadsServed", rateBasedOn: null },
-          { key: "emailsGenerated", label: "Generated", statsField: "emailsGenerated", rateBasedOn: "leadsServed" },
-          { key: "emailsSent", label: "Sent", statsField: "emailsSent", rateBasedOn: "emailsGenerated" },
-          { key: "emailsOpened", label: "Opened", statsField: "emailsOpened", rateBasedOn: "emailsSent" },
-          { key: "emailsReplied", label: "Replied", statsField: "emailsReplied", rateBasedOn: "emailsSent" },
+          { key: "leadsServed" },
+          { key: "emailsGenerated" },
+          { key: "emailsSent" },
+          { key: "emailsOpened" },
+          { key: "emailsReplied" },
         ],
       },
       {
@@ -163,36 +113,16 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
         title: "Reply Breakdown",
         displayOrder: 2,
         segments: [
-          { key: "willingToMeet", label: "Willing to meet", statsField: "repliesWillingToMeet", color: "green", sentiment: "positive" },
-          { key: "interested", label: "Interested", statsField: "repliesInterested", color: "blue", sentiment: "positive" },
-          { key: "notInterested", label: "Not interested", statsField: "repliesNotInterested", color: "red", sentiment: "negative" },
-          { key: "outOfOffice", label: "Out of office", statsField: "repliesOutOfOffice", color: "gray", sentiment: "neutral" },
-          { key: "unsubscribe", label: "Unsubscribe", statsField: "repliesUnsubscribe", color: "orange", sentiment: "negative" },
+          { key: "repliesWillingToMeet", color: "green",  sentiment: "positive" },
+          { key: "repliesInterested",    color: "blue",   sentiment: "positive" },
+          { key: "repliesNotInterested", color: "red",    sentiment: "negative" },
+          { key: "repliesOutOfOffice",   color: "gray",   sentiment: "neutral" },
+          { key: "repliesUnsubscribe",   color: "orange", sentiment: "negative" },
         ],
       },
     ],
 
-    workflowColumns: [
-      {
-        key: "replyRate",
-        label: "% Replies",
-        type: "rate",
-        numeratorKey: "emailsReplied",
-        denominatorKey: "emailsSent",
-        sortDirection: "desc",
-        displayOrder: 1,
-      },
-      {
-        key: "costPerReplyCents",
-        label: "$/Reply",
-        type: "currency",
-        numeratorKey: "totalCostInUsdCents",
-        denominatorKey: "emailsReplied",
-        sortDirection: "asc",
-        displayOrder: 2,
-        defaultSort: true,
-      },
-    ],
+    entities: ["leads", "companies", "emails"],
   },
 
   // ─── Outlet Database Discovery ──────────────────────────────────────────
@@ -206,8 +136,6 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     implemented: true,
     displayOrder: 2,
     status: "active",
-    defaultWorkflowName: null,
-    resultComponent: "discovered-outlets",
 
     inputs: [
       {
@@ -240,34 +168,36 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     ],
 
     outputs: [
+      { key: "outletsDiscovered",  displayOrder: 1 },
+      { key: "avgRelevanceScore",  displayOrder: 2 },
+      { key: "searchQueriesUsed",  displayOrder: 3 },
+      { key: "costPerOutletCents", displayOrder: 4, defaultSort: true, sortDirection: "asc" },
+    ],
+
+    charts: [
       {
-        key: "outletsDiscovered",
-        label: "Outlets Found",
-        type: "count",
+        key: "discoveryFunnel",
+        type: "funnel-bar",
+        title: "Discovery Funnel",
         displayOrder: 1,
-        showInCampaignRow: true,
-        showInFunnel: false,
+        steps: [
+          { key: "searchQueriesUsed" },
+          { key: "outletsDiscovered" },
+        ],
       },
       {
-        key: "avgRelevanceScore",
-        label: "Avg Relevance",
-        type: "percentage",
+        key: "qualityBreakdown",
+        type: "breakdown-bar",
+        title: "Relevance Breakdown",
         displayOrder: 2,
-        showInCampaignRow: true,
-        showInFunnel: false,
-      },
-      {
-        key: "searchQueriesUsed",
-        label: "Searches",
-        type: "count",
-        displayOrder: 3,
-        showInCampaignRow: false,
-        showInFunnel: false,
+        segments: [
+          { key: "outletsDiscovered", color: "green", sentiment: "positive" },
+          { key: "searchQueriesUsed", color: "blue",  sentiment: "neutral" },
+        ],
       },
     ],
 
-    charts: [],
-    workflowColumns: [],
+    entities: ["outlets"],
   },
 
   // ─── PR Cold Email Outreach ─────────────────────────────────────────────
@@ -281,8 +211,6 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     implemented: true,
     displayOrder: 3,
     status: "active",
-    defaultWorkflowName: "pr-email-cold-outreach",
-    resultComponent: null,
 
     inputs: [
       {
@@ -333,61 +261,13 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     ],
 
     outputs: [
-      {
-        key: "journalistsContacted",
-        label: "Contacted",
-        type: "count",
-        displayOrder: 1,
-        showInCampaignRow: true,
-        showInFunnel: true,
-        funnelOrder: 1,
-      },
-      {
-        key: "emailsGenerated",
-        label: "Generated",
-        type: "count",
-        displayOrder: 2,
-        showInCampaignRow: true,
-        showInFunnel: true,
-        funnelOrder: 2,
-      },
-      {
-        key: "emailsSent",
-        label: "Sent",
-        type: "count",
-        displayOrder: 3,
-        showInCampaignRow: true,
-        showInFunnel: true,
-        funnelOrder: 3,
-      },
-      {
-        key: "emailsOpened",
-        label: "Opened",
-        type: "count",
-        displayOrder: 4,
-        showInCampaignRow: false,
-        showInFunnel: true,
-        funnelOrder: 4,
-      },
-      {
-        key: "emailsReplied",
-        label: "Replied",
-        type: "count",
-        displayOrder: 5,
-        showInCampaignRow: true,
-        showInFunnel: true,
-        funnelOrder: 5,
-      },
-      {
-        key: "coverageRate",
-        label: "Coverage Rate",
-        type: "rate",
-        displayOrder: 6,
-        showInCampaignRow: false,
-        showInFunnel: false,
-        numeratorKey: "repliesInterested",
-        denominatorKey: "emailsSent",
-      },
+      { key: "journalistsContacted", displayOrder: 1 },
+      { key: "emailsGenerated",      displayOrder: 2 },
+      { key: "emailsSent",           displayOrder: 3 },
+      { key: "emailsOpened",         displayOrder: 4 },
+      { key: "emailsReplied",        displayOrder: 5 },
+      { key: "replyRate",            displayOrder: 6 },
+      { key: "costPerReplyCents",    displayOrder: 7, defaultSort: true, sortDirection: "asc" },
     ],
 
     charts: [
@@ -397,11 +277,11 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
         title: "Outreach Funnel",
         displayOrder: 1,
         steps: [
-          { key: "journalistsContacted", label: "Contacted", statsField: "journalistsContacted", rateBasedOn: null },
-          { key: "emailsGenerated", label: "Generated", statsField: "emailsGenerated", rateBasedOn: "journalistsContacted" },
-          { key: "emailsSent", label: "Sent", statsField: "emailsSent", rateBasedOn: "emailsGenerated" },
-          { key: "emailsOpened", label: "Opened", statsField: "emailsOpened", rateBasedOn: "emailsSent" },
-          { key: "emailsReplied", label: "Replied", statsField: "emailsReplied", rateBasedOn: "emailsSent" },
+          { key: "journalistsContacted" },
+          { key: "emailsGenerated" },
+          { key: "emailsSent" },
+          { key: "emailsOpened" },
+          { key: "emailsReplied" },
         ],
       },
       {
@@ -410,35 +290,15 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
         title: "Reply Breakdown",
         displayOrder: 2,
         segments: [
-          { key: "interested", label: "Interested", statsField: "repliesInterested", color: "green", sentiment: "positive" },
-          { key: "moreInfo", label: "Wants more info", statsField: "repliesMoreInfo", color: "blue", sentiment: "positive" },
-          { key: "notInterested", label: "Not interested", statsField: "repliesNotInterested", color: "red", sentiment: "negative" },
-          { key: "outOfOffice", label: "Out of office", statsField: "repliesOutOfOffice", color: "gray", sentiment: "neutral" },
-          { key: "wrongContact", label: "Wrong contact", statsField: "repliesWrongContact", color: "orange", sentiment: "negative" },
+          { key: "repliesInterested",    color: "green",  sentiment: "positive" },
+          { key: "repliesMoreInfo",      color: "blue",   sentiment: "positive" },
+          { key: "repliesNotInterested", color: "red",    sentiment: "negative" },
+          { key: "repliesOutOfOffice",   color: "gray",   sentiment: "neutral" },
+          { key: "repliesWrongContact",  color: "orange", sentiment: "negative" },
         ],
       },
     ],
 
-    workflowColumns: [
-      {
-        key: "replyRate",
-        label: "% Replies",
-        type: "rate",
-        numeratorKey: "emailsReplied",
-        denominatorKey: "emailsSent",
-        sortDirection: "desc",
-        displayOrder: 1,
-      },
-      {
-        key: "costPerReplyCents",
-        label: "$/Reply",
-        type: "currency",
-        numeratorKey: "totalCostInUsdCents",
-        denominatorKey: "emailsReplied",
-        sortDirection: "asc",
-        displayOrder: 2,
-        defaultSort: true,
-      },
-    ],
+    entities: ["leads", "journalists", "emails", "press-kits"],
   },
 ];

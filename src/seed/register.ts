@@ -34,10 +34,8 @@ export async function registerSeedFeatures(): Promise<void> {
       status: f.status,
       inputs: f.inputs,
       outputs: f.outputs,
-      workflowColumns: f.workflowColumns ?? [],
-      charts: f.charts ?? [],
-      resultComponent: f.resultComponent ?? null,
-      defaultWorkflowName: f.defaultWorkflowName ?? null,
+      charts: f.charts,
+      entities: f.entities,
     };
 
     if (bySignature) {
