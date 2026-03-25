@@ -225,7 +225,8 @@
           },
           "icon": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone')"
           },
           "category": {
             "type": "string",
@@ -491,7 +492,8 @@
           },
           "icon": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone')"
           },
           "category": {
             "type": "string",
@@ -761,7 +763,8 @@
           },
           "icon": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone')"
           },
           "category": {
             "type": "string",
@@ -1018,7 +1021,8 @@
             "type": "string"
           },
           "icon": {
-            "type": "string"
+            "type": "string",
+            "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone'). Use as <LucideIcon name={icon} /> or look up at lucide.dev/icons."
           },
           "category": {
             "type": "string",
@@ -1822,7 +1826,8 @@
                         },
                         "icon": {
                           "type": "string",
-                          "minLength": 1
+                          "minLength": 1,
+                          "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone')"
                         },
                         "category": {
                           "type": "string",
@@ -2114,7 +2119,8 @@
                             "type": "string"
                           },
                           "icon": {
-                            "type": "string"
+                            "type": "string",
+                            "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone'). Use as <LucideIcon name={icon} /> or look up at lucide.dev/icons."
                           },
                           "category": {
                             "type": "string",
@@ -2433,7 +2439,8 @@
                   },
                   "icon": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone')"
                   },
                   "category": {
                     "type": "string",
@@ -2720,7 +2727,8 @@
                           "type": "string"
                         },
                         "icon": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone'). Use as <LucideIcon name={icon} /> or look up at lucide.dev/icons."
                         },
                         "category": {
                           "type": "string",
@@ -3118,7 +3126,8 @@
                             "type": "string"
                           },
                           "icon": {
-                            "type": "string"
+                            "type": "string",
+                            "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone'). Use as <LucideIcon name={icon} /> or look up at lucide.dev/icons."
                           },
                           "category": {
                             "type": "string",
@@ -3442,7 +3451,8 @@
                           "type": "string"
                         },
                         "icon": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone'). Use as <LucideIcon name={icon} /> or look up at lucide.dev/icons."
                         },
                         "category": {
                           "type": "string",
@@ -3770,7 +3780,8 @@
                   },
                   "icon": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone')"
                   },
                   "category": {
                     "type": "string",
@@ -4038,7 +4049,8 @@
                           "type": "string"
                         },
                         "icon": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone'). Use as <LucideIcon name={icon} /> or look up at lucide.dev/icons."
                         },
                         "category": {
                           "type": "string",
