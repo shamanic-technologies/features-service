@@ -38,16 +38,31 @@ export async function registerSeedFeatures(): Promise<void> {
       entities: f.entities,
     };
 
+    const baseSlug = slugify(f.name);
+
     if (bySignature) {
-      // Same signature → upsert metadata
+      // Same signature → upsert metadata.
+      // If the matched row has a different name/slug (e.g. "Feature v2"),
+      // delete any stale row that holds our target name before renaming.
+      if (bySignature.name !== f.name || bySignature.slug !== baseSlug) {
+        const stale = await db.query.features.findFirst({
+          where: or(
+            eq(features.name, f.name),
+            eq(features.slug, baseSlug),
+          ),
+        });
+        if (stale && stale.id !== bySignature.id) {
+          await db.delete(features).where(eq(features.id, stale.id));
+          console.log(`[seed] Removed stale duplicate: ${stale.slug}`);
+        }
+      }
       await db
         .update(features)
-        .set({ ...values, updatedAt: new Date() })
+        .set({ ...values, slug: baseSlug, updatedAt: new Date() })
         .where(eq(features.id, bySignature.id));
-      console.log(`[seed] Updated (signature match): ${bySignature.slug}`);
+      console.log(`[seed] Updated (signature match): ${baseSlug}`);
     } else {
       // Signature changed or new feature — check if same name already exists
-      const baseSlug = slugify(f.name);
       const byName = await db.query.features.findFirst({
         where: or(
           eq(features.name, f.name),
