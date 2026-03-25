@@ -1,7 +1,7 @@
 import { eq, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
-import { computeSignature, slugify, versionedName, versionedSlug } from "../lib/signature.js";
+import { computeSignature, slugify } from "../lib/signature.js";
 import { SEED_FEATURES } from "./features.js";
 
 /**
@@ -44,34 +44,33 @@ export async function registerSeedFeatures(): Promise<void> {
         .update(features)
         .set({ ...values, updatedAt: new Date() })
         .where(eq(features.id, bySignature.id));
-      console.log(`[seed] Updated: ${bySignature.slug}`);
+      console.log(`[seed] Updated (signature match): ${bySignature.slug}`);
     } else {
-      // New feature — resolve unique name/slug
+      // Signature changed or new feature — check if same name already exists
       const baseSlug = slugify(f.name);
-      let version = 1;
-      let candidateName = f.name;
-      let candidateSlug = baseSlug;
-
-      while (true) {
-        const collision = await db.query.features.findFirst({
-          where: or(
-            eq(features.name, candidateName),
-            eq(features.slug, candidateSlug),
-          ),
-        });
-        if (!collision) break;
-        version++;
-        candidateName = versionedName(f.name, version);
-        candidateSlug = versionedSlug(baseSlug, version);
-      }
-
-      await db.insert(features).values({
-        slug: candidateSlug,
-        signature,
-        ...values,
-        name: candidateName,
+      const byName = await db.query.features.findFirst({
+        where: or(
+          eq(features.name, f.name),
+          eq(features.slug, baseSlug),
+        ),
       });
-      console.log(`[seed] Created: ${candidateSlug}`);
+
+      if (byName) {
+        // Same name/slug, different signature → update in place (outputs changed)
+        await db
+          .update(features)
+          .set({ ...values, signature, updatedAt: new Date() })
+          .where(eq(features.id, byName.id));
+        console.log(`[seed] Updated (signature changed): ${byName.slug}`);
+      } else {
+        // Truly new feature — insert
+        await db.insert(features).values({
+          slug: baseSlug,
+          signature,
+          ...values,
+        });
+        console.log(`[seed] Created: ${baseSlug}`);
+      }
     }
   }
 
