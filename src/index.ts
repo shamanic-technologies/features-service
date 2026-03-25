@@ -10,6 +10,10 @@ import featuresRoutes from "./routes/features.js";
 import statsRoutes from "./routes/stats.js";
 import { registerSeedFeatures } from "./seed/register.js";
 
+// ── Required env vars — crash at startup if missing ─────────────────────────
+import { validateRequiredEnv, REQUIRED_ENV } from "./lib/env.js";
+validateRequiredEnv();
+
 const app = express();
 const PORT = process.env.PORT || 3010;
 

@@ -5,12 +5,12 @@ import { features, type Feature, type FeatureChart } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { STATS_REGISTRY, getPublicRegistry, type StatsKeyDef } from "../lib/stats-registry.js";
 
-const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL;
-const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY;
-const EMAIL_GATEWAY_SERVICE_URL = process.env.EMAIL_GATEWAY_SERVICE_URL;
-const EMAIL_GATEWAY_SERVICE_API_KEY = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
-const OUTLETS_SERVICE_URL = process.env.OUTLETS_SERVICE_URL;
-const OUTLETS_SERVICE_API_KEY = process.env.OUTLETS_SERVICE_API_KEY;
+const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL!;
+const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY!;
+const EMAIL_GATEWAY_SERVICE_URL = process.env.EMAIL_GATEWAY_SERVICE_URL!;
+const EMAIL_GATEWAY_SERVICE_API_KEY = process.env.EMAIL_GATEWAY_SERVICE_API_KEY!;
+const OUTLETS_SERVICE_URL = process.env.OUTLETS_SERVICE_URL!;
+const OUTLETS_SERVICE_API_KEY = process.env.OUTLETS_SERVICE_API_KEY!;
 
 const router = Router();
 
@@ -90,11 +90,6 @@ async function fetchEmailStats(
   groupBy: GroupByDimension | null,
   filters: Record<string, string>,
 ): Promise<Map<string, Record<string, number>>> {
-  if (!EMAIL_GATEWAY_SERVICE_URL || !EMAIL_GATEWAY_SERVICE_API_KEY) {
-    console.warn("[stats] EMAIL_GATEWAY_SERVICE not configured, skipping email stats");
-    return new Map();
-  }
-
   const params = new URLSearchParams();
   if (groupBy === "workflowName") params.set("groupBy", "workflowName");
   if (groupBy === "brandId") params.set("groupBy", "brandId");
@@ -163,11 +158,6 @@ async function fetchRunsStats(
   groupBy: GroupByDimension | null,
   filters: Record<string, string>,
 ): Promise<Map<string, { totalCostInUsdCents: number; completedRuns: number }>> {
-  if (!RUNS_SERVICE_URL || !RUNS_SERVICE_API_KEY) {
-    console.warn("[stats] RUNS_SERVICE not configured, skipping runs stats");
-    return new Map();
-  }
-
   // Map our groupBy to runs-service groupBy dimension
   const runsGroupBy = groupBy ?? "workflowName";
   const params = new URLSearchParams({ groupBy: runsGroupBy });
@@ -217,11 +207,6 @@ async function fetchOutletsStats(
   groupBy: GroupByDimension | null,
   filters: Record<string, string>,
 ): Promise<Map<string, Record<string, number>>> {
-  if (!OUTLETS_SERVICE_URL || !OUTLETS_SERVICE_API_KEY) {
-    console.warn("[stats] OUTLETS_SERVICE not configured, skipping outlets stats");
-    return new Map();
-  }
-
   const params = new URLSearchParams();
   if (groupBy === "workflowName") params.set("groupBy", "workflowName");
   if (groupBy === "brandId") params.set("groupBy", "brandId");
