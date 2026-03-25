@@ -30,7 +30,7 @@ const featureResponseSchema = z.object({
   slug: z.string().describe("Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"),
   name: z.string().describe("Display name (e.g. 'Outlet Database Discovery')"),
   description: z.string(),
-  icon: z.string(),
+  icon: z.string().describe("Lucide icon name (e.g. 'envelope', 'globe', 'megaphone'). Use as <LucideIcon name={icon} /> or look up at lucide.dev/icons."),
   category: z.string().describe("Feature category: 'sales', 'pr', 'discovery', etc."),
   channel: z.string().describe("Communication channel: 'email', 'phone', 'linkedin', 'database', etc."),
   audienceType: z.string().describe("Form layout type: 'cold-outreach', 'discovery', etc."),

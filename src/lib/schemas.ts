@@ -86,7 +86,7 @@ export const upsertFeatureSchema = z.object({
   // No slug — auto-generated from name
   name: z.string().min(1),
   description: z.string().min(1),
-  icon: z.string().min(1),
+  icon: z.string().min(1).describe("Lucide icon name (e.g. 'envelope', 'globe', 'megaphone')"),
   category: z.string().min(1),
   channel: z.string().min(1),
   audienceType: z.string().min(1),
@@ -121,7 +121,7 @@ export const createFeatureSchema = upsertFeatureSchema.extend({
 export const updateFeatureSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().min(1).optional(),
-  icon: z.string().min(1).optional(),
+  icon: z.string().min(1).describe("Lucide icon name (e.g. 'envelope', 'globe', 'megaphone')").optional(),
   category: z.string().min(1).optional(),
   channel: z.string().min(1).optional(),
   audienceType: z.string().min(1).optional(),
