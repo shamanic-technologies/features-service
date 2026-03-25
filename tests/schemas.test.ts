@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { upsertFeatureSchema, batchUpsertFeaturesSchema, prefillRequestSchema } from "../src/lib/schemas.js";
+import { upsertFeatureSchema, batchUpsertFeaturesSchema, createFeatureSchema, updateFeatureSchema, prefillRequestSchema } from "../src/lib/schemas.js";
 
 const validInput = {
   key: "targetAudience",
@@ -254,6 +254,73 @@ describe("batchUpsertFeaturesSchema", () => {
   it("rejects empty batch", () => {
     const result = batchUpsertFeaturesSchema.safeParse({ features: [] });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("createFeatureSchema", () => {
+  it("accepts a valid feature without slug (auto-generated)", () => {
+    const result = createFeatureSchema.safeParse(validFeature);
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a valid feature with explicit slug", () => {
+    const result = createFeatureSchema.safeParse({ ...validFeature, slug: "my-custom-slug" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.slug).toBe("my-custom-slug");
+    }
+  });
+
+  it("rejects empty slug", () => {
+    const result = createFeatureSchema.safeParse({ ...validFeature, slug: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("inherits all upsertFeatureSchema validation (e.g. rejects empty inputs)", () => {
+    const result = createFeatureSchema.safeParse({ ...validFeature, inputs: [] });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("updateFeatureSchema", () => {
+  it("accepts a full update", () => {
+    const result = updateFeatureSchema.safeParse(validFeature);
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a partial update (name only)", () => {
+    const result = updateFeatureSchema.safeParse({ name: "New Name" });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an empty body (no-op update)", () => {
+    const result = updateFeatureSchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects invalid status", () => {
+    const result = updateFeatureSchema.safeParse({ status: "invalid" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects empty inputs array", () => {
+    const result = updateFeatureSchema.safeParse({ inputs: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects empty outputs array", () => {
+    const result = updateFeatureSchema.safeParse({ outputs: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts updating only category and channel", () => {
+    const result = updateFeatureSchema.safeParse({ category: "pr", channel: "linkedin" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.category).toBe("pr");
+      expect(result.data.channel).toBe("linkedin");
+      expect(result.data.name).toBeUndefined();
+    }
   });
 });
 

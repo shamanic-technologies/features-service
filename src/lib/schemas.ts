@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
+
+extendZodWithOpenApi(z);
 
 // ── Input ───────────────────────────────────────────────────────────────────
 
@@ -108,6 +111,35 @@ export const prefillRequestSchema = z.object({
   brandId: z.string().uuid(),
 });
 
+// ── Single feature create (dashboard) ────────────────────────────────────
+
+export const createFeatureSchema = upsertFeatureSchema.extend({
+  /** Optional slug — auto-generated from name if omitted */
+  slug: z.string().min(1).optional(),
+});
+
+// ── Single feature update (dashboard) ────────────────────────────────────
+
+export const updateFeatureSchema = z.object({
+  name: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+  icon: z.string().min(1).optional(),
+  category: z.string().min(1).optional(),
+  channel: z.string().min(1).optional(),
+  audienceType: z.string().min(1).optional(),
+  implemented: z.boolean().optional(),
+  displayOrder: z.number().int().optional(),
+  status: z.enum(["active", "draft", "deprecated"]).optional(),
+  inputs: z.array(featureInputSchema).min(1).optional(),
+  outputs: z.array(featureOutputSchema).min(1).optional(),
+  workflowColumns: z.array(workflowColumnSchema).optional(),
+  charts: z.array(featureChartSchema).optional(),
+  resultComponent: z.string().nullable().optional(),
+  defaultWorkflowName: z.string().nullable().optional(),
+});
+
 export type UpsertFeatureBody = z.infer<typeof upsertFeatureSchema>;
 export type BatchUpsertFeaturesBody = z.infer<typeof batchUpsertFeaturesSchema>;
+export type CreateFeatureBody = z.infer<typeof createFeatureSchema>;
+export type UpdateFeatureBody = z.infer<typeof updateFeatureSchema>;
 export type PrefillRequestBody = z.infer<typeof prefillRequestSchema>;

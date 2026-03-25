@@ -3,7 +3,7 @@ import { eq, or, and } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { batchUpsertFeaturesSchema, prefillRequestSchema } from "../lib/schemas.js";
+import { batchUpsertFeaturesSchema, createFeatureSchema, updateFeatureSchema, prefillRequestSchema } from "../lib/schemas.js";
 import { computeSignature, slugify, versionedName, versionedSlug } from "../lib/signature.js";
 import { extractBrandFields } from "../lib/brand-client.js";
 import { flattenValue } from "../lib/flatten.js";
@@ -113,6 +113,170 @@ router.put("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
     res.json({ features: results });
   } catch (error) {
     console.error("Upsert features error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
+ * POST /features — Create a single feature (dashboard use case).
+ *
+ * Slug is auto-generated from name if not provided.
+ * Signature is computed from input/output keys.
+ * Returns 409 if slug or name already exists.
+ */
+router.post("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const parsed = createFeatureSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+
+    const f = parsed.data;
+    const signature = computeSignature(
+      f.inputs.map((i) => i.key),
+      f.outputs.map((o) => o.key),
+    );
+
+    // Check for duplicate signature
+    const existingSig = await db.query.features.findFirst({
+      where: eq(features.signature, signature),
+    });
+    if (existingSig) {
+      return res.status(409).json({
+        error: "A feature with the same input/output keys already exists",
+        existingSlug: existingSig.slug,
+      });
+    }
+
+    const slug = f.slug || slugify(f.name);
+
+    // Check for duplicate slug or name
+    const existingSlugOrName = await db.query.features.findFirst({
+      where: or(eq(features.slug, slug), eq(features.name, f.name)),
+    });
+    if (existingSlugOrName) {
+      return res.status(409).json({
+        error: existingSlugOrName.slug === slug
+          ? `Slug "${slug}" already exists`
+          : `Name "${f.name}" already exists`,
+      });
+    }
+
+    const [created] = await db
+      .insert(features)
+      .values({
+        slug,
+        signature,
+        name: f.name,
+        description: f.description,
+        icon: f.icon,
+        category: f.category,
+        channel: f.channel,
+        audienceType: f.audienceType,
+        implemented: f.implemented,
+        displayOrder: f.displayOrder,
+        status: f.status,
+        inputs: f.inputs,
+        outputs: f.outputs,
+        workflowColumns: f.workflowColumns,
+        charts: f.charts,
+        resultComponent: f.resultComponent ?? null,
+        defaultWorkflowName: f.defaultWorkflowName ?? null,
+      })
+      .returning();
+
+    res.status(201).json({ feature: created });
+  } catch (error) {
+    console.error("Create feature error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
+ * PUT /features/:slug — Update a single feature by slug (dashboard use case).
+ *
+ * Partial update — only provided fields are changed.
+ * If inputs or outputs change, the signature is recomputed.
+ * Returns 404 if the feature doesn't exist.
+ */
+router.put("/features/:slug", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { slug } = req.params;
+    const parsed = updateFeatureSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+
+    const existing = await db.query.features.findFirst({
+      where: eq(features.slug, slug),
+    });
+    if (!existing) {
+      return res.status(404).json({ error: "Feature not found" });
+    }
+
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    const data = parsed.data;
+
+    // Copy simple fields if provided
+    if (data.name !== undefined) updates.name = data.name;
+    if (data.description !== undefined) updates.description = data.description;
+    if (data.icon !== undefined) updates.icon = data.icon;
+    if (data.category !== undefined) updates.category = data.category;
+    if (data.channel !== undefined) updates.channel = data.channel;
+    if (data.audienceType !== undefined) updates.audienceType = data.audienceType;
+    if (data.implemented !== undefined) updates.implemented = data.implemented;
+    if (data.displayOrder !== undefined) updates.displayOrder = data.displayOrder;
+    if (data.status !== undefined) updates.status = data.status;
+    if (data.inputs !== undefined) updates.inputs = data.inputs;
+    if (data.outputs !== undefined) updates.outputs = data.outputs;
+    if (data.workflowColumns !== undefined) updates.workflowColumns = data.workflowColumns;
+    if (data.charts !== undefined) updates.charts = data.charts;
+    if (data.resultComponent !== undefined) updates.resultComponent = data.resultComponent;
+    if (data.defaultWorkflowName !== undefined) updates.defaultWorkflowName = data.defaultWorkflowName;
+
+    // Recompute signature if inputs or outputs changed
+    if (data.inputs || data.outputs) {
+      const finalInputs = data.inputs ?? existing.inputs;
+      const finalOutputs = data.outputs ?? existing.outputs;
+      const newSignature = computeSignature(
+        finalInputs.map((i) => i.key),
+        finalOutputs.map((o) => o.key),
+      );
+
+      // Check if the new signature conflicts with another feature
+      if (newSignature !== existing.signature) {
+        const conflict = await db.query.features.findFirst({
+          where: eq(features.signature, newSignature),
+        });
+        if (conflict) {
+          return res.status(409).json({
+            error: "A feature with the same input/output keys already exists",
+            existingSlug: conflict.slug,
+          });
+        }
+        updates.signature = newSignature;
+      }
+    }
+
+    // Check name uniqueness if name changed
+    if (data.name && data.name !== existing.name) {
+      const nameConflict = await db.query.features.findFirst({
+        where: eq(features.name, data.name),
+      });
+      if (nameConflict) {
+        return res.status(409).json({ error: `Name "${data.name}" already exists` });
+      }
+    }
+
+    const [updated] = await db
+      .update(features)
+      .set(updates)
+      .where(eq(features.id, existing.id))
+      .returning();
+
+    res.json({ feature: updated });
+  } catch (error) {
+    console.error("Update feature error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
