@@ -22,63 +22,26 @@ export interface FeatureInput {
 // ── Output metric definition ────────────────────────────────────────────────
 
 export interface FeatureOutput {
-  /** Machine-readable key, e.g. "leadsServed" */
+  /** Stats key from the registry, e.g. "emailsReplied", "replyRate" */
   key: string;
-  /** Human-readable label, e.g. "Leads" */
-  label: string;
-  /** Display type for formatting */
-  type: "count" | "rate" | "currency" | "percentage";
-  /** Display order in the metrics row */
+  /** Display order in tables */
   displayOrder: number;
-  /** Show in the campaign row on the campaign list page */
-  showInCampaignRow: boolean;
-  /** Show in the funnel chart at the top of the feature page */
-  showInFunnel: boolean;
-  /** Position in the funnel (only when showInFunnel is true) */
-  funnelOrder?: number;
-  /** For "rate" type: numerator stats field key */
-  numeratorKey?: string;
-  /** For "rate" type: denominator stats field key */
-  denominatorKey?: string;
-}
-
-// ── Workflow column definition ──────────────────────────────────────────────
-
-export interface WorkflowColumn {
-  /** Column key, e.g. "openRate" */
-  key: string;
-  /** Column header label, e.g. "% Opens" */
-  label: string;
-  /** Value type */
-  type: "rate" | "currency" | "count";
-  /** For computed columns: numerator stats field */
-  numeratorKey?: string;
-  /** For computed columns: denominator stats field */
-  denominatorKey?: string;
-  /** Sort direction: desc = higher is better, asc = lower is better */
-  sortDirection: "asc" | "desc";
-  /** Column display order */
-  displayOrder: number;
-  /** Whether this column is sorted by default */
+  /** Whether this column is sorted by default in the workflow ranking table */
   defaultSort?: boolean;
+  /** Sort direction when this is the active sort column */
+  sortDirection?: "asc" | "desc";
 }
 
 // ── Chart definition ────────────────────────────────────────────────────────
 
 export interface FunnelStep {
+  /** Stats key from the registry */
   key: string;
-  label: string;
-  /** Field name in the CampaignStats object */
-  statsField: string;
-  /** Key of the step to compute conversion rate against (null for first step) */
-  rateBasedOn: string | null;
 }
 
 export interface BreakdownSegment {
+  /** Stats key from the registry */
   key: string;
-  label: string;
-  /** Field name in the CampaignStats object */
-  statsField: string;
   color: "green" | "blue" | "red" | "gray" | "orange";
   sentiment: "positive" | "neutral" | "negative";
 }
@@ -148,20 +111,14 @@ export const features = pgTable(
     /** Input fields for campaign creation form (pre-filled by LLM) */
     inputs: jsonb("inputs").notNull().$type<FeatureInput[]>(),
 
-    /** Output metrics displayed on dashboard for campaigns */
+    /** Output metrics — stats keys from the registry with display config */
     outputs: jsonb("outputs").notNull().$type<FeatureOutput[]>(),
 
-    /** Column definitions for the workflow performance table */
-    workflowColumns: jsonb("workflow_columns").notNull().$type<WorkflowColumn[]>().default([]),
+    /** Chart definitions (funnel, breakdown) */
+    charts: jsonb("charts").notNull().$type<FeatureChart[]>(),
 
-    /** Chart definitions (funnel, breakdown, etc.) */
-    charts: jsonb("charts").notNull().$type<FeatureChart[]>().default([]),
-
-    /** Specialized result component for discovery/press-kit features (null for standard features) */
-    resultComponent: text("result_component"),
-
-    /** Default workflow name in workflow-service */
-    defaultWorkflowName: text("default_workflow_name"),
+    /** Entity types shown in campaign detail sidebar (e.g. ["leads", "companies", "emails"]) */
+    entities: jsonb("entities").notNull().$type<string[]>(),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

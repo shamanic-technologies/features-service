@@ -1,7 +1,20 @@
 import { z } from "zod";
 import { extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
+import { VALID_STATS_KEYS, VALID_ENTITY_TYPES } from "./stats-registry.js";
 
 extendZodWithOpenApi(z);
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const statsKeyString = z.string().min(1).refine(
+  (key) => VALID_STATS_KEYS.has(key),
+  (key) => ({ message: `Unknown stats key "${key}". Must be one of: ${[...VALID_STATS_KEYS].join(", ")}` }),
+);
+
+const entityTypeString = z.string().min(1).refine(
+  (type) => VALID_ENTITY_TYPES.has(type),
+  (type) => ({ message: `Unknown entity type "${type}". Must be one of: ${[...VALID_ENTITY_TYPES].join(", ")}` }),
+);
 
 // ── Input ───────────────────────────────────────────────────────────────────
 
@@ -18,43 +31,20 @@ export const featureInputSchema = z.object({
 // ── Output ──────────────────────────────────────────────────────────────────
 
 export const featureOutputSchema = z.object({
-  key: z.string().min(1),
-  label: z.string().min(1),
-  type: z.enum(["count", "rate", "currency", "percentage"]),
-  displayOrder: z.number().int(),
-  showInCampaignRow: z.boolean(),
-  showInFunnel: z.boolean(),
-  funnelOrder: z.number().int().optional(),
-  numeratorKey: z.string().optional(),
-  denominatorKey: z.string().optional(),
-});
-
-// ── Workflow columns ────────────────────────────────────────────────────────
-
-export const workflowColumnSchema = z.object({
-  key: z.string().min(1),
-  label: z.string().min(1),
-  type: z.enum(["rate", "currency", "count"]),
-  numeratorKey: z.string().optional(),
-  denominatorKey: z.string().optional(),
-  sortDirection: z.enum(["asc", "desc"]),
+  key: statsKeyString,
   displayOrder: z.number().int(),
   defaultSort: z.boolean().optional(),
+  sortDirection: z.enum(["asc", "desc"]).optional(),
 });
 
 // ── Charts ──────────────────────────────────────────────────────────────────
 
 const funnelStepSchema = z.object({
-  key: z.string().min(1),
-  label: z.string().min(1),
-  statsField: z.string().min(1),
-  rateBasedOn: z.string().nullable(),
+  key: statsKeyString,
 });
 
 const breakdownSegmentSchema = z.object({
-  key: z.string().min(1),
-  label: z.string().min(1),
-  statsField: z.string().min(1),
+  key: statsKeyString,
   color: z.enum(["green", "blue", "red", "gray", "orange"]),
   sentiment: z.enum(["positive", "neutral", "negative"]),
 });
@@ -64,7 +54,7 @@ const funnelBarChartSchema = z.object({
   type: z.literal("funnel-bar"),
   title: z.string().min(1),
   displayOrder: z.number().int(),
-  steps: z.array(funnelStepSchema).min(1),
+  steps: z.array(funnelStepSchema).min(2),
 });
 
 const breakdownBarChartSchema = z.object({
@@ -72,13 +62,23 @@ const breakdownBarChartSchema = z.object({
   type: z.literal("breakdown-bar"),
   title: z.string().min(1),
   displayOrder: z.number().int(),
-  segments: z.array(breakdownSegmentSchema).min(1),
+  segments: z.array(breakdownSegmentSchema).min(2),
 });
 
 export const featureChartSchema = z.discriminatedUnion("type", [
   funnelBarChartSchema,
   breakdownBarChartSchema,
 ]);
+
+// ── Charts validation ───────────────────────────────────────────────────────
+
+const chartsArraySchema = z.array(featureChartSchema).min(1).refine(
+  (charts) => charts.some((c) => c.type === "funnel-bar"),
+  { message: "Charts must include at least one funnel-bar chart (with min 2 steps)" },
+).refine(
+  (charts) => charts.some((c) => c.type === "breakdown-bar"),
+  { message: "Charts must include at least one breakdown-bar chart (with min 2 segments)" },
+);
 
 // ── Feature upsert ──────────────────────────────────────────────────────────
 
@@ -95,10 +95,8 @@ export const upsertFeatureSchema = z.object({
   status: z.enum(["active", "draft", "deprecated"]).optional().default("active"),
   inputs: z.array(featureInputSchema).min(1),
   outputs: z.array(featureOutputSchema).min(1),
-  workflowColumns: z.array(workflowColumnSchema).optional().default([]),
-  charts: z.array(featureChartSchema).optional().default([]),
-  resultComponent: z.string().nullable().optional(),
-  defaultWorkflowName: z.string().nullable().optional(),
+  charts: chartsArraySchema,
+  entities: z.array(entityTypeString).min(1),
 });
 
 export const batchUpsertFeaturesSchema = z.object({
@@ -132,10 +130,8 @@ export const updateFeatureSchema = z.object({
   status: z.enum(["active", "draft", "deprecated"]).optional(),
   inputs: z.array(featureInputSchema).min(1).optional(),
   outputs: z.array(featureOutputSchema).min(1).optional(),
-  workflowColumns: z.array(workflowColumnSchema).optional(),
-  charts: z.array(featureChartSchema).optional(),
-  resultComponent: z.string().nullable().optional(),
-  defaultWorkflowName: z.string().nullable().optional(),
+  charts: chartsArraySchema.optional(),
+  entities: z.array(entityTypeString).min(1).optional(),
 });
 
 export type UpsertFeatureBody = z.infer<typeof upsertFeatureSchema>;
