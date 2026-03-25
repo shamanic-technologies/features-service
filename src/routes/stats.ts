@@ -9,6 +9,8 @@ const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL;
 const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY;
 const EMAIL_GATEWAY_SERVICE_URL = process.env.EMAIL_GATEWAY_SERVICE_URL;
 const EMAIL_GATEWAY_SERVICE_API_KEY = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
+const OUTLETS_SERVICE_URL = process.env.OUTLETS_SERVICE_URL;
+const OUTLETS_SERVICE_API_KEY = process.env.OUTLETS_SERVICE_API_KEY;
 
 const router = Router();
 
@@ -208,6 +210,66 @@ async function fetchRunsStats(
 }
 
 /**
+ * Fetch outlet stats from outlets-service, grouped by the requested dimension.
+ */
+async function fetchOutletsStats(
+  orgId: string,
+  groupBy: GroupByDimension | null,
+  filters: Record<string, string>,
+): Promise<Map<string, Record<string, number>>> {
+  if (!OUTLETS_SERVICE_URL || !OUTLETS_SERVICE_API_KEY) {
+    console.warn("[stats] OUTLETS_SERVICE not configured, skipping outlets stats");
+    return new Map();
+  }
+
+  const params = new URLSearchParams();
+  if (groupBy === "workflowName") params.set("groupBy", "workflowName");
+  if (groupBy === "brandId") params.set("groupBy", "brandId");
+  if (groupBy === "campaignId") params.set("groupBy", "campaignId");
+  if (filters.workflowName) params.set("workflowName", filters.workflowName);
+  if (filters.brandId) params.set("brandId", filters.brandId);
+  if (filters.campaignId) params.set("campaignId", filters.campaignId);
+
+  const url = `${OUTLETS_SERVICE_URL}/outlets/stats?${params}`;
+  const response = await fetch(url, {
+    headers: {
+      "x-api-key": OUTLETS_SERVICE_API_KEY,
+      "x-org-id": orgId,
+    },
+  });
+
+  if (!response.ok) {
+    console.error(`[stats] outlets-service /outlets/stats failed: ${response.status}`);
+    return new Map();
+  }
+
+  const data = await response.json() as Record<string, unknown>;
+  const result = new Map<string, Record<string, number>>();
+
+  if (data.groups && Array.isArray(data.groups)) {
+    for (const group of data.groups as Array<Record<string, unknown>>) {
+      const groupKey = String(group.key ?? "__total__");
+      result.set(groupKey, extractOutletFields(group));
+    }
+  } else {
+    result.set("__total__", extractOutletFields(data));
+  }
+
+  return result;
+}
+
+/**
+ * Extract outlet stats fields from a response object.
+ */
+function extractOutletFields(data: Record<string, unknown>): Record<string, number> {
+  return {
+    outletsDiscovered: Number(data.outletsDiscovered ?? 0),
+    avgRelevanceScore: Number(data.avgRelevanceScore ?? 0),
+    searchQueriesUsed: Number(data.searchQueriesUsed ?? 0),
+  };
+}
+
+/**
  * Compute derived stats from raw values.
  */
 function computeDerivedStats(
@@ -301,18 +363,21 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req: Authenticated
     const sources = requiredSources(requiredKeys);
 
     // Fetch data from sources in parallel
-    const [emailStatsMap, runsStatsMap] = await Promise.all([
+    const [emailStatsMap, runsStatsMap, outletsStatsMap] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters) : Promise.resolve(new Map<string, Record<string, number>>()),
       sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters) : Promise.resolve(new Map<string, { totalCostInUsdCents: number; completedRuns: number }>()),
+      sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters) : Promise.resolve(new Map<string, Record<string, number>>()),
     ]);
 
     if (!groupBy) {
       // No grouping — return flat stats
       const emailStats = emailStatsMap.get("__total__") ?? {};
       const runsStats = runsStatsMap.get("__total__");
+      const outletsStats = outletsStatsMap.get("__total__") ?? {};
 
       const rawStats: Record<string, number> = {
         ...emailStats,
+        ...outletsStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -328,6 +393,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req: Authenticated
     const allGroupKeys = new Set<string>();
     for (const key of emailStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of runsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
+    for (const key of outletsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
 
     // Compute totals for top-level systemStats
     let totalCost = 0;
@@ -341,9 +407,11 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req: Authenticated
     for (const groupKey of allGroupKeys) {
       const emailStats = emailStatsMap.get(groupKey) ?? {};
       const runsStats = runsStatsMap.get(groupKey);
+      const outletsStats = outletsStatsMap.get(groupKey) ?? {};
 
       const rawStats: Record<string, number> = {
         ...emailStats,
+        ...outletsStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -409,18 +477,21 @@ router.get("/stats", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
 
     const groupBy = (groupByParam?.split(",")[0] ?? null) as GroupByDimension | null;
 
-    const [emailStatsMap, runsStatsMap] = await Promise.all([
+    const [emailStatsMap, runsStatsMap, outletsStatsMap] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchRunsStats(orgId, groupBy, filters),
+      sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters) : Promise.resolve(new Map<string, Record<string, number>>()),
     ]);
 
     if (!groupBy) {
       // No grouping — flat aggregate
       const emailStats = emailStatsMap.get("__total__") ?? {};
       const runsStats = runsStatsMap.get("__total__");
+      const outletsStats = outletsStatsMap.get("__total__") ?? {};
 
       const rawStats: Record<string, number> = {
         ...emailStats,
+        ...outletsStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -435,6 +506,7 @@ router.get("/stats", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
     const allGroupKeys = new Set<string>();
     for (const key of emailStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of runsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
+    for (const key of outletsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
 
     let totalCost = 0;
     let totalRuns = 0;
@@ -447,9 +519,11 @@ router.get("/stats", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
     for (const groupKey of allGroupKeys) {
       const emailStats = emailStatsMap.get(groupKey) ?? {};
       const runsStats = runsStatsMap.get(groupKey);
+      const outletsStats = outletsStatsMap.get(groupKey) ?? {};
 
       const rawStats: Record<string, number> = {
         ...emailStats,
+        ...outletsStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
