@@ -54,6 +54,23 @@ describe("SEED_FEATURES", () => {
     expect(outlets!.charts).toHaveLength(0);
   });
 
+  it("PR Cold Email Outreach has 5 inputs and 6 outputs", () => {
+    const pr = SEED_FEATURES.find((f) => f.name === "PR Cold Email Outreach");
+    expect(pr).toBeDefined();
+    expect(pr!.inputs).toHaveLength(5);
+    expect(pr!.outputs).toHaveLength(6);
+    expect(pr!.category).toBe("pr");
+    expect(pr!.channel).toBe("email");
+    expect(pr!.defaultWorkflowName).toBe("pr-email-cold-outreach");
+  });
+
+  it("PR Cold Email Outreach has funnel and breakdown charts", () => {
+    const pr = SEED_FEATURES.find((f) => f.name === "PR Cold Email Outreach");
+    expect(pr!.charts).toHaveLength(2);
+    expect(pr!.charts![0].type).toBe("funnel-bar");
+    expect(pr!.charts![1].type).toBe("breakdown-bar");
+  });
+
   it("implemented features have all required fields", () => {
     const implemented = SEED_FEATURES.filter((f) => f.implemented);
     expect(implemented.length).toBeGreaterThanOrEqual(2);
