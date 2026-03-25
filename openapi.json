@@ -3,7 +3,7 @@
   "info": {
     "title": "Features Service API",
     "version": "1.0.0",
-    "description": "Manages feature definitions for the dashboard — inputs, outputs, charts, and metadata."
+    "description": "Manages feature definitions for the dashboard — inputs, outputs, charts, and metadata.\n\n## Key Concepts\n\n**Features** define what campaigns can do: their input form, output metrics, charts, and workflow columns. Each feature has a unique slug (e.g. `outlet-database-discovery`) auto-generated from its name.\n\n**Inputs** define the fields shown in the campaign creation form. Each input has an `extractKey` that maps to brand-service's extract-fields API, enabling AI-powered pre-fill from brand data.\n\n**Pre-fill flow** (for LLMs and workflows):\n1. Call `GET /features/{slug}/inputs` to see what fields a feature needs and their extractKeys\n2. Call `POST /features/{slug}/prefill` with a brandId to get AI-extracted values keyed by input key\n3. Pass the prefilled values to downstream services (e.g. outlets-service discover endpoint)\n\nThe prefill endpoint returns **named keys** (not positional arrays), so workflows can reference fields by name (e.g. `$ref:prefill.output.prefilled.industry`) instead of fragile index-based mapping.\n\n## Available Features\n\n| Slug | Category | Channel | Description |\n|------|----------|---------|-------------|\n| `outlet-database-discovery` | pr | database | Discover relevant press outlets via AI search + scoring |\n| *(more via GET /features)* | | | |"
   },
   "servers": [
     {
@@ -1380,6 +1380,558 @@
             "nullable": true
           }
         }
+      },
+      "Feature": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": "string",
+            "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name (e.g. 'Outlet Database Discovery')"
+          },
+          "description": {
+            "type": "string"
+          },
+          "icon": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "description": "Feature category: 'sales', 'pr', 'discovery', etc."
+          },
+          "channel": {
+            "type": "string",
+            "description": "Communication channel: 'email', 'phone', 'linkedin', 'database', etc."
+          },
+          "audienceType": {
+            "type": "string",
+            "description": "Form layout type: 'cold-outreach', 'discovery', etc."
+          },
+          "implemented": {
+            "type": "boolean"
+          },
+          "displayOrder": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "draft",
+              "deprecated"
+            ]
+          },
+          "signature": {
+            "type": "string",
+            "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "text",
+                    "textarea",
+                    "number",
+                    "select"
+                  ]
+                },
+                "placeholder": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "extractKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "type",
+                "placeholder",
+                "description",
+                "extractKey"
+              ]
+            },
+            "description": "Input fields for the campaign creation form. Each input has an extractKey that maps to brand-service's extract-fields API for AI pre-fill."
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "count",
+                    "rate",
+                    "currency",
+                    "percentage"
+                  ]
+                },
+                "displayOrder": {
+                  "type": "integer"
+                },
+                "showInCampaignRow": {
+                  "type": "boolean"
+                },
+                "showInFunnel": {
+                  "type": "boolean"
+                },
+                "funnelOrder": {
+                  "type": "integer"
+                },
+                "numeratorKey": {
+                  "type": "string"
+                },
+                "denominatorKey": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "type",
+                "displayOrder",
+                "showInCampaignRow",
+                "showInFunnel"
+              ]
+            },
+            "description": "Output metrics displayed on the dashboard"
+          },
+          "workflowColumns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "rate",
+                    "currency",
+                    "count"
+                  ]
+                },
+                "numeratorKey": {
+                  "type": "string"
+                },
+                "denominatorKey": {
+                  "type": "string"
+                },
+                "sortDirection": {
+                  "type": "string",
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
+                },
+                "displayOrder": {
+                  "type": "integer"
+                },
+                "defaultSort": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "type",
+                "sortDirection",
+                "displayOrder"
+              ]
+            },
+            "description": "Column definitions for the workflow performance table"
+          },
+          "charts": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "funnel-bar"
+                      ]
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "displayOrder": {
+                      "type": "integer"
+                    },
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "statsField": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "rateBasedOn": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "label",
+                          "statsField",
+                          "rateBasedOn"
+                        ]
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "type",
+                    "title",
+                    "displayOrder",
+                    "steps"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "breakdown-bar"
+                      ]
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "displayOrder": {
+                      "type": "integer"
+                    },
+                    "segments": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "statsField": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "color": {
+                            "type": "string",
+                            "enum": [
+                              "green",
+                              "blue",
+                              "red",
+                              "gray",
+                              "orange"
+                            ]
+                          },
+                          "sentiment": {
+                            "type": "string",
+                            "enum": [
+                              "positive",
+                              "neutral",
+                              "negative"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "label",
+                          "statsField",
+                          "color",
+                          "sentiment"
+                        ]
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "type",
+                    "title",
+                    "displayOrder",
+                    "segments"
+                  ]
+                }
+              ]
+            },
+            "description": "Chart definitions (funnel, breakdown, etc.)"
+          },
+          "resultComponent": {
+            "type": "string",
+            "nullable": true,
+            "description": "Specialized result component slug (e.g. 'discovered-outlets'), null for standard features"
+          },
+          "defaultWorkflowName": {
+            "type": "string",
+            "nullable": true,
+            "description": "Default workflow name in workflow-service, null if no default"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "description",
+          "icon",
+          "category",
+          "channel",
+          "audienceType",
+          "implemented",
+          "displayOrder",
+          "status",
+          "signature",
+          "inputs",
+          "outputs",
+          "workflowColumns",
+          "charts",
+          "resultComponent",
+          "defaultWorkflowName",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "PrefillTextResponse": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "description": "Feature slug"
+          },
+          "brandId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Brand that was used for pre-fill"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "text"
+            ]
+          },
+          "prefilled": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "nullable": true
+            },
+            "description": "Map of input key → flattened text value (or null if extraction failed). Keys match the feature's inputs[].key. Example: { industry: 'Enterprise SaaS', angles: 'Series B funding, AI product launch', targetGeo: 'US and UK' }"
+          }
+        },
+        "required": [
+          "slug",
+          "brandId",
+          "format",
+          "prefilled"
+        ],
+        "description": "Pre-filled values as flat strings, ready for form inputs or workflow inputMapping"
+      },
+      "PrefillFullResponse": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "description": "Feature slug"
+          },
+          "brandId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Brand that was used for pre-fill"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "full"
+            ]
+          },
+          "prefilled": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "nullable": true,
+                  "description": "Extracted value — can be a string, array, or object depending on the field"
+                },
+                "cached": {
+                  "type": "boolean",
+                  "description": "Whether the value was served from cache (brand-service caches extractions for 30 days)"
+                },
+                "sourceUrls": {
+                  "type": "array",
+                  "nullable": true,
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "URLs from the brand's website that were used to extract this value"
+                }
+              },
+              "required": [
+                "cached",
+                "sourceUrls"
+              ]
+            },
+            "description": "Map of input key → full extraction result. Keys match the feature's inputs[].key. Example: { industry: { value: 'Enterprise SaaS', cached: true, sourceUrls: ['https://example.com/about'] } }"
+          }
+        },
+        "required": [
+          "slug",
+          "brandId",
+          "format",
+          "prefilled"
+        ],
+        "description": "Pre-filled values with metadata (cache status, source URLs)"
+      },
+      "InputsResponse": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "description": "Feature slug"
+          },
+          "name": {
+            "type": "string",
+            "description": "Feature display name"
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "text",
+                    "textarea",
+                    "number",
+                    "select"
+                  ]
+                },
+                "placeholder": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "extractKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "type",
+                "placeholder",
+                "description",
+                "extractKey"
+              ]
+            },
+            "description": "Input definitions. Each input's extractKey maps to a brand-service extract-fields key. Use these extractKeys when calling POST /brands/{brandId}/extract-fields, or call POST /features/{slug}/prefill to let the service handle extraction automatically."
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "inputs"
+        ]
       }
     },
     "parameters": {}
@@ -1388,6 +1940,7 @@
     "/features": {
       "put": {
         "summary": "Batch upsert features (cold-start registration)",
+        "description": "Idempotent — safe to call on every cold start. Uses a signature (hash of sorted input+output keys) to detect duplicates: same signature → upsert metadata, same name but different signature → auto-suffix with v2, v3, etc.",
         "tags": [
           "Features"
         ],
@@ -1782,7 +2335,395 @@
                     "features": {
                       "type": "array",
                       "items": {
-                        "nullable": true
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "slug": {
+                            "type": "string",
+                            "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Display name (e.g. 'Outlet Database Discovery')"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string"
+                          },
+                          "category": {
+                            "type": "string",
+                            "description": "Feature category: 'sales', 'pr', 'discovery', etc."
+                          },
+                          "channel": {
+                            "type": "string",
+                            "description": "Communication channel: 'email', 'phone', 'linkedin', 'database', etc."
+                          },
+                          "audienceType": {
+                            "type": "string",
+                            "description": "Form layout type: 'cold-outreach', 'discovery', etc."
+                          },
+                          "implemented": {
+                            "type": "boolean"
+                          },
+                          "displayOrder": {
+                            "type": "integer"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "draft",
+                              "deprecated"
+                            ]
+                          },
+                          "signature": {
+                            "type": "string",
+                            "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+                          },
+                          "inputs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "key": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": [
+                                    "text",
+                                    "textarea",
+                                    "number",
+                                    "select"
+                                  ]
+                                },
+                                "placeholder": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "extractKey": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "options": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "label",
+                                "type",
+                                "placeholder",
+                                "description",
+                                "extractKey"
+                              ]
+                            },
+                            "description": "Input fields for the campaign creation form. Each input has an extractKey that maps to brand-service's extract-fields API for AI pre-fill."
+                          },
+                          "outputs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "key": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": [
+                                    "count",
+                                    "rate",
+                                    "currency",
+                                    "percentage"
+                                  ]
+                                },
+                                "displayOrder": {
+                                  "type": "integer"
+                                },
+                                "showInCampaignRow": {
+                                  "type": "boolean"
+                                },
+                                "showInFunnel": {
+                                  "type": "boolean"
+                                },
+                                "funnelOrder": {
+                                  "type": "integer"
+                                },
+                                "numeratorKey": {
+                                  "type": "string"
+                                },
+                                "denominatorKey": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "label",
+                                "type",
+                                "displayOrder",
+                                "showInCampaignRow",
+                                "showInFunnel"
+                              ]
+                            },
+                            "description": "Output metrics displayed on the dashboard"
+                          },
+                          "workflowColumns": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "key": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": [
+                                    "rate",
+                                    "currency",
+                                    "count"
+                                  ]
+                                },
+                                "numeratorKey": {
+                                  "type": "string"
+                                },
+                                "denominatorKey": {
+                                  "type": "string"
+                                },
+                                "sortDirection": {
+                                  "type": "string",
+                                  "enum": [
+                                    "asc",
+                                    "desc"
+                                  ]
+                                },
+                                "displayOrder": {
+                                  "type": "integer"
+                                },
+                                "defaultSort": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "label",
+                                "type",
+                                "sortDirection",
+                                "displayOrder"
+                              ]
+                            },
+                            "description": "Column definitions for the workflow performance table"
+                          },
+                          "charts": {
+                            "type": "array",
+                            "items": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "funnel-bar"
+                                      ]
+                                    },
+                                    "title": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "displayOrder": {
+                                      "type": "integer"
+                                    },
+                                    "steps": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "key": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "label": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "statsField": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "rateBasedOn": {
+                                            "type": "string",
+                                            "nullable": true
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "label",
+                                          "statsField",
+                                          "rateBasedOn"
+                                        ]
+                                      },
+                                      "minItems": 1
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "type",
+                                    "title",
+                                    "displayOrder",
+                                    "steps"
+                                  ]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "breakdown-bar"
+                                      ]
+                                    },
+                                    "title": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "displayOrder": {
+                                      "type": "integer"
+                                    },
+                                    "segments": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "key": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "label": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "statsField": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "color": {
+                                            "type": "string",
+                                            "enum": [
+                                              "green",
+                                              "blue",
+                                              "red",
+                                              "gray",
+                                              "orange"
+                                            ]
+                                          },
+                                          "sentiment": {
+                                            "type": "string",
+                                            "enum": [
+                                              "positive",
+                                              "neutral",
+                                              "negative"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "label",
+                                          "statsField",
+                                          "color",
+                                          "sentiment"
+                                        ]
+                                      },
+                                      "minItems": 1
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "type",
+                                    "title",
+                                    "displayOrder",
+                                    "segments"
+                                  ]
+                                }
+                              ]
+                            },
+                            "description": "Chart definitions (funnel, breakdown, etc.)"
+                          },
+                          "resultComponent": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Specialized result component slug (e.g. 'discovered-outlets'), null for standard features"
+                          },
+                          "defaultWorkflowName": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Default workflow name in workflow-service, null if no default"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "updatedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "slug",
+                          "name",
+                          "description",
+                          "icon",
+                          "category",
+                          "channel",
+                          "audienceType",
+                          "implemented",
+                          "displayOrder",
+                          "status",
+                          "signature",
+                          "inputs",
+                          "outputs",
+                          "workflowColumns",
+                          "charts",
+                          "resultComponent",
+                          "defaultWorkflowName",
+                          "createdAt",
+                          "updatedAt"
+                        ]
                       }
                     }
                   },
@@ -2199,9 +3140,400 @@
                   "type": "object",
                   "properties": {
                     "feature": {
-                      "nullable": true
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "slug": {
+                          "type": "string",
+                          "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Display name (e.g. 'Outlet Database Discovery')"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "icon": {
+                          "type": "string"
+                        },
+                        "category": {
+                          "type": "string",
+                          "description": "Feature category: 'sales', 'pr', 'discovery', etc."
+                        },
+                        "channel": {
+                          "type": "string",
+                          "description": "Communication channel: 'email', 'phone', 'linkedin', 'database', etc."
+                        },
+                        "audienceType": {
+                          "type": "string",
+                          "description": "Form layout type: 'cold-outreach', 'discovery', etc."
+                        },
+                        "implemented": {
+                          "type": "boolean"
+                        },
+                        "displayOrder": {
+                          "type": "integer"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "draft",
+                            "deprecated"
+                          ]
+                        },
+                        "signature": {
+                          "type": "string",
+                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+                        },
+                        "inputs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "text",
+                                  "textarea",
+                                  "number",
+                                  "select"
+                                ]
+                              },
+                              "placeholder": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "description": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "extractKey": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "options": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "type",
+                              "placeholder",
+                              "description",
+                              "extractKey"
+                            ]
+                          },
+                          "description": "Input fields for the campaign creation form. Each input has an extractKey that maps to brand-service's extract-fields API for AI pre-fill."
+                        },
+                        "outputs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "count",
+                                  "rate",
+                                  "currency",
+                                  "percentage"
+                                ]
+                              },
+                              "displayOrder": {
+                                "type": "integer"
+                              },
+                              "showInCampaignRow": {
+                                "type": "boolean"
+                              },
+                              "showInFunnel": {
+                                "type": "boolean"
+                              },
+                              "funnelOrder": {
+                                "type": "integer"
+                              },
+                              "numeratorKey": {
+                                "type": "string"
+                              },
+                              "denominatorKey": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "type",
+                              "displayOrder",
+                              "showInCampaignRow",
+                              "showInFunnel"
+                            ]
+                          },
+                          "description": "Output metrics displayed on the dashboard"
+                        },
+                        "workflowColumns": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "rate",
+                                  "currency",
+                                  "count"
+                                ]
+                              },
+                              "numeratorKey": {
+                                "type": "string"
+                              },
+                              "denominatorKey": {
+                                "type": "string"
+                              },
+                              "sortDirection": {
+                                "type": "string",
+                                "enum": [
+                                  "asc",
+                                  "desc"
+                                ]
+                              },
+                              "displayOrder": {
+                                "type": "integer"
+                              },
+                              "defaultSort": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "type",
+                              "sortDirection",
+                              "displayOrder"
+                            ]
+                          },
+                          "description": "Column definitions for the workflow performance table"
+                        },
+                        "charts": {
+                          "type": "array",
+                          "items": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "funnel-bar"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "displayOrder": {
+                                    "type": "integer"
+                                  },
+                                  "steps": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "statsField": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "rateBasedOn": {
+                                          "type": "string",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label",
+                                        "statsField",
+                                        "rateBasedOn"
+                                      ]
+                                    },
+                                    "minItems": 1
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "type",
+                                  "title",
+                                  "displayOrder",
+                                  "steps"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "breakdown-bar"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "displayOrder": {
+                                    "type": "integer"
+                                  },
+                                  "segments": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "statsField": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "enum": [
+                                            "green",
+                                            "blue",
+                                            "red",
+                                            "gray",
+                                            "orange"
+                                          ]
+                                        },
+                                        "sentiment": {
+                                          "type": "string",
+                                          "enum": [
+                                            "positive",
+                                            "neutral",
+                                            "negative"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label",
+                                        "statsField",
+                                        "color",
+                                        "sentiment"
+                                      ]
+                                    },
+                                    "minItems": 1
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "type",
+                                  "title",
+                                  "displayOrder",
+                                  "segments"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "Chart definitions (funnel, breakdown, etc.)"
+                        },
+                        "resultComponent": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Specialized result component slug (e.g. 'discovered-outlets'), null for standard features"
+                        },
+                        "defaultWorkflowName": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Default workflow name in workflow-service, null if no default"
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "slug",
+                        "name",
+                        "description",
+                        "icon",
+                        "category",
+                        "channel",
+                        "audienceType",
+                        "implemented",
+                        "displayOrder",
+                        "status",
+                        "signature",
+                        "inputs",
+                        "outputs",
+                        "workflowColumns",
+                        "charts",
+                        "resultComponent",
+                        "defaultWorkflowName",
+                        "createdAt",
+                        "updatedAt"
+                      ]
                     }
-                  }
+                  },
+                  "required": [
+                    "feature"
+                  ]
                 }
               }
             }
@@ -2249,39 +3581,48 @@
       },
       "get": {
         "summary": "List all features",
+        "description": "Returns all features, optionally filtered by status, category, channel, audienceType, or implemented flag.",
         "tags": [
           "Features"
         ],
         "parameters": [
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Filter by status: 'active', 'draft', 'deprecated'"
             },
             "required": false,
+            "description": "Filter by status: 'active', 'draft', 'deprecated'",
             "name": "status",
             "in": "query"
           },
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Filter by category: 'sales', 'pr', etc."
             },
             "required": false,
+            "description": "Filter by category: 'sales', 'pr', etc.",
             "name": "category",
             "in": "query"
           },
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Filter by channel: 'email', 'database', etc."
             },
             "required": false,
+            "description": "Filter by channel: 'email', 'database', etc.",
             "name": "channel",
             "in": "query"
           },
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Filter by audience type: 'cold-outreach', 'discovery', etc."
             },
             "required": false,
+            "description": "Filter by audience type: 'cold-outreach', 'discovery', etc.",
             "name": "audienceType",
             "in": "query"
           },
@@ -2291,9 +3632,11 @@
               "enum": [
                 "true",
                 "false"
-              ]
+              ],
+              "description": "Filter by implementation status"
             },
             "required": false,
+            "description": "Filter by implementation status",
             "name": "implemented",
             "in": "query"
           }
@@ -2309,7 +3652,395 @@
                     "features": {
                       "type": "array",
                       "items": {
-                        "nullable": true
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "slug": {
+                            "type": "string",
+                            "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Display name (e.g. 'Outlet Database Discovery')"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string"
+                          },
+                          "category": {
+                            "type": "string",
+                            "description": "Feature category: 'sales', 'pr', 'discovery', etc."
+                          },
+                          "channel": {
+                            "type": "string",
+                            "description": "Communication channel: 'email', 'phone', 'linkedin', 'database', etc."
+                          },
+                          "audienceType": {
+                            "type": "string",
+                            "description": "Form layout type: 'cold-outreach', 'discovery', etc."
+                          },
+                          "implemented": {
+                            "type": "boolean"
+                          },
+                          "displayOrder": {
+                            "type": "integer"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "draft",
+                              "deprecated"
+                            ]
+                          },
+                          "signature": {
+                            "type": "string",
+                            "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+                          },
+                          "inputs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "key": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": [
+                                    "text",
+                                    "textarea",
+                                    "number",
+                                    "select"
+                                  ]
+                                },
+                                "placeholder": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "extractKey": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "options": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "label",
+                                "type",
+                                "placeholder",
+                                "description",
+                                "extractKey"
+                              ]
+                            },
+                            "description": "Input fields for the campaign creation form. Each input has an extractKey that maps to brand-service's extract-fields API for AI pre-fill."
+                          },
+                          "outputs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "key": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": [
+                                    "count",
+                                    "rate",
+                                    "currency",
+                                    "percentage"
+                                  ]
+                                },
+                                "displayOrder": {
+                                  "type": "integer"
+                                },
+                                "showInCampaignRow": {
+                                  "type": "boolean"
+                                },
+                                "showInFunnel": {
+                                  "type": "boolean"
+                                },
+                                "funnelOrder": {
+                                  "type": "integer"
+                                },
+                                "numeratorKey": {
+                                  "type": "string"
+                                },
+                                "denominatorKey": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "label",
+                                "type",
+                                "displayOrder",
+                                "showInCampaignRow",
+                                "showInFunnel"
+                              ]
+                            },
+                            "description": "Output metrics displayed on the dashboard"
+                          },
+                          "workflowColumns": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "key": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "type": {
+                                  "type": "string",
+                                  "enum": [
+                                    "rate",
+                                    "currency",
+                                    "count"
+                                  ]
+                                },
+                                "numeratorKey": {
+                                  "type": "string"
+                                },
+                                "denominatorKey": {
+                                  "type": "string"
+                                },
+                                "sortDirection": {
+                                  "type": "string",
+                                  "enum": [
+                                    "asc",
+                                    "desc"
+                                  ]
+                                },
+                                "displayOrder": {
+                                  "type": "integer"
+                                },
+                                "defaultSort": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "label",
+                                "type",
+                                "sortDirection",
+                                "displayOrder"
+                              ]
+                            },
+                            "description": "Column definitions for the workflow performance table"
+                          },
+                          "charts": {
+                            "type": "array",
+                            "items": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "funnel-bar"
+                                      ]
+                                    },
+                                    "title": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "displayOrder": {
+                                      "type": "integer"
+                                    },
+                                    "steps": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "key": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "label": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "statsField": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "rateBasedOn": {
+                                            "type": "string",
+                                            "nullable": true
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "label",
+                                          "statsField",
+                                          "rateBasedOn"
+                                        ]
+                                      },
+                                      "minItems": 1
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "type",
+                                    "title",
+                                    "displayOrder",
+                                    "steps"
+                                  ]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "type": {
+                                      "type": "string",
+                                      "enum": [
+                                        "breakdown-bar"
+                                      ]
+                                    },
+                                    "title": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "displayOrder": {
+                                      "type": "integer"
+                                    },
+                                    "segments": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "key": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "label": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "statsField": {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          "color": {
+                                            "type": "string",
+                                            "enum": [
+                                              "green",
+                                              "blue",
+                                              "red",
+                                              "gray",
+                                              "orange"
+                                            ]
+                                          },
+                                          "sentiment": {
+                                            "type": "string",
+                                            "enum": [
+                                              "positive",
+                                              "neutral",
+                                              "negative"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "label",
+                                          "statsField",
+                                          "color",
+                                          "sentiment"
+                                        ]
+                                      },
+                                      "minItems": 1
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "type",
+                                    "title",
+                                    "displayOrder",
+                                    "segments"
+                                  ]
+                                }
+                              ]
+                            },
+                            "description": "Chart definitions (funnel, breakdown, etc.)"
+                          },
+                          "resultComponent": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Specialized result component slug (e.g. 'discovered-outlets'), null for standard features"
+                          },
+                          "defaultWorkflowName": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Default workflow name in workflow-service, null if no default"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "updatedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "slug",
+                          "name",
+                          "description",
+                          "icon",
+                          "category",
+                          "channel",
+                          "audienceType",
+                          "implemented",
+                          "displayOrder",
+                          "status",
+                          "signature",
+                          "inputs",
+                          "outputs",
+                          "workflowColumns",
+                          "charts",
+                          "resultComponent",
+                          "defaultWorkflowName",
+                          "createdAt",
+                          "updatedAt"
+                        ]
                       }
                     }
                   },
@@ -2326,15 +4057,18 @@
     "/features/{slug}": {
       "get": {
         "summary": "Get a single feature by slug",
+        "description": "Returns the full feature definition including inputs, outputs, charts, and workflow columns. The inputs array contains extractKey fields that map to brand-service for AI-powered pre-fill.",
         "tags": [
           "Features"
         ],
         "parameters": [
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Feature slug, e.g. 'outlet-database-discovery'"
             },
             "required": true,
+            "description": "Feature slug, e.g. 'outlet-database-discovery'",
             "name": "slug",
             "in": "path"
           }
@@ -2348,9 +4082,400 @@
                   "type": "object",
                   "properties": {
                     "feature": {
-                      "nullable": true
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "slug": {
+                          "type": "string",
+                          "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Display name (e.g. 'Outlet Database Discovery')"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "icon": {
+                          "type": "string"
+                        },
+                        "category": {
+                          "type": "string",
+                          "description": "Feature category: 'sales', 'pr', 'discovery', etc."
+                        },
+                        "channel": {
+                          "type": "string",
+                          "description": "Communication channel: 'email', 'phone', 'linkedin', 'database', etc."
+                        },
+                        "audienceType": {
+                          "type": "string",
+                          "description": "Form layout type: 'cold-outreach', 'discovery', etc."
+                        },
+                        "implemented": {
+                          "type": "boolean"
+                        },
+                        "displayOrder": {
+                          "type": "integer"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "draft",
+                            "deprecated"
+                          ]
+                        },
+                        "signature": {
+                          "type": "string",
+                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+                        },
+                        "inputs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "text",
+                                  "textarea",
+                                  "number",
+                                  "select"
+                                ]
+                              },
+                              "placeholder": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "description": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "extractKey": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "options": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "type",
+                              "placeholder",
+                              "description",
+                              "extractKey"
+                            ]
+                          },
+                          "description": "Input fields for the campaign creation form. Each input has an extractKey that maps to brand-service's extract-fields API for AI pre-fill."
+                        },
+                        "outputs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "count",
+                                  "rate",
+                                  "currency",
+                                  "percentage"
+                                ]
+                              },
+                              "displayOrder": {
+                                "type": "integer"
+                              },
+                              "showInCampaignRow": {
+                                "type": "boolean"
+                              },
+                              "showInFunnel": {
+                                "type": "boolean"
+                              },
+                              "funnelOrder": {
+                                "type": "integer"
+                              },
+                              "numeratorKey": {
+                                "type": "string"
+                              },
+                              "denominatorKey": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "type",
+                              "displayOrder",
+                              "showInCampaignRow",
+                              "showInFunnel"
+                            ]
+                          },
+                          "description": "Output metrics displayed on the dashboard"
+                        },
+                        "workflowColumns": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "rate",
+                                  "currency",
+                                  "count"
+                                ]
+                              },
+                              "numeratorKey": {
+                                "type": "string"
+                              },
+                              "denominatorKey": {
+                                "type": "string"
+                              },
+                              "sortDirection": {
+                                "type": "string",
+                                "enum": [
+                                  "asc",
+                                  "desc"
+                                ]
+                              },
+                              "displayOrder": {
+                                "type": "integer"
+                              },
+                              "defaultSort": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "type",
+                              "sortDirection",
+                              "displayOrder"
+                            ]
+                          },
+                          "description": "Column definitions for the workflow performance table"
+                        },
+                        "charts": {
+                          "type": "array",
+                          "items": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "funnel-bar"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "displayOrder": {
+                                    "type": "integer"
+                                  },
+                                  "steps": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "statsField": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "rateBasedOn": {
+                                          "type": "string",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label",
+                                        "statsField",
+                                        "rateBasedOn"
+                                      ]
+                                    },
+                                    "minItems": 1
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "type",
+                                  "title",
+                                  "displayOrder",
+                                  "steps"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "breakdown-bar"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "displayOrder": {
+                                    "type": "integer"
+                                  },
+                                  "segments": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "statsField": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "enum": [
+                                            "green",
+                                            "blue",
+                                            "red",
+                                            "gray",
+                                            "orange"
+                                          ]
+                                        },
+                                        "sentiment": {
+                                          "type": "string",
+                                          "enum": [
+                                            "positive",
+                                            "neutral",
+                                            "negative"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label",
+                                        "statsField",
+                                        "color",
+                                        "sentiment"
+                                      ]
+                                    },
+                                    "minItems": 1
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "type",
+                                  "title",
+                                  "displayOrder",
+                                  "segments"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "Chart definitions (funnel, breakdown, etc.)"
+                        },
+                        "resultComponent": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Specialized result component slug (e.g. 'discovered-outlets'), null for standard features"
+                        },
+                        "defaultWorkflowName": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Default workflow name in workflow-service, null if no default"
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "slug",
+                        "name",
+                        "description",
+                        "icon",
+                        "category",
+                        "channel",
+                        "audienceType",
+                        "implemented",
+                        "displayOrder",
+                        "status",
+                        "signature",
+                        "inputs",
+                        "outputs",
+                        "workflowColumns",
+                        "charts",
+                        "resultComponent",
+                        "defaultWorkflowName",
+                        "createdAt",
+                        "updatedAt"
+                      ]
                     }
-                  }
+                  },
+                  "required": [
+                    "feature"
+                  ]
                 }
               }
             }
@@ -2377,6 +4502,7 @@
       },
       "put": {
         "summary": "Update a single feature by slug",
+        "description": "Partial update — only provided fields are changed. If name changes, slug is re-generated.",
         "tags": [
           "Features"
         ],
@@ -2752,9 +4878,400 @@
                   "type": "object",
                   "properties": {
                     "feature": {
-                      "nullable": true
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "slug": {
+                          "type": "string",
+                          "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Display name (e.g. 'Outlet Database Discovery')"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "icon": {
+                          "type": "string"
+                        },
+                        "category": {
+                          "type": "string",
+                          "description": "Feature category: 'sales', 'pr', 'discovery', etc."
+                        },
+                        "channel": {
+                          "type": "string",
+                          "description": "Communication channel: 'email', 'phone', 'linkedin', 'database', etc."
+                        },
+                        "audienceType": {
+                          "type": "string",
+                          "description": "Form layout type: 'cold-outreach', 'discovery', etc."
+                        },
+                        "implemented": {
+                          "type": "boolean"
+                        },
+                        "displayOrder": {
+                          "type": "integer"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "draft",
+                            "deprecated"
+                          ]
+                        },
+                        "signature": {
+                          "type": "string",
+                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+                        },
+                        "inputs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "text",
+                                  "textarea",
+                                  "number",
+                                  "select"
+                                ]
+                              },
+                              "placeholder": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "description": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "extractKey": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "options": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "type",
+                              "placeholder",
+                              "description",
+                              "extractKey"
+                            ]
+                          },
+                          "description": "Input fields for the campaign creation form. Each input has an extractKey that maps to brand-service's extract-fields API for AI pre-fill."
+                        },
+                        "outputs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "count",
+                                  "rate",
+                                  "currency",
+                                  "percentage"
+                                ]
+                              },
+                              "displayOrder": {
+                                "type": "integer"
+                              },
+                              "showInCampaignRow": {
+                                "type": "boolean"
+                              },
+                              "showInFunnel": {
+                                "type": "boolean"
+                              },
+                              "funnelOrder": {
+                                "type": "integer"
+                              },
+                              "numeratorKey": {
+                                "type": "string"
+                              },
+                              "denominatorKey": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "type",
+                              "displayOrder",
+                              "showInCampaignRow",
+                              "showInFunnel"
+                            ]
+                          },
+                          "description": "Output metrics displayed on the dashboard"
+                        },
+                        "workflowColumns": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "rate",
+                                  "currency",
+                                  "count"
+                                ]
+                              },
+                              "numeratorKey": {
+                                "type": "string"
+                              },
+                              "denominatorKey": {
+                                "type": "string"
+                              },
+                              "sortDirection": {
+                                "type": "string",
+                                "enum": [
+                                  "asc",
+                                  "desc"
+                                ]
+                              },
+                              "displayOrder": {
+                                "type": "integer"
+                              },
+                              "defaultSort": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "type",
+                              "sortDirection",
+                              "displayOrder"
+                            ]
+                          },
+                          "description": "Column definitions for the workflow performance table"
+                        },
+                        "charts": {
+                          "type": "array",
+                          "items": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "funnel-bar"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "displayOrder": {
+                                    "type": "integer"
+                                  },
+                                  "steps": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "statsField": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "rateBasedOn": {
+                                          "type": "string",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label",
+                                        "statsField",
+                                        "rateBasedOn"
+                                      ]
+                                    },
+                                    "minItems": 1
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "type",
+                                  "title",
+                                  "displayOrder",
+                                  "steps"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "breakdown-bar"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "displayOrder": {
+                                    "type": "integer"
+                                  },
+                                  "segments": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "statsField": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "enum": [
+                                            "green",
+                                            "blue",
+                                            "red",
+                                            "gray",
+                                            "orange"
+                                          ]
+                                        },
+                                        "sentiment": {
+                                          "type": "string",
+                                          "enum": [
+                                            "positive",
+                                            "neutral",
+                                            "negative"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label",
+                                        "statsField",
+                                        "color",
+                                        "sentiment"
+                                      ]
+                                    },
+                                    "minItems": 1
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "type",
+                                  "title",
+                                  "displayOrder",
+                                  "segments"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "Chart definitions (funnel, breakdown, etc.)"
+                        },
+                        "resultComponent": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Specialized result component slug (e.g. 'discovered-outlets'), null for standard features"
+                        },
+                        "defaultWorkflowName": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Default workflow name in workflow-service, null if no default"
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "slug",
+                        "name",
+                        "description",
+                        "icon",
+                        "category",
+                        "channel",
+                        "audienceType",
+                        "implemented",
+                        "displayOrder",
+                        "status",
+                        "signature",
+                        "inputs",
+                        "outputs",
+                        "workflowColumns",
+                        "charts",
+                        "resultComponent",
+                        "defaultWorkflowName",
+                        "createdAt",
+                        "updatedAt"
+                      ]
                     }
-                  }
+                  },
+                  "required": [
+                    "feature"
+                  ]
                 }
               }
             }
@@ -2822,15 +5339,18 @@
     "/features/{slug}/inputs": {
       "get": {
         "summary": "Get input definitions for a feature",
+        "description": "Returns the input schema for a feature. Each input has:\n- **key**: machine-readable identifier used in prefill responses and workflow inputMapping\n- **extractKey**: the key passed to brand-service's POST /brands/{brandId}/extract-fields for AI extraction\n- **description**: rich context used by the LLM during extraction — describes what a good value looks like\n\n**Workflow integration**: Use these inputs to build extract-fields requests, or call POST /features/{slug}/prefill which handles extraction automatically and returns values keyed by input key.\n\n**Example** for 'outlet-database-discovery':\n```json\n{\n  \"slug\": \"outlet-database-discovery\",\n  \"name\": \"Outlet Database Discovery\",\n  \"inputs\": [\n    { \"key\": \"industry\", \"extractKey\": \"industry\", \"type\": \"text\", ... },\n    { \"key\": \"angles\", \"extractKey\": \"suggestedAngles\", \"type\": \"text\", ... },\n    { \"key\": \"targetGeo\", \"extractKey\": \"suggestedGeo\", \"type\": \"text\", ... }\n  ]\n}\n```",
         "tags": [
           "Features"
         ],
         "parameters": [
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Feature slug, e.g. 'outlet-database-discovery'"
             },
             "required": true,
+            "description": "Feature slug, e.g. 'outlet-database-discovery'",
             "name": "slug",
             "in": "path"
           }
@@ -2844,10 +5364,12 @@
                   "type": "object",
                   "properties": {
                     "slug": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Feature slug"
                     },
                     "name": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Feature display name"
                     },
                     "inputs": {
                       "type": "array",
@@ -2898,7 +5420,8 @@
                           "description",
                           "extractKey"
                         ]
-                      }
+                      },
+                      "description": "Input definitions. Each input's extractKey maps to a brand-service extract-fields key. Use these extractKeys when calling POST /brands/{brandId}/extract-fields, or call POST /features/{slug}/prefill to let the service handle extraction automatically."
                     }
                   },
                   "required": [
@@ -2934,15 +5457,18 @@
     "/features/{slug}/prefill": {
       "post": {
         "summary": "Pre-fill input values for a feature from brand data",
+        "description": "Takes a brandId, looks up the feature's inputs, calls brand-service to extract values via AI (cached 30 days per field), and returns pre-filled values mapped to each input key.\n\n**How it works internally**:\n1. Reads the feature's inputs[].extractKey to build the extract-fields request\n2. Calls brand-service POST /brands/{brandId}/extract-fields with those keys\n3. Maps results back to input keys and returns a named object (not a positional array)\n\n**format=text** (recommended for workflows): Returns `{ prefilled: { industry: 'SaaS', angles: 'Series B funding', targetGeo: 'US' } }` — flat string values ready to pass directly as workflow inputs or form values.\n\n**format=full** (default): Returns `{ prefilled: { industry: { value: 'SaaS', cached: true, sourceUrls: [...] } } }` — includes cache status and source URLs for UI display.\n\n**Workflow pattern**: In a workflow DAG, use this endpoint instead of calling brand-service extract-fields directly. This ensures the extracted fields always match what the feature expects, with no index-based mapping fragility:\n```\nprefill-node → downstream-service\n  inputMapping: { body.industry: '$ref:prefill-node.output.prefilled.industry' }\n```",
         "tags": [
           "Features"
         ],
         "parameters": [
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Feature slug, e.g. 'outlet-database-discovery'"
             },
             "required": true,
+            "description": "Feature slug, e.g. 'outlet-database-discovery'",
             "name": "slug",
             "in": "path"
           },
@@ -2952,9 +5478,11 @@
               "enum": [
                 "text",
                 "full"
-              ]
+              ],
+              "description": "Response format: 'text' for flat strings (best for workflows), 'full' for values + metadata (default)"
             },
             "required": false,
+            "description": "Response format: 'text' for flat strings (best for workflows), 'full' for values + metadata (default)",
             "name": "format",
             "in": "query"
           }
@@ -2979,17 +5507,127 @@
         },
         "responses": {
           "200": {
-            "description": "Pre-filled values",
+            "description": "Pre-filled values. Response shape depends on ?format= query param.",
             "content": {
               "application/json": {
                 "schema": {
-                  "nullable": true
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "slug": {
+                          "type": "string",
+                          "description": "Feature slug"
+                        },
+                        "brandId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "description": "Brand that was used for pre-fill"
+                        },
+                        "format": {
+                          "type": "string",
+                          "enum": [
+                            "text"
+                          ]
+                        },
+                        "prefilled": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "description": "Map of input key → flattened text value (or null if extraction failed). Keys match the feature's inputs[].key. Example: { industry: 'Enterprise SaaS', angles: 'Series B funding, AI product launch', targetGeo: 'US and UK' }"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "brandId",
+                        "format",
+                        "prefilled"
+                      ],
+                      "description": "Pre-filled values as flat strings, ready for form inputs or workflow inputMapping"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "slug": {
+                          "type": "string",
+                          "description": "Feature slug"
+                        },
+                        "brandId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "description": "Brand that was used for pre-fill"
+                        },
+                        "format": {
+                          "type": "string",
+                          "enum": [
+                            "full"
+                          ]
+                        },
+                        "prefilled": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "nullable": true,
+                                "description": "Extracted value — can be a string, array, or object depending on the field"
+                              },
+                              "cached": {
+                                "type": "boolean",
+                                "description": "Whether the value was served from cache (brand-service caches extractions for 30 days)"
+                              },
+                              "sourceUrls": {
+                                "type": "array",
+                                "nullable": true,
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "URLs from the brand's website that were used to extract this value"
+                              }
+                            },
+                            "required": [
+                              "cached",
+                              "sourceUrls"
+                            ]
+                          },
+                          "description": "Map of input key → full extraction result. Keys match the feature's inputs[].key. Example: { industry: { value: 'Enterprise SaaS', cached: true, sourceUrls: ['https://example.com/about'] } }"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "brandId",
+                        "format",
+                        "prefilled"
+                      ],
+                      "description": "Pre-filled values with metadata (cache status, source URLs)"
+                    }
+                  ]
                 }
               }
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Brand-service unavailable or extraction failed",
             "content": {
               "application/json": {
                 "schema": {
