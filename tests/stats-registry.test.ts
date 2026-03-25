@@ -27,6 +27,18 @@ describe("STATS_REGISTRY", () => {
     expect(VALID_STATS_KEYS.has("completedRuns")).toBe(true);
   });
 
+  it("contains outlets stats keys", () => {
+    expect(VALID_STATS_KEYS.has("outletsDiscovered")).toBe(true);
+    expect(VALID_STATS_KEYS.has("avgRelevanceScore")).toBe(true);
+    expect(VALID_STATS_KEYS.has("searchQueriesUsed")).toBe(true);
+  });
+
+  it("outlets keys have source 'outlets'", () => {
+    expect(STATS_REGISTRY.outletsDiscovered).toMatchObject({ kind: "raw", source: "outlets" });
+    expect(STATS_REGISTRY.avgRelevanceScore).toMatchObject({ kind: "raw", source: "outlets" });
+    expect(STATS_REGISTRY.searchQueriesUsed).toMatchObject({ kind: "raw", source: "outlets" });
+  });
+
   it("contains derived rate keys", () => {
     expect(VALID_STATS_KEYS.has("openRate")).toBe(true);
     expect(VALID_STATS_KEYS.has("clickRate")).toBe(true);
