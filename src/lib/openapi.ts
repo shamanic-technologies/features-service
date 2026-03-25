@@ -133,6 +133,12 @@ registry.registerPath({
   },
 });
 
+registry.registerComponent("securitySchemes", "ApiKeyAuth", {
+  type: "apiKey",
+  in: "header",
+  name: "x-api-key",
+});
+
 const generator = new OpenApiGeneratorV3(registry.definitions);
 
 export const openApiDocument = generator.generateDocument({
@@ -144,9 +150,4 @@ export const openApiDocument = generator.generateDocument({
   },
   servers: [{ url: "/" }],
   security: [{ ApiKeyAuth: [] }],
-  components: {
-    securitySchemes: {
-      ApiKeyAuth: { type: "apiKey", in: "header", name: "x-api-key" },
-    },
-  },
 });
