@@ -179,7 +179,7 @@ function mergeEmailChannels(data: Record<string, unknown>): Record<string, numbe
     "emailsContacted", "emailsSent", "emailsDelivered", "emailsOpened",
     "emailsClicked", "emailsReplied", "emailsBounced", "recipients",
     "repliesWillingToMeet", "repliesInterested", "repliesNotInterested",
-    "repliesOutOfOffice", "repliesUnsubscribe",
+    "repliesOutOfOffice", "repliesUnsubscribe", "repliesMoreInfo", "repliesWrongContact",
   ];
 
   const broadcast = (data.broadcast ?? {}) as Record<string, number>;
@@ -467,6 +467,47 @@ function extractOutletFields(data: Record<string, unknown>): Record<string, numb
 }
 
 /**
+ * Fetch active campaign count from campaign-service.
+ * Campaign-service /stats doesn't support groupBy, so this returns a flat count.
+ */
+async function fetchActiveCampaigns(
+  orgId: string,
+  filters: Record<string, string>,
+  identity: { userId: string; runId: string },
+): Promise<number> {
+  const campaignUrl = process.env.CAMPAIGN_SERVICE_URL;
+  const campaignKey = process.env.CAMPAIGN_SERVICE_API_KEY;
+  if (!campaignUrl || !campaignKey) return 0;
+
+  const params = new URLSearchParams({ orgId });
+  if (filters.brandId) params.set("brandId", filters.brandId);
+  if (filters.campaignId) params.set("campaignId", filters.campaignId);
+
+  const url = `${campaignUrl}/stats?${params}`;
+  const response = await fetch(url, {
+    headers: {
+      "x-api-key": campaignKey,
+      "x-org-id": orgId,
+      "x-user-id": identity.userId,
+      "x-run-id": identity.runId,
+    },
+  });
+
+  if (!response.ok) {
+    console.error(`[stats] campaign-service /stats failed: ${response.status}`);
+    return 0;
+  }
+
+  const data = await response.json() as {
+    stats: {
+      byStatus: Record<string, number>;
+    };
+  };
+
+  return data.stats.byStatus?.active ?? data.stats.byStatus?.running ?? 0;
+}
+
+/**
  * Compute derived stats from raw values.
  */
 function computeDerivedStats(
@@ -498,11 +539,14 @@ function computeDerivedStats(
 /**
  * Build system stats from raw data.
  */
-function buildSystemStats(runsData: { totalCostInUsdCents: number; completedRuns: number } | undefined): SystemStats {
+function buildSystemStats(
+  runsData: { totalCostInUsdCents: number; completedRuns: number } | undefined,
+  activeCampaigns = 0,
+): SystemStats {
   return {
     totalCostInUsdCents: runsData?.totalCostInUsdCents ?? 0,
     completedRuns: runsData?.completedRuns ?? 0,
-    activeCampaigns: 0, // TODO: call campaign-service
+    activeCampaigns,
     firstRunAt: null, // TODO: runs-service needs min/max started_at
     lastRunAt: null,
   };
@@ -561,11 +605,12 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     // runs-service: pass all lineage slugs to aggregate across the full chain
     const identity = { userId, runId };
     const pipelineKeys = collectPipelineKeys(requiredKeys);
-    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap] = await Promise.all([
+    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, lineageSlugs, identity) : Promise.resolve(new Map<string, { totalCostInUsdCents: number; completedRuns: number }>()),
       sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       pipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, lineageSlugs, pipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      fetchActiveCampaigns(orgId, filters, identity),
     ]);
 
     if (!groupBy) {
@@ -585,7 +630,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
 
       return res.json({
         featureSlug,
-        systemStats: buildSystemStats(runsStats),
+        systemStats: buildSystemStats(runsStats, activeCampaigns),
         stats: computeDerivedStats(rawStats, requiredKeys),
       });
     }
@@ -621,7 +666,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       };
 
       const group: StatsGroup = {
-        systemStats: buildSystemStats(runsStats),
+        systemStats: buildSystemStats(runsStats, activeCampaigns),
         stats: computeDerivedStats(rawStats, requiredKeys),
       };
 
@@ -636,7 +681,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     res.json({
       featureSlug,
       groupBy,
-      systemStats: buildSystemStats({ totalCostInUsdCents: totalCost, completedRuns: totalRuns }),
+      systemStats: buildSystemStats({ totalCostInUsdCents: totalCost, completedRuns: totalRuns }, activeCampaigns),
       groups,
     });
   } catch (error) {
@@ -680,11 +725,12 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
 
     const identity = { userId, runId };
     const globalPipelineKeys = collectPipelineKeys(allKeys);
-    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap] = await Promise.all([
+    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchRunsStats(orgId, groupBy, filters, undefined, identity),
       sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       globalPipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, undefined, globalPipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      fetchActiveCampaigns(orgId, filters, identity),
     ]);
 
     if (!groupBy) {
@@ -703,7 +749,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       };
 
       return res.json({
-        systemStats: buildSystemStats(runsStats),
+        systemStats: buildSystemStats(runsStats, activeCampaigns),
         stats: computeDerivedStats(rawStats, allKeys),
       });
     }
@@ -738,7 +784,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       };
 
       const group: StatsGroup = {
-        systemStats: buildSystemStats(runsStats),
+        systemStats: buildSystemStats(runsStats, activeCampaigns),
         stats: computeDerivedStats(rawStats, allKeys),
       };
 
@@ -751,7 +797,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
 
     res.json({
       groupBy: groupByParam,
-      systemStats: buildSystemStats({ totalCostInUsdCents: totalCost, completedRuns: totalRuns }),
+      systemStats: buildSystemStats({ totalCostInUsdCents: totalCost, completedRuns: totalRuns }, activeCampaigns),
       groups,
     });
   } catch (error) {

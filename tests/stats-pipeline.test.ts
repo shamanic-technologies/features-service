@@ -290,3 +290,149 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     expect(campB.stats.emailsGenerated).toBeNull(); // no data for camp-b
   });
 });
+
+describe("repliesMoreInfo and repliesWrongContact extraction", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  const PR_FEATURE_WITH_REPLIES = {
+    id: "feat-2",
+    slug: "pr-cold-email-outreach",
+    name: "PR Cold Email Outreach",
+    status: "active",
+    forkedFrom: null,
+    upgradedTo: null,
+    inputs: [],
+    outputs: [
+      { key: "emailsSent", displayOrder: 1 },
+    ],
+    charts: [
+      {
+        key: "replyBreakdown",
+        type: "breakdown-bar",
+        title: "Reply Breakdown",
+        displayOrder: 1,
+        segments: [
+          { key: "repliesMoreInfo", color: "blue", sentiment: "positive" },
+          { key: "repliesWrongContact", color: "orange", sentiment: "negative" },
+        ],
+      },
+    ],
+    entityTypes: [],
+    workflows: [],
+  };
+
+  beforeEach(() => {
+    fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(PR_FEATURE_WITH_REPLIES as any);
+    vi.mocked(db.query.features.findMany).mockResolvedValue([PR_FEATURE_WITH_REPLIES] as any);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("extracts repliesMoreInfo and repliesWrongContact from email-gateway broadcast stats", async () => {
+    fetchSpy.mockImplementation((url: string) => {
+      if (url.includes("/stats?")) {
+        // email-gateway response
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            broadcast: {
+              emailsSent: 100,
+              repliesMoreInfo: 8,
+              repliesWrongContact: 3,
+            },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ groups: [] }),
+      });
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(statsRoutes);
+
+    const res = await request(app)
+      .get("/features/pr-cold-email-outreach/stats")
+      .set("x-api-key", "test-key")
+      .set("x-org-id", "org-1")
+      .set("x-user-id", "user-1")
+      .set("x-run-id", "run-1")
+      .expect(200);
+
+    expect(res.body.stats.repliesMoreInfo).toBe(8);
+    expect(res.body.stats.repliesWrongContact).toBe(3);
+  });
+});
+
+describe("activeCampaigns in systemStats", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.stubEnv("CAMPAIGN_SERVICE_URL", "http://campaign-service");
+    vi.stubEnv("CAMPAIGN_SERVICE_API_KEY", "campaign-key");
+
+    const feature = {
+      id: "feat-1",
+      slug: "sales-cold-email-outreach",
+      name: "Sales Cold Email Outreach",
+      status: "active",
+      forkedFrom: null,
+      upgradedTo: null,
+      inputs: [],
+      outputs: [{ key: "emailsSent", displayOrder: 1 }],
+      charts: [],
+      entityTypes: [],
+      workflows: [],
+    };
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(feature as any);
+    vi.mocked(db.query.features.findMany).mockResolvedValue([feature] as any);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches active campaign count from campaign-service and includes in systemStats", async () => {
+    fetchSpy.mockImplementation((url: string) => {
+      if (url.includes("campaign-service/stats")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            stats: {
+              totalCampaigns: 10,
+              byStatus: { active: 5, paused: 3, completed: 2 },
+              budgetTotalUsd: null,
+              maxLeadsTotal: null,
+            },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ groups: [] }),
+      });
+    });
+
+    const app = createApp();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/stats")
+      .set("x-api-key", "test-key")
+      .set("x-org-id", "org-1")
+      .set("x-user-id", "user-1")
+      .set("x-run-id", "run-1")
+      .expect(200);
+
+    expect(res.body.systemStats.activeCampaigns).toBe(5);
+  });
+});
