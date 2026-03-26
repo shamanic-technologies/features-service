@@ -28,7 +28,8 @@ const errorResponse = z.object({ error: z.string() });
 const featureResponseSchema = z.object({
   id: z.string().uuid(),
   slug: z.string().describe("Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"),
-  name: z.string().describe("Display name (e.g. 'Outlet Database Discovery')"),
+  name: z.string().describe("Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"),
+  displayName: z.string().describe("Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."),
   description: z.string(),
   icon: z.string().describe("Lucide icon name (e.g. 'envelope', 'globe', 'megaphone'). Use as <LucideIcon name={icon} /> or look up at lucide.dev/icons."),
   category: z.string().describe("Feature category: 'sales', 'pr', 'discovery', etc."),
@@ -42,6 +43,8 @@ const featureResponseSchema = z.object({
   outputs: z.array(featureOutputSchema).describe("Output metrics — stats keys from the registry with display config. Use GET /stats/registry for labels and types."),
   charts: z.array(featureChartSchema).describe("Chart definitions (funnel-bar, breakdown-bar). At least one of each required."),
   entities: z.array(z.string()).describe("Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"),
+  forkedFrom: z.string().uuid().nullable().describe("If this feature was forked from another, the ID of the original."),
+  upgradedTo: z.string().uuid().nullable().describe("If deprecated, the ID of the replacement feature."),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -195,22 +198,38 @@ registry.registerPath({
   },
 });
 
-// ── PUT /features/:slug — update single ──────────────────────────────────
+// ── PUT /features/:slug — fork-on-write ──────────────────────────────────
+
+const forkResponseSchema = z.object({
+  feature: featureResponseSchema,
+  forkedFrom: z.object({
+    id: z.string().uuid(),
+    slug: z.string(),
+    status: z.enum(["active", "draft", "deprecated"]),
+    upgradedTo: z.string().uuid(),
+  }),
+});
 
 registry.registerPath({
   method: "put",
   path: "/features/{slug}",
-  summary: "Update a single feature by slug",
+  summary: "Update or fork a feature (fork-on-write)",
+  description:
+    "If only metadata changes (same signature) → updates in-place and returns 200. " +
+    "If inputs or outputs change (different signature) → creates a new feature (fork), " +
+    "deprecates the original, and returns 201. The fork inherits the displayName " +
+    "of the original. The original's upgradedTo points to the fork.",
   tags: ["Features"],
   request: {
     params: z.object({ slug: z.string() }),
     body: { content: { "application/json": { schema: updateFeatureSchema } } },
   },
   responses: {
-    200: { description: "Updated feature", content: { "application/json": { schema: z.object({ feature: featureResponseSchema }) } } },
+    200: { description: "Updated in-place (metadata only, same signature)", content: { "application/json": { schema: z.object({ feature: featureResponseSchema }) } } },
+    201: { description: "Forked (new feature created, original deprecated)", content: { "application/json": { schema: forkResponseSchema } } },
     400: { description: "Validation error", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Not found", content: { "application/json": { schema: errorResponse } } },
-    409: { description: "Conflict", content: { "application/json": { schema: z.object({ error: z.string(), existingSlug: z.string().optional() }) } } },
+    409: { description: "A feature with the same input/output signature already exists", content: { "application/json": { schema: z.object({ error: z.string(), existingSlug: z.string().optional() }) } } },
   },
 });
 
@@ -333,6 +352,12 @@ export const openApiDocument = generator.generateDocument({
       "Manages feature definitions and computes output stats.\n\n" +
       "## Key Concepts\n\n" +
       "**Features** define what campaigns can do: inputs (form), outputs (metrics), charts (funnel/breakdown), and entities (detail tabs).\n\n" +
+      "**Fork-on-write** — Features are immutable once created. `PUT /features/:slug` uses fork-on-write semantics: " +
+      "metadata-only changes (same signature) update in-place (200), but changes to inputs/outputs (different signature) " +
+      "create a new feature (201) and deprecate the original. The fork inherits the `displayName` of the original. " +
+      "Use `forkedFrom` and `upgradedTo` to traverse the lineage chain.\n\n" +
+      "**displayName vs name** — `displayName` is the human-readable label, stable across forks. " +
+      "`name` is the machine identifier that changes on each fork (e.g. 'Sales Cold Email Outreach v2').\n\n" +
       "**Stats Registry** (`GET /stats/registry`) — the finite universe of known stats keys. " +
       "Each key has a label and type (count, rate, currency). Features reference these keys in outputs and charts.\n\n" +
       "**Stats Endpoints** — features-service computes stats by calling downstream services " +

@@ -74,8 +74,11 @@ export const features = pgTable(
     /** Unique machine-readable identifier, auto-generated from name (e.g. "sales-cold-email-v2") */
     slug: text("slug").notNull().unique(),
 
-    /** Display name, e.g. "Sales Cold Email v2" — must be unique */
+    /** Machine name — unique, changes on fork (e.g. "Sales Cold Email Outreach v2") */
     name: text("name").notNull().unique(),
+
+    /** Human-readable display name — stable across forks (e.g. "Sales Cold Email Outreach") */
+    displayName: text("display_name").notNull(),
 
     /** Short description of what this feature does */
     description: text("description").notNull(),
@@ -119,6 +122,12 @@ export const features = pgTable(
 
     /** Entity types shown in campaign detail sidebar (e.g. ["leads", "companies", "emails"]) */
     entities: jsonb("entities").notNull().$type<string[]>(),
+
+    /** If this feature was forked from another, the ID of the original */
+    forkedFrom: uuid("forked_from"),
+
+    /** If deprecated, the ID of the replacement feature */
+    upgradedTo: uuid("upgraded_to"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

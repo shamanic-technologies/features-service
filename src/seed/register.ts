@@ -24,6 +24,7 @@ export async function registerSeedFeatures(): Promise<void> {
 
     const values = {
       name: f.name,
+      displayName: f.name, // displayName = the human-readable name
       description: f.description,
       icon: f.icon,
       category: f.category,

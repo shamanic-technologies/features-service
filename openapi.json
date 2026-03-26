@@ -3,7 +3,7 @@
   "info": {
     "title": "Features Service API",
     "version": "2.0.0",
-    "description": "Manages feature definitions and computes output stats.\n\n## Key Concepts\n\n**Features** define what campaigns can do: inputs (form), outputs (metrics), charts (funnel/breakdown), and entities (detail tabs).\n\n**Stats Registry** (`GET /stats/registry`) — the finite universe of known stats keys. Each key has a label and type (count, rate, currency). Features reference these keys in outputs and charts.\n\n**Stats Endpoints** — features-service computes stats by calling downstream services (email-gateway, runs-service, outlets-service) and returns computed values.\n\n## Feature Definition\n\n```typescript\n{\n  inputs:   [{ key, label, type, ... }],           // campaign form\n  outputs:  [{ key, displayOrder }],                // metrics (validated against registry)\n  charts:   [{ type: \"funnel-bar\", steps: [...] }], // visualizations\n  entities: [\"leads\", \"companies\", \"emails\"],       // campaign detail tabs\n}\n```"
+    "description": "Manages feature definitions and computes output stats.\n\n## Key Concepts\n\n**Features** define what campaigns can do: inputs (form), outputs (metrics), charts (funnel/breakdown), and entities (detail tabs).\n\n**Fork-on-write** — Features are immutable once created. `PUT /features/:slug` uses fork-on-write semantics: metadata-only changes (same signature) update in-place (200), but changes to inputs/outputs (different signature) create a new feature (201) and deprecate the original. The fork inherits the `displayName` of the original. Use `forkedFrom` and `upgradedTo` to traverse the lineage chain.\n\n**displayName vs name** — `displayName` is the human-readable label, stable across forks. `name` is the machine identifier that changes on each fork (e.g. 'Sales Cold Email Outreach v2').\n\n**Stats Registry** (`GET /stats/registry`) — the finite universe of known stats keys. Each key has a label and type (count, rate, currency). Features reference these keys in outputs and charts.\n\n**Stats Endpoints** — features-service computes stats by calling downstream services (email-gateway, runs-service, outlets-service) and returns computed values.\n\n## Feature Definition\n\n```typescript\n{\n  inputs:   [{ key, label, type, ... }],           // campaign form\n  outputs:  [{ key, displayOrder }],                // metrics (validated against registry)\n  charts:   [{ type: \"funnel-bar\", steps: [...] }], // visualizations\n  entities: [\"leads\", \"companies\", \"emails\"],       // campaign detail tabs\n}\n```"
   },
   "servers": [
     {
@@ -1015,7 +1015,11 @@
           },
           "name": {
             "type": "string",
-            "description": "Display name (e.g. 'Outlet Database Discovery')"
+            "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
           },
           "description": {
             "type": "string"
@@ -1261,6 +1265,18 @@
             },
             "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
           },
+          "forkedFrom": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid",
+            "description": "If this feature was forked from another, the ID of the original."
+          },
+          "upgradedTo": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid",
+            "description": "If deprecated, the ID of the replacement feature."
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
@@ -1274,6 +1290,7 @@
           "id",
           "slug",
           "name",
+          "displayName",
           "description",
           "icon",
           "category",
@@ -1287,6 +1304,8 @@
           "outputs",
           "charts",
           "entities",
+          "forkedFrom",
+          "upgradedTo",
           "createdAt",
           "updatedAt"
         ]
@@ -2113,7 +2132,11 @@
                           },
                           "name": {
                             "type": "string",
-                            "description": "Display name (e.g. 'Outlet Database Discovery')"
+                            "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+                          },
+                          "displayName": {
+                            "type": "string",
+                            "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
                           },
                           "description": {
                             "type": "string"
@@ -2359,6 +2382,18 @@
                             },
                             "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
                           },
+                          "forkedFrom": {
+                            "type": "string",
+                            "nullable": true,
+                            "format": "uuid",
+                            "description": "If this feature was forked from another, the ID of the original."
+                          },
+                          "upgradedTo": {
+                            "type": "string",
+                            "nullable": true,
+                            "format": "uuid",
+                            "description": "If deprecated, the ID of the replacement feature."
+                          },
                           "createdAt": {
                             "type": "string",
                             "format": "date-time"
@@ -2372,6 +2407,7 @@
                           "id",
                           "slug",
                           "name",
+                          "displayName",
                           "description",
                           "icon",
                           "category",
@@ -2385,6 +2421,8 @@
                           "outputs",
                           "charts",
                           "entities",
+                          "forkedFrom",
+                          "upgradedTo",
                           "createdAt",
                           "updatedAt"
                         ]
@@ -2721,7 +2759,11 @@
                         },
                         "name": {
                           "type": "string",
-                          "description": "Display name (e.g. 'Outlet Database Discovery')"
+                          "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+                        },
+                        "displayName": {
+                          "type": "string",
+                          "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
                         },
                         "description": {
                           "type": "string"
@@ -2967,6 +3009,18 @@
                           },
                           "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
                         },
+                        "forkedFrom": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "uuid",
+                          "description": "If this feature was forked from another, the ID of the original."
+                        },
+                        "upgradedTo": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "uuid",
+                          "description": "If deprecated, the ID of the replacement feature."
+                        },
                         "createdAt": {
                           "type": "string",
                           "format": "date-time"
@@ -2980,6 +3034,7 @@
                         "id",
                         "slug",
                         "name",
+                        "displayName",
                         "description",
                         "icon",
                         "category",
@@ -2993,6 +3048,8 @@
                         "outputs",
                         "charts",
                         "entities",
+                        "forkedFrom",
+                        "upgradedTo",
                         "createdAt",
                         "updatedAt"
                       ]
@@ -3120,7 +3177,11 @@
                           },
                           "name": {
                             "type": "string",
-                            "description": "Display name (e.g. 'Outlet Database Discovery')"
+                            "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+                          },
+                          "displayName": {
+                            "type": "string",
+                            "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
                           },
                           "description": {
                             "type": "string"
@@ -3366,6 +3427,18 @@
                             },
                             "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
                           },
+                          "forkedFrom": {
+                            "type": "string",
+                            "nullable": true,
+                            "format": "uuid",
+                            "description": "If this feature was forked from another, the ID of the original."
+                          },
+                          "upgradedTo": {
+                            "type": "string",
+                            "nullable": true,
+                            "format": "uuid",
+                            "description": "If deprecated, the ID of the replacement feature."
+                          },
                           "createdAt": {
                             "type": "string",
                             "format": "date-time"
@@ -3379,6 +3452,7 @@
                           "id",
                           "slug",
                           "name",
+                          "displayName",
                           "description",
                           "icon",
                           "category",
@@ -3392,6 +3466,8 @@
                           "outputs",
                           "charts",
                           "entities",
+                          "forkedFrom",
+                          "upgradedTo",
                           "createdAt",
                           "updatedAt"
                         ]
@@ -3445,7 +3521,11 @@
                         },
                         "name": {
                           "type": "string",
-                          "description": "Display name (e.g. 'Outlet Database Discovery')"
+                          "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+                        },
+                        "displayName": {
+                          "type": "string",
+                          "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
                         },
                         "description": {
                           "type": "string"
@@ -3691,6 +3771,18 @@
                           },
                           "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
                         },
+                        "forkedFrom": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "uuid",
+                          "description": "If this feature was forked from another, the ID of the original."
+                        },
+                        "upgradedTo": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "uuid",
+                          "description": "If deprecated, the ID of the replacement feature."
+                        },
                         "createdAt": {
                           "type": "string",
                           "format": "date-time"
@@ -3704,6 +3796,7 @@
                         "id",
                         "slug",
                         "name",
+                        "displayName",
                         "description",
                         "icon",
                         "category",
@@ -3717,6 +3810,8 @@
                         "outputs",
                         "charts",
                         "entities",
+                        "forkedFrom",
+                        "upgradedTo",
                         "createdAt",
                         "updatedAt"
                       ]
@@ -3750,7 +3845,8 @@
         }
       },
       "put": {
-        "summary": "Update a single feature by slug",
+        "summary": "Update or fork a feature (fork-on-write)",
+        "description": "If only metadata changes (same signature) → updates in-place and returns 200. If inputs or outputs change (different signature) → creates a new feature (fork), deprecates the original, and returns 201. The fork inherits the displayName of the original. The original's upgradedTo points to the fork.",
         "tags": [
           "Features"
         ],
@@ -4024,7 +4120,7 @@
         },
         "responses": {
           "200": {
-            "description": "Updated feature",
+            "description": "Updated in-place (metadata only, same signature)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4043,7 +4139,11 @@
                         },
                         "name": {
                           "type": "string",
-                          "description": "Display name (e.g. 'Outlet Database Discovery')"
+                          "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+                        },
+                        "displayName": {
+                          "type": "string",
+                          "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
                         },
                         "description": {
                           "type": "string"
@@ -4289,6 +4389,18 @@
                           },
                           "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
                         },
+                        "forkedFrom": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "uuid",
+                          "description": "If this feature was forked from another, the ID of the original."
+                        },
+                        "upgradedTo": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "uuid",
+                          "description": "If deprecated, the ID of the replacement feature."
+                        },
                         "createdAt": {
                           "type": "string",
                           "format": "date-time"
@@ -4302,6 +4414,7 @@
                         "id",
                         "slug",
                         "name",
+                        "displayName",
                         "description",
                         "icon",
                         "category",
@@ -4315,6 +4428,8 @@
                         "outputs",
                         "charts",
                         "entities",
+                        "forkedFrom",
+                        "upgradedTo",
                         "createdAt",
                         "updatedAt"
                       ]
@@ -4322,6 +4437,360 @@
                   },
                   "required": [
                     "feature"
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Forked (new feature created, original deprecated)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "feature": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "slug": {
+                          "type": "string",
+                          "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+                        },
+                        "displayName": {
+                          "type": "string",
+                          "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "icon": {
+                          "type": "string",
+                          "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone'). Use as <LucideIcon name={icon} /> or look up at lucide.dev/icons."
+                        },
+                        "category": {
+                          "type": "string",
+                          "description": "Feature category: 'sales', 'pr', 'discovery', etc."
+                        },
+                        "channel": {
+                          "type": "string",
+                          "description": "Communication channel: 'email', 'phone', 'linkedin', 'database', etc."
+                        },
+                        "audienceType": {
+                          "type": "string",
+                          "description": "Form layout type: 'cold-outreach', 'discovery', etc."
+                        },
+                        "implemented": {
+                          "type": "boolean"
+                        },
+                        "displayOrder": {
+                          "type": "integer"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "draft",
+                            "deprecated"
+                          ]
+                        },
+                        "signature": {
+                          "type": "string",
+                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+                        },
+                        "inputs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "text",
+                                  "textarea",
+                                  "number",
+                                  "select"
+                                ]
+                              },
+                              "placeholder": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "description": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "extractKey": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "options": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "type",
+                              "placeholder",
+                              "description",
+                              "extractKey"
+                            ]
+                          },
+                          "description": "Input fields for the campaign creation form."
+                        },
+                        "outputs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "displayOrder": {
+                                "type": "integer"
+                              },
+                              "defaultSort": {
+                                "type": "boolean"
+                              },
+                              "sortDirection": {
+                                "type": "string",
+                                "enum": [
+                                  "asc",
+                                  "desc"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "displayOrder"
+                            ]
+                          },
+                          "description": "Output metrics — stats keys from the registry with display config. Use GET /stats/registry for labels and types."
+                        },
+                        "charts": {
+                          "type": "array",
+                          "items": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "funnel-bar"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "displayOrder": {
+                                    "type": "integer"
+                                  },
+                                  "steps": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "key"
+                                      ]
+                                    },
+                                    "minItems": 2
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "type",
+                                  "title",
+                                  "displayOrder",
+                                  "steps"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "breakdown-bar"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "displayOrder": {
+                                    "type": "integer"
+                                  },
+                                  "segments": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "enum": [
+                                            "green",
+                                            "blue",
+                                            "red",
+                                            "gray",
+                                            "orange"
+                                          ]
+                                        },
+                                        "sentiment": {
+                                          "type": "string",
+                                          "enum": [
+                                            "positive",
+                                            "neutral",
+                                            "negative"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "color",
+                                        "sentiment"
+                                      ]
+                                    },
+                                    "minItems": 2
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "type",
+                                  "title",
+                                  "displayOrder",
+                                  "segments"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "Chart definitions (funnel-bar, breakdown-bar). At least one of each required."
+                        },
+                        "entities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
+                        },
+                        "forkedFrom": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "uuid",
+                          "description": "If this feature was forked from another, the ID of the original."
+                        },
+                        "upgradedTo": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "uuid",
+                          "description": "If deprecated, the ID of the replacement feature."
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "slug",
+                        "name",
+                        "displayName",
+                        "description",
+                        "icon",
+                        "category",
+                        "channel",
+                        "audienceType",
+                        "implemented",
+                        "displayOrder",
+                        "status",
+                        "signature",
+                        "inputs",
+                        "outputs",
+                        "charts",
+                        "entities",
+                        "forkedFrom",
+                        "upgradedTo",
+                        "createdAt",
+                        "updatedAt"
+                      ]
+                    },
+                    "forkedFrom": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "slug": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "draft",
+                            "deprecated"
+                          ]
+                        },
+                        "upgradedTo": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "slug",
+                        "status",
+                        "upgradedTo"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "feature",
+                    "forkedFrom"
                   ]
                 }
               }
@@ -4364,7 +4833,7 @@
             }
           },
           "409": {
-            "description": "Conflict",
+            "description": "A feature with the same input/output signature already exists",
             "content": {
               "application/json": {
                 "schema": {

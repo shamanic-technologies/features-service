@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, or, and } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
@@ -52,6 +52,35 @@ async function resolveNameAndSlug(
 }
 
 /**
+ * Find the next available versioned name/slug for a fork.
+ * Starts from the base display name and increments until a free slot is found.
+ */
+async function resolveForkedNameAndSlug(
+  displayName: string
+): Promise<{ name: string; slug: string }> {
+  const baseSlug = slugify(displayName);
+  let version = 2; // forks always start at v2
+
+  while (true) {
+    const candidateName = versionedName(displayName, version);
+    const candidateSlug = versionedSlug(baseSlug, version);
+
+    const collision = await db.query.features.findFirst({
+      where: or(
+        eq(features.name, candidateName),
+        eq(features.slug, candidateSlug),
+      ),
+    });
+
+    if (!collision) {
+      return { name: candidateName, slug: candidateSlug };
+    }
+
+    version++;
+  }
+}
+
+/**
  * PUT /features — Batch upsert features (idempotent, for cold-start registration).
  *
  * Signature = hash of sorted input keys + sorted output keys.
@@ -76,6 +105,7 @@ router.put("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
 
       const values = {
         name: resolved.name,
+        displayName: f.name, // displayName = the human-readable name from seed
         description: f.description,
         icon: f.icon,
         category: f.category,
@@ -166,6 +196,7 @@ router.post("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
         slug,
         signature,
         name: f.name,
+        displayName: f.name, // new features: displayName = name
         description: f.description,
         icon: f.icon,
         category: f.category,
@@ -189,11 +220,14 @@ router.post("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
 });
 
 /**
- * PUT /features/:slug — Update a single feature by slug (dashboard use case).
+ * PUT /features/:slug — Fork-on-write.
  *
- * Partial update — only provided fields are changed.
- * If inputs or outputs change, the signature is recomputed.
- * Returns 404 if the feature doesn't exist.
+ * - Metadata-only change (same signature) → update in-place, return 200
+ * - Inputs/outputs change (different signature) → fork: create new feature,
+ *   deprecate original, return 201
+ *
+ * The original feature is never mutated structurally. displayName is preserved
+ * across the fork chain.
  */
 router.put("/features/:slug", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
   try {
@@ -210,67 +244,106 @@ router.put("/features/:slug", apiKeyAuth, async (req: AuthenticatedRequest, res)
       return res.status(404).json({ error: "Feature not found" });
     }
 
-    const updates: Record<string, unknown> = { updatedAt: new Date() };
     const data = parsed.data;
 
-    // Copy simple fields if provided
-    if (data.name !== undefined) updates.name = data.name;
-    if (data.description !== undefined) updates.description = data.description;
-    if (data.icon !== undefined) updates.icon = data.icon;
-    if (data.category !== undefined) updates.category = data.category;
-    if (data.channel !== undefined) updates.channel = data.channel;
-    if (data.audienceType !== undefined) updates.audienceType = data.audienceType;
-    if (data.implemented !== undefined) updates.implemented = data.implemented;
-    if (data.displayOrder !== undefined) updates.displayOrder = data.displayOrder;
-    if (data.status !== undefined) updates.status = data.status;
-    if (data.inputs !== undefined) updates.inputs = data.inputs;
-    if (data.outputs !== undefined) updates.outputs = data.outputs;
-    if (data.charts !== undefined) updates.charts = data.charts;
-    if (data.entities !== undefined) updates.entities = data.entities;
+    // Determine if signature changes
+    const finalInputs = data.inputs ?? existing.inputs;
+    const finalOutputs = data.outputs ?? existing.outputs;
+    const newSignature = computeSignature(
+      finalInputs.map((i) => i.key),
+      finalOutputs.map((o) => o.key),
+    );
 
-    // Recompute signature if inputs or outputs changed
-    if (data.inputs || data.outputs) {
-      const finalInputs = data.inputs ?? existing.inputs;
-      const finalOutputs = data.outputs ?? existing.outputs;
-      const newSignature = computeSignature(
-        finalInputs.map((i) => i.key),
-        finalOutputs.map((o) => o.key),
-      );
+    const signatureChanged = newSignature !== existing.signature;
 
-      // Check if the new signature conflicts with another feature
-      if (newSignature !== existing.signature) {
-        const conflict = await db.query.features.findFirst({
-          where: eq(features.signature, newSignature),
-        });
-        if (conflict) {
-          return res.status(409).json({
-            error: "A feature with the same input/output keys already exists",
-            existingSlug: conflict.slug,
-          });
-        }
-        updates.signature = newSignature;
-      }
+    if (!signatureChanged) {
+      // ── Metadata-only update — safe to apply in-place ──────────────────
+      const updates: Record<string, unknown> = { updatedAt: new Date() };
+
+      if (data.description !== undefined) updates.description = data.description;
+      if (data.icon !== undefined) updates.icon = data.icon;
+      if (data.category !== undefined) updates.category = data.category;
+      if (data.channel !== undefined) updates.channel = data.channel;
+      if (data.audienceType !== undefined) updates.audienceType = data.audienceType;
+      if (data.implemented !== undefined) updates.implemented = data.implemented;
+      if (data.displayOrder !== undefined) updates.displayOrder = data.displayOrder;
+      if (data.status !== undefined) updates.status = data.status;
+      if (data.charts !== undefined) updates.charts = data.charts;
+      if (data.entities !== undefined) updates.entities = data.entities;
+      // inputs/outputs may be sent but produce the same signature → still metadata-only
+      if (data.inputs !== undefined) updates.inputs = data.inputs;
+      if (data.outputs !== undefined) updates.outputs = data.outputs;
+
+      const [updated] = await db
+        .update(features)
+        .set(updates)
+        .where(eq(features.id, existing.id))
+        .returning();
+
+      return res.json({ feature: updated });
     }
 
-    // Check name uniqueness if name changed
-    if (data.name && data.name !== existing.name) {
-      const nameConflict = await db.query.features.findFirst({
-        where: eq(features.name, data.name),
+    // ── Signature changed → fork ───────────────────────────────────────────
+
+    // Check if the new signature already exists
+    const conflict = await db.query.features.findFirst({
+      where: eq(features.signature, newSignature),
+    });
+    if (conflict) {
+      return res.status(409).json({
+        error: "A feature with the same input/output keys already exists",
+        existingSlug: conflict.slug,
       });
-      if (nameConflict) {
-        return res.status(409).json({ error: `Name "${data.name}" already exists` });
-      }
     }
 
-    const [updated] = await db
-      .update(features)
-      .set(updates)
-      .where(eq(features.id, existing.id))
+    // Resolve a unique versioned name/slug for the fork
+    const resolved = await resolveForkedNameAndSlug(existing.displayName);
+
+    // Create the forked feature — inherits displayName, merges updates
+    const [forked] = await db
+      .insert(features)
+      .values({
+        slug: resolved.slug,
+        name: resolved.name,
+        displayName: existing.displayName, // stable across forks
+        signature: newSignature,
+        description: data.description ?? existing.description,
+        icon: data.icon ?? existing.icon,
+        category: data.category ?? existing.category,
+        channel: data.channel ?? existing.channel,
+        audienceType: data.audienceType ?? existing.audienceType,
+        implemented: data.implemented ?? existing.implemented,
+        displayOrder: data.displayOrder ?? existing.displayOrder,
+        status: "active",
+        inputs: finalInputs,
+        outputs: finalOutputs,
+        charts: data.charts ?? existing.charts,
+        entities: data.entities ?? existing.entities,
+        forkedFrom: existing.id,
+      })
       .returning();
 
-    res.json({ feature: updated });
+    // Deprecate the original and link to fork
+    await db
+      .update(features)
+      .set({
+        status: "deprecated",
+        upgradedTo: forked.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(features.id, existing.id));
+
+    res.status(201).json({
+      feature: forked,
+      forkedFrom: {
+        id: existing.id,
+        slug: existing.slug,
+        status: "deprecated",
+        upgradedTo: forked.id,
+      },
+    });
   } catch (error) {
-    console.error("Update feature error:", error);
+    console.error("Update/fork feature error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -281,18 +354,15 @@ router.put("/features/:slug", apiKeyAuth, async (req: AuthenticatedRequest, res)
  */
 router.get("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
   try {
-    const status = (req.query.status as string) || "active";
-    const category = req.query.category as string | undefined;
-    const channel = req.query.channel as string | undefined;
-    const audienceType = req.query.audienceType as string | undefined;
-    const implemented = req.query.implemented as string | undefined;
+    const { status, category, channel, audienceType, implemented } = req.query as Record<string, string | undefined>;
 
-    const conditions = [eq(features.status, status)];
+    const conditions = [eq(features.status, status || "active")];
     if (category) conditions.push(eq(features.category, category));
     if (channel) conditions.push(eq(features.channel, channel));
     if (audienceType) conditions.push(eq(features.audienceType, audienceType));
     if (implemented !== undefined) conditions.push(eq(features.implemented, implemented === "true"));
 
+    const { and } = await import("drizzle-orm");
     const results = await db.query.features.findMany({
       where: and(...conditions),
     });
@@ -344,7 +414,7 @@ router.get("/features/:slug/inputs", apiKeyAuth, async (req: AuthenticatedReques
 
     res.json({
       slug: feature.slug,
-      name: feature.name,
+      name: feature.displayName,
       inputs: feature.inputs,
     });
   } catch (error) {
