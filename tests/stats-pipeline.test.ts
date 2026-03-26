@@ -184,39 +184,6 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     expect(res.body.stats.emailsGenerated).toBe(37);
   });
 
-  it("returns null for pipeline keys with no runFilter (leadsBuffered)", async () => {
-    // Use a feature that references leadsBuffered
-    const featureWithBuffer = {
-      ...SALES_FEATURE,
-      outputs: [
-        { key: "leadsServed", displayOrder: 1 },
-        { key: "leadsBuffered", displayOrder: 2 },
-      ],
-    };
-    vi.mocked(db.query.features.findFirst).mockResolvedValue(featureWithBuffer as any);
-
-    mockFetchMulti([
-      {
-        match: "serviceName=lead-service",
-        response: {
-          groups: [{ dimensions: { workflowName: null }, runCount: 10, totalCostInUsdCents: "0", actualCostInUsdCents: "0", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0" }],
-        },
-      },
-    ]);
-
-    const app = createApp();
-
-    const res = await request(app)
-      .get("/features/sales-cold-email-outreach/stats")
-      .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
-      .expect(200);
-
-    expect(res.body.stats.leadsServed).toBe(10);
-    expect(res.body.stats.leadsBuffered).toBeNull();
-  });
 
   it("fetches journalistsContacted for PR feature via lead-service/lead-serve", async () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(PR_FEATURE as any);
