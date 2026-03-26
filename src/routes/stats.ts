@@ -171,10 +171,10 @@ async function fetchEmailStats(
 }
 
 /**
- * Merge broadcast + transactional stats into a single record.
+ * Extract broadcast-only email stats (transactional emails are excluded).
  */
 function mergeEmailChannels(data: Record<string, unknown>): Record<string, number> {
-  const merged: Record<string, number> = {};
+  const result: Record<string, number> = {};
   const emailFields = [
     "emailsContacted", "emailsSent", "emailsDelivered", "emailsOpened",
     "emailsClicked", "emailsReplied", "emailsBounced", "recipients",
@@ -183,13 +183,12 @@ function mergeEmailChannels(data: Record<string, unknown>): Record<string, numbe
   ];
 
   const broadcast = (data.broadcast ?? {}) as Record<string, number>;
-  const transactional = (data.transactional ?? {}) as Record<string, number>;
 
   for (const field of emailFields) {
-    merged[field] = (broadcast[field] ?? 0) + (transactional[field] ?? 0);
+    result[field] = broadcast[field] ?? 0;
   }
 
-  return merged;
+  return result;
 }
 
 /**
