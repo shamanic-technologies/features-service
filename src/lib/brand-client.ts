@@ -44,6 +44,10 @@ export async function extractBrandFields(
     throw new Error(`brand-service extract-fields failed (${response.status}): ${text}`);
   }
 
-  const data = await response.json() as { brandId: string; results: Record<string, ExtractedFieldResult> };
-  return data.results;
+  const data = await response.json() as { brandId: string; results: Array<{ key: string } & ExtractedFieldResult> };
+  const map: Record<string, ExtractedFieldResult> = {};
+  for (const r of data.results) {
+    map[r.key] = r;
+  }
+  return map;
 }
