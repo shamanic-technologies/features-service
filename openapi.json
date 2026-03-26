@@ -3,7 +3,7 @@
   "info": {
     "title": "Features Service API",
     "version": "2.0.0",
-    "description": "Manages feature definitions and computes output stats.\n\n## Key Concepts\n\n**Features** define what campaigns can do: inputs (form), outputs (metrics), charts (funnel/breakdown), and entities (detail tabs).\n\n**Fork-on-write** — Features are immutable once created. `PUT /features/:slug` uses fork-on-write semantics: metadata-only changes (same signature) update in-place (200), but changes to inputs/outputs (different signature) create a new feature (201) and deprecate the original. The fork inherits the `displayName` of the original. Use `forkedFrom` and `upgradedTo` to traverse the lineage chain.\n\n**displayName vs name** — `displayName` is the human-readable label, stable across forks. `name` is the machine identifier that changes on each fork (e.g. 'Sales Cold Email Outreach v2').\n\n**Stats Registry** (`GET /stats/registry`) — the finite universe of known stats keys. Each key has a label and type (count, rate, currency). Features reference these keys in outputs and charts.\n\n**Stats Endpoints** — features-service computes stats by calling downstream services (email-gateway, runs-service, outlets-service) and returns computed values.\n\n## Feature Definition\n\n```typescript\n{\n  inputs:   [{ key, label, type, ... }],           // campaign form\n  outputs:  [{ key, displayOrder }],                // metrics (validated against registry)\n  charts:   [{ type: \"funnel-bar\", steps: [...] }], // visualizations\n  entities: [\"leads\", \"companies\", \"emails\"],       // campaign detail tabs\n}\n```"
+    "description": "Manages feature definitions and computes output stats.\n\n## Key Concepts\n\n**Features** define what campaigns can do: inputs (form), outputs (metrics), charts (funnel/breakdown), and entities (detail tabs). Features are **global** — shared across all orgs. They are template definitions, not per-org resources.\n\n## Feature Definition\n\n```typescript\n{\n  inputs:   [{ key, label, type, ... }],           // campaign creation form\n  outputs:  [{ key, displayOrder }],                // metrics (validated against registry)\n  charts:   [{ type: \"funnel-bar\", steps: [...] }], // visualizations\n  entities: [\"leads\", \"companies\", \"emails\"],       // campaign detail tabs\n}\n```\n\n## Fork-on-Write (Immutability)\n\nFeatures are **immutable** once created. No endpoint mutates inputs or outputs in place.\n\n`PUT /features/{slug}` uses **fork-on-write** semantics:\n\n| Scenario | Behavior | HTTP |\n|----------|----------|------|\n| Only metadata changes (description, icon, charts…) | Update in-place | `200` |\n| Inputs or outputs change (different signature) | Create new feature (fork), deprecate original | `201` |\n| New signature already exists elsewhere | Conflict | `409` |\n\nOn fork:\n- The new feature gets an auto-versioned `name` and `slug` (e.g. `Sales Cold Email Outreach v2` / `sales-cold-email-outreach-v2`)\n- The `displayName` is inherited from the original (stable across forks)\n- `forkedFrom` on the new feature points to the original's ID\n- `upgradedTo` on the original points to the new feature's ID\n- The original's `status` is set to `deprecated`\n\nThis is aligned with workflow-service's fork model (`PUT /workflows/{id}`).\n\n## displayName vs name\n\n| Field | Purpose | Changes on fork? | Example |\n|-------|---------|-----------------|--------|\n| `displayName` | Human-readable label for UI | **No** — inherited | `Sales Cold Email Outreach` |\n| `name` | Machine identifier, unique | **Yes** — auto-versioned | `Sales Cold Email Outreach v2` |\n| `slug` | URL-safe machine identifier | **Yes** — derived from name | `sales-cold-email-outreach-v2` |\n\n**Always use `displayName` for UI display.** The `name`/`slug` are for internal routing and deduplication.\n\n## Lineage Chain\n\nEach feature can have:\n- `forkedFrom` (uuid | null) — the parent feature this was forked from\n- `upgradedTo` (uuid | null) — if deprecated, the replacement feature\n\nTo traverse the full lineage of a feature, follow `forkedFrom` upward (ancestors) and `upgradedTo` downward (descendants). Campaigns and workflows keep their original `featureSlug` — they are **never** migrated on fork. This preserves full audit history of which feature version produced which results.\n\n## Stats Aggregation Across the Chain\n\nWhen you request stats for a feature (`GET /features/{slug}/stats`), the service automatically resolves the **full upgrade chain** and aggregates stats across all ancestors and descendants. This means:\n\n- Old campaigns/workflows still referencing a deprecated slug are included in the stats\n- You always get the complete picture regardless of which slug in the chain you query\n- No data is lost on fork — the chain is just extended\n\nThis matches workflow-service behavior: *\"Stats are aggregated across the full upgrade chain (deprecated predecessors included)\"*.\n\n## Stats Registry\n\n`GET /stats/registry` — the finite universe of known stats keys. Each key has a label and type (count, rate, currency). Features reference these keys in outputs and charts.\n\n## Stats Computation\n\nStats endpoints compute values by calling downstream services (email-gateway, runs-service, outlets-service) and returning aggregated results. Keys are either **raw** (fetched from a source) or **derived** (computed as a ratio of two raw keys, e.g. `replyRate = emailsReplied / emailsSent`).\n\n## Registration (Cold Start)\n\n`PUT /features` — idempotent batch upsert, safe to call on every boot. Uses signature-based deduplication: same signature → update metadata, different signature → create or auto-version. This is the equivalent of workflow-service's `PUT /workflows/upgrade`."
   },
   "servers": [
     {
@@ -1820,7 +1820,7 @@
     "/features": {
       "put": {
         "summary": "Batch upsert features (cold-start registration)",
-        "description": "Idempotent — safe to call on every cold start. Uses a signature (hash of sorted input+output keys) to detect duplicates.",
+        "description": "Idempotent — safe to call on every cold start. Platform-only (X-API-Key auth).\n\nUses a **signature** (SHA-256 hash of sorted input+output keys) to detect duplicates:\n- Same signature → upsert metadata (labels, descriptions, charts, entities, etc.)\n- Same name but different signature → auto-suffix name/slug with v2, v3, etc.\n- New name and new signature → create new feature\n\nThis is the equivalent of workflow-service's `PUT /workflows/upgrade`. The `name` field in the request body becomes the `displayName`.",
         "tags": [
           "Features"
         ],
@@ -2458,6 +2458,7 @@
       },
       "post": {
         "summary": "Create a single feature",
+        "description": "Creates a brand-new feature. Slug is auto-generated from name if not provided. Returns 409 if a feature with the same slug, name, or signature already exists.\n\nThe `name` field becomes both the `name` (machine identifier) and `displayName` (human-readable label) of the created feature. On future forks, `displayName` stays the same while `name` gets versioned.",
         "tags": [
           "Features"
         ],
@@ -3105,6 +3106,7 @@
       },
       "get": {
         "summary": "List all features",
+        "description": "Returns features filtered by query params. Defaults to `status=active` — deprecated features (replaced by a fork) are excluded unless explicitly requested.\n\nUse `status=deprecated` to see the full history, or omit the status filter to see all.",
         "tags": [
           "Features"
         ],
@@ -3846,7 +3848,7 @@
       },
       "put": {
         "summary": "Update or fork a feature (fork-on-write)",
-        "description": "If only metadata changes (same signature) → updates in-place and returns 200. If inputs or outputs change (different signature) → creates a new feature (fork), deprecates the original, and returns 201. The fork inherits the displayName of the original. The original's upgradedTo points to the fork.",
+        "description": "**Fork-on-write** — features are immutable. This endpoint decides automatically:\n\n**Same signature (metadata-only change) → 200:**\nFields like description, icon, category, charts, entities, displayOrder can be updated in place because they don't affect the feature's identity (inputs + outputs). Even if you send `inputs` or `outputs` in the body, if the resulting signature is unchanged, it's treated as metadata-only.\n\n**Different signature (inputs/outputs changed) → 201 (fork):**\nA new feature is created with:\n- Auto-versioned `name`/`slug` (e.g. `Sales Cold Email Outreach v2`)\n- Same `displayName` as the original\n- `forkedFrom` pointing to the original\n- All other fields merged from the update body + the original\n\nThe original is deprecated (`status: deprecated`, `upgradedTo` set). Existing campaigns/workflows referencing the old slug are **not** migrated — stats aggregation traverses the full lineage chain automatically.\n\n**409:**\nReturned if the new signature already exists on a different feature.",
         "tags": [
           "Features"
         ],
@@ -5206,7 +5208,7 @@
     "/features/{featureSlug}/stats": {
       "get": {
         "summary": "Get computed stats for a feature",
-        "description": "Returns computed stats for a feature's outputs and charts. Optionally grouped by workflowName, brandId, or campaignId. System stats (cost, runs, campaigns, dates) are always included.",
+        "description": "Returns computed stats for a feature's outputs and charts. Optionally grouped by workflowName, brandId, or campaignId. System stats (cost, runs, campaigns, dates) are always included.\n\n**Lineage aggregation:** Stats are automatically aggregated across the full upgrade chain (deprecated ancestors + active descendants). If a feature was forked, querying any slug in the chain returns the combined stats. This ensures no data is lost when features evolve.\n\nStats keys are either **raw** (fetched from email-gateway, runs-service, or outlets-service) or **derived** (computed as a ratio, e.g. `replyRate = emailsReplied / emailsSent`). Use `GET /stats/registry` to discover available keys, their labels, and types.",
         "tags": [
           "Stats"
         ],
@@ -5422,7 +5424,7 @@
     "/stats": {
       "get": {
         "summary": "Global stats across all features",
-        "description": "Cross-feature stats endpoint for performance dashboards and org overview. Supports groupBy: featureSlug, workflowName, brandId, campaignId.",
+        "description": "Cross-feature stats endpoint for performance dashboards and org overview. Supports groupBy: featureSlug, workflowName, brandId, campaignId.\n\nOnly active features are included in the computation. Stats from deprecated features are aggregated into their active successor via the lineage chain.",
         "tags": [
           "Stats"
         ],
