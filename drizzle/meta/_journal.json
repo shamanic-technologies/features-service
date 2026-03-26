@@ -15,6 +15,13 @@
       "when": 1774431200000,
       "tag": "0001_dynamic_column_stats",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1774488400000,
+      "tag": "0002_feature_fork_system",
+      "breakpoints": true
     }
   ]
 }

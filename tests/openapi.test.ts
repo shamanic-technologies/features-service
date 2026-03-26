@@ -35,10 +35,10 @@ describe("openApiDocument", () => {
     expect(put?.summary).toContain("Batch upsert");
   });
 
-  it("has PUT /features/{slug} (update single)", () => {
+  it("has PUT /features/{slug} (fork-on-write)", () => {
     const put = (openApiDocument.paths as Record<string, Record<string, unknown>>)["/features/{slug}"]?.["put"] as Record<string, unknown> | undefined;
     expect(put).toBeDefined();
-    expect(put?.summary).toContain("Update a single feature");
+    expect(put?.summary).toContain("fork-on-write");
   });
 
   it("has GET /features/{slug}", () => {

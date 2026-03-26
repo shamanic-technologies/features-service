@@ -99,6 +99,18 @@ export const upsertFeatureSchema = z.object({
   entities: z.array(entityTypeString).min(1),
 });
 
+// ── Fork response (returned when PUT /features/:slug forks) ──────────────
+
+export const forkResultSchema = z.object({
+  feature: z.any(), // filled with featureResponseSchema at OpenAPI level
+  forkedFrom: z.object({
+    id: z.string().uuid(),
+    slug: z.string(),
+    status: z.enum(["active", "draft", "deprecated"]),
+    upgradedTo: z.string().uuid(),
+  }),
+});
+
 export const batchUpsertFeaturesSchema = z.object({
   features: z.array(upsertFeatureSchema).min(1),
 });
