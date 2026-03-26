@@ -101,4 +101,42 @@ describe("extractBrandFields", () => {
     expect(Object.keys(results)).toHaveLength(0);
     expect(results.biography).toBeUndefined();
   });
+
+  it("forwards x-campaign-id and x-feature-slug when provided", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ brandId: "brand-123", results: [] }),
+    });
+    globalThis.fetch = mockFetch;
+
+    const { extractBrandFields } = await import("../src/lib/brand-client.js");
+    await extractBrandFields(
+      "brand-123",
+      [{ key: "bio", description: "Bio" }],
+      { orgId: "org-1", userId: "user-1", runId: "run-1", campaignId: "camp-42", featureSlug: "pr-outreach" },
+    );
+
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(opts.headers["x-campaign-id"]).toBe("camp-42");
+    expect(opts.headers["x-feature-slug"]).toBe("pr-outreach");
+  });
+
+  it("omits x-campaign-id and x-feature-slug when not provided", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ brandId: "brand-123", results: [] }),
+    });
+    globalThis.fetch = mockFetch;
+
+    const { extractBrandFields } = await import("../src/lib/brand-client.js");
+    await extractBrandFields(
+      "brand-123",
+      [{ key: "bio", description: "Bio" }],
+      { orgId: "org-1", userId: "user-1", runId: "run-1" },
+    );
+
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(opts.headers["x-campaign-id"]).toBeUndefined();
+    expect(opts.headers["x-feature-slug"]).toBeUndefined();
+  });
 });
