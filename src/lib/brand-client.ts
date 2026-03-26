@@ -21,21 +21,25 @@ export interface ExtractedFieldResult {
 export async function extractBrandFields(
   brandId: string,
   fields: ExtractFieldItem[],
-  headers: { orgId: string; userId: string; runId: string },
+  headers: { orgId: string; userId: string; runId: string; campaignId?: string; featureSlug?: string },
 ): Promise<Record<string, ExtractedFieldResult>> {
   if (!BRAND_SERVICE_URL || !BRAND_SERVICE_API_KEY) {
     throw new Error("BRAND_SERVICE_URL or BRAND_SERVICE_API_KEY not configured");
   }
 
+  const reqHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-api-key": BRAND_SERVICE_API_KEY,
+    "x-org-id": headers.orgId,
+    "x-user-id": headers.userId,
+    "x-run-id": headers.runId,
+  };
+  if (headers.campaignId) reqHeaders["x-campaign-id"] = headers.campaignId;
+  if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
+
   const response = await fetch(`${BRAND_SERVICE_URL}/brands/${brandId}/extract-fields`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": BRAND_SERVICE_API_KEY,
-      "x-org-id": headers.orgId,
-      "x-user-id": headers.userId,
-      "x-run-id": headers.runId,
-    },
+    headers: reqHeaders,
     body: JSON.stringify({ fields }),
   });
 

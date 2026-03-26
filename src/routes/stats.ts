@@ -14,6 +14,31 @@ const OUTLETS_SERVICE_API_KEY = process.env.OUTLETS_SERVICE_API_KEY!;
 
 const router = Router();
 
+// ── Helpers — downstream headers ─────────────────────────────────────────────
+
+interface Identity {
+  userId: string;
+  runId: string;
+  campaignId?: string;
+  featureSlug?: string;
+}
+
+function buildDownstreamHeaders(
+  apiKey: string,
+  orgId: string,
+  identity: Identity,
+): Record<string, string> {
+  const h: Record<string, string> = {
+    "x-api-key": apiKey,
+    "x-org-id": orgId,
+    "x-user-id": identity.userId,
+    "x-run-id": identity.runId,
+  };
+  if (identity.campaignId) h["x-campaign-id"] = identity.campaignId;
+  if (identity.featureSlug) h["x-feature-slug"] = identity.featureSlug;
+  return h;
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface SystemStats {
@@ -135,7 +160,7 @@ async function fetchEmailStats(
   orgId: string,
   groupBy: GroupByDimension | null,
   filters: Record<string, string>,
-  identity: { userId: string; runId: string },
+  identity: Identity,
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams();
   if (groupBy === "workflowName") params.set("groupBy", "workflowName");
@@ -147,12 +172,7 @@ async function fetchEmailStats(
 
   const url = `${EMAIL_GATEWAY_SERVICE_URL}/stats?${params}`;
   const response = await fetch(url, {
-    headers: {
-      "x-api-key": EMAIL_GATEWAY_SERVICE_API_KEY,
-      "x-org-id": orgId,
-      "x-user-id": identity.userId,
-      "x-run-id": identity.runId,
-    },
+    headers: buildDownstreamHeaders(EMAIL_GATEWAY_SERVICE_API_KEY, orgId, identity),
   });
 
   if (!response.ok) {
@@ -208,7 +228,7 @@ async function fetchRunsStats(
   groupBy: GroupByDimension | null,
   filters: Record<string, string>,
   featureSlugs: string[] | undefined,
-  identity: { userId: string; runId: string },
+  identity: Identity,
 ): Promise<Map<string, RunsStatsEntry>> {
   const slugsToQuery = featureSlugs ?? (filters.featureSlug ? [filters.featureSlug] : []);
 
@@ -250,7 +270,7 @@ async function fetchRunsStatsForSlug(
   groupBy: GroupByDimension | null,
   filters: Record<string, string>,
   featureSlug: string | undefined,
-  identity: { userId: string; runId: string },
+  identity: Identity,
 ): Promise<Map<string, RunsStatsEntry>> {
   const runsGroupBy = groupBy ?? "workflowName";
   const params = new URLSearchParams({ groupBy: runsGroupBy });
@@ -260,12 +280,7 @@ async function fetchRunsStatsForSlug(
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
   const response = await fetch(url, {
-    headers: {
-      "x-api-key": RUNS_SERVICE_API_KEY,
-      "x-org-id": orgId,
-      "x-user-id": identity.userId,
-      "x-run-id": identity.runId,
-    },
+    headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
   });
 
   if (!response.ok) {
@@ -322,7 +337,7 @@ async function fetchPipelineStats(
   filters: Record<string, string>,
   featureSlugs: string[] | undefined,
   pipelineKeys: Map<string, RunFilter>,
-  identity: { userId: string; runId: string },
+  identity: Identity,
 ): Promise<Map<string, Record<string, number>>> {
   if (pipelineKeys.size === 0) return new Map();
 
@@ -382,7 +397,7 @@ async function fetchPipelineStatsForFilter(
   filters: Record<string, string>,
   featureSlug: string | undefined,
   runFilter: RunFilter,
-  identity: { userId: string; runId: string },
+  identity: Identity,
 ): Promise<Map<string, number>> {
   const runsGroupBy = groupBy ?? "workflowName";
   const params = new URLSearchParams({
@@ -396,12 +411,7 @@ async function fetchPipelineStatsForFilter(
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
   const response = await fetch(url, {
-    headers: {
-      "x-api-key": RUNS_SERVICE_API_KEY,
-      "x-org-id": orgId,
-      "x-user-id": identity.userId,
-      "x-run-id": identity.runId,
-    },
+    headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
   });
 
   if (!response.ok) {
@@ -432,7 +442,7 @@ async function fetchOutletsStats(
   orgId: string,
   groupBy: GroupByDimension | null,
   filters: Record<string, string>,
-  identity: { userId: string; runId: string },
+  identity: Identity,
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams();
   if (groupBy === "workflowName") params.set("groupBy", "workflowName");
@@ -444,12 +454,7 @@ async function fetchOutletsStats(
 
   const url = `${OUTLETS_SERVICE_URL}/outlets/stats?${params}`;
   const response = await fetch(url, {
-    headers: {
-      "x-api-key": OUTLETS_SERVICE_API_KEY,
-      "x-org-id": orgId,
-      "x-user-id": identity.userId,
-      "x-run-id": identity.runId,
-    },
+    headers: buildDownstreamHeaders(OUTLETS_SERVICE_API_KEY, orgId, identity),
   });
 
   if (!response.ok) {
@@ -490,7 +495,7 @@ function extractOutletFields(data: Record<string, unknown>): Record<string, numb
 async function fetchActiveCampaigns(
   orgId: string,
   filters: Record<string, string>,
-  identity: { userId: string; runId: string },
+  identity: Identity,
 ): Promise<number> {
   const campaignUrl = process.env.CAMPAIGN_SERVICE_URL;
   const campaignKey = process.env.CAMPAIGN_SERVICE_API_KEY;
@@ -502,12 +507,7 @@ async function fetchActiveCampaigns(
 
   const url = `${campaignUrl}/stats?${params}`;
   const response = await fetch(url, {
-    headers: {
-      "x-api-key": campaignKey,
-      "x-org-id": orgId,
-      "x-user-id": identity.userId,
-      "x-run-id": identity.runId,
-    },
+    headers: buildDownstreamHeaders(campaignKey, orgId, identity),
   });
 
   if (!response.ok) {
@@ -611,7 +611,7 @@ router.get("/stats/registry", apiKeyAuth, async (_req, res) => {
 router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
   try {
     const { featureSlug } = req.params;
-    const { orgId, userId, runId } = req as AuthenticatedRequest;
+    const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
 
     const feature = await db.query.features.findFirst({
       where: eq(features.slug, featureSlug),
@@ -638,7 +638,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
 
     // Fetch data from sources in parallel
     // runs-service: pass all lineage slugs to aggregate across the full chain
-    const identity = { userId, runId };
+    const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
     const pipelineKeys = collectPipelineKeys(requiredKeys);
     const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
@@ -732,7 +732,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
  */
 router.get("/stats", apiKeyAuth, async (req, res) => {
   try {
-    const { orgId, userId, runId } = req as AuthenticatedRequest;
+    const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
 
     const groupByParam = req.query.groupBy as string | undefined;
     const filters: Record<string, string> = {};
@@ -753,7 +753,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
 
     const groupBy = (groupByParam?.split(",")[0] ?? null) as GroupByDimension | null;
 
-    const identity = { userId, runId };
+    const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
     const globalPipelineKeys = collectPipelineKeys(allKeys);
     const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),

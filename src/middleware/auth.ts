@@ -4,6 +4,8 @@ export interface AuthenticatedRequest extends Request {
   orgId: string;
   userId: string;
   runId: string;
+  campaignId?: string;
+  featureSlug?: string;
 }
 
 /**
@@ -40,6 +42,11 @@ export const apiKeyAuth: RequestHandler = (
   (req as AuthenticatedRequest).orgId = orgId!;
   (req as AuthenticatedRequest).userId = userId!;
   (req as AuthenticatedRequest).runId = runId!;
+
+  const campaignId = req.headers["x-campaign-id"] as string | undefined;
+  const featureSlug = req.headers["x-feature-slug"] as string | undefined;
+  if (campaignId) (req as AuthenticatedRequest).campaignId = campaignId;
+  if (featureSlug) (req as AuthenticatedRequest).featureSlug = featureSlug;
 
   next();
 };

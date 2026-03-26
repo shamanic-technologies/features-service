@@ -105,6 +105,44 @@ describe("stats routes forward identity headers to downstream services", () => {
     }
   });
 
+  it("GET /features/:slug/stats forwards x-campaign-id and x-feature-slug when present", async () => {
+    const app = createApp();
+
+    await request(app)
+      .get("/features/sales-cold-email-outreach/stats")
+      .set("x-api-key", "test-key")
+      .set("x-org-id", "org-123")
+      .set("x-user-id", "user-456")
+      .set("x-run-id", "run-789")
+      .set("x-campaign-id", "camp-42")
+      .set("x-feature-slug", "sales-cold-email-outreach")
+      .expect(200);
+
+    for (const [_url, opts] of fetchSpy.mock.calls) {
+      const headers = opts?.headers ?? {};
+      expect(headers["x-campaign-id"]).toBe("camp-42");
+      expect(headers["x-feature-slug"]).toBe("sales-cold-email-outreach");
+    }
+  });
+
+  it("omits x-campaign-id and x-feature-slug from downstream calls when not in request", async () => {
+    const app = createApp();
+
+    await request(app)
+      .get("/features/sales-cold-email-outreach/stats")
+      .set("x-api-key", "test-key")
+      .set("x-org-id", "org-123")
+      .set("x-user-id", "user-456")
+      .set("x-run-id", "run-789")
+      .expect(200);
+
+    for (const [_url, opts] of fetchSpy.mock.calls) {
+      const headers = opts?.headers ?? {};
+      expect(headers["x-campaign-id"]).toBeUndefined();
+      expect(headers["x-feature-slug"]).toBeUndefined();
+    }
+  });
+
   it("rejects requests missing required identity headers with 400", async () => {
     const app = createApp();
 

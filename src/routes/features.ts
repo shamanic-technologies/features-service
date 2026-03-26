@@ -472,6 +472,8 @@ router.post("/features/:slug/prefill", apiKeyAuth, async (req, res) => {
       orgId: auth.orgId,
       userId: auth.userId,
       runId: auth.runId,
+      campaignId: auth.campaignId,
+      featureSlug: auth.featureSlug,
     });
 
     // Map extracted values back to input keys (results is keyed by field key)
