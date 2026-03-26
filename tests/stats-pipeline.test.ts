@@ -403,3 +403,117 @@ describe("activeCampaigns in systemStats", () => {
     expect(res.body.systemStats.activeCampaigns).toBe(5);
   });
 });
+
+describe("firstRunAt / lastRunAt in systemStats", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.stubEnv("CAMPAIGN_SERVICE_URL", "http://campaign-service");
+    vi.stubEnv("CAMPAIGN_SERVICE_API_KEY", "campaign-key");
+
+    const feature = {
+      id: "feat-1",
+      slug: "sales-cold-email-outreach",
+      name: "Sales Cold Email Outreach",
+      status: "active",
+      forkedFrom: null,
+      upgradedTo: null,
+      inputs: [],
+      outputs: [{ key: "emailsSent", displayOrder: 1 }],
+      charts: [],
+      entityTypes: [],
+      workflows: [],
+    };
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(feature as any);
+    vi.mocked(db.query.features.findMany).mockResolvedValue([feature] as any);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("maps minStartedAt/maxStartedAt from costs-service to firstRunAt/lastRunAt", async () => {
+    fetchSpy.mockImplementation((url: string) => {
+      if (url.includes("/v1/stats/costs")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            groups: [{
+              dimensions: {},
+              totalCostInUsdCents: "1500",
+              runCount: 3,
+              minStartedAt: "2026-01-10T08:00:00.000Z",
+              maxStartedAt: "2026-03-25T14:30:00.000Z",
+            }],
+          }),
+        });
+      }
+      if (url.includes("campaign-service/stats")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            stats: { totalCampaigns: 0, byStatus: {}, budgetTotalUsd: null, maxLeadsTotal: null },
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ groups: [] }) });
+    });
+
+    const app = createApp();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/stats")
+      .set("x-api-key", "test-key")
+      .set("x-org-id", "org-1")
+      .set("x-user-id", "user-1")
+      .set("x-run-id", "run-1")
+      .expect(200);
+
+    expect(res.body.systemStats.firstRunAt).toBe("2026-01-10T08:00:00.000Z");
+    expect(res.body.systemStats.lastRunAt).toBe("2026-03-25T14:30:00.000Z");
+  });
+
+  it("returns null for firstRunAt/lastRunAt when costs-service returns no timestamps", async () => {
+    fetchSpy.mockImplementation((url: string) => {
+      if (url.includes("/v1/stats/costs")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            groups: [{
+              dimensions: {},
+              totalCostInUsdCents: "500",
+              runCount: 1,
+              minStartedAt: null,
+              maxStartedAt: null,
+            }],
+          }),
+        });
+      }
+      if (url.includes("campaign-service/stats")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            stats: { totalCampaigns: 0, byStatus: {}, budgetTotalUsd: null, maxLeadsTotal: null },
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ groups: [] }) });
+    });
+
+    const app = createApp();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/stats")
+      .set("x-api-key", "test-key")
+      .set("x-org-id", "org-1")
+      .set("x-user-id", "user-1")
+      .set("x-run-id", "run-1")
+      .expect(200);
+
+    expect(res.body.systemStats.firstRunAt).toBeNull();
+    expect(res.body.systemStats.lastRunAt).toBeNull();
+  });
+});
