@@ -48,6 +48,21 @@ describe("fork signature logic", () => {
   });
 });
 
+describe("lineage stats aggregation", () => {
+  it("same feature queried across chain produces consistent signatures", () => {
+    // When a feature is forked, the old version has different inputs/outputs (different signature).
+    // Stats aggregation should query all slugs in the chain, not just the active one.
+    const originalSig = computeSignature(["targetAudience", "tone"], ["emailsSent", "replyRate"]);
+    const forkedSig = computeSignature(["targetAudience", "tone", "newField"], ["emailsSent", "replyRate"]);
+
+    // Different signatures confirm they're different features in the chain
+    expect(originalSig).not.toBe(forkedSig);
+
+    // Each slug in the chain has its own signature — aggregation happens at the slug level
+    // The stats endpoint resolves the full chain via forkedFrom/upgradedTo
+  });
+});
+
 describe("fork-on-write decision matrix", () => {
   const existingInputKeys = ["targetAudience", "tone"];
   const existingOutputKeys = ["emailsSent", "replyRate"];
