@@ -171,30 +171,35 @@ async function fetchEmailStats(
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
   const url = `${EMAIL_GATEWAY_SERVICE_URL}/stats?${params}`;
-  const response = await fetch(url, {
-    headers: buildDownstreamHeaders(EMAIL_GATEWAY_SERVICE_API_KEY, orgId, identity),
-  });
+  try {
+    const response = await fetch(url, {
+      headers: buildDownstreamHeaders(EMAIL_GATEWAY_SERVICE_API_KEY, orgId, identity),
+    });
 
-  if (!response.ok) {
-    console.error(`[stats] email-gateway /stats failed: ${response.status}`);
+    if (!response.ok) {
+      console.error(`[stats] email-gateway /stats failed: ${response.status}`);
+      return new Map();
+    }
+
+    const data = await response.json() as Record<string, unknown>;
+    const result = new Map<string, Record<string, number>>();
+
+    // If grouped, response has { groups: [{ key, broadcast?, transactional? }] }
+    if (data.groups && Array.isArray(data.groups)) {
+      for (const group of data.groups as Array<Record<string, unknown>>) {
+        const groupKey = String(group.key ?? "__total__");
+        result.set(groupKey, mergeEmailChannels(group));
+      }
+    } else {
+      // Flat response: { broadcast?, transactional? }
+      result.set("__total__", mergeEmailChannels(data));
+    }
+
+    return result;
+  } catch (error) {
+    console.error(`[stats] email-gateway /stats network error:`, (error as Error).message);
     return new Map();
   }
-
-  const data = await response.json() as Record<string, unknown>;
-  const result = new Map<string, Record<string, number>>();
-
-  // If grouped, response has { groups: [{ key, broadcast?, transactional? }] }
-  if (data.groups && Array.isArray(data.groups)) {
-    for (const group of data.groups as Array<Record<string, unknown>>) {
-      const groupKey = String(group.key ?? "__total__");
-      result.set(groupKey, mergeEmailChannels(group));
-    }
-  } else {
-    // Flat response: { broadcast?, transactional? }
-    result.set("__total__", mergeEmailChannels(data));
-  }
-
-  return result;
 }
 
 /**
@@ -279,38 +284,43 @@ async function fetchRunsStatsForSlug(
   if (featureSlug) params.set("featureSlug", featureSlug);
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
-  const response = await fetch(url, {
-    headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
-  });
+  try {
+    const response = await fetch(url, {
+      headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
+    });
 
-  if (!response.ok) {
-    console.error(`[stats] runs-service /v1/stats/costs failed: ${response.status}`);
+    if (!response.ok) {
+      console.error(`[stats] runs-service /v1/stats/costs failed: ${response.status}`);
+      return new Map();
+    }
+
+    const data = await response.json() as {
+      groups: Array<{
+        dimensions: Record<string, string | null>;
+        totalCostInUsdCents: string;
+        runCount: number;
+        minStartedAt: string | null;
+        maxStartedAt: string | null;
+      }>;
+    };
+
+    const result = new Map<string, RunsStatsEntry>();
+
+    for (const group of data.groups) {
+      const key = group.dimensions[runsGroupBy] ?? "__total__";
+      result.set(key, {
+        totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)),
+        completedRuns: group.runCount,
+        minStartedAt: group.minStartedAt ?? null,
+        maxStartedAt: group.maxStartedAt ?? null,
+      });
+    }
+
+    return result;
+  } catch (error) {
+    console.error(`[stats] runs-service /v1/stats/costs network error:`, (error as Error).message);
     return new Map();
   }
-
-  const data = await response.json() as {
-    groups: Array<{
-      dimensions: Record<string, string | null>;
-      totalCostInUsdCents: string;
-      runCount: number;
-      minStartedAt: string | null;
-      maxStartedAt: string | null;
-    }>;
-  };
-
-  const result = new Map<string, RunsStatsEntry>();
-
-  for (const group of data.groups) {
-    const key = group.dimensions[runsGroupBy] ?? "__total__";
-    result.set(key, {
-      totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)),
-      completedRuns: group.runCount,
-      minStartedAt: group.minStartedAt ?? null,
-      maxStartedAt: group.maxStartedAt ?? null,
-    });
-  }
-
-  return result;
 }
 
 /**
@@ -410,29 +420,34 @@ async function fetchPipelineStatsForFilter(
   if (featureSlug) params.set("featureSlug", featureSlug);
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
-  const response = await fetch(url, {
-    headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
-  });
+  try {
+    const response = await fetch(url, {
+      headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
+    });
 
-  if (!response.ok) {
-    console.error(`[stats] runs-service pipeline stats failed: ${response.status} (${runFilter.serviceName}/${runFilter.taskName})`);
+    if (!response.ok) {
+      console.error(`[stats] runs-service pipeline stats failed: ${response.status} (${runFilter.serviceName}/${runFilter.taskName})`);
+      return new Map();
+    }
+
+    const data = await response.json() as {
+      groups: Array<{
+        dimensions: Record<string, string | null>;
+        runCount: number;
+      }>;
+    };
+
+    const result = new Map<string, number>();
+    for (const group of data.groups) {
+      const key = group.dimensions[runsGroupBy] ?? "__total__";
+      result.set(key, (result.get(key) ?? 0) + group.runCount);
+    }
+
+    return result;
+  } catch (error) {
+    console.error(`[stats] runs-service pipeline stats network error (${runFilter.serviceName}/${runFilter.taskName}):`, (error as Error).message);
     return new Map();
   }
-
-  const data = await response.json() as {
-    groups: Array<{
-      dimensions: Record<string, string | null>;
-      runCount: number;
-    }>;
-  };
-
-  const result = new Map<string, number>();
-  for (const group of data.groups) {
-    const key = group.dimensions[runsGroupBy] ?? "__total__";
-    result.set(key, (result.get(key) ?? 0) + group.runCount);
-  }
-
-  return result;
 }
 
 /**
@@ -453,28 +468,33 @@ async function fetchOutletsStats(
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
   const url = `${OUTLETS_SERVICE_URL}/outlets/stats?${params}`;
-  const response = await fetch(url, {
-    headers: buildDownstreamHeaders(OUTLETS_SERVICE_API_KEY, orgId, identity),
-  });
+  try {
+    const response = await fetch(url, {
+      headers: buildDownstreamHeaders(OUTLETS_SERVICE_API_KEY, orgId, identity),
+    });
 
-  if (!response.ok) {
-    console.error(`[stats] outlets-service /outlets/stats failed: ${response.status}`);
+    if (!response.ok) {
+      console.error(`[stats] outlets-service /outlets/stats failed: ${response.status}`);
+      return new Map();
+    }
+
+    const data = await response.json() as Record<string, unknown>;
+    const result = new Map<string, Record<string, number>>();
+
+    if (data.groups && Array.isArray(data.groups)) {
+      for (const group of data.groups as Array<Record<string, unknown>>) {
+        const groupKey = String(group.key ?? "__total__");
+        result.set(groupKey, extractOutletFields(group));
+      }
+    } else {
+      result.set("__total__", extractOutletFields(data));
+    }
+
+    return result;
+  } catch (error) {
+    console.error(`[stats] outlets-service /outlets/stats network error:`, (error as Error).message);
     return new Map();
   }
-
-  const data = await response.json() as Record<string, unknown>;
-  const result = new Map<string, Record<string, number>>();
-
-  if (data.groups && Array.isArray(data.groups)) {
-    for (const group of data.groups as Array<Record<string, unknown>>) {
-      const groupKey = String(group.key ?? "__total__");
-      result.set(groupKey, extractOutletFields(group));
-    }
-  } else {
-    result.set("__total__", extractOutletFields(data));
-  }
-
-  return result;
 }
 
 /**
@@ -506,22 +526,27 @@ async function fetchActiveCampaigns(
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
   const url = `${campaignUrl}/stats?${params}`;
-  const response = await fetch(url, {
-    headers: buildDownstreamHeaders(campaignKey, orgId, identity),
-  });
+  try {
+    const response = await fetch(url, {
+      headers: buildDownstreamHeaders(campaignKey, orgId, identity),
+    });
 
-  if (!response.ok) {
-    console.error(`[stats] campaign-service /stats failed: ${response.status}`);
+    if (!response.ok) {
+      console.error(`[stats] campaign-service /stats failed: ${response.status}`);
+      return 0;
+    }
+
+    const data = await response.json() as {
+      stats: {
+        byStatus: Record<string, number>;
+      };
+    };
+
+    return data.stats.byStatus?.active ?? data.stats.byStatus?.running ?? 0;
+  } catch (error) {
+    console.error(`[stats] campaign-service /stats network error:`, (error as Error).message);
     return 0;
   }
-
-  const data = await response.json() as {
-    stats: {
-      byStatus: Record<string, number>;
-    };
-  };
-
-  return data.stats.byStatus?.active ?? data.stats.byStatus?.running ?? 0;
 }
 
 /**
