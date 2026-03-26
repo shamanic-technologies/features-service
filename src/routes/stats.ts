@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features, type Feature, type FeatureChart } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
@@ -35,6 +35,45 @@ interface StatsGroup {
 type GroupByDimension = "workflowName" | "brandId" | "campaignId" | "featureSlug";
 
 const VALID_GROUP_BY: Set<string> = new Set(["workflowName", "brandId", "campaignId", "featureSlug"]);
+
+// ── Lineage resolution ──────────────────────────────────────────────────────
+
+/**
+ * Collect all slugs in a feature's upgrade chain (ancestors + descendants).
+ * Traverses forkedFrom upward and upgradedTo downward to build the full dynasty.
+ * Used to aggregate stats across the entire lineage of a feature.
+ */
+async function collectLineageSlugs(feature: Feature): Promise<string[]> {
+  const slugs = new Set<string>();
+  slugs.add(feature.slug);
+
+  // Walk up the chain (ancestors via forkedFrom)
+  let currentId = feature.forkedFrom;
+  const visited = new Set<string>([feature.id]);
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const ancestor = await db.query.features.findFirst({
+      where: eq(features.id, currentId),
+    });
+    if (!ancestor) break;
+    slugs.add(ancestor.slug);
+    currentId = ancestor.forkedFrom;
+  }
+
+  // Walk down the chain (descendants via upgradedTo)
+  currentId = feature.upgradedTo;
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const descendant = await db.query.features.findFirst({
+      where: eq(features.id, currentId),
+    });
+    if (!descendant) break;
+    slugs.add(descendant.slug);
+    currentId = descendant.upgradedTo;
+  }
+
+  return [...slugs];
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -152,18 +191,55 @@ function mergeEmailChannels(data: Record<string, unknown>): Record<string, numbe
 
 /**
  * Fetch cost/run stats from runs-service, grouped by the requested dimension.
+ * Accepts an array of featureSlugs to aggregate across the full upgrade chain.
+ * Makes one call per slug and merges the results.
  */
 async function fetchRunsStats(
   orgId: string,
   groupBy: GroupByDimension | null,
   filters: Record<string, string>,
+  featureSlugs?: string[],
 ): Promise<Map<string, { totalCostInUsdCents: number; completedRuns: number }>> {
-  // Map our groupBy to runs-service groupBy dimension
+  const slugsToQuery = featureSlugs ?? (filters.featureSlug ? [filters.featureSlug] : []);
+
+  if (slugsToQuery.length === 0) {
+    // No feature slug filter — single call without featureSlug param
+    return fetchRunsStatsForSlug(orgId, groupBy, filters, undefined);
+  }
+
+  // Call runs-service once per slug, then merge
+  const maps = await Promise.all(
+    slugsToQuery.map((slug) => fetchRunsStatsForSlug(orgId, groupBy, filters, slug)),
+  );
+
+  // Merge all maps by summing costs and runs per group key
+  const merged = new Map<string, { totalCostInUsdCents: number; completedRuns: number }>();
+  for (const map of maps) {
+    for (const [key, data] of map) {
+      const existing = merged.get(key);
+      if (existing) {
+        existing.totalCostInUsdCents += data.totalCostInUsdCents;
+        existing.completedRuns += data.completedRuns;
+      } else {
+        merged.set(key, { ...data });
+      }
+    }
+  }
+
+  return merged;
+}
+
+async function fetchRunsStatsForSlug(
+  orgId: string,
+  groupBy: GroupByDimension | null,
+  filters: Record<string, string>,
+  featureSlug: string | undefined,
+): Promise<Map<string, { totalCostInUsdCents: number; completedRuns: number }>> {
   const runsGroupBy = groupBy ?? "workflowName";
   const params = new URLSearchParams({ groupBy: runsGroupBy });
   if (filters.workflowName) params.set("workflowName", filters.workflowName);
   if (filters.brandId) params.set("brandId", filters.brandId);
-  if (filters.featureSlug) params.set("featureSlug", filters.featureSlug);
+  if (featureSlug) params.set("featureSlug", featureSlug);
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
   const response = await fetch(url, {
@@ -341,16 +417,19 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req: Authenticated
     if (req.query.brandId) filters.brandId = req.query.brandId as string;
     if (req.query.campaignId) filters.campaignId = req.query.campaignId as string;
     if (req.query.workflowName) filters.workflowName = req.query.workflowName as string;
-    filters.featureSlug = featureSlug;
+
+    // Resolve the full upgrade chain — aggregate stats across all ancestors + descendants
+    const lineageSlugs = await collectLineageSlugs(feature);
 
     // Determine which keys and sources we need
     const requiredKeys = collectRequiredKeys(feature);
     const sources = requiredSources(requiredKeys);
 
     // Fetch data from sources in parallel
+    // runs-service: pass all lineage slugs to aggregate across the full chain
     const [emailStatsMap, runsStatsMap, outletsStatsMap] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters) : Promise.resolve(new Map<string, Record<string, number>>()),
-      sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters) : Promise.resolve(new Map<string, { totalCostInUsdCents: number; completedRuns: number }>()),
+      sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, lineageSlugs) : Promise.resolve(new Map<string, { totalCostInUsdCents: number; completedRuns: number }>()),
       sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters) : Promise.resolve(new Map<string, Record<string, number>>()),
     ]);
 
