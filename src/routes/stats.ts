@@ -3,7 +3,7 @@ import { eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features, type Feature, type FeatureChart } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { STATS_REGISTRY, getPublicRegistry, type StatsKeyDef } from "../lib/stats-registry.js";
+import { STATS_REGISTRY, getPublicRegistry, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
 
 const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL!;
 const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY!;
@@ -282,6 +282,133 @@ async function fetchRunsStatsForSlug(
 }
 
 /**
+ * Collect pipeline stats keys (those with runFilter) from the required keys.
+ */
+function collectPipelineKeys(requiredKeys: Set<string>): Map<string, RunFilter> {
+  const result = new Map<string, RunFilter>();
+  for (const key of requiredKeys) {
+    const def = STATS_REGISTRY[key];
+    if (def?.kind === "raw" && def.runFilter) {
+      result.set(key, def.runFilter);
+    }
+  }
+  return result;
+}
+
+/**
+ * Fetch pipeline counts from runs-service by counting runs per service+task.
+ * Returns a map of groupKey → { statsKey → runCount }.
+ */
+async function fetchPipelineStats(
+  orgId: string,
+  groupBy: GroupByDimension | null,
+  filters: Record<string, string>,
+  featureSlugs: string[] | undefined,
+  pipelineKeys: Map<string, RunFilter>,
+  identity: { userId: string; runId: string },
+): Promise<Map<string, Record<string, number>>> {
+  if (pipelineKeys.size === 0) return new Map();
+
+  // Dedupe filters — multiple stats keys can share the same runFilter
+  const filterToKeys = new Map<string, { filter: RunFilter; keys: string[] }>();
+  for (const [key, filter] of pipelineKeys) {
+    const filterKey = `${filter.serviceName}:${filter.taskName}`;
+    const entry = filterToKeys.get(filterKey);
+    if (entry) {
+      entry.keys.push(key);
+    } else {
+      filterToKeys.set(filterKey, { filter, keys: [key] });
+    }
+  }
+
+  // Fetch counts for each unique filter in parallel
+  const entries = [...filterToKeys.values()];
+  const results = await Promise.all(
+    entries.map(async ({ filter, keys }) => {
+      const slugsToQuery = featureSlugs ?? (filters.featureSlug ? [filters.featureSlug] : []);
+      const maps = await Promise.all(
+        (slugsToQuery.length > 0 ? slugsToQuery : [undefined]).map((slug) =>
+          fetchPipelineStatsForFilter(orgId, groupBy, filters, slug, filter, identity),
+        ),
+      );
+
+      // Merge across slugs
+      const merged = new Map<string, number>();
+      for (const map of maps) {
+        for (const [groupKey, count] of map) {
+          merged.set(groupKey, (merged.get(groupKey) ?? 0) + count);
+        }
+      }
+
+      return { keys, counts: merged };
+    }),
+  );
+
+  // Build final map: groupKey → { statsKey → count }
+  const output = new Map<string, Record<string, number>>();
+  for (const { keys, counts } of results) {
+    for (const [groupKey, count] of counts) {
+      const existing = output.get(groupKey) ?? {};
+      for (const key of keys) {
+        existing[key] = count;
+      }
+      output.set(groupKey, existing);
+    }
+  }
+
+  return output;
+}
+
+async function fetchPipelineStatsForFilter(
+  orgId: string,
+  groupBy: GroupByDimension | null,
+  filters: Record<string, string>,
+  featureSlug: string | undefined,
+  runFilter: RunFilter,
+  identity: { userId: string; runId: string },
+): Promise<Map<string, number>> {
+  const runsGroupBy = groupBy ?? "workflowName";
+  const params = new URLSearchParams({
+    groupBy: runsGroupBy,
+    serviceName: runFilter.serviceName,
+    taskName: runFilter.taskName,
+  });
+  if (filters.workflowName) params.set("workflowName", filters.workflowName);
+  if (filters.brandId) params.set("brandId", filters.brandId);
+  if (featureSlug) params.set("featureSlug", featureSlug);
+
+  const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
+  const response = await fetch(url, {
+    headers: {
+      "x-api-key": RUNS_SERVICE_API_KEY,
+      "x-org-id": orgId,
+      "x-user-id": identity.userId,
+      "x-run-id": identity.runId,
+    },
+  });
+
+  if (!response.ok) {
+    console.error(`[stats] runs-service pipeline stats failed: ${response.status} (${runFilter.serviceName}/${runFilter.taskName})`);
+    return new Map();
+  }
+
+  const data = await response.json() as {
+    groups: Array<{
+      dimensions: Record<string, string | null>;
+      runCount: number;
+    }>;
+  };
+
+  const result = new Map<string, number>();
+  for (const group of data.groups) {
+    const key = group.dimensions[runsGroupBy] ?? "__total__";
+    result.set(key, (result.get(key) ?? 0) + group.runCount);
+  }
+
+  return result;
+}
+
+/**
  * Fetch outlet stats from outlets-service, grouped by the requested dimension.
  */
 async function fetchOutletsStats(
@@ -433,10 +560,12 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     // Fetch data from sources in parallel
     // runs-service: pass all lineage slugs to aggregate across the full chain
     const identity = { userId, runId };
-    const [emailStatsMap, runsStatsMap, outletsStatsMap] = await Promise.all([
+    const pipelineKeys = collectPipelineKeys(requiredKeys);
+    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, lineageSlugs, identity) : Promise.resolve(new Map<string, { totalCostInUsdCents: number; completedRuns: number }>()),
       sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      pipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, lineageSlugs, pipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
     ]);
 
     if (!groupBy) {
@@ -444,10 +573,12 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       const emailStats = emailStatsMap.get("__total__") ?? {};
       const runsStats = runsStatsMap.get("__total__");
       const outletsStats = outletsStatsMap.get("__total__") ?? {};
+      const pipelineStats = pipelineStatsMap.get("__total__") ?? {};
 
       const rawStats: Record<string, number> = {
         ...emailStats,
         ...outletsStats,
+        ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -464,6 +595,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     for (const key of emailStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of runsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of outletsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
+    for (const key of pipelineStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
 
     // Compute totals for top-level systemStats
     let totalCost = 0;
@@ -478,10 +610,12 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       const emailStats = emailStatsMap.get(groupKey) ?? {};
       const runsStats = runsStatsMap.get(groupKey);
       const outletsStats = outletsStatsMap.get(groupKey) ?? {};
+      const pipelineStats = pipelineStatsMap.get(groupKey) ?? {};
 
       const rawStats: Record<string, number> = {
         ...emailStats,
         ...outletsStats,
+        ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -545,10 +679,12 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
     const groupBy = (groupByParam?.split(",")[0] ?? null) as GroupByDimension | null;
 
     const identity = { userId, runId };
-    const [emailStatsMap, runsStatsMap, outletsStatsMap] = await Promise.all([
+    const globalPipelineKeys = collectPipelineKeys(allKeys);
+    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchRunsStats(orgId, groupBy, filters, undefined, identity),
       sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      globalPipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, undefined, globalPipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
     ]);
 
     if (!groupBy) {
@@ -556,10 +692,12 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       const emailStats = emailStatsMap.get("__total__") ?? {};
       const runsStats = runsStatsMap.get("__total__");
       const outletsStats = outletsStatsMap.get("__total__") ?? {};
+      const pipelineStats = pipelineStatsMap.get("__total__") ?? {};
 
       const rawStats: Record<string, number> = {
         ...emailStats,
         ...outletsStats,
+        ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -575,6 +713,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
     for (const key of emailStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of runsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of outletsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
+    for (const key of pipelineStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
 
     let totalCost = 0;
     let totalRuns = 0;
@@ -588,10 +727,12 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       const emailStats = emailStatsMap.get(groupKey) ?? {};
       const runsStats = runsStatsMap.get(groupKey);
       const outletsStats = outletsStatsMap.get(groupKey) ?? {};
+      const pipelineStats = pipelineStatsMap.get(groupKey) ?? {};
 
       const rawStats: Record<string, number> = {
         ...emailStats,
         ...outletsStats,
+        ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
