@@ -131,6 +131,14 @@ registry.register("PrefillTextResponse", prefillTextResponseSchema);
 registry.register("PrefillFullResponse", prefillFullResponseSchema);
 registry.register("InputsResponse", inputsResponseSchema);
 
+// ── Required identity headers (all authenticated endpoints) ────────────────
+
+const identityHeaders = z.object({
+  "x-org-id": z.string().uuid().describe("Internal org UUID from client-service"),
+  "x-user-id": z.string().uuid().describe("Internal user UUID from client-service"),
+  "x-run-id": z.string().uuid().describe("Run ID for tracking and billing"),
+});
+
 // ── PUT /features — batch upsert ──────────────────────────────────────────
 
 registry.registerPath({
@@ -146,7 +154,7 @@ registry.registerPath({
     "This is the equivalent of workflow-service's `PUT /workflows/upgrade`. " +
     "The `name` field in the request body becomes the `displayName`.",
   tags: ["Features"],
-  request: { body: { content: { "application/json": { schema: batchUpsertFeaturesSchema } } } },
+  request: { headers: identityHeaders, body: { content: { "application/json": { schema: batchUpsertFeaturesSchema } } } },
   responses: {
     200: { description: "Upserted features", content: { "application/json": { schema: z.object({ features: z.array(featureResponseSchema) }) } } },
     400: { description: "Validation error", content: { "application/json": { schema: errorResponse } } },
@@ -165,7 +173,7 @@ registry.registerPath({
     "The `name` field becomes both the `name` (machine identifier) and `displayName` (human-readable label) " +
     "of the created feature. On future forks, `displayName` stays the same while `name` gets versioned.",
   tags: ["Features"],
-  request: { body: { content: { "application/json": { schema: createFeatureSchema } } } },
+  request: { headers: identityHeaders, body: { content: { "application/json": { schema: createFeatureSchema } } } },
   responses: {
     201: { description: "Created feature", content: { "application/json": { schema: z.object({ feature: featureResponseSchema }) } } },
     400: { description: "Validation error", content: { "application/json": { schema: errorResponse } } },
@@ -185,6 +193,7 @@ registry.registerPath({
     "Use `status=deprecated` to see the full history, or omit the status filter to see all.",
   tags: ["Features"],
   request: {
+    headers: identityHeaders,
     query: z.object({
       status: z.string().optional(),
       category: z.string().optional(),
@@ -205,7 +214,7 @@ registry.registerPath({
   path: "/features/{slug}",
   summary: "Get a single feature by slug",
   tags: ["Features"],
-  request: { params: z.object({ slug: z.string() }) },
+  request: { headers: identityHeaders, params: z.object({ slug: z.string() }) },
   responses: {
     200: { description: "Feature details", content: { "application/json": { schema: z.object({ feature: featureResponseSchema }) } } },
     404: { description: "Not found", content: { "application/json": { schema: errorResponse } } },
@@ -247,6 +256,7 @@ registry.registerPath({
     "Returned if the new signature already exists on a different feature.",
   tags: ["Features"],
   request: {
+    headers: identityHeaders,
     params: z.object({ slug: z.string() }),
     body: { content: { "application/json": { schema: updateFeatureSchema } } },
   },
@@ -266,7 +276,7 @@ registry.registerPath({
   path: "/features/{slug}/inputs",
   summary: "Get input definitions for a feature",
   tags: ["Features"],
-  request: { params: z.object({ slug: z.string() }) },
+  request: { headers: identityHeaders, params: z.object({ slug: z.string() }) },
   responses: {
     200: { description: "Feature inputs", content: { "application/json": { schema: inputsResponseSchema } } },
     404: { description: "Not found", content: { "application/json": { schema: errorResponse } } },
@@ -281,6 +291,7 @@ registry.registerPath({
   summary: "Pre-fill input values for a feature from brand data",
   tags: ["Features"],
   request: {
+    headers: identityHeaders,
     params: z.object({ slug: z.string() }),
     query: z.object({ format: z.enum(["text", "full"]).optional() }),
     body: { content: { "application/json": { schema: prefillRequestSchema } } },
@@ -307,6 +318,7 @@ registry.registerPath({
   summary: "Get the stats key registry",
   description: "Returns the complete dictionary of known stats keys with their label and type. Used by the front-end to format and label output columns dynamically.",
   tags: ["Stats"],
+  request: { headers: identityHeaders },
   responses: {
     200: { description: "Stats registry", content: { "application/json": { schema: registryResponseSchema } } },
   },
@@ -330,6 +342,7 @@ registry.registerPath({
     "Use `GET /stats/registry` to discover available keys, their labels, and types.",
   tags: ["Stats"],
   request: {
+    headers: identityHeaders,
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       groupBy: z.enum(["workflowName", "brandId", "campaignId"]).optional(),
@@ -340,7 +353,7 @@ registry.registerPath({
   },
   responses: {
     200: { description: "Feature stats", content: { "application/json": { schema: featureStatsResponseSchema } } },
-    400: { description: "Missing org ID", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing required identity headers", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
   },
 });
@@ -358,6 +371,7 @@ registry.registerPath({
     "Stats from deprecated features are aggregated into their active successor via the lineage chain.",
   tags: ["Stats"],
   request: {
+    headers: identityHeaders,
     query: z.object({
       groupBy: z.string().optional().describe("Comma-separated dimensions: featureSlug, workflowName, brandId, campaignId"),
       brandId: z.string().optional(),
@@ -365,7 +379,7 @@ registry.registerPath({
   },
   responses: {
     200: { description: "Global stats", content: { "application/json": { schema: globalStatsResponseSchema } } },
-    400: { description: "Missing org ID", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing required identity headers", content: { "application/json": { schema: errorResponse } } },
   },
 });
 

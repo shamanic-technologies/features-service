@@ -1,14 +1,14 @@
 import { Request, Response, NextFunction } from "express";
 
 export interface AuthenticatedRequest extends Request {
-  orgId?: string;
-  userId?: string;
-  runId?: string;
+  orgId: string;
+  userId: string;
+  runId: string;
 }
 
 /**
  * API key auth for service-to-service calls.
- * Features are global (not per-org), but we still accept identity headers for logging/run tracking.
+ * Requires x-org-id, x-user-id, and x-run-id on every authenticated endpoint.
  */
 export function apiKeyAuth(
   req: AuthenticatedRequest,
@@ -21,10 +21,23 @@ export function apiKeyAuth(
     return res.status(401).json({ error: "Invalid or missing API key" });
   }
 
-  // Capture identity headers for logging (not required since features are global)
-  req.orgId = req.headers["x-org-id"] as string | undefined;
-  req.userId = req.headers["x-user-id"] as string | undefined;
-  req.runId = req.headers["x-run-id"] as string | undefined;
+  const orgId = req.headers["x-org-id"] as string | undefined;
+  const userId = req.headers["x-user-id"] as string | undefined;
+  const runId = req.headers["x-run-id"] as string | undefined;
+
+  const missing = [
+    !orgId && "x-org-id",
+    !userId && "x-user-id",
+    !runId && "x-run-id",
+  ].filter(Boolean);
+
+  if (missing.length > 0) {
+    return res.status(400).json({ error: `Missing required headers: ${missing.join(", ")}` });
+  }
+
+  req.orgId = orgId!;
+  req.userId = userId!;
+  req.runId = runId!;
 
   next();
 }

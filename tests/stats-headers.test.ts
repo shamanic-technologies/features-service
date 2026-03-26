@@ -105,21 +105,30 @@ describe("stats routes forward identity headers to downstream services", () => {
     }
   });
 
-  it("omits identity headers when not provided by caller", async () => {
+  it("rejects requests missing required identity headers with 400", async () => {
     const app = createApp();
 
-    await request(app)
+    // Missing x-user-id and x-run-id
+    const res1 = await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
       .set("x-org-id", "org-123")
-      .expect(200);
+      .expect(400);
 
-    for (const [url, opts] of fetchSpy.mock.calls) {
-      const headers = opts?.headers ?? {};
-      expect(headers["x-org-id"]).toBe("org-123");
-      // Should not have undefined string values
-      expect(headers["x-user-id"]).toBeUndefined();
-      expect(headers["x-run-id"]).toBeUndefined();
-    }
+    expect(res1.body.error).toMatch(/x-user-id/);
+    expect(res1.body.error).toMatch(/x-run-id/);
+
+    // Missing all three
+    const res2 = await request(app)
+      .get("/stats")
+      .set("x-api-key", "test-key")
+      .expect(400);
+
+    expect(res2.body.error).toMatch(/x-org-id/);
+    expect(res2.body.error).toMatch(/x-user-id/);
+    expect(res2.body.error).toMatch(/x-run-id/);
+
+    // No downstream calls should have been made
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
