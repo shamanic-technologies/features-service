@@ -460,8 +460,20 @@
           "entities": {
             "type": "array",
             "items": {
-              "type": "string",
-              "minLength": 1
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "countKey": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "name"
+              ]
             },
             "minItems": 1
           }
@@ -727,8 +739,20 @@
           "entities": {
             "type": "array",
             "items": {
-              "type": "string",
-              "minLength": 1
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "countKey": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "name"
+              ]
             },
             "minItems": 1
           },
@@ -995,8 +1019,20 @@
           "entities": {
             "type": "array",
             "items": {
-              "type": "string",
-              "minLength": 1
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "countKey": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "name"
+              ]
             },
             "minItems": 1
           }
@@ -2115,8 +2151,20 @@
                         "entities": {
                           "type": "array",
                           "items": {
-                            "type": "string",
-                            "minLength": 1
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "countKey": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "name"
+                            ]
                           },
                           "minItems": 1
                         }
@@ -2783,8 +2831,20 @@
                   "entities": {
                     "type": "array",
                     "items": {
-                      "type": "string",
-                      "minLength": 1
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "countKey": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ]
                     },
                     "minItems": 1
                   },
@@ -4279,8 +4339,20 @@
                   "entities": {
                     "type": "array",
                     "items": {
-                      "type": "string",
-                      "minLength": 1
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "countKey": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ]
                     },
                     "minItems": 1
                   }

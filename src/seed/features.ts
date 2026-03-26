@@ -122,7 +122,11 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
       },
     ],
 
-    entities: ["leads", "companies", "emails"],
+    entities: [
+      { name: "leads", countKey: "leadsServed" },
+      { name: "companies" },
+      { name: "emails", countKey: "emailsGenerated" },
+    ],
   },
 
   // ─── Outlet Database Discovery ──────────────────────────────────────────
@@ -197,7 +201,9 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
       },
     ],
 
-    entities: ["outlets"],
+    entities: [
+      { name: "outlets", countKey: "outletsDiscovered" },
+    ],
   },
 
   // ─── PR Cold Email Outreach ─────────────────────────────────────────────
@@ -299,6 +305,11 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
       },
     ],
 
-    entities: ["leads", "journalists", "emails", "press-kits"],
+    entities: [
+      { name: "leads", countKey: "leadsServed" },
+      { name: "journalists", countKey: "journalistsContacted" },
+      { name: "emails", countKey: "emailsGenerated" },
+      { name: "press-kits" },
+    ],
   },
 ];

@@ -64,6 +64,15 @@ export interface BreakdownBarChart {
 
 export type FeatureChart = FunnelBarChart | BreakdownBarChart;
 
+// ── Entity definition ────────────────────────────────────────────────────────
+
+export interface FeatureEntity {
+  /** Entity type name, e.g. "leads", "journalists" */
+  name: string;
+  /** Optional stats key whose value is the entity count for this campaign */
+  countKey?: string;
+}
+
 // ── Table definition ────────────────────────────────────────────────────────
 
 export const features = pgTable(
@@ -120,8 +129,8 @@ export const features = pgTable(
     /** Chart definitions (funnel, breakdown) */
     charts: jsonb("charts").notNull().$type<FeatureChart[]>(),
 
-    /** Entity types shown in campaign detail sidebar (e.g. ["leads", "companies", "emails"]) */
-    entities: jsonb("entities").notNull().$type<string[]>(),
+    /** Entity types shown in campaign detail sidebar, each with an optional countKey linking to a stats metric */
+    entities: jsonb("entities").notNull().$type<FeatureEntity[]>(),
 
     /** If this feature was forked from another, the ID of the original */
     forkedFrom: uuid("forked_from"),

@@ -48,14 +48,20 @@ describe("SEED_FEATURES", () => {
 
   it("Sales Cold Email has correct entities", () => {
     const sales = SEED_FEATURES.find((f) => f.name === "Sales Cold Email Outreach");
-    expect(sales!.entities).toEqual(["leads", "companies", "emails"]);
+    expect(sales!.entities).toEqual([
+      { name: "leads", countKey: "leadsServed" },
+      { name: "companies" },
+      { name: "emails", countKey: "emailsGenerated" },
+    ]);
   });
 
   it("Outlet Database Discovery has 3 inputs and entities", () => {
     const outlets = SEED_FEATURES.find((f) => f.name === "Outlet Database Discovery");
     expect(outlets).toBeDefined();
     expect(outlets!.inputs).toHaveLength(3);
-    expect(outlets!.entities).toEqual(["outlets"]);
+    expect(outlets!.entities).toEqual([
+      { name: "outlets", countKey: "outletsDiscovered" },
+    ]);
   });
 
   it("Outlet Database Discovery has charts (funnel + breakdown)", () => {
@@ -83,7 +89,12 @@ describe("SEED_FEATURES", () => {
 
   it("PR Cold Email Outreach has correct entities", () => {
     const pr = SEED_FEATURES.find((f) => f.name === "PR Cold Email Outreach");
-    expect(pr!.entities).toEqual(["leads", "journalists", "emails", "press-kits"]);
+    expect(pr!.entities).toEqual([
+      { name: "leads", countKey: "leadsServed" },
+      { name: "journalists", countKey: "journalistsContacted" },
+      { name: "emails", countKey: "emailsGenerated" },
+      { name: "press-kits" },
+    ]);
   });
 
   it("implemented features have all required fields", () => {
