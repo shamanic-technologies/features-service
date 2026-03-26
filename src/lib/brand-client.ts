@@ -22,7 +22,7 @@ export interface ExtractedFieldResult {
 export async function extractBrandFields(
   brandId: string,
   fields: ExtractFieldItem[],
-  headers: { orgId?: string; userId?: string; runId?: string },
+  headers: { orgId: string; userId: string; runId: string },
 ): Promise<ExtractedFieldResult[]> {
   if (!BRAND_SERVICE_URL || !BRAND_SERVICE_API_KEY) {
     throw new Error("BRAND_SERVICE_URL or BRAND_SERVICE_API_KEY not configured");
@@ -33,9 +33,9 @@ export async function extractBrandFields(
     headers: {
       "Content-Type": "application/json",
       "x-api-key": BRAND_SERVICE_API_KEY,
-      ...(headers.orgId && { "x-org-id": headers.orgId }),
-      ...(headers.userId && { "x-user-id": headers.userId }),
-      ...(headers.runId && { "x-run-id": headers.runId }),
+      "x-org-id": headers.orgId,
+      "x-user-id": headers.userId,
+      "x-run-id": headers.runId,
     },
     body: JSON.stringify({ fields }),
   });

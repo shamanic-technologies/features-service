@@ -128,7 +128,7 @@ async function fetchEmailStats(
   orgId: string,
   groupBy: GroupByDimension | null,
   filters: Record<string, string>,
-  identity: { userId?: string; runId?: string },
+  identity: { userId: string; runId: string },
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams();
   if (groupBy === "workflowName") params.set("groupBy", "workflowName");
@@ -143,8 +143,8 @@ async function fetchEmailStats(
     headers: {
       "x-api-key": EMAIL_GATEWAY_SERVICE_API_KEY,
       "x-org-id": orgId,
-      ...(identity.userId && { "x-user-id": identity.userId }),
-      ...(identity.runId && { "x-run-id": identity.runId }),
+      "x-user-id": identity.userId,
+      "x-run-id": identity.runId,
     },
   });
 
@@ -200,8 +200,8 @@ async function fetchRunsStats(
   orgId: string,
   groupBy: GroupByDimension | null,
   filters: Record<string, string>,
-  featureSlugs?: string[],
-  identity?: { userId?: string; runId?: string },
+  featureSlugs: string[] | undefined,
+  identity: { userId: string; runId: string },
 ): Promise<Map<string, { totalCostInUsdCents: number; completedRuns: number }>> {
   const slugsToQuery = featureSlugs ?? (filters.featureSlug ? [filters.featureSlug] : []);
 
@@ -237,7 +237,7 @@ async function fetchRunsStatsForSlug(
   groupBy: GroupByDimension | null,
   filters: Record<string, string>,
   featureSlug: string | undefined,
-  identity?: { userId?: string; runId?: string },
+  identity: { userId: string; runId: string },
 ): Promise<Map<string, { totalCostInUsdCents: number; completedRuns: number }>> {
   const runsGroupBy = groupBy ?? "workflowName";
   const params = new URLSearchParams({ groupBy: runsGroupBy });
@@ -250,8 +250,8 @@ async function fetchRunsStatsForSlug(
     headers: {
       "x-api-key": RUNS_SERVICE_API_KEY,
       "x-org-id": orgId,
-      ...(identity?.userId && { "x-user-id": identity.userId }),
-      ...(identity?.runId && { "x-run-id": identity.runId }),
+      "x-user-id": identity.userId,
+      "x-run-id": identity.runId,
     },
   });
 
@@ -288,7 +288,7 @@ async function fetchOutletsStats(
   orgId: string,
   groupBy: GroupByDimension | null,
   filters: Record<string, string>,
-  identity?: { userId?: string; runId?: string },
+  identity: { userId: string; runId: string },
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams();
   if (groupBy === "workflowName") params.set("groupBy", "workflowName");
@@ -303,8 +303,8 @@ async function fetchOutletsStats(
     headers: {
       "x-api-key": OUTLETS_SERVICE_API_KEY,
       "x-org-id": orgId,
-      ...(identity?.userId && { "x-user-id": identity.userId }),
-      ...(identity?.runId && { "x-run-id": identity.runId }),
+      "x-user-id": identity.userId,
+      "x-run-id": identity.runId,
     },
   });
 
@@ -405,11 +405,7 @@ router.get("/stats/registry", apiKeyAuth, async (_req: AuthenticatedRequest, res
 router.get("/features/:featureSlug/stats", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const { featureSlug } = req.params;
-    const orgId = req.orgId;
-
-    if (!orgId) {
-      return res.status(400).json({ error: "x-org-id header is required for stats" });
-    }
+    const { orgId, userId, runId } = req;
 
     const feature = await db.query.features.findFirst({
       where: eq(features.slug, featureSlug),
@@ -436,7 +432,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req: Authenticated
 
     // Fetch data from sources in parallel
     // runs-service: pass all lineage slugs to aggregate across the full chain
-    const identity = { userId: req.userId, runId: req.runId };
+    const identity = { userId, runId };
     const [emailStatsMap, runsStatsMap, outletsStatsMap] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, lineageSlugs, identity) : Promise.resolve(new Map<string, { totalCostInUsdCents: number; completedRuns: number }>()),
@@ -527,10 +523,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req: Authenticated
  */
 router.get("/stats", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
   try {
-    const orgId = req.orgId;
-    if (!orgId) {
-      return res.status(400).json({ error: "x-org-id header is required for stats" });
-    }
+    const { orgId, userId, runId } = req;
 
     const groupByParam = req.query.groupBy as string | undefined;
     const filters: Record<string, string> = {};
@@ -551,7 +544,7 @@ router.get("/stats", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
 
     const groupBy = (groupByParam?.split(",")[0] ?? null) as GroupByDimension | null;
 
-    const identity = { userId: req.userId, runId: req.runId };
+    const identity = { userId, runId };
     const [emailStatsMap, runsStatsMap, outletsStatsMap] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchRunsStats(orgId, groupBy, filters, undefined, identity),
