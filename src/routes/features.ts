@@ -474,13 +474,11 @@ router.post("/features/:slug/prefill", apiKeyAuth, async (req, res) => {
       runId: auth.runId,
     });
 
-    // Map extracted values back to input keys
-    const extractedByKey = new Map(extractedResults.map((r) => [r.key, r]));
-
+    // Map extracted values back to input keys (results is keyed by field key)
     if (format === "text") {
       const prefilled: Record<string, string | null> = {};
       for (const input of feature.inputs) {
-        const result = extractedByKey.get(input.extractKey);
+        const result = extractedResults[input.extractKey];
         prefilled[input.key] = flattenValue(result?.value ?? null);
       }
       return res.json({ slug: feature.slug, brandId, format: "text", prefilled });
@@ -489,7 +487,7 @@ router.post("/features/:slug/prefill", apiKeyAuth, async (req, res) => {
     // format === "full"
     const prefilled: Record<string, { value: unknown; cached: boolean; sourceUrls: string[] | null }> = {};
     for (const input of feature.inputs) {
-      const result = extractedByKey.get(input.extractKey);
+      const result = extractedResults[input.extractKey];
       prefilled[input.key] = {
         value: result?.value ?? null,
         cached: result?.cached ?? false,

@@ -7,7 +7,6 @@ export interface ExtractFieldItem {
 }
 
 export interface ExtractedFieldResult {
-  key: string;
   value: string | string[] | Record<string, unknown> | null;
   cached: boolean;
   extractedAt: string;
@@ -23,7 +22,7 @@ export async function extractBrandFields(
   brandId: string,
   fields: ExtractFieldItem[],
   headers: { orgId: string; userId: string; runId: string },
-): Promise<ExtractedFieldResult[]> {
+): Promise<Record<string, ExtractedFieldResult>> {
   if (!BRAND_SERVICE_URL || !BRAND_SERVICE_API_KEY) {
     throw new Error("BRAND_SERVICE_URL or BRAND_SERVICE_API_KEY not configured");
   }
@@ -45,6 +44,6 @@ export async function extractBrandFields(
     throw new Error(`brand-service extract-fields failed (${response.status}): ${text}`);
   }
 
-  const data = await response.json() as { brandId: string; results: ExtractedFieldResult[] };
+  const data = await response.json() as { brandId: string; results: Record<string, ExtractedFieldResult> };
   return data.results;
 }
