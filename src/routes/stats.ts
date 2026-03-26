@@ -32,6 +32,13 @@ interface StatsGroup {
   stats: Record<string, number | null>;
 }
 
+interface RunsStatsEntry {
+  totalCostInUsdCents: number;
+  completedRuns: number;
+  minStartedAt: string | null;
+  maxStartedAt: string | null;
+}
+
 type GroupByDimension = "workflowName" | "brandId" | "campaignId" | "featureSlug";
 
 const VALID_GROUP_BY: Set<string> = new Set(["workflowName", "brandId", "campaignId", "featureSlug"]);
@@ -202,7 +209,7 @@ async function fetchRunsStats(
   filters: Record<string, string>,
   featureSlugs: string[] | undefined,
   identity: { userId: string; runId: string },
-): Promise<Map<string, { totalCostInUsdCents: number; completedRuns: number }>> {
+): Promise<Map<string, RunsStatsEntry>> {
   const slugsToQuery = featureSlugs ?? (filters.featureSlug ? [filters.featureSlug] : []);
 
   if (slugsToQuery.length === 0) {
@@ -216,13 +223,19 @@ async function fetchRunsStats(
   );
 
   // Merge all maps by summing costs and runs per group key
-  const merged = new Map<string, { totalCostInUsdCents: number; completedRuns: number }>();
+  const merged = new Map<string, RunsStatsEntry>();
   for (const map of maps) {
     for (const [key, data] of map) {
       const existing = merged.get(key);
       if (existing) {
         existing.totalCostInUsdCents += data.totalCostInUsdCents;
         existing.completedRuns += data.completedRuns;
+        if (data.minStartedAt && (!existing.minStartedAt || data.minStartedAt < existing.minStartedAt)) {
+          existing.minStartedAt = data.minStartedAt;
+        }
+        if (data.maxStartedAt && (!existing.maxStartedAt || data.maxStartedAt > existing.maxStartedAt)) {
+          existing.maxStartedAt = data.maxStartedAt;
+        }
       } else {
         merged.set(key, { ...data });
       }
@@ -238,7 +251,7 @@ async function fetchRunsStatsForSlug(
   filters: Record<string, string>,
   featureSlug: string | undefined,
   identity: { userId: string; runId: string },
-): Promise<Map<string, { totalCostInUsdCents: number; completedRuns: number }>> {
+): Promise<Map<string, RunsStatsEntry>> {
   const runsGroupBy = groupBy ?? "workflowName";
   const params = new URLSearchParams({ groupBy: runsGroupBy });
   if (filters.workflowName) params.set("workflowName", filters.workflowName);
@@ -265,16 +278,20 @@ async function fetchRunsStatsForSlug(
       dimensions: Record<string, string | null>;
       totalCostInUsdCents: string;
       runCount: number;
+      minStartedAt: string | null;
+      maxStartedAt: string | null;
     }>;
   };
 
-  const result = new Map<string, { totalCostInUsdCents: number; completedRuns: number }>();
+  const result = new Map<string, RunsStatsEntry>();
 
   for (const group of data.groups) {
     const key = group.dimensions[runsGroupBy] ?? "__total__";
     result.set(key, {
       totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)),
       completedRuns: group.runCount,
+      minStartedAt: group.minStartedAt ?? null,
+      maxStartedAt: group.maxStartedAt ?? null,
     });
   }
 
@@ -536,19 +553,37 @@ function computeDerivedStats(
   return result;
 }
 
+function aggregateRunsTotals(runsStatsMap: Map<string, RunsStatsEntry>): RunsStatsEntry {
+  let totalCost = 0;
+  let totalRuns = 0;
+  let minStartedAt: string | null = null;
+  let maxStartedAt: string | null = null;
+  for (const entry of runsStatsMap.values()) {
+    totalCost += entry.totalCostInUsdCents;
+    totalRuns += entry.completedRuns;
+    if (entry.minStartedAt && (!minStartedAt || entry.minStartedAt < minStartedAt)) {
+      minStartedAt = entry.minStartedAt;
+    }
+    if (entry.maxStartedAt && (!maxStartedAt || entry.maxStartedAt > maxStartedAt)) {
+      maxStartedAt = entry.maxStartedAt;
+    }
+  }
+  return { totalCostInUsdCents: totalCost, completedRuns: totalRuns, minStartedAt, maxStartedAt };
+}
+
 /**
  * Build system stats from raw data.
  */
 function buildSystemStats(
-  runsData: { totalCostInUsdCents: number; completedRuns: number } | undefined,
+  runsData: RunsStatsEntry | undefined,
   activeCampaigns = 0,
 ): SystemStats {
   return {
     totalCostInUsdCents: runsData?.totalCostInUsdCents ?? 0,
     completedRuns: runsData?.completedRuns ?? 0,
     activeCampaigns,
-    firstRunAt: null, // TODO: runs-service needs min/max started_at
-    lastRunAt: null,
+    firstRunAt: runsData?.minStartedAt ?? null,
+    lastRunAt: runsData?.maxStartedAt ?? null,
   };
 }
 
@@ -607,7 +642,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     const pipelineKeys = collectPipelineKeys(requiredKeys);
     const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
-      sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, lineageSlugs, identity) : Promise.resolve(new Map<string, { totalCostInUsdCents: number; completedRuns: number }>()),
+      sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, lineageSlugs, identity) : Promise.resolve(new Map<string, RunsStatsEntry>()),
       sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       pipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, lineageSlugs, pipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchActiveCampaigns(orgId, filters, identity),
@@ -643,12 +678,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     for (const key of pipelineStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
 
     // Compute totals for top-level systemStats
-    let totalCost = 0;
-    let totalRuns = 0;
-    for (const runsData of runsStatsMap.values()) {
-      totalCost += runsData.totalCostInUsdCents;
-      totalRuns += runsData.completedRuns;
-    }
+    const totals = aggregateRunsTotals(runsStatsMap);
 
     const groups: StatsGroup[] = [];
     for (const groupKey of allGroupKeys) {
@@ -681,7 +711,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     res.json({
       featureSlug,
       groupBy,
-      systemStats: buildSystemStats({ totalCostInUsdCents: totalCost, completedRuns: totalRuns }, activeCampaigns),
+      systemStats: buildSystemStats(totals, activeCampaigns),
       groups,
     });
   } catch (error) {
@@ -761,12 +791,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
     for (const key of outletsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of pipelineStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
 
-    let totalCost = 0;
-    let totalRuns = 0;
-    for (const runsData of runsStatsMap.values()) {
-      totalCost += runsData.totalCostInUsdCents;
-      totalRuns += runsData.completedRuns;
-    }
+    const totals = aggregateRunsTotals(runsStatsMap);
 
     const groups: StatsGroup[] = [];
     for (const groupKey of allGroupKeys) {
@@ -797,7 +822,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
 
     res.json({
       groupBy: groupByParam,
-      systemStats: buildSystemStats({ totalCostInUsdCents: totalCost, completedRuns: totalRuns }, activeCampaigns),
+      systemStats: buildSystemStats(totals, activeCampaigns),
       groups,
     });
   } catch (error) {
