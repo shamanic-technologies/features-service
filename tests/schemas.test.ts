@@ -58,7 +58,11 @@ const validFeature = {
   inputs: [validInput],
   outputs: [validOutput, validOutputWithSort],
   charts: [validFunnelChart, validBreakdownChart],
-  entities: ["leads", "companies", "emails"],
+  entities: [
+    { name: "leads", countKey: "leadsServed" },
+    { name: "companies" },
+    { name: "emails", countKey: "emailsGenerated" },
+  ],
 };
 
 describe("upsertFeatureSchema", () => {
@@ -96,9 +100,33 @@ describe("upsertFeatureSchema", () => {
   it("rejects unknown entity type", () => {
     const result = upsertFeatureSchema.safeParse({
       ...validFeature,
-      entities: ["leads", "unknown-entity"],
+      entities: [{ name: "leads" }, { name: "unknown-entity" }],
     });
     expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown countKey", () => {
+    const result = upsertFeatureSchema.safeParse({
+      ...validFeature,
+      entities: [{ name: "leads", countKey: "nonExistentKey" }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts entity without countKey", () => {
+    const result = upsertFeatureSchema.safeParse({
+      ...validFeature,
+      entities: [{ name: "leads" }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts entity with valid countKey", () => {
+    const result = upsertFeatureSchema.safeParse({
+      ...validFeature,
+      entities: [{ name: "leads", countKey: "leadsServed" }],
+    });
+    expect(result.success).toBe(true);
   });
 
   it("rejects empty entities", () => {
@@ -348,7 +376,7 @@ describe("updateFeatureSchema", () => {
 
   it("rejects unknown entity type in partial update", () => {
     const result = updateFeatureSchema.safeParse({
-      entities: ["unknown-entity"],
+      entities: [{ name: "unknown-entity" }],
     });
     expect(result.success).toBe(false);
   });

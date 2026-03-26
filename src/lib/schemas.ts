@@ -16,6 +16,13 @@ const entityTypeString = z.string().min(1).refine(
   (type) => ({ message: `Unknown entity type "${type}". Must be one of: ${[...VALID_ENTITY_TYPES].join(", ")}` }),
 );
 
+// ── Entity (object form with optional countKey) ─────────────────────────────
+
+export const featureEntitySchema = z.object({
+  name: entityTypeString,
+  countKey: statsKeyString.optional(),
+});
+
 // ── Input ───────────────────────────────────────────────────────────────────
 
 export const featureInputSchema = z.object({
@@ -96,7 +103,7 @@ export const upsertFeatureSchema = z.object({
   inputs: z.array(featureInputSchema).min(1),
   outputs: z.array(featureOutputSchema).min(1),
   charts: chartsArraySchema,
-  entities: z.array(entityTypeString).min(1),
+  entities: z.array(featureEntitySchema).min(1),
 });
 
 // ── Fork response (returned when PUT /features/:slug forks) ──────────────
@@ -143,7 +150,7 @@ export const updateFeatureSchema = z.object({
   inputs: z.array(featureInputSchema).min(1).optional(),
   outputs: z.array(featureOutputSchema).min(1).optional(),
   charts: chartsArraySchema.optional(),
-  entities: z.array(entityTypeString).min(1).optional(),
+  entities: z.array(featureEntitySchema).min(1).optional(),
 });
 
 export type UpsertFeatureBody = z.infer<typeof upsertFeatureSchema>;
