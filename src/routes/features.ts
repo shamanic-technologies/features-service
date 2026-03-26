@@ -87,7 +87,7 @@ async function resolveForkedNameAndSlug(
  * - Same signature → upsert metadata (labels, descriptions, charts, etc.)
  * - Same name but different signature → auto-suffix name/slug with v2, v3, etc.
  */
-router.put("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
+router.put("/features", apiKeyAuth, async (req, res) => {
   try {
     const parsed = batchUpsertFeaturesSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -152,7 +152,7 @@ router.put("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
  * Signature is computed from input/output keys.
  * Returns 409 if slug or name already exists.
  */
-router.post("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
+router.post("/features", apiKeyAuth, async (req, res) => {
   try {
     const parsed = createFeatureSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -229,7 +229,7 @@ router.post("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
  * The original feature is never mutated structurally. displayName is preserved
  * across the fork chain.
  */
-router.put("/features/:slug", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
+router.put("/features/:slug", apiKeyAuth, async (req, res) => {
   try {
     const { slug } = req.params;
     const parsed = updateFeatureSchema.safeParse(req.body);
@@ -352,7 +352,7 @@ router.put("/features/:slug", apiKeyAuth, async (req: AuthenticatedRequest, res)
  * GET /features — List all features.
  * Query params: status, category, channel, audienceType, implemented
  */
-router.get("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
+router.get("/features", apiKeyAuth, async (req, res) => {
   try {
     const { status, category, channel, audienceType, implemented } = req.query as Record<string, string | undefined>;
 
@@ -377,7 +377,7 @@ router.get("/features", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
 /**
  * GET /features/:slug — Get a single feature by slug.
  */
-router.get("/features/:slug", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
+router.get("/features/:slug", apiKeyAuth, async (req, res) => {
   try {
     const { slug } = req.params;
 
@@ -400,7 +400,7 @@ router.get("/features/:slug", apiKeyAuth, async (req: AuthenticatedRequest, res)
  * GET /features/:slug/inputs — Get only the inputs for a feature.
  * Used by the dashboard to build the campaign creation form and by the LLM to pre-fill values.
  */
-router.get("/features/:slug/inputs", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
+router.get("/features/:slug/inputs", apiKeyAuth, async (req, res) => {
   try {
     const { slug } = req.params;
 
@@ -437,7 +437,7 @@ router.get("/features/:slug/inputs", apiKeyAuth, async (req: AuthenticatedReques
  * The dashboard calls this instead of brand-service directly — features-service
  * owns the routing logic (brand-service today, other sources tomorrow).
  */
-router.post("/features/:slug/prefill", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
+router.post("/features/:slug/prefill", apiKeyAuth, async (req, res) => {
   try {
     const { slug } = req.params;
     const format = (req.query.format as string) || "full";
@@ -467,10 +467,11 @@ router.post("/features/:slug/prefill", apiKeyAuth, async (req: AuthenticatedRequ
       description: input.description,
     }));
 
+    const auth = req as AuthenticatedRequest;
     const extractedResults = await extractBrandFields(brandId, fields, {
-      orgId: req.orgId,
-      userId: req.userId,
-      runId: req.runId,
+      orgId: auth.orgId,
+      userId: auth.userId,
+      runId: auth.runId,
     });
 
     // Map extracted values back to input keys

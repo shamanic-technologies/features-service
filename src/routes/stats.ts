@@ -387,7 +387,7 @@ function buildSystemStats(runsData: { totalCostInUsdCents: number; completedRuns
  * Returns the complete stats key registry with label and type for each key.
  * The front-end uses this to know how to format and label output columns.
  */
-router.get("/stats/registry", apiKeyAuth, async (_req: AuthenticatedRequest, res) => {
+router.get("/stats/registry", apiKeyAuth, async (_req, res) => {
   res.json({ registry: getPublicRegistry() });
 });
 
@@ -402,10 +402,10 @@ router.get("/stats/registry", apiKeyAuth, async (_req: AuthenticatedRequest, res
  *   - campaignId: filter by campaign (optional)
  *   - workflowName: filter by workflow (optional)
  */
-router.get("/features/:featureSlug/stats", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
+router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
   try {
     const { featureSlug } = req.params;
-    const { orgId, userId, runId } = req;
+    const { orgId, userId, runId } = req as AuthenticatedRequest;
 
     const feature = await db.query.features.findFirst({
       where: eq(features.slug, featureSlug),
@@ -521,9 +521,9 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req: Authenticated
  *   - groupBy: "featureSlug" | "featureSlug,workflowName" | "workflowName" | "brandId"
  *   - brandId: filter by brand (optional)
  */
-router.get("/stats", apiKeyAuth, async (req: AuthenticatedRequest, res) => {
+router.get("/stats", apiKeyAuth, async (req, res) => {
   try {
-    const { orgId, userId, runId } = req;
+    const { orgId, userId, runId } = req as AuthenticatedRequest;
 
     const groupByParam = req.query.groupBy as string | undefined;
     const filters: Record<string, string> = {};
