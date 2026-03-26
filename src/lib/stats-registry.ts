@@ -6,11 +6,18 @@
  * Features-service also owns the computation logic for each key.
  */
 
+export interface RunFilter {
+  serviceName: string;
+  taskName: string;
+}
+
 export interface RawStatsKeyDef {
   kind: "raw";
   type: "count" | "currency";
   label: string;
   source: "email-gateway" | "runs" | "campaign" | "outlets";
+  /** For pipeline count keys: count runs matching this service+task filter */
+  runFilter?: RunFilter;
 }
 
 export interface DerivedStatsKeyDef {
@@ -43,11 +50,11 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   repliesMoreInfo:      { kind: "raw", type: "count",   label: "Wants More Info",  source: "email-gateway" },
   repliesWrongContact:  { kind: "raw", type: "count",   label: "Wrong Contact",    source: "email-gateway" },
 
-  // ── Pipeline counts: runs-service ─────────────────────────────────────────
-  leadsServed:         { kind: "raw", type: "count",    label: "Leads Served",     source: "runs" },
+  // ── Pipeline counts: runs-service (counted via per-task runCount) ─────────
+  leadsServed:         { kind: "raw", type: "count",    label: "Leads Served",     source: "runs", runFilter: { serviceName: "lead-service", taskName: "lead-serve" } },
   leadsBuffered:       { kind: "raw", type: "count",    label: "Leads Buffered",   source: "runs" },
-  emailsGenerated:     { kind: "raw", type: "count",    label: "Emails Generated", source: "runs" },
-  journalistsContacted: { kind: "raw", type: "count",   label: "Journalists Contacted", source: "runs" },
+  emailsGenerated:     { kind: "raw", type: "count",    label: "Emails Generated", source: "runs", runFilter: { serviceName: "content-generation-service", taskName: "single-generation" } },
+  journalistsContacted: { kind: "raw", type: "count",   label: "Journalists Contacted", source: "runs", runFilter: { serviceName: "lead-service", taskName: "lead-serve" } },
 
   // ── Cost & runs: runs-service ─────────────────────────────────────────────
   totalCostInUsdCents: { kind: "raw", type: "currency", label: "Total Cost",       source: "runs" },
