@@ -185,12 +185,12 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
   });
 
 
-  it("fetches journalistsContacted for PR feature via lead-service/lead-serve", async () => {
+  it("fetches journalistsContacted for PR feature via journalists-service/resolve-journalists", async () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(PR_FEATURE as any);
 
     mockFetchMulti([
       {
-        match: "serviceName=lead-service",
+        match: "serviceName=journalists-service",
         response: {
           groups: [{ dimensions: { workflowName: null }, runCount: 25, totalCostInUsdCents: "0", actualCostInUsdCents: "0", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0" }],
         },
