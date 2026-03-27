@@ -281,6 +281,7 @@ async function fetchRunsStatsForSlug(
   const params = new URLSearchParams({ groupBy: runsGroupBy });
   if (filters.workflowName) params.set("workflowName", filters.workflowName);
   if (filters.brandId) params.set("brandId", filters.brandId);
+  if (filters.campaignId) params.set("campaignId", filters.campaignId);
   if (featureSlug) params.set("featureSlug", featureSlug);
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
@@ -306,14 +307,35 @@ async function fetchRunsStatsForSlug(
 
     const result = new Map<string, RunsStatsEntry>();
 
-    for (const group of data.groups) {
-      const key = group.dimensions[runsGroupBy] ?? "__total__";
-      result.set(key, {
-        totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)),
-        completedRuns: group.runCount,
-        minStartedAt: group.minStartedAt ?? null,
-        maxStartedAt: group.maxStartedAt ?? null,
-      });
+    if (!groupBy) {
+      // No grouping requested — aggregate all groups into __total__
+      let totalCost = 0;
+      let totalRuns = 0;
+      let minStartedAt: string | null = null;
+      let maxStartedAt: string | null = null;
+      for (const group of data.groups) {
+        totalCost += Math.round(Number(group.totalCostInUsdCents));
+        totalRuns += group.runCount;
+        if (group.minStartedAt && (!minStartedAt || group.minStartedAt < minStartedAt)) {
+          minStartedAt = group.minStartedAt;
+        }
+        if (group.maxStartedAt && (!maxStartedAt || group.maxStartedAt > maxStartedAt)) {
+          maxStartedAt = group.maxStartedAt;
+        }
+      }
+      if (data.groups.length > 0) {
+        result.set("__total__", { totalCostInUsdCents: totalCost, completedRuns: totalRuns, minStartedAt, maxStartedAt });
+      }
+    } else {
+      for (const group of data.groups) {
+        const key = group.dimensions[runsGroupBy] ?? "__total__";
+        result.set(key, {
+          totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)),
+          completedRuns: group.runCount,
+          minStartedAt: group.minStartedAt ?? null,
+          maxStartedAt: group.maxStartedAt ?? null,
+        });
+      }
     }
 
     return result;
@@ -417,6 +439,7 @@ async function fetchPipelineStatsForFilter(
   });
   if (filters.workflowName) params.set("workflowName", filters.workflowName);
   if (filters.brandId) params.set("brandId", filters.brandId);
+  if (filters.campaignId) params.set("campaignId", filters.campaignId);
   if (featureSlug) params.set("featureSlug", featureSlug);
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
@@ -438,9 +461,20 @@ async function fetchPipelineStatsForFilter(
     };
 
     const result = new Map<string, number>();
-    for (const group of data.groups) {
-      const key = group.dimensions[runsGroupBy] ?? "__total__";
-      result.set(key, (result.get(key) ?? 0) + group.runCount);
+    if (!groupBy) {
+      // No grouping requested — aggregate all groups into __total__
+      let total = 0;
+      for (const group of data.groups) {
+        total += group.runCount;
+      }
+      if (data.groups.length > 0) {
+        result.set("__total__", total);
+      }
+    } else {
+      for (const group of data.groups) {
+        const key = group.dimensions[runsGroupBy] ?? "__total__";
+        result.set(key, (result.get(key) ?? 0) + group.runCount);
+      }
     }
 
     return result;
