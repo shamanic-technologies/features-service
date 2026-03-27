@@ -258,6 +258,178 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
   });
 });
 
+describe("Bug fix: campaignId filter forwarded to runs-service", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
+    vi.mocked(db.query.features.findMany).mockResolvedValue([SALES_FEATURE] as any);
+
+    fetchSpy.mockImplementation(() =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve({ groups: [] }) }),
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("forwards campaignId to runs-service /v1/stats/costs", async () => {
+    const app = createApp();
+
+    await request(app)
+      .get("/features/sales-cold-email-outreach/stats?campaignId=camp-123")
+      .set("x-api-key", "test-key")
+      .set("x-org-id", "org-1")
+      .set("x-user-id", "user-1")
+      .set("x-run-id", "run-1")
+      .expect(200);
+
+    const costsCalls = fetchSpy.mock.calls.filter(
+      ([url]: [string]) => url.includes("/v1/stats/costs"),
+    );
+    expect(costsCalls.length).toBeGreaterThan(0);
+    for (const [url] of costsCalls) {
+      expect(url).toContain("campaignId=camp-123");
+    }
+  });
+
+  it("forwards campaignId to runs-service pipeline stats calls", async () => {
+    const app = createApp();
+
+    await request(app)
+      .get("/features/sales-cold-email-outreach/stats?campaignId=camp-456")
+      .set("x-api-key", "test-key")
+      .set("x-org-id", "org-1")
+      .set("x-user-id", "user-1")
+      .set("x-run-id", "run-1")
+      .expect(200);
+
+    const pipelineCalls = fetchSpy.mock.calls.filter(
+      ([url]: [string]) => url.includes("serviceName="),
+    );
+    expect(pipelineCalls.length).toBeGreaterThan(0);
+    for (const [url] of pipelineCalls) {
+      expect(url).toContain("campaignId=camp-456");
+    }
+  });
+});
+
+describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
+    vi.mocked(db.query.features.findMany).mockResolvedValue([SALES_FEATURE] as any);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("returns non-zero pipeline stats when no groupBy is specified", async () => {
+    fetchSpy.mockImplementation((url: string) => {
+      if (url.includes("serviceName=lead-service")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            groups: [
+              { dimensions: { workflowName: "sales-email-cold-outreach-herald" }, runCount: 3, totalCostInUsdCents: "0" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("serviceName=content-generation-service")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            groups: [
+              { dimensions: { workflowName: "sales-email-cold-outreach-herald" }, runCount: 3, totalCostInUsdCents: "0" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/v1/stats/costs")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            groups: [
+              { dimensions: { workflowName: "sales-email-cold-outreach-herald" }, runCount: 3, totalCostInUsdCents: "100", minStartedAt: null, maxStartedAt: null },
+            ],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ groups: [] }) });
+    });
+
+    const app = createApp();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/stats")
+      .set("x-api-key", "test-key")
+      .set("x-org-id", "org-1")
+      .set("x-user-id", "user-1")
+      .set("x-run-id", "run-1")
+      .expect(200);
+
+    // Before the fix, these were null/0 because runs-service returned groups keyed by
+    // workflowName but the caller looked for "__total__"
+    expect(res.body.stats.leadsServed).toBe(3);
+    expect(res.body.stats.emailsGenerated).toBe(3);
+    expect(res.body.systemStats.completedRuns).toBe(3);
+  });
+
+  it("aggregates multiple workflow groups into __total__ when no groupBy", async () => {
+    fetchSpy.mockImplementation((url: string) => {
+      if (url.includes("serviceName=lead-service")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            groups: [
+              { dimensions: { workflowName: "wf-a" }, runCount: 5, totalCostInUsdCents: "0" },
+              { dimensions: { workflowName: "wf-b" }, runCount: 7, totalCostInUsdCents: "0" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/v1/stats/costs") && !url.includes("serviceName=")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            groups: [
+              { dimensions: { workflowName: "wf-a" }, runCount: 10, totalCostInUsdCents: "200", minStartedAt: "2026-01-01T00:00:00Z", maxStartedAt: "2026-02-01T00:00:00Z" },
+              { dimensions: { workflowName: "wf-b" }, runCount: 20, totalCostInUsdCents: "300", minStartedAt: "2026-01-15T00:00:00Z", maxStartedAt: "2026-03-01T00:00:00Z" },
+            ],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ groups: [] }) });
+    });
+
+    const app = createApp();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/stats")
+      .set("x-api-key", "test-key")
+      .set("x-org-id", "org-1")
+      .set("x-user-id", "user-1")
+      .set("x-run-id", "run-1")
+      .expect(200);
+
+    expect(res.body.stats.leadsServed).toBe(12); // 5 + 7
+    expect(res.body.systemStats.completedRuns).toBe(30); // 10 + 20
+    expect(res.body.systemStats.totalCostInUsdCents).toBe(500); // 200 + 300
+    expect(res.body.systemStats.firstRunAt).toBe("2026-01-01T00:00:00Z");
+    expect(res.body.systemStats.lastRunAt).toBe("2026-03-01T00:00:00Z");
+  });
+});
+
 describe("repliesMoreInfo and repliesWrongContact extraction", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
 
