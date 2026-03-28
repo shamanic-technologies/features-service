@@ -1875,6 +1875,21 @@
           "feature_dynasty_name",
           "feature_dynasty_slug"
         ]
+      },
+      "DynastySlugsResponse": {
+        "type": "object",
+        "properties": {
+          "slugs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All versioned slugs in the dynasty, sorted by version ascending"
+          }
+        },
+        "required": [
+          "slugs"
+        ]
       }
     },
     "parameters": {}
@@ -5431,6 +5446,102 @@
           },
           "404": {
             "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/by-dynasty/{dynastySlug}/slugs": {
+      "get": {
+        "summary": "List all versioned slugs for a dynasty",
+        "description": "Returns all feature slugs (active + deprecated) belonging to the given dynasty slug. Useful for downstream services that store versioned feature slugs and need to aggregate stats across all versions of a dynasty (e.g. `WHERE feature_slug IN (...)`).\n\nExample: `/features/by-dynasty/sales-cold-email-sophia/slugs` → `{ slugs: ['sales-cold-email-sophia', 'sales-cold-email-sophia-v2', 'sales-cold-email-sophia-v3'] }`",
+        "tags": [
+          "Features"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The stable dynasty slug (unversioned)"
+            },
+            "required": true,
+            "description": "The stable dynasty slug (unversioned)",
+            "name": "dynastySlug",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dynasty slugs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "slugs": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "All versioned slugs in the dynasty, sorted by version ascending"
+                    }
+                  },
+                  "required": [
+                    "slugs"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No features found for this dynasty slug",
             "content": {
               "application/json": {
                 "schema": {

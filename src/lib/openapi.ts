@@ -346,6 +346,35 @@ registry.registerPath({
   },
 });
 
+// ── GET /features/by-dynasty/:dynastySlug/slugs ───────────────────────────
+
+const dynastySlugsResponseSchema = z.object({
+  slugs: z.array(z.string()).describe("All versioned slugs in the dynasty, sorted by version ascending"),
+});
+
+registry.register("DynastySlugsResponse", dynastySlugsResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/features/by-dynasty/{dynastySlug}/slugs",
+  summary: "List all versioned slugs for a dynasty",
+  description:
+    "Returns all feature slugs (active + deprecated) belonging to the given dynasty slug. " +
+    "Useful for downstream services that store versioned feature slugs and need to aggregate stats " +
+    "across all versions of a dynasty (e.g. `WHERE feature_slug IN (...)`).\n\n" +
+    "Example: `/features/by-dynasty/sales-cold-email-sophia/slugs` → " +
+    "`{ slugs: ['sales-cold-email-sophia', 'sales-cold-email-sophia-v2', 'sales-cold-email-sophia-v3'] }`",
+  tags: ["Features"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ dynastySlug: z.string().describe("The stable dynasty slug (unversioned)") }),
+  },
+  responses: {
+    200: { description: "Dynasty slugs", content: { "application/json": { schema: dynastySlugsResponseSchema } } },
+    404: { description: "No features found for this dynasty slug", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── POST /features/:slug/prefill ─────────────────────────────────────────
 
 registry.registerPath({

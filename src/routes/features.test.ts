@@ -143,6 +143,66 @@ describe("GET /features/dynasty", () => {
   });
 });
 
+// ── Dynasty slugs endpoint ─────────────────────────────────────────────────
+
+describe("GET /features/by-dynasty/:dynastySlug/slugs", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns all versioned slugs sorted by version", async () => {
+    mockFindMany.mockResolvedValueOnce([
+      { slug: "sales-cold-email-sophia-v2", version: 2 },
+      { slug: "sales-cold-email-sophia", version: 1 },
+      { slug: "sales-cold-email-sophia-v3", version: 3 },
+    ]);
+
+    const res = await request(app)
+      .get("/features/by-dynasty/sales-cold-email-sophia/slugs")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      slugs: [
+        "sales-cold-email-sophia",
+        "sales-cold-email-sophia-v2",
+        "sales-cold-email-sophia-v3",
+      ],
+    });
+  });
+
+  it("returns 404 when no features match the dynasty slug", async () => {
+    mockFindMany.mockResolvedValueOnce([]);
+
+    const res = await request(app)
+      .get("/features/by-dynasty/nonexistent-dynasty/slugs")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/no features found/i);
+  });
+
+  it("returns a single slug for a dynasty with one version", async () => {
+    mockFindMany.mockResolvedValueOnce([
+      { slug: "pr-journalist-outreach", version: 1 },
+    ]);
+
+    const res = await request(app)
+      .get("/features/by-dynasty/pr-journalist-outreach/slugs")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.slugs).toEqual(["pr-journalist-outreach"]);
+  });
+
+  it("requires authentication", async () => {
+    const res = await request(app)
+      .get("/features/by-dynasty/sales-cold-email/slugs");
+
+    expect(res.status).toBe(401);
+  });
+});
+
 // ── Signature helpers ───────────────────────────────────────────────────────
 
 describe("signature helpers", () => {

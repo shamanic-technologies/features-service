@@ -482,6 +482,31 @@ router.get("/features/dynasty", apiKeyAuth, async (req, res) => {
   }
 });
 
+// ── GET /features/by-dynasty/:dynastySlug/slugs — All slugs in a dynasty ────
+
+router.get("/features/by-dynasty/:dynastySlug/slugs", apiKeyAuth, async (req, res) => {
+  try {
+    const { dynastySlug } = req.params;
+
+    const results = await db.query.features.findMany({
+      where: eq(features.dynastySlug, dynastySlug),
+      columns: { slug: true, version: true },
+    });
+
+    if (results.length === 0) {
+      return res.status(404).json({ error: "No features found for this dynasty slug" });
+    }
+
+    // Sort by version ascending for predictable output
+    results.sort((a, b) => a.version - b.version);
+
+    res.json({ slugs: results.map((f) => f.slug) });
+  } catch (error) {
+    console.error("[features-service] Dynasty slugs resolution error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // ── GET /features — List all features ───────────────────────────────────────
 
 router.get("/features", apiKeyAuth, async (req, res) => {
