@@ -1890,6 +1890,121 @@
         "required": [
           "slugs"
         ]
+      },
+      "DynastyStatsResponse": {
+        "type": "object",
+        "properties": {
+          "dynastySlug": {
+            "type": "string"
+          },
+          "groupBy": {
+            "type": "string"
+          },
+          "systemStats": {
+            "type": "object",
+            "properties": {
+              "totalCostInUsdCents": {
+                "type": "number"
+              },
+              "completedRuns": {
+                "type": "number"
+              },
+              "activeCampaigns": {
+                "type": "number"
+              },
+              "firstRunAt": {
+                "type": "string",
+                "nullable": true,
+                "format": "date-time"
+              },
+              "lastRunAt": {
+                "type": "string",
+                "nullable": true,
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "totalCostInUsdCents",
+              "completedRuns",
+              "activeCampaigns",
+              "firstRunAt",
+              "lastRunAt"
+            ]
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "workflowSlug": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "brandId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "campaignId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "systemStats": {
+                  "type": "object",
+                  "properties": {
+                    "totalCostInUsdCents": {
+                      "type": "number"
+                    },
+                    "completedRuns": {
+                      "type": "number"
+                    },
+                    "activeCampaigns": {
+                      "type": "number"
+                    },
+                    "firstRunAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "format": "date-time"
+                    },
+                    "lastRunAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "totalCostInUsdCents",
+                    "completedRuns",
+                    "activeCampaigns",
+                    "firstRunAt",
+                    "lastRunAt"
+                  ]
+                },
+                "stats": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "nullable": true
+                  }
+                }
+              },
+              "required": [
+                "systemStats",
+                "stats"
+              ]
+            }
+          },
+          "stats": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "nullable": true
+            }
+          }
+        },
+        "required": [
+          "dynastySlug",
+          "systemStats"
+        ]
       }
     },
     "parameters": {}
@@ -5465,10 +5580,10 @@
         }
       }
     },
-    "/features/by-dynasty/{dynastySlug}/slugs": {
+    "/features/dynasty/slugs": {
       "get": {
         "summary": "List all versioned slugs for a dynasty",
-        "description": "Returns all feature slugs (active + deprecated) belonging to the given dynasty slug. Useful for downstream services that store versioned feature slugs and need to aggregate stats across all versions of a dynasty (e.g. `WHERE feature_slug IN (...)`).\n\nExample: `/features/by-dynasty/sales-cold-email-sophia/slugs` → `{ slugs: ['sales-cold-email-sophia', 'sales-cold-email-sophia-v2', 'sales-cold-email-sophia-v3'] }`",
+        "description": "Returns all feature slugs (active + deprecated) belonging to the given dynasty slug. Useful for downstream services that store versioned feature slugs and need to aggregate stats across all versions of a dynasty (e.g. `WHERE feature_slug IN (...)`).\n\nExample: `?dynastySlug=sales-cold-email-sophia` → `{ slugs: ['sales-cold-email-sophia', 'sales-cold-email-sophia-v2', 'sales-cold-email-sophia-v3'] }`",
         "tags": [
           "Features"
         ],
@@ -5481,7 +5596,7 @@
             "required": true,
             "description": "The stable dynasty slug (unversioned)",
             "name": "dynastySlug",
-            "in": "path"
+            "in": "query"
           },
           {
             "schema": {
@@ -5535,6 +5650,24 @@
                   },
                   "required": [
                     "slugs"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing dynastySlug parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
                   ]
                 }
               }
@@ -5864,7 +5997,7 @@
     "/features/{featureSlug}/stats": {
       "get": {
         "summary": "Get computed stats for a feature",
-        "description": "Returns computed stats for a feature's outputs and charts. Optionally grouped by workflowSlug, brandId, or campaignId. System stats (cost, runs, campaigns, dates) are always included.\n\n**Lineage aggregation:** Stats are automatically aggregated across the full upgrade chain (deprecated ancestors + active descendants). If a feature was forked, querying any slug in the chain returns the combined stats. This ensures no data is lost when features evolve.\n\nStats keys are either **raw** (fetched from email-gateway, runs-service, or outlets-service) or **derived** (computed as a ratio, e.g. `replyRate = emailsReplied / emailsSent`). Use `GET /stats/registry` to discover available keys, their labels, and types.",
+        "description": "Returns computed stats for a **single feature slug** — no lineage traversal. Optionally grouped by workflowSlug, brandId, or campaignId. System stats (cost, runs, campaigns, dates) are always included.\n\n**This endpoint returns stats for the exact slug only.** For aggregated stats across all versions of a dynasty (upgrade chain), use `GET /stats/dynasty?dynastySlug=...`.\n\nStats keys are either **raw** (fetched from email-gateway, runs-service, or outlets-service) or **derived** (computed as a ratio, e.g. `replyRate = emailsReplied / emailsSent`). Use `GET /stats/registry` to discover available keys, their labels, and types.",
         "tags": [
           "Stats"
         ],
@@ -6091,6 +6224,257 @@
           },
           "404": {
             "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stats/dynasty": {
+      "get": {
+        "summary": "Aggregated stats across all versions of a dynasty",
+        "description": "Returns stats aggregated across the **full upgrade chain** of a dynasty using BFS lineage traversal. This handles linear chains (v1 → v2 → v3) and convergence (two dynasties producing the same signature).\n\nUse this endpoint when you need dynasty-wide stats. For stats on a single specific slug, use `GET /features/{featureSlug}/stats`.\n\nSupports the same groupBy and filter params as the per-feature stats endpoint.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The stable dynasty slug (unversioned)"
+            },
+            "required": true,
+            "description": "The stable dynasty slug (unversioned)",
+            "name": "dynastySlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "workflowSlug",
+                "brandId",
+                "campaignId"
+              ]
+            },
+            "required": false,
+            "name": "groupBy",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "campaignId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "workflowSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dynasty stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "dynastySlug": {
+                      "type": "string"
+                    },
+                    "groupBy": {
+                      "type": "string"
+                    },
+                    "systemStats": {
+                      "type": "object",
+                      "properties": {
+                        "totalCostInUsdCents": {
+                          "type": "number"
+                        },
+                        "completedRuns": {
+                          "type": "number"
+                        },
+                        "activeCampaigns": {
+                          "type": "number"
+                        },
+                        "firstRunAt": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "date-time"
+                        },
+                        "lastRunAt": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "totalCostInUsdCents",
+                        "completedRuns",
+                        "activeCampaigns",
+                        "firstRunAt",
+                        "lastRunAt"
+                      ]
+                    },
+                    "groups": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "workflowSlug": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "brandId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "campaignId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "systemStats": {
+                            "type": "object",
+                            "properties": {
+                              "totalCostInUsdCents": {
+                                "type": "number"
+                              },
+                              "completedRuns": {
+                                "type": "number"
+                              },
+                              "activeCampaigns": {
+                                "type": "number"
+                              },
+                              "firstRunAt": {
+                                "type": "string",
+                                "nullable": true,
+                                "format": "date-time"
+                              },
+                              "lastRunAt": {
+                                "type": "string",
+                                "nullable": true,
+                                "format": "date-time"
+                              }
+                            },
+                            "required": [
+                              "totalCostInUsdCents",
+                              "completedRuns",
+                              "activeCampaigns",
+                              "firstRunAt",
+                              "lastRunAt"
+                            ]
+                          },
+                          "stats": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number",
+                              "nullable": true
+                            }
+                          }
+                        },
+                        "required": [
+                          "systemStats",
+                          "stats"
+                        ]
+                      }
+                    },
+                    "stats": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "number",
+                        "nullable": true
+                      }
+                    }
+                  },
+                  "required": [
+                    "dynastySlug",
+                    "systemStats"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing dynastySlug parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No features found for this dynasty slug",
             "content": {
               "application/json": {
                 "schema": {

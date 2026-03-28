@@ -346,7 +346,7 @@ registry.registerPath({
   },
 });
 
-// ── GET /features/by-dynasty/:dynastySlug/slugs ───────────────────────────
+// ── GET /features/dynasty/slugs ────────────────────────────────────────────
 
 const dynastySlugsResponseSchema = z.object({
   slugs: z.array(z.string()).describe("All versioned slugs in the dynasty, sorted by version ascending"),
@@ -356,21 +356,24 @@ registry.register("DynastySlugsResponse", dynastySlugsResponseSchema);
 
 registry.registerPath({
   method: "get",
-  path: "/features/by-dynasty/{dynastySlug}/slugs",
+  path: "/features/dynasty/slugs",
   summary: "List all versioned slugs for a dynasty",
   description:
     "Returns all feature slugs (active + deprecated) belonging to the given dynasty slug. " +
     "Useful for downstream services that store versioned feature slugs and need to aggregate stats " +
     "across all versions of a dynasty (e.g. `WHERE feature_slug IN (...)`).\n\n" +
-    "Example: `/features/by-dynasty/sales-cold-email-sophia/slugs` → " +
+    "Example: `?dynastySlug=sales-cold-email-sophia` → " +
     "`{ slugs: ['sales-cold-email-sophia', 'sales-cold-email-sophia-v2', 'sales-cold-email-sophia-v3'] }`",
   tags: ["Features"],
   request: {
     headers: identityHeaders,
-    params: z.object({ dynastySlug: z.string().describe("The stable dynasty slug (unversioned)") }),
+    query: z.object({
+      dynastySlug: z.string().describe("The stable dynasty slug (unversioned)"),
+    }),
   },
   responses: {
     200: { description: "Dynasty slugs", content: { "application/json": { schema: dynastySlugsResponseSchema } } },
+    400: { description: "Missing dynastySlug parameter", content: { "application/json": { schema: errorResponse } } },
     404: { description: "No features found for this dynasty slug", content: { "application/json": { schema: errorResponse } } },
   },
 });
@@ -423,12 +426,11 @@ registry.registerPath({
   path: "/features/{featureSlug}/stats",
   summary: "Get computed stats for a feature",
   description:
-    "Returns computed stats for a feature's outputs and charts. " +
+    "Returns computed stats for a **single feature slug** — no lineage traversal. " +
     "Optionally grouped by workflowSlug, brandId, or campaignId. " +
     "System stats (cost, runs, campaigns, dates) are always included.\n\n" +
-    "**Lineage aggregation:** Stats are automatically aggregated across the full upgrade chain " +
-    "(deprecated ancestors + active descendants). If a feature was forked, querying any slug " +
-    "in the chain returns the combined stats. This ensures no data is lost when features evolve.\n\n" +
+    "**This endpoint returns stats for the exact slug only.** " +
+    "For aggregated stats across all versions of a dynasty (upgrade chain), use `GET /stats/dynasty?dynastySlug=...`.\n\n" +
     "Stats keys are either **raw** (fetched from email-gateway, runs-service, or outlets-service) " +
     "or **derived** (computed as a ratio, e.g. `replyRate = emailsReplied / emailsSent`). " +
     "Use `GET /stats/registry` to discover available keys, their labels, and types.",
@@ -447,6 +449,45 @@ registry.registerPath({
     200: { description: "Feature stats", content: { "application/json": { schema: featureStatsResponseSchema } } },
     400: { description: "Missing required identity headers", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /stats/dynasty ─────────────────────────────────────────────────
+
+const dynastyStatsResponseSchema = z.object({
+  dynastySlug: z.string(),
+  groupBy: z.string().optional(),
+  systemStats: systemStatsSchema,
+  groups: z.array(statsGroupSchema).optional(),
+  stats: z.record(z.string(), z.number().nullable()).optional(),
+});
+
+registry.register("DynastyStatsResponse", dynastyStatsResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/stats/dynasty",
+  summary: "Aggregated stats across all versions of a dynasty",
+  description:
+    "Returns stats aggregated across the **full upgrade chain** of a dynasty using BFS lineage traversal. " +
+    "This handles linear chains (v1 → v2 → v3) and convergence (two dynasties producing the same signature).\n\n" +
+    "Use this endpoint when you need dynasty-wide stats. For stats on a single specific slug, use `GET /features/{featureSlug}/stats`.\n\n" +
+    "Supports the same groupBy and filter params as the per-feature stats endpoint.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    query: z.object({
+      dynastySlug: z.string().describe("The stable dynasty slug (unversioned)"),
+      groupBy: z.enum(["workflowSlug", "brandId", "campaignId"]).optional(),
+      brandId: z.string().optional(),
+      campaignId: z.string().optional(),
+      workflowSlug: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: { description: "Dynasty stats", content: { "application/json": { schema: dynastyStatsResponseSchema } } },
+    400: { description: "Missing dynastySlug parameter", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No features found for this dynasty slug", content: { "application/json": { schema: errorResponse } } },
   },
 });
 

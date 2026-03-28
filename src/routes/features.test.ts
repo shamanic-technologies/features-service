@@ -145,7 +145,7 @@ describe("GET /features/dynasty", () => {
 
 // ── Dynasty slugs endpoint ─────────────────────────────────────────────────
 
-describe("GET /features/by-dynasty/:dynastySlug/slugs", () => {
+describe("GET /features/dynasty/slugs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -158,7 +158,7 @@ describe("GET /features/by-dynasty/:dynastySlug/slugs", () => {
     ]);
 
     const res = await request(app)
-      .get("/features/by-dynasty/sales-cold-email-sophia/slugs")
+      .get("/features/dynasty/slugs?dynastySlug=sales-cold-email-sophia")
       .set(AUTH_HEADERS);
 
     expect(res.status).toBe(200);
@@ -175,11 +175,20 @@ describe("GET /features/by-dynasty/:dynastySlug/slugs", () => {
     mockFindMany.mockResolvedValueOnce([]);
 
     const res = await request(app)
-      .get("/features/by-dynasty/nonexistent-dynasty/slugs")
+      .get("/features/dynasty/slugs?dynastySlug=nonexistent-dynasty")
       .set(AUTH_HEADERS);
 
     expect(res.status).toBe(404);
     expect(res.body.error).toMatch(/no features found/i);
+  });
+
+  it("returns 400 when dynastySlug query param is missing", async () => {
+    const res = await request(app)
+      .get("/features/dynasty/slugs")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/dynastySlug/i);
   });
 
   it("returns a single slug for a dynasty with one version", async () => {
@@ -188,7 +197,7 @@ describe("GET /features/by-dynasty/:dynastySlug/slugs", () => {
     ]);
 
     const res = await request(app)
-      .get("/features/by-dynasty/pr-journalist-outreach/slugs")
+      .get("/features/dynasty/slugs?dynastySlug=pr-journalist-outreach")
       .set(AUTH_HEADERS);
 
     expect(res.status).toBe(200);
@@ -197,7 +206,7 @@ describe("GET /features/by-dynasty/:dynastySlug/slugs", () => {
 
   it("requires authentication", async () => {
     const res = await request(app)
-      .get("/features/by-dynasty/sales-cold-email/slugs");
+      .get("/features/dynasty/slugs?dynastySlug=sales-cold-email");
 
     expect(res.status).toBe(401);
   });

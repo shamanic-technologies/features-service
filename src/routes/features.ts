@@ -482,11 +482,14 @@ router.get("/features/dynasty", apiKeyAuth, async (req, res) => {
   }
 });
 
-// ── GET /features/by-dynasty/:dynastySlug/slugs — All slugs in a dynasty ────
+// ── GET /features/dynasty/slugs — All versioned slugs in a dynasty ──────────
 
-router.get("/features/by-dynasty/:dynastySlug/slugs", apiKeyAuth, async (req, res) => {
+router.get("/features/dynasty/slugs", apiKeyAuth, async (req, res) => {
   try {
-    const { dynastySlug } = req.params;
+    const dynastySlug = req.query.dynastySlug as string | undefined;
+    if (!dynastySlug) {
+      return res.status(400).json({ error: "Query parameter 'dynastySlug' is required" });
+    }
 
     const results = await db.query.features.findMany({
       where: eq(features.dynastySlug, dynastySlug),

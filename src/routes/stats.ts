@@ -726,22 +726,21 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     if (req.query.campaignId) filters.campaignId = req.query.campaignId as string;
     if (req.query.workflowSlug) filters.workflowSlug = req.query.workflowSlug as string;
 
-    // Resolve the full upgrade chain — aggregate stats across all ancestors + descendants
-    const lineageSlugs = await collectLineageSlugs(feature);
+    // Stats for this exact slug only — no lineage traversal
+    const slugs = [featureSlug];
 
     // Determine which keys and sources we need
     const requiredKeys = collectRequiredKeys(feature);
     const sources = requiredSources(requiredKeys);
 
     // Fetch data from sources in parallel
-    // runs-service: pass all lineage slugs to aggregate across the full chain
     const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
     const pipelineKeys = collectPipelineKeys(requiredKeys);
     const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
-      sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, lineageSlugs, identity) : Promise.resolve(new Map<string, RunsStatsEntry>()),
+      sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, slugs, identity) : Promise.resolve(new Map<string, RunsStatsEntry>()),
       sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
-      pipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, lineageSlugs, pipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      pipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, slugs, pipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchActiveCampaigns(orgId, filters, identity),
     ]);
 
@@ -813,6 +812,122 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     });
   } catch (error) {
     console.error("Feature stats error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /features/dynasty/stats — Aggregated stats across all dynasty versions ─
+
+router.get("/stats/dynasty", apiKeyAuth, async (req, res) => {
+  try {
+    const dynastySlug = req.query.dynastySlug as string | undefined;
+    if (!dynastySlug) {
+      return res.status(400).json({ error: "Query parameter 'dynastySlug' is required" });
+    }
+
+    const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
+
+    // Find any feature in this dynasty to use as the source of keys/charts
+    const dynastyFeatures = await db.query.features.findMany({
+      where: eq(features.dynastySlug, dynastySlug),
+    });
+
+    if (dynastyFeatures.length === 0) {
+      return res.status(404).json({ error: "No features found for this dynasty slug" });
+    }
+
+    // Use the latest version (active preferred) for key definitions
+    const activeFeature = dynastyFeatures.find((f) => f.status === "active")
+      ?? dynastyFeatures.sort((a, b) => b.version - a.version)[0];
+
+    // Collect all slugs in the dynasty — plus walk the full lineage for convergence
+    const lineageSlugs = await collectLineageSlugs(activeFeature);
+
+    const groupByParam = req.query.groupBy as string | undefined;
+    const groupBy = (groupByParam && VALID_GROUP_BY.has(groupByParam) ? groupByParam : null) as GroupByDimension | null;
+
+    const filters: Record<string, string> = {};
+    if (req.query.brandId) filters.brandId = req.query.brandId as string;
+    if (req.query.campaignId) filters.campaignId = req.query.campaignId as string;
+    if (req.query.workflowSlug) filters.workflowSlug = req.query.workflowSlug as string;
+
+    const requiredKeys = collectRequiredKeys(activeFeature);
+    const sources = requiredSources(requiredKeys);
+
+    const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
+    const pipelineKeys = collectPipelineKeys(requiredKeys);
+    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
+      sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, lineageSlugs, identity) : Promise.resolve(new Map<string, RunsStatsEntry>()),
+      sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      pipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, lineageSlugs, pipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      fetchActiveCampaigns(orgId, filters, identity),
+    ]);
+
+    if (!groupBy) {
+      const emailStats = emailStatsMap.get("__total__") ?? {};
+      const runsStats = runsStatsMap.get("__total__");
+      const outletsStats = outletsStatsMap.get("__total__") ?? {};
+      const pipelineStats = pipelineStatsMap.get("__total__") ?? {};
+
+      const rawStats: Record<string, number> = {
+        ...emailStats,
+        ...outletsStats,
+        ...pipelineStats,
+        totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
+        completedRuns: runsStats?.completedRuns ?? 0,
+      };
+
+      return res.json({
+        dynastySlug,
+        systemStats: buildSystemStats(runsStats, activeCampaigns),
+        stats: computeDerivedStats(rawStats, requiredKeys),
+      });
+    }
+
+    const allGroupKeys = new Set<string>();
+    for (const key of emailStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
+    for (const key of runsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
+    for (const key of outletsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
+    for (const key of pipelineStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
+
+    const totals = aggregateRunsTotals(runsStatsMap);
+
+    const groups: StatsGroup[] = [];
+    for (const groupKey of allGroupKeys) {
+      const emailStats = emailStatsMap.get(groupKey) ?? {};
+      const runsStats = runsStatsMap.get(groupKey);
+      const outletsStats = outletsStatsMap.get(groupKey) ?? {};
+      const pipelineStats = pipelineStatsMap.get(groupKey) ?? {};
+
+      const rawStats: Record<string, number> = {
+        ...emailStats,
+        ...outletsStats,
+        ...pipelineStats,
+        totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
+        completedRuns: runsStats?.completedRuns ?? 0,
+      };
+
+      const group: StatsGroup = {
+        systemStats: buildSystemStats(runsStats, activeCampaigns),
+        stats: computeDerivedStats(rawStats, requiredKeys),
+      };
+
+      if (groupBy === "workflowSlug") group.workflowSlug = groupKey;
+      if (groupBy === "brandId") group.brandId = groupKey;
+      if (groupBy === "campaignId") group.campaignId = groupKey;
+
+      groups.push(group);
+    }
+
+    res.json({
+      dynastySlug,
+      groupBy,
+      systemStats: buildSystemStats(totals, activeCampaigns),
+      groups,
+    });
+  } catch (error) {
+    console.error("[features-service] Dynasty stats error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
