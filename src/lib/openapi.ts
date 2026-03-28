@@ -65,8 +65,10 @@ const systemStatsSchema = z.object({
 
 const statsGroupSchema = z.object({
   workflowSlug: z.string().nullable().optional(),
+  workflowDynastySlug: z.string().nullable().optional(),
   brandId: z.string().nullable().optional(),
   campaignId: z.string().nullable().optional(),
+  featureDynastySlug: z.string().nullable().optional(),
   systemStats: systemStatsSchema,
   stats: z.record(z.string(), z.number().nullable()),
 });
@@ -477,10 +479,11 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
-      groupBy: z.enum(["workflowSlug", "brandId", "campaignId"]).optional(),
+      groupBy: z.enum(["workflowSlug", "workflowDynastySlug", "brandId", "campaignId"]).optional(),
       brandId: z.string().optional(),
       campaignId: z.string().optional(),
-      workflowSlug: z.string().optional(),
+      workflowSlug: z.string().optional().describe("Filter by exact workflow slug"),
+      workflowDynastySlug: z.string().optional().describe("Filter by workflow dynasty slug — resolved to all versioned slugs, takes priority over workflowSlug"),
     }),
   },
   responses: {
@@ -516,10 +519,11 @@ registry.registerPath({
     headers: identityHeaders,
     query: z.object({
       dynastySlug: z.string().describe("The stable dynasty slug (unversioned)"),
-      groupBy: z.enum(["workflowSlug", "brandId", "campaignId"]).optional(),
+      groupBy: z.enum(["workflowSlug", "workflowDynastySlug", "brandId", "campaignId"]).optional(),
       brandId: z.string().optional(),
       campaignId: z.string().optional(),
-      workflowSlug: z.string().optional(),
+      workflowSlug: z.string().optional().describe("Filter by exact workflow slug"),
+      workflowDynastySlug: z.string().optional().describe("Filter by workflow dynasty slug — resolved to all versioned slugs, takes priority over workflowSlug"),
     }),
   },
   responses: {
@@ -544,8 +548,13 @@ registry.registerPath({
   request: {
     headers: identityHeaders,
     query: z.object({
-      groupBy: z.string().optional().describe("Comma-separated dimensions: featureSlug, workflowSlug, brandId, campaignId"),
+      groupBy: z.string().optional().describe("Dimension: featureSlug, featureDynastySlug, workflowSlug, workflowDynastySlug, brandId, campaignId"),
       brandId: z.string().optional(),
+      featureSlug: z.string().optional().describe("Filter by exact feature slug"),
+      featureDynastySlug: z.string().optional().describe("Filter by feature dynasty slug — resolved to all versioned slugs, takes priority over featureSlug"),
+      workflowSlug: z.string().optional().describe("Filter by exact workflow slug"),
+      workflowDynastySlug: z.string().optional().describe("Filter by workflow dynasty slug — resolved to all versioned slugs, takes priority over workflowSlug"),
+      campaignId: z.string().optional(),
     }),
   },
   responses: {
