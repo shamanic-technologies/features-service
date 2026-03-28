@@ -510,6 +510,36 @@ router.get("/features/dynasty/slugs", apiKeyAuth, async (req, res) => {
   }
 });
 
+// ── GET /features/dynasties — All dynasties with their versioned slugs ───────
+
+router.get("/features/dynasties", apiKeyAuth, async (req, res) => {
+  try {
+    const all = await db.query.features.findMany({
+      columns: { dynastySlug: true, slug: true, version: true },
+    });
+
+    // Group by dynastySlug
+    const map = new Map<string, Array<{ slug: string; version: number }>>();
+    for (const f of all) {
+      const list = map.get(f.dynastySlug) ?? [];
+      list.push({ slug: f.slug, version: f.version });
+      map.set(f.dynastySlug, list);
+    }
+
+    const dynasties = [...map.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([dynastySlug, items]) => ({
+        dynastySlug,
+        slugs: items.sort((a, b) => a.version - b.version).map((i) => i.slug),
+      }));
+
+    res.json({ dynasties });
+  } catch (error) {
+    console.error("[features-service] List dynasties error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // ── GET /features — List all features ───────────────────────────────────────
 
 router.get("/features", apiKeyAuth, async (req, res) => {

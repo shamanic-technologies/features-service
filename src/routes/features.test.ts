@@ -212,6 +212,50 @@ describe("GET /features/dynasty/slugs", () => {
   });
 });
 
+// ── List dynasties endpoint ────────────────────────────────────────────────
+
+describe("GET /features/dynasties", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns all dynasties grouped and sorted", async () => {
+    mockFindMany.mockResolvedValueOnce([
+      { dynastySlug: "sales-cold-email", slug: "sales-cold-email-v2", version: 2 },
+      { dynastySlug: "lead-scoring", slug: "lead-scoring", version: 1 },
+      { dynastySlug: "sales-cold-email", slug: "sales-cold-email", version: 1 },
+    ]);
+
+    const res = await request(app)
+      .get("/features/dynasties")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.dynasties).toEqual([
+      { dynastySlug: "lead-scoring", slugs: ["lead-scoring"] },
+      { dynastySlug: "sales-cold-email", slugs: ["sales-cold-email", "sales-cold-email-v2"] },
+    ]);
+  });
+
+  it("returns empty array when no features exist", async () => {
+    mockFindMany.mockResolvedValueOnce([]);
+
+    const res = await request(app)
+      .get("/features/dynasties")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.dynasties).toEqual([]);
+  });
+
+  it("requires authentication", async () => {
+    const res = await request(app)
+      .get("/features/dynasties");
+
+    expect(res.status).toBe(401);
+  });
+});
+
 // ── Signature helpers ───────────────────────────────────────────────────────
 
 describe("signature helpers", () => {
