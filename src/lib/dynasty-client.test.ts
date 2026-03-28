@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 // Mock DB before importing
 vi.mock("../db/index.js", () => ({
@@ -14,86 +14,10 @@ vi.mock("../db/index.js", () => ({
 
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 
-import { buildSlugToDynastyMap, type DynastyEntry } from "./dynasty-client.js";
-
-// ── buildSlugToDynastyMap ───────────────────────────────────────────────────
-
-describe("buildSlugToDynastyMap", () => {
-  it("builds reverse map from dynasties", () => {
-    const dynasties: DynastyEntry[] = [
-      { dynastySlug: "sales-cold-email", slugs: ["sales-cold-email", "sales-cold-email-v2"] },
-      { dynastySlug: "lead-scoring", slugs: ["lead-scoring"] },
-    ];
-
-    const map = buildSlugToDynastyMap(dynasties);
-
-    expect(map.get("sales-cold-email")).toBe("sales-cold-email");
-    expect(map.get("sales-cold-email-v2")).toBe("sales-cold-email");
-    expect(map.get("lead-scoring")).toBe("lead-scoring");
-    expect(map.get("unknown")).toBeUndefined();
-  });
-
-  it("returns empty map for empty dynasties", () => {
-    const map = buildSlugToDynastyMap([]);
-    expect(map.size).toBe(0);
-  });
-
-  it("handles slugs not in any dynasty as fallback", () => {
-    const dynasties: DynastyEntry[] = [
-      { dynastySlug: "sales-cold-email", slugs: ["sales-cold-email"] },
-    ];
-    const map = buildSlugToDynastyMap(dynasties);
-    // Orphan slug falls back to raw value (not in map)
-    expect(map.has("orphan-slug")).toBe(false);
-  });
-});
-
-// ── resolveWorkflowDynastySlugs ─────────────────────────────────────────────
-
-describe("resolveWorkflowDynastySlugs", () => {
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
-
-  afterEach(() => {
-    fetchSpy?.mockRestore();
-  });
-
-  it("returns empty array on network error", async () => {
-    fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("network error"));
-
-    const { resolveWorkflowDynastySlugs } = await import("./dynasty-client.js");
-    const slugs = await resolveWorkflowDynastySlugs("anything", {
-      apiKey: "key", orgId: "org-1", userId: "user-1", runId: "run-1",
-    });
-
-    expect(Array.isArray(slugs)).toBe(true);
-  });
-});
-
-// ── fetchAllWorkflowDynasties ───────────────────────────────────────────────
-
-describe("fetchAllWorkflowDynasties", () => {
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
-
-  afterEach(() => {
-    fetchSpy?.mockRestore();
-  });
-
-  it("returns empty array on network error", async () => {
-    fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("network error"));
-
-    const { fetchAllWorkflowDynasties } = await import("./dynasty-client.js");
-    const result = await fetchAllWorkflowDynasties({
-      apiKey: "key", orgId: "org-1", userId: "user-1", runId: "run-1",
-    });
-
-    expect(Array.isArray(result)).toBe(true);
-  });
-});
-
 // ── resolveFeatureDynastySlugs (local DB) ───────────────────────────────────
 
 describe("resolveFeatureDynastySlugs", () => {
-  it("resolves slugs from local DB", async () => {
+  it("resolves slugs from local DB sorted by version", async () => {
     const { db } = await import("../db/index.js");
     vi.mocked(db.query.features.findMany).mockResolvedValueOnce([
       { slug: "feat-v2", version: 2 },
@@ -104,5 +28,46 @@ describe("resolveFeatureDynastySlugs", () => {
     const slugs = await resolveFeatureDynastySlugs("feat");
 
     expect(slugs).toEqual(["feat", "feat-v2"]);
+  });
+
+  it("returns empty array for unknown dynasty", async () => {
+    const { db } = await import("../db/index.js");
+    vi.mocked(db.query.features.findMany).mockResolvedValueOnce([]);
+
+    const { resolveFeatureDynastySlugs } = await import("./dynasty-client.js");
+    const slugs = await resolveFeatureDynastySlugs("nonexistent");
+
+    expect(slugs).toEqual([]);
+  });
+});
+
+// ── buildFeatureSlugToDynastyMap ────────────────────────────────────────────
+
+describe("buildFeatureSlugToDynastyMap", () => {
+  it("builds reverse map from DB features", async () => {
+    const { db } = await import("../db/index.js");
+    vi.mocked(db.query.features.findMany).mockResolvedValueOnce([
+      { slug: "sales-cold-email", dynastySlug: "sales-cold-email" },
+      { slug: "sales-cold-email-v2", dynastySlug: "sales-cold-email" },
+      { slug: "lead-scoring", dynastySlug: "lead-scoring" },
+    ] as any);
+
+    const { buildFeatureSlugToDynastyMap } = await import("./dynasty-client.js");
+    const map = await buildFeatureSlugToDynastyMap();
+
+    expect(map.get("sales-cold-email")).toBe("sales-cold-email");
+    expect(map.get("sales-cold-email-v2")).toBe("sales-cold-email");
+    expect(map.get("lead-scoring")).toBe("lead-scoring");
+    expect(map.get("unknown")).toBeUndefined();
+  });
+
+  it("returns empty map when no features exist", async () => {
+    const { db } = await import("../db/index.js");
+    vi.mocked(db.query.features.findMany).mockResolvedValueOnce([]);
+
+    const { buildFeatureSlugToDynastyMap } = await import("./dynasty-client.js");
+    const map = await buildFeatureSlugToDynastyMap();
+
+    expect(map.size).toBe(0);
   });
 });
