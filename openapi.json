@@ -1390,7 +1390,7 @@
       "StatsGroup": {
         "type": "object",
         "properties": {
-          "workflowName": {
+          "workflowSlug": {
             "type": "string",
             "nullable": true
           },
@@ -1491,7 +1491,7 @@
             "items": {
               "type": "object",
               "properties": {
-                "workflowName": {
+                "workflowSlug": {
                   "type": "string",
                   "nullable": true
                 },
@@ -1603,7 +1603,7 @@
             "items": {
               "type": "object",
               "properties": {
-                "workflowName": {
+                "workflowSlug": {
                   "type": "string",
                   "nullable": true
                 },
@@ -5753,7 +5753,7 @@
     "/features/{featureSlug}/stats": {
       "get": {
         "summary": "Get computed stats for a feature",
-        "description": "Returns computed stats for a feature's outputs and charts. Optionally grouped by workflowName, brandId, or campaignId. System stats (cost, runs, campaigns, dates) are always included.\n\n**Lineage aggregation:** Stats are automatically aggregated across the full upgrade chain (deprecated ancestors + active descendants). If a feature was forked, querying any slug in the chain returns the combined stats. This ensures no data is lost when features evolve.\n\nStats keys are either **raw** (fetched from email-gateway, runs-service, or outlets-service) or **derived** (computed as a ratio, e.g. `replyRate = emailsReplied / emailsSent`). Use `GET /stats/registry` to discover available keys, their labels, and types.",
+        "description": "Returns computed stats for a feature's outputs and charts. Optionally grouped by workflowSlug, brandId, or campaignId. System stats (cost, runs, campaigns, dates) are always included.\n\n**Lineage aggregation:** Stats are automatically aggregated across the full upgrade chain (deprecated ancestors + active descendants). If a feature was forked, querying any slug in the chain returns the combined stats. This ensures no data is lost when features evolve.\n\nStats keys are either **raw** (fetched from email-gateway, runs-service, or outlets-service) or **derived** (computed as a ratio, e.g. `replyRate = emailsReplied / emailsSent`). Use `GET /stats/registry` to discover available keys, their labels, and types.",
         "tags": [
           "Stats"
         ],
@@ -5770,7 +5770,7 @@
             "schema": {
               "type": "string",
               "enum": [
-                "workflowName",
+                "workflowSlug",
                 "brandId",
                 "campaignId"
               ]
@@ -5800,7 +5800,7 @@
               "type": "string"
             },
             "required": false,
-            "name": "workflowName",
+            "name": "workflowSlug",
             "in": "query"
           },
           {
@@ -5887,7 +5887,7 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "workflowName": {
+                          "workflowSlug": {
                             "type": "string",
                             "nullable": true
                           },
@@ -6002,7 +6002,7 @@
     "/stats": {
       "get": {
         "summary": "Global stats across all features",
-        "description": "Cross-feature stats endpoint for performance dashboards and org overview. Supports groupBy: featureSlug, workflowName, brandId, campaignId.\n\nOnly active features are included in the computation. Stats from deprecated features are aggregated into their active successor via the lineage chain.",
+        "description": "Cross-feature stats endpoint for performance dashboards and org overview. Supports groupBy: featureSlug, workflowSlug, brandId, campaignId.\n\nOnly active features are included in the computation. Stats from deprecated features are aggregated into their active successor via the lineage chain.",
         "tags": [
           "Stats"
         ],
@@ -6010,10 +6010,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Comma-separated dimensions: featureSlug, workflowName, brandId, campaignId"
+              "description": "Comma-separated dimensions: featureSlug, workflowSlug, brandId, campaignId"
             },
             "required": false,
-            "description": "Comma-separated dimensions: featureSlug, workflowName, brandId, campaignId",
+            "description": "Comma-separated dimensions: featureSlug, workflowSlug, brandId, campaignId",
             "name": "groupBy",
             "in": "query"
           },
@@ -6106,7 +6106,7 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "workflowName": {
+                          "workflowSlug": {
                             "type": "string",
                             "nullable": true
                           },

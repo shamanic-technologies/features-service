@@ -50,7 +50,7 @@ interface SystemStats {
 }
 
 interface StatsGroup {
-  workflowName?: string | null;
+  workflowSlug?: string | null;
   brandId?: string | null;
   campaignId?: string | null;
   systemStats: SystemStats;
@@ -64,9 +64,9 @@ interface RunsStatsEntry {
   maxStartedAt: string | null;
 }
 
-type GroupByDimension = "workflowName" | "brandId" | "campaignId" | "featureSlug";
+type GroupByDimension = "workflowSlug" | "brandId" | "campaignId" | "featureSlug";
 
-const VALID_GROUP_BY: Set<string> = new Set(["workflowName", "brandId", "campaignId", "featureSlug"]);
+const VALID_GROUP_BY: Set<string> = new Set(["workflowSlug", "brandId", "campaignId", "featureSlug"]);
 
 // ── Lineage resolution (BFS predecessor map) ───────────────────────────────
 
@@ -201,10 +201,10 @@ async function fetchEmailStats(
   identity: Identity,
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams();
-  if (groupBy === "workflowName") params.set("groupBy", "workflowName");
+  if (groupBy === "workflowSlug") params.set("groupBy", "workflowSlug");
   if (groupBy === "brandId") params.set("groupBy", "brandId");
   if (groupBy === "campaignId") params.set("groupBy", "campaignId");
-  if (filters.workflowName) params.set("workflowName", filters.workflowName);
+  if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
@@ -315,9 +315,9 @@ async function fetchRunsStatsForSlug(
   featureSlug: string | undefined,
   identity: Identity,
 ): Promise<Map<string, RunsStatsEntry>> {
-  const runsGroupBy = groupBy ?? "workflowName";
+  const runsGroupBy = groupBy ?? "workflowSlug";
   const params = new URLSearchParams({ groupBy: runsGroupBy });
-  if (filters.workflowName) params.set("workflowName", filters.workflowName);
+  if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
   if (featureSlug) params.set("featureSlug", featureSlug);
@@ -469,13 +469,13 @@ async function fetchPipelineStatsForFilter(
   runFilter: RunFilter,
   identity: Identity,
 ): Promise<Map<string, number>> {
-  const runsGroupBy = groupBy ?? "workflowName";
+  const runsGroupBy = groupBy ?? "workflowSlug";
   const params = new URLSearchParams({
     groupBy: runsGroupBy,
     serviceName: runFilter.serviceName,
     taskName: runFilter.taskName,
   });
-  if (filters.workflowName) params.set("workflowName", filters.workflowName);
+  if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
   if (featureSlug) params.set("featureSlug", featureSlug);
@@ -532,10 +532,10 @@ async function fetchOutletsStats(
   identity: Identity,
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams();
-  if (groupBy === "workflowName") params.set("groupBy", "workflowName");
+  if (groupBy === "workflowSlug") params.set("groupBy", "workflowSlug");
   if (groupBy === "brandId") params.set("groupBy", "brandId");
   if (groupBy === "campaignId") params.set("groupBy", "campaignId");
-  if (filters.workflowName) params.set("workflowName", filters.workflowName);
+  if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
@@ -700,10 +700,10 @@ router.get("/stats/registry", apiKeyAuth, async (_req, res) => {
  * Returns computed stats for a feature, optionally grouped by a dimension.
  *
  * Query params:
- *   - groupBy: "workflowName" | "brandId" | "campaignId" (optional)
+ *   - groupBy: "workflowSlug" | "brandId" | "campaignId" (optional)
  *   - brandId: filter by brand (optional)
  *   - campaignId: filter by campaign (optional)
- *   - workflowName: filter by workflow (optional)
+ *   - workflowSlug: filter by workflow (optional)
  */
 router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
   try {
@@ -724,7 +724,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     const filters: Record<string, string> = {};
     if (req.query.brandId) filters.brandId = req.query.brandId as string;
     if (req.query.campaignId) filters.campaignId = req.query.campaignId as string;
-    if (req.query.workflowName) filters.workflowName = req.query.workflowName as string;
+    if (req.query.workflowSlug) filters.workflowSlug = req.query.workflowSlug as string;
 
     // Resolve the full upgrade chain — aggregate stats across all ancestors + descendants
     const lineageSlugs = await collectLineageSlugs(feature);
@@ -798,7 +798,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       };
 
       // Set the dimension key explicitly
-      if (groupBy === "workflowName") group.workflowName = groupKey;
+      if (groupBy === "workflowSlug") group.workflowSlug = groupKey;
       if (groupBy === "brandId") group.brandId = groupKey;
       if (groupBy === "campaignId") group.campaignId = groupKey;
 
@@ -824,7 +824,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
  * Used by performance-service and org overview.
  *
  * Query params:
- *   - groupBy: "featureSlug" | "featureSlug,workflowName" | "workflowName" | "brandId"
+ *   - groupBy: "featureSlug" | "featureSlug,workflowSlug" | "workflowSlug" | "brandId"
  *   - brandId: filter by brand (optional)
  */
 router.get("/stats", apiKeyAuth, async (req, res) => {
@@ -910,7 +910,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
         stats: computeDerivedStats(rawStats, allKeys),
       };
 
-      if (groupBy === "workflowName") group.workflowName = groupKey;
+      if (groupBy === "workflowSlug") group.workflowSlug = groupKey;
       if (groupBy === "brandId") group.brandId = groupKey;
       if (groupBy === "campaignId") group.campaignId = groupKey;
 

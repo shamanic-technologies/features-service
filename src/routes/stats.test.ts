@@ -131,7 +131,7 @@ describe("stats route - network error resilience", () => {
       if (url.includes("runs:3000")) {
         return new Response(JSON.stringify({
           groups: [{
-            dimensions: { workflowName: "__total__" },
+            dimensions: { workflowSlug: "__total__" },
             totalCostInUsdCents: "1500",
             runCount: 10,
             minStartedAt: "2026-01-01T00:00:00Z",
