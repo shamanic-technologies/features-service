@@ -4,6 +4,14 @@ import { db } from "../db/index.js";
 import { features, type Feature, type FeatureChart } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { STATS_REGISTRY, getPublicRegistry, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
+import {
+  resolveFeatureDynastySlugs,
+  resolveWorkflowDynastySlugs,
+  fetchAllFeatureDynasties,
+  fetchAllWorkflowDynasties,
+  buildSlugToDynastyMap,
+  type DynastyEntry,
+} from "../lib/dynasty-client.js";
 
 const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL!;
 const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY!;
@@ -51,8 +59,10 @@ interface SystemStats {
 
 interface StatsGroup {
   workflowSlug?: string | null;
+  workflowDynastySlug?: string | null;
   brandId?: string | null;
   campaignId?: string | null;
+  featureDynastySlug?: string | null;
   systemStats: SystemStats;
   stats: Record<string, number | null>;
 }
@@ -64,9 +74,18 @@ interface RunsStatsEntry {
   maxStartedAt: string | null;
 }
 
-type GroupByDimension = "workflowSlug" | "brandId" | "campaignId" | "featureSlug";
+type GroupByDimension = "workflowSlug" | "brandId" | "campaignId" | "featureSlug" | "workflowDynastySlug" | "featureDynastySlug";
 
-const VALID_GROUP_BY: Set<string> = new Set(["workflowSlug", "brandId", "campaignId", "featureSlug"]);
+// Dynasty groupBy values map to their underlying slug dimension for downstream queries
+const DYNASTY_GROUP_BY_MAP: Record<string, GroupByDimension> = {
+  workflowDynastySlug: "workflowSlug",
+  featureDynastySlug: "featureSlug",
+};
+
+const VALID_GROUP_BY: Set<string> = new Set([
+  "workflowSlug", "brandId", "campaignId", "featureSlug",
+  "workflowDynastySlug", "featureDynastySlug",
+]);
 
 // ── Lineage resolution (BFS predecessor map) ───────────────────────────────
 
@@ -684,6 +703,112 @@ function buildSystemStats(
   };
 }
 
+// ── Dynasty filter/groupBy resolution helpers ────────────────────────────────
+
+interface ResolvedDynastyFilters {
+  /** Resolved workflow slugs (from workflowDynastySlug), or undefined if not filtering */
+  workflowSlugs?: string[];
+  /** Resolved feature slugs (from featureDynastySlug), or undefined if not filtering */
+  featureSlugs?: string[];
+}
+
+/**
+ * Resolve dynasty filter params into slug lists.
+ * Dynasty filters take priority over exact slug filters.
+ */
+async function resolveDynastyFilters(
+  query: Record<string, string | undefined>,
+  headers: { apiKey: string; orgId: string; userId: string; runId: string },
+): Promise<ResolvedDynastyFilters> {
+  const result: ResolvedDynastyFilters = {};
+
+  if (query.workflowDynastySlug) {
+    result.workflowSlugs = await resolveWorkflowDynastySlugs(query.workflowDynastySlug, headers);
+  }
+
+  if (query.featureDynastySlug) {
+    result.featureSlugs = await resolveFeatureDynastySlugs(query.featureDynastySlug);
+  }
+
+  return result;
+}
+
+/**
+ * Re-key stats maps when grouping by a dynasty dimension.
+ * Translates versioned slug keys → dynasty slugs using a reverse map,
+ * then merges groups that map to the same dynasty slug.
+ */
+function remapGroupsToDynasty<T>(
+  statsMap: Map<string, T>,
+  reverseMap: Map<string, string>,
+  merge: (a: T, b: T) => T,
+): Map<string, T> {
+  const remapped = new Map<string, T>();
+  for (const [key, value] of statsMap) {
+    const dynastyKey = key === "__total__" ? key : (reverseMap.get(key) ?? key);
+    const existing = remapped.get(dynastyKey);
+    if (existing) {
+      remapped.set(dynastyKey, merge(existing, value));
+    } else {
+      remapped.set(dynastyKey, value);
+    }
+  }
+  return remapped;
+}
+
+function mergeRecordNumbers(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
+  const result = { ...a };
+  for (const [k, v] of Object.entries(b)) {
+    result[k] = (result[k] ?? 0) + v;
+  }
+  return result;
+}
+
+function mergeRunsStatsEntries(a: RunsStatsEntry, b: RunsStatsEntry): RunsStatsEntry {
+  return {
+    totalCostInUsdCents: a.totalCostInUsdCents + b.totalCostInUsdCents,
+    completedRuns: a.completedRuns + b.completedRuns,
+    minStartedAt: a.minStartedAt && b.minStartedAt
+      ? (a.minStartedAt < b.minStartedAt ? a.minStartedAt : b.minStartedAt)
+      : a.minStartedAt ?? b.minStartedAt,
+    maxStartedAt: a.maxStartedAt && b.maxStartedAt
+      ? (a.maxStartedAt > b.maxStartedAt ? a.maxStartedAt : b.maxStartedAt)
+      : a.maxStartedAt ?? b.maxStartedAt,
+  };
+}
+
+/**
+ * Apply dynasty remapping to all stats maps when groupBy is a dynasty dimension.
+ */
+async function remapAllStatsMaps(
+  groupBy: GroupByDimension,
+  emailStatsMap: Map<string, Record<string, number>>,
+  runsStatsMap: Map<string, RunsStatsEntry>,
+  outletsStatsMap: Map<string, Record<string, number>>,
+  pipelineStatsMap: Map<string, Record<string, number>>,
+  headers: { apiKey: string; orgId: string; userId: string; runId: string },
+): Promise<{
+  emailStatsMap: Map<string, Record<string, number>>;
+  runsStatsMap: Map<string, RunsStatsEntry>;
+  outletsStatsMap: Map<string, Record<string, number>>;
+  pipelineStatsMap: Map<string, Record<string, number>>;
+}> {
+  let dynasties: DynastyEntry[];
+  if (groupBy === "workflowDynastySlug") {
+    dynasties = await fetchAllWorkflowDynasties(headers);
+  } else {
+    dynasties = await fetchAllFeatureDynasties();
+  }
+  const reverseMap = buildSlugToDynastyMap(dynasties);
+
+  return {
+    emailStatsMap: remapGroupsToDynasty(emailStatsMap, reverseMap, mergeRecordNumbers),
+    runsStatsMap: remapGroupsToDynasty(runsStatsMap, reverseMap, mergeRunsStatsEntries),
+    outletsStatsMap: remapGroupsToDynasty(outletsStatsMap, reverseMap, mergeRecordNumbers),
+    pipelineStatsMap: remapGroupsToDynasty(pipelineStatsMap, reverseMap, mergeRecordNumbers),
+  };
+}
+
 // ── GET /stats/registry ──────────────────────────────────────────────────────
 
 /**
@@ -696,15 +821,6 @@ router.get("/stats/registry", apiKeyAuth, async (_req, res) => {
 
 // ── GET /features/:featureSlug/stats ─────────────────────────────────────────
 
-/**
- * Returns computed stats for a feature, optionally grouped by a dimension.
- *
- * Query params:
- *   - groupBy: "workflowSlug" | "brandId" | "campaignId" (optional)
- *   - brandId: filter by brand (optional)
- *   - campaignId: filter by campaign (optional)
- *   - workflowSlug: filter by workflow (optional)
- */
 router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
   try {
     const { featureSlug } = req.params;
@@ -720,41 +836,61 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
 
     const groupByParam = req.query.groupBy as string | undefined;
     const groupBy = (groupByParam && VALID_GROUP_BY.has(groupByParam) ? groupByParam : null) as GroupByDimension | null;
+    // Dynasty groupBy maps to the underlying slug dimension for downstream queries
+    const downstreamGroupBy = groupBy ? (DYNASTY_GROUP_BY_MAP[groupBy] ?? groupBy) : null;
 
     const filters: Record<string, string> = {};
     if (req.query.brandId) filters.brandId = req.query.brandId as string;
     if (req.query.campaignId) filters.campaignId = req.query.campaignId as string;
     if (req.query.workflowSlug) filters.workflowSlug = req.query.workflowSlug as string;
 
-    // Stats for this exact slug only — no lineage traversal
+    // Resolve dynasty filters
+    const resolveHeaders = { apiKey: process.env.FEATURES_SERVICE_API_KEY!, orgId, userId, runId };
+    const dynastyFilters = await resolveDynastyFilters(req.query as Record<string, string | undefined>, resolveHeaders);
+
+    // workflowDynastySlug filter takes priority over workflowSlug
+    if (dynastyFilters.workflowSlugs) {
+      if (dynastyFilters.workflowSlugs.length === 0) {
+        return res.json({
+          featureSlug,
+          systemStats: buildSystemStats(undefined),
+          stats: {},
+        });
+      }
+      // Use the first slug for downstream filter — runs-service processes one at a time anyway
+      filters.workflowSlug = dynastyFilters.workflowSlugs[0];
+    }
+
+    // Stats for this exact feature slug only
     const slugs = [featureSlug];
 
-    // Determine which keys and sources we need
     const requiredKeys = collectRequiredKeys(feature);
     const sources = requiredSources(requiredKeys);
 
-    // Fetch data from sources in parallel
     const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
     const pipelineKeys = collectPipelineKeys(requiredKeys);
-    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
-      sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
-      sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, slugs, identity) : Promise.resolve(new Map<string, RunsStatsEntry>()),
-      sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
-      pipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, slugs, pipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+    let [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
+      sources.has("email-gateway") ? fetchEmailStats(orgId, downstreamGroupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      sources.has("runs") || true ? fetchRunsStats(orgId, downstreamGroupBy, filters, slugs, identity) : Promise.resolve(new Map<string, RunsStatsEntry>()),
+      sources.has("outlets") ? fetchOutletsStats(orgId, downstreamGroupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      pipelineKeys.size > 0 ? fetchPipelineStats(orgId, downstreamGroupBy, filters, slugs, pipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchActiveCampaigns(orgId, filters, identity),
     ]);
 
+    // Remap group keys for dynasty groupBy
+    if (groupBy && DYNASTY_GROUP_BY_MAP[groupBy]) {
+      ({ emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap } =
+        await remapAllStatsMaps(groupBy, emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, resolveHeaders));
+    }
+
     if (!groupBy) {
-      // No grouping — return flat stats
       const emailStats = emailStatsMap.get("__total__") ?? {};
       const runsStats = runsStatsMap.get("__total__");
       const outletsStats = outletsStatsMap.get("__total__") ?? {};
       const pipelineStats = pipelineStatsMap.get("__total__") ?? {};
 
       const rawStats: Record<string, number> = {
-        ...emailStats,
-        ...outletsStats,
-        ...pipelineStats,
+        ...emailStats, ...outletsStats, ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -766,14 +902,12 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       });
     }
 
-    // Grouped — collect all group keys from all sources
     const allGroupKeys = new Set<string>();
     for (const key of emailStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of runsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of outletsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of pipelineStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
 
-    // Compute totals for top-level systemStats
     const totals = aggregateRunsTotals(runsStatsMap);
 
     const groups: StatsGroup[] = [];
@@ -784,9 +918,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       const pipelineStats = pipelineStatsMap.get(groupKey) ?? {};
 
       const rawStats: Record<string, number> = {
-        ...emailStats,
-        ...outletsStats,
-        ...pipelineStats,
+        ...emailStats, ...outletsStats, ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -796,8 +928,8 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         stats: computeDerivedStats(rawStats, requiredKeys),
       };
 
-      // Set the dimension key explicitly
       if (groupBy === "workflowSlug") group.workflowSlug = groupKey;
+      if (groupBy === "workflowDynastySlug") group.workflowDynastySlug = groupKey;
       if (groupBy === "brandId") group.brandId = groupKey;
       if (groupBy === "campaignId") group.campaignId = groupKey;
 
@@ -811,7 +943,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       groups,
     });
   } catch (error) {
-    console.error("Feature stats error:", error);
+    console.error("[features-service] Feature stats error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -845,24 +977,45 @@ router.get("/stats/dynasty", apiKeyAuth, async (req, res) => {
 
     const groupByParam = req.query.groupBy as string | undefined;
     const groupBy = (groupByParam && VALID_GROUP_BY.has(groupByParam) ? groupByParam : null) as GroupByDimension | null;
+    const downstreamGroupBy = groupBy ? (DYNASTY_GROUP_BY_MAP[groupBy] ?? groupBy) : null;
 
     const filters: Record<string, string> = {};
     if (req.query.brandId) filters.brandId = req.query.brandId as string;
     if (req.query.campaignId) filters.campaignId = req.query.campaignId as string;
     if (req.query.workflowSlug) filters.workflowSlug = req.query.workflowSlug as string;
 
+    // Resolve dynasty filters
+    const resolveHeaders = { apiKey: process.env.FEATURES_SERVICE_API_KEY!, orgId, userId, runId };
+    const dynastyFilters = await resolveDynastyFilters(req.query as Record<string, string | undefined>, resolveHeaders);
+
+    if (dynastyFilters.workflowSlugs) {
+      if (dynastyFilters.workflowSlugs.length === 0) {
+        return res.json({
+          dynastySlug,
+          systemStats: buildSystemStats(undefined),
+          stats: {},
+        });
+      }
+      filters.workflowSlug = dynastyFilters.workflowSlugs[0];
+    }
+
     const requiredKeys = collectRequiredKeys(activeFeature);
     const sources = requiredSources(requiredKeys);
 
     const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
     const pipelineKeys = collectPipelineKeys(requiredKeys);
-    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
-      sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
-      sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, lineageSlugs, identity) : Promise.resolve(new Map<string, RunsStatsEntry>()),
-      sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
-      pipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, lineageSlugs, pipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+    let [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
+      sources.has("email-gateway") ? fetchEmailStats(orgId, downstreamGroupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      sources.has("runs") || true ? fetchRunsStats(orgId, downstreamGroupBy, filters, lineageSlugs, identity) : Promise.resolve(new Map<string, RunsStatsEntry>()),
+      sources.has("outlets") ? fetchOutletsStats(orgId, downstreamGroupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      pipelineKeys.size > 0 ? fetchPipelineStats(orgId, downstreamGroupBy, filters, lineageSlugs, pipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchActiveCampaigns(orgId, filters, identity),
     ]);
+
+    if (groupBy && DYNASTY_GROUP_BY_MAP[groupBy]) {
+      ({ emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap } =
+        await remapAllStatsMaps(groupBy, emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, resolveHeaders));
+    }
 
     if (!groupBy) {
       const emailStats = emailStatsMap.get("__total__") ?? {};
@@ -914,6 +1067,7 @@ router.get("/stats/dynasty", apiKeyAuth, async (req, res) => {
       };
 
       if (groupBy === "workflowSlug") group.workflowSlug = groupKey;
+      if (groupBy === "workflowDynastySlug") group.workflowDynastySlug = groupKey;
       if (groupBy === "brandId") group.brandId = groupKey;
       if (groupBy === "campaignId") group.campaignId = groupKey;
 
@@ -949,6 +1103,34 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
     const groupByParam = req.query.groupBy as string | undefined;
     const filters: Record<string, string> = {};
     if (req.query.brandId) filters.brandId = req.query.brandId as string;
+    if (req.query.workflowSlug) filters.workflowSlug = req.query.workflowSlug as string;
+    if (req.query.featureSlug) filters.featureSlug = req.query.featureSlug as string;
+    if (req.query.campaignId) filters.campaignId = req.query.campaignId as string;
+
+    // Resolve dynasty filters
+    const resolveHeaders = { apiKey: process.env.FEATURES_SERVICE_API_KEY!, orgId, userId, runId };
+    const dynastyFilters = await resolveDynastyFilters(req.query as Record<string, string | undefined>, resolveHeaders);
+
+    // Dynasty filters take priority over exact slug filters
+    let featureSlugsOverride: string[] | undefined;
+    if (dynastyFilters.featureSlugs) {
+      if (dynastyFilters.featureSlugs.length === 0) {
+        return res.json({
+          systemStats: buildSystemStats(undefined),
+          stats: {},
+        });
+      }
+      featureSlugsOverride = dynastyFilters.featureSlugs;
+    }
+    if (dynastyFilters.workflowSlugs) {
+      if (dynastyFilters.workflowSlugs.length === 0) {
+        return res.json({
+          systemStats: buildSystemStats(undefined),
+          stats: {},
+        });
+      }
+      filters.workflowSlug = dynastyFilters.workflowSlugs[0];
+    }
 
     // For the global endpoint, fetch all active features and aggregate
     const allFeatures = await db.query.features.findMany({
@@ -964,28 +1146,32 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
     const sources = requiredSources(allKeys);
 
     const groupBy = (groupByParam?.split(",")[0] ?? null) as GroupByDimension | null;
+    const downstreamGroupBy = groupBy ? (DYNASTY_GROUP_BY_MAP[groupBy] ?? groupBy) : null;
 
     const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
     const globalPipelineKeys = collectPipelineKeys(allKeys);
-    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
-      sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
-      fetchRunsStats(orgId, groupBy, filters, undefined, identity),
-      sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
-      globalPipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, undefined, globalPipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+    let [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
+      sources.has("email-gateway") ? fetchEmailStats(orgId, downstreamGroupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      fetchRunsStats(orgId, downstreamGroupBy, filters, featureSlugsOverride, identity),
+      sources.has("outlets") ? fetchOutletsStats(orgId, downstreamGroupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      globalPipelineKeys.size > 0 ? fetchPipelineStats(orgId, downstreamGroupBy, filters, featureSlugsOverride, globalPipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchActiveCampaigns(orgId, filters, identity),
     ]);
 
+    // Remap group keys for dynasty groupBy
+    if (groupBy && DYNASTY_GROUP_BY_MAP[groupBy]) {
+      ({ emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap } =
+        await remapAllStatsMaps(groupBy, emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, resolveHeaders));
+    }
+
     if (!groupBy) {
-      // No grouping — flat aggregate
       const emailStats = emailStatsMap.get("__total__") ?? {};
       const runsStats = runsStatsMap.get("__total__");
       const outletsStats = outletsStatsMap.get("__total__") ?? {};
       const pipelineStats = pipelineStatsMap.get("__total__") ?? {};
 
       const rawStats: Record<string, number> = {
-        ...emailStats,
-        ...outletsStats,
-        ...pipelineStats,
+        ...emailStats, ...outletsStats, ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -996,7 +1182,6 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       });
     }
 
-    // Grouped
     const allGroupKeys = new Set<string>();
     for (const key of emailStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of runsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
@@ -1013,9 +1198,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       const pipelineStats = pipelineStatsMap.get(groupKey) ?? {};
 
       const rawStats: Record<string, number> = {
-        ...emailStats,
-        ...outletsStats,
-        ...pipelineStats,
+        ...emailStats, ...outletsStats, ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -1026,6 +1209,8 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       };
 
       if (groupBy === "workflowSlug") group.workflowSlug = groupKey;
+      if (groupBy === "workflowDynastySlug") group.workflowDynastySlug = groupKey;
+      if (groupBy === "featureDynastySlug") group.featureDynastySlug = groupKey;
       if (groupBy === "brandId") group.brandId = groupKey;
       if (groupBy === "campaignId") group.campaignId = groupKey;
 
@@ -1038,7 +1223,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       groups,
     });
   } catch (error) {
-    console.error("Global stats error:", error);
+    console.error("[features-service] Global stats error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
