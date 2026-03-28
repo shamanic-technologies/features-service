@@ -1,92 +1,143 @@
 import { Router } from "express";
-import { eq, or } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { batchUpsertFeaturesSchema, createFeatureSchema, updateFeatureSchema, prefillRequestSchema } from "../lib/schemas.js";
-import { computeSignature, slugify, versionedName, versionedSlug } from "../lib/signature.js";
+import { computeSignature, slugify, versionedName, versionedSlug, composeDynastyName, pickForkName } from "../lib/signature.js";
 import { extractBrandFields } from "../lib/brand-client.js";
 import { flattenValue } from "../lib/flatten.js";
 
 const router = Router();
 
+// ── Dynasty helpers ─────────────────────────────────────────────────────────
+
 /**
- * Resolve a unique name + slug for a feature.
- * If the signature already exists → upsert (return existing slug/name).
- * If the name collides but signature differs → auto-suffix v2, v3, etc.
+ * Find the next available version number for a dynasty.
  */
-async function resolveNameAndSlug(
+async function nextVersionInDynasty(dynastySlug: string): Promise<number> {
+  const existing = await db.query.features.findMany({
+    where: eq(features.dynastySlug, dynastySlug),
+    columns: { version: true },
+  });
+  if (existing.length === 0) return 1;
+  return Math.max(...existing.map((f) => f.version)) + 1;
+}
+
+/**
+ * Generate a unique fork name for a given base_name.
+ * Queries existing fork names for this base_name and picks an unused codename.
+ */
+async function generateForkName(baseName: string): Promise<string> {
+  const existing = await db.query.features.findMany({
+    where: eq(features.baseName, baseName),
+    columns: { forkName: true },
+  });
+  const usedNames = new Set(
+    existing.map((f) => f.forkName).filter((n): n is string => n !== null),
+  );
+  return pickForkName(usedNames);
+}
+
+/**
+ * Resolve dynasty identity for a new feature.
+ *
+ * If a dynasty with this base_name + fork_name=null already exists:
+ *   - For upsert (isUpsert=true): this is an upgrade within the existing dynasty
+ *   - For create (isUpsert=false): auto-generate a fork_name to create a new dynasty
+ *
+ * Returns the full dynasty identity needed to create the feature record.
+ */
+async function resolveDynastyIdentity(
   name: string,
-  signature: string
-): Promise<{ name: string; slug: string; existingId: string | null }> {
-  // Check if this exact signature already exists
+  signature: string,
+  opts: { isUpsert: boolean },
+): Promise<
+  | { kind: "existing"; existingId: string }
+  | { kind: "upgrade"; baseName: string; forkName: string | null; dynastyName: string; dynastySlug: string; version: number; deprecateId: string }
+  | { kind: "new"; baseName: string; forkName: string | null; dynastyName: string; dynastySlug: string; version: number }
+> {
+  // Check if this exact signature already exists (idempotent upsert)
   const bySignature = await db.query.features.findFirst({
     where: eq(features.signature, signature),
   });
   if (bySignature) {
-    return { name: bySignature.name, slug: bySignature.slug, existingId: bySignature.id };
+    return { kind: "existing", existingId: bySignature.id };
   }
 
-  // Signature is new — find a unique name/slug
-  const baseSlug = slugify(name);
-  let version = 1;
-  let candidateName = name;
-  let candidateSlug = baseSlug;
-
-  while (true) {
-    const collision = await db.query.features.findFirst({
-      where: or(
-        eq(features.name, candidateName),
-        eq(features.slug, candidateSlug),
+  if (opts.isUpsert) {
+    // Batch upsert: match dynasty by base_name + fork_name=null (seed features)
+    const activeInDynasty = await db.query.features.findFirst({
+      where: and(
+        eq(features.baseName, name),
+        isNull(features.forkName),
+        eq(features.status, "active"),
       ),
     });
 
-    if (!collision) {
-      return { name: candidateName, slug: candidateSlug, existingId: null };
+    if (activeInDynasty) {
+      // Dynasty exists with an active feature → upgrade
+      const dSlug = activeInDynasty.dynastySlug;
+      const nextVersion = await nextVersionInDynasty(dSlug);
+      return {
+        kind: "upgrade",
+        baseName: activeInDynasty.baseName,
+        forkName: activeInDynasty.forkName,
+        dynastyName: activeInDynasty.dynastyName,
+        dynastySlug: dSlug,
+        version: nextVersion,
+        deprecateId: activeInDynasty.id,
+      };
     }
 
-    version++;
-    candidateName = versionedName(name, version);
-    candidateSlug = versionedSlug(baseSlug, version);
+    // No existing dynasty — create new
+    const dynastyName = composeDynastyName(name, null);
+    const dSlug = slugify(dynastyName);
+    return {
+      kind: "new",
+      baseName: name,
+      forkName: null,
+      dynastyName,
+      dynastySlug: dSlug,
+      version: 1,
+    };
   }
+
+  // POST /features (create): if base_name collision, generate fork name
+  const existingWithBaseName = await db.query.features.findFirst({
+    where: eq(features.baseName, name),
+  });
+
+  if (existingWithBaseName) {
+    // Collision — generate a fork name for a new dynasty
+    const forkName = await generateForkName(name);
+    const dynastyName = composeDynastyName(name, forkName);
+    const dSlug = slugify(dynastyName);
+    return {
+      kind: "new",
+      baseName: name,
+      forkName,
+      dynastyName,
+      dynastySlug: dSlug,
+      version: 1,
+    };
+  }
+
+  // No collision — new dynasty with no fork name
+  const dynastyName = composeDynastyName(name, null);
+  const dSlug = slugify(dynastyName);
+  return {
+    kind: "new",
+    baseName: name,
+    forkName: null,
+    dynastyName,
+    dynastySlug: dSlug,
+    version: 1,
+  };
 }
 
-/**
- * Find the next available versioned name/slug for a fork.
- * Starts from the base display name and increments until a free slot is found.
- */
-async function resolveForkedNameAndSlug(
-  displayName: string
-): Promise<{ name: string; slug: string }> {
-  const baseSlug = slugify(displayName);
-  let version = 2; // forks always start at v2
+// ── PUT /features — Batch upsert (cold-start registration) ─────────────────
 
-  while (true) {
-    const candidateName = versionedName(displayName, version);
-    const candidateSlug = versionedSlug(baseSlug, version);
-
-    const collision = await db.query.features.findFirst({
-      where: or(
-        eq(features.name, candidateName),
-        eq(features.slug, candidateSlug),
-      ),
-    });
-
-    if (!collision) {
-      return { name: candidateName, slug: candidateSlug };
-    }
-
-    version++;
-  }
-}
-
-/**
- * PUT /features — Batch upsert features (idempotent, for cold-start registration).
- *
- * Signature = hash of sorted input keys + sorted output keys.
- * - Same signature → upsert metadata (labels, descriptions, charts, etc.)
- * - Same name but different signature → auto-suffix name/slug with v2, v3, etc.
- */
 router.put("/features", apiKeyAuth, async (req, res) => {
   try {
     const parsed = batchUpsertFeaturesSchema.safeParse(req.body);
@@ -101,11 +152,9 @@ router.put("/features", apiKeyAuth, async (req, res) => {
         f.outputs.map((o) => o.key),
       );
 
-      const resolved = await resolveNameAndSlug(f.name, signature);
+      const resolved = await resolveDynastyIdentity(f.name, signature, { isUpsert: true });
 
-      const values = {
-        name: resolved.name,
-        displayName: f.name, // displayName = the human-readable name from seed
+      const metadataValues = {
         description: f.description,
         icon: f.icon,
         category: f.category,
@@ -120,19 +169,58 @@ router.put("/features", apiKeyAuth, async (req, res) => {
         entities: f.entities,
       };
 
-      if (resolved.existingId) {
-        // Same signature → upsert metadata
+      if (resolved.kind === "existing") {
+        // Same signature → upsert metadata in-place
         const [updated] = await db
           .update(features)
-          .set({ ...values, updatedAt: new Date() })
+          .set({ ...metadataValues, updatedAt: new Date() })
           .where(eq(features.id, resolved.existingId))
           .returning();
         results.push(updated);
-      } else {
-        // New feature
+      } else if (resolved.kind === "upgrade") {
+        // Signature changed within dynasty → deprecate old, create new version
+        await db
+          .update(features)
+          .set({ status: "deprecated", updatedAt: new Date() })
+          .where(eq(features.id, resolved.deprecateId));
+
         const [created] = await db
           .insert(features)
-          .values({ slug: resolved.slug, signature, ...values })
+          .values({
+            baseName: resolved.baseName,
+            forkName: resolved.forkName,
+            dynastyName: resolved.dynastyName,
+            dynastySlug: resolved.dynastySlug,
+            version: resolved.version,
+            slug: versionedSlug(resolved.dynastySlug, resolved.version),
+            name: versionedName(resolved.dynastyName, resolved.version),
+            signature,
+            ...metadataValues,
+          })
+          .returning();
+
+        // Link predecessor
+        await db
+          .update(features)
+          .set({ upgradedTo: created.id })
+          .where(eq(features.id, resolved.deprecateId));
+
+        results.push(created);
+      } else {
+        // New dynasty
+        const [created] = await db
+          .insert(features)
+          .values({
+            baseName: resolved.baseName,
+            forkName: resolved.forkName,
+            dynastyName: resolved.dynastyName,
+            dynastySlug: resolved.dynastySlug,
+            version: resolved.version,
+            slug: versionedSlug(resolved.dynastySlug, resolved.version),
+            name: versionedName(resolved.dynastyName, resolved.version),
+            signature,
+            ...metadataValues,
+          })
           .returning();
         results.push(created);
       }
@@ -140,18 +228,13 @@ router.put("/features", apiKeyAuth, async (req, res) => {
 
     res.json({ features: results });
   } catch (error) {
-    console.error("Upsert features error:", error);
+    console.error("[features-service] Upsert features error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-/**
- * POST /features — Create a single feature (dashboard use case).
- *
- * Slug is auto-generated from name if not provided.
- * Signature is computed from input/output keys.
- * Returns 409 if slug or name already exists.
- */
+// ── POST /features — Create a single feature ───────────────────────────────
+
 router.post("/features", apiKeyAuth, async (req, res) => {
   try {
     const parsed = createFeatureSchema.safeParse(req.body);
@@ -176,27 +259,38 @@ router.post("/features", apiKeyAuth, async (req, res) => {
       });
     }
 
-    const slug = f.slug || slugify(f.name);
+    const resolved = await resolveDynastyIdentity(f.name, signature, { isUpsert: false });
+    if (resolved.kind === "existing") {
+      // Should not happen — we already checked signature above
+      return res.status(409).json({ error: "Feature already exists" });
+    }
+    if (resolved.kind === "upgrade") {
+      return res.status(409).json({ error: "Cannot create — would upgrade an existing dynasty. Use PUT /features for upserts." });
+    }
 
-    // Check for duplicate slug or name
-    const existingSlugOrName = await db.query.features.findFirst({
-      where: or(eq(features.slug, slug), eq(features.name, f.name)),
-    });
-    if (existingSlugOrName) {
-      return res.status(409).json({
-        error: existingSlugOrName.slug === slug
-          ? `Slug "${slug}" already exists`
-          : `Name "${f.name}" already exists`,
+    const slug = f.slug || versionedSlug(resolved.dynastySlug, resolved.version);
+
+    // Check slug collision (for user-provided slugs)
+    if (f.slug) {
+      const existingSlug = await db.query.features.findFirst({
+        where: eq(features.slug, slug),
       });
+      if (existingSlug) {
+        return res.status(409).json({ error: `Slug "${slug}" already exists` });
+      }
     }
 
     const [created] = await db
       .insert(features)
       .values({
+        baseName: resolved.baseName,
+        forkName: resolved.forkName,
+        dynastyName: resolved.dynastyName,
+        dynastySlug: resolved.dynastySlug,
+        version: resolved.version,
         slug,
+        name: versionedName(resolved.dynastyName, resolved.version),
         signature,
-        name: f.name,
-        displayName: f.name, // new features: displayName = name
         description: f.description,
         icon: f.icon,
         category: f.category,
@@ -214,21 +308,13 @@ router.post("/features", apiKeyAuth, async (req, res) => {
 
     res.status(201).json({ feature: created });
   } catch (error) {
-    console.error("Create feature error:", error);
+    console.error("[features-service] Create feature error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-/**
- * PUT /features/:slug — Fork-on-write.
- *
- * - Metadata-only change (same signature) → update in-place, return 200
- * - Inputs/outputs change (different signature) → fork: create new feature,
- *   deprecate original, return 201
- *
- * The original feature is never mutated structurally. displayName is preserved
- * across the fork chain.
- */
+// ── PUT /features/:slug — Update or fork (fork-on-write) ────────────────────
+
 router.put("/features/:slug", apiKeyAuth, async (req, res) => {
   try {
     const { slug } = req.params;
@@ -270,7 +356,6 @@ router.put("/features/:slug", apiKeyAuth, async (req, res) => {
       if (data.status !== undefined) updates.status = data.status;
       if (data.charts !== undefined) updates.charts = data.charts;
       if (data.entities !== undefined) updates.entities = data.entities;
-      // inputs/outputs may be sent but produce the same signature → still metadata-only
       if (data.inputs !== undefined) updates.inputs = data.inputs;
       if (data.outputs !== undefined) updates.outputs = data.outputs;
 
@@ -283,29 +368,51 @@ router.put("/features/:slug", apiKeyAuth, async (req, res) => {
       return res.json({ feature: updated });
     }
 
-    // ── Signature changed → fork ───────────────────────────────────────────
+    // ── Signature changed ─────────────────────────────────────────────────
 
-    // Check if the new signature already exists
-    const conflict = await db.query.features.findFirst({
+    // Check if the new signature already exists (convergence)
+    const convergenceTarget = await db.query.features.findFirst({
       where: eq(features.signature, newSignature),
     });
-    if (conflict) {
-      return res.status(409).json({
-        error: "A feature with the same input/output keys already exists",
-        existingSlug: conflict.slug,
+
+    if (convergenceTarget) {
+      // ── Convergence: deprecate this feature, point to existing ────────
+      await db
+        .update(features)
+        .set({
+          status: "deprecated",
+          upgradedTo: convergenceTarget.id,
+          updatedAt: new Date(),
+        })
+        .where(eq(features.id, existing.id));
+
+      return res.json({
+        feature: convergenceTarget,
+        convergedFrom: {
+          id: existing.id,
+          slug: existing.slug,
+          status: "deprecated",
+          upgradedTo: convergenceTarget.id,
+        },
       });
     }
 
-    // Resolve a unique versioned name/slug for the fork
-    const resolved = await resolveForkedNameAndSlug(existing.displayName);
+    // ── Fork: create new dynasty ──────────────────────────────────────────
+    const forkName = await generateForkName(existing.baseName);
+    const dynastyName = composeDynastyName(existing.baseName, forkName);
+    const dynastySlug = slugify(dynastyName);
+    const forkVersion = 1;
 
-    // Create the forked feature — inherits displayName, merges updates
     const [forked] = await db
       .insert(features)
       .values({
-        slug: resolved.slug,
-        name: resolved.name,
-        displayName: existing.displayName, // stable across forks
+        baseName: existing.baseName,
+        forkName,
+        dynastyName,
+        dynastySlug,
+        version: forkVersion,
+        slug: versionedSlug(dynastySlug, forkVersion),
+        name: versionedName(dynastyName, forkVersion),
         signature: newSignature,
         description: data.description ?? existing.description,
         icon: data.icon ?? existing.icon,
@@ -343,15 +450,40 @@ router.put("/features/:slug", apiKeyAuth, async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Update/fork feature error:", error);
+    console.error("[features-service] Update/fork feature error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-/**
- * GET /features — List all features.
- * Query params: status, category, channel, audienceType, implemented
- */
+// ── GET /features/dynasty — Resolve dynasty identity from a versioned slug ──
+
+router.get("/features/dynasty", apiKeyAuth, async (req, res) => {
+  try {
+    const slug = req.query.slug as string | undefined;
+    if (!slug) {
+      return res.status(400).json({ error: "Query parameter 'slug' is required" });
+    }
+
+    const feature = await db.query.features.findFirst({
+      where: eq(features.slug, slug),
+    });
+
+    if (!feature) {
+      return res.status(404).json({ error: "Feature not found" });
+    }
+
+    res.json({
+      feature_dynasty_name: feature.dynastyName,
+      feature_dynasty_slug: feature.dynastySlug,
+    });
+  } catch (error) {
+    console.error("[features-service] Dynasty resolution error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /features — List all features ───────────────────────────────────────
+
 router.get("/features", apiKeyAuth, async (req, res) => {
   try {
     const { status, category, channel, audienceType, implemented } = req.query as Record<string, string | undefined>;
@@ -362,21 +494,19 @@ router.get("/features", apiKeyAuth, async (req, res) => {
     if (audienceType) conditions.push(eq(features.audienceType, audienceType));
     if (implemented !== undefined) conditions.push(eq(features.implemented, implemented === "true"));
 
-    const { and } = await import("drizzle-orm");
     const results = await db.query.features.findMany({
       where: and(...conditions),
     });
 
     res.json({ features: results });
   } catch (error) {
-    console.error("List features error:", error);
+    console.error("[features-service] List features error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-/**
- * GET /features/:slug — Get a single feature by slug.
- */
+// ── GET /features/:slug — Get a single feature by slug ──────────────────────
+
 router.get("/features/:slug", apiKeyAuth, async (req, res) => {
   try {
     const { slug } = req.params;
@@ -391,15 +521,13 @@ router.get("/features/:slug", apiKeyAuth, async (req, res) => {
 
     res.json({ feature });
   } catch (error) {
-    console.error("Get feature error:", error);
+    console.error("[features-service] Get feature error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-/**
- * GET /features/:slug/inputs — Get only the inputs for a feature.
- * Used by the dashboard to build the campaign creation form and by the LLM to pre-fill values.
- */
+// ── GET /features/:slug/inputs — Get only the inputs for a feature ──────────
+
 router.get("/features/:slug/inputs", apiKeyAuth, async (req, res) => {
   try {
     const { slug } = req.params;
@@ -414,29 +542,17 @@ router.get("/features/:slug/inputs", apiKeyAuth, async (req, res) => {
 
     res.json({
       slug: feature.slug,
-      name: feature.displayName,
+      name: feature.dynastyName,
       inputs: feature.inputs,
     });
   } catch (error) {
-    console.error("Get feature inputs error:", error);
+    console.error("[features-service] Get feature inputs error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-/**
- * POST /features/:slug/prefill — Pre-fill input values for a feature.
- *
- * Takes a brandId, looks up the feature's inputs, calls brand-service
- * to extract values via AI (cached 30 days), and returns prefilled values
- * mapped to each input key.
- *
- * Query param ?format=text|full (default: full)
- *   - text: returns { value: string | null } — flat strings for form inputs
- *   - full: returns { value: unknown, cached, sourceUrls } — complete data from brand-service
- *
- * The dashboard calls this instead of brand-service directly — features-service
- * owns the routing logic (brand-service today, other sources tomorrow).
- */
+// ── POST /features/:slug/prefill — Pre-fill input values ────────────────────
+
 router.post("/features/:slug/prefill", apiKeyAuth, async (req, res) => {
   try {
     const { slug } = req.params;
@@ -476,7 +592,7 @@ router.post("/features/:slug/prefill", apiKeyAuth, async (req, res) => {
       featureSlug: auth.featureSlug,
     });
 
-    // Map extracted values back to input keys (results is keyed by field key)
+    // Map extracted values back to input keys
     if (format === "text") {
       const prefilled: Record<string, string | null> = {};
       for (const input of feature.inputs) {
@@ -504,7 +620,7 @@ router.post("/features/:slug/prefill", apiKeyAuth, async (req, res) => {
       prefilled,
     });
   } catch (error) {
-    console.error("Prefill feature error:", error);
+    console.error("[features-service] Prefill feature error:", error);
     if (error instanceof Error && error.message.includes("brand-service")) {
       return res.status(502).json({ error: error.message });
     }

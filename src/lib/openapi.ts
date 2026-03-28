@@ -27,9 +27,11 @@ const errorResponse = z.object({ error: z.string() });
 
 const featureResponseSchema = z.object({
   id: z.string().uuid(),
-  slug: z.string().describe("Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"),
-  name: z.string().describe("Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"),
-  displayName: z.string().describe("Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."),
+  slug: z.string().describe("Globally unique versioned slug (e.g. 'sales-cold-email-sophia-v2'). Composed: dynasty_slug + version suffix."),
+  name: z.string().describe("Globally unique versioned name (e.g. 'Sales Cold Email Sophia v2'). Composed: dynasty_name + version suffix."),
+  dynastyName: z.string().describe("Stable name across all versions of this dynasty (e.g. 'Sales Cold Email Sophia'). Use for UI display."),
+  dynastySlug: z.string().describe("Stable slug across all versions of this dynasty (e.g. 'sales-cold-email-sophia')."),
+  version: z.number().int().describe("Version number within the dynasty (1-based). v1 has no suffix in name/slug."),
   description: z.string(),
   icon: z.string().describe("Lucide icon name (e.g. 'envelope', 'globe', 'megaphone'). Use as <LucideIcon name={icon} /> or look up at lucide.dev/icons."),
   category: z.string().describe("Feature category: 'sales', 'pr', 'discovery', etc."),
@@ -38,7 +40,7 @@ const featureResponseSchema = z.object({
   implemented: z.boolean(),
   displayOrder: z.number().int(),
   status: z.enum(["active", "draft", "deprecated"]),
-  signature: z.string().describe("Deterministic hash of sorted input+output keys — used for idempotent upsert"),
+  signature: z.string().describe("Deterministic hash of sorted input+output keys — used for idempotent upsert and convergence detection"),
   inputs: z.array(featureInputSchema).describe("Input fields for the campaign creation form."),
   outputs: z.array(featureOutputSchema).describe("Output metrics — stats keys from the registry with display config. Use GET /stats/registry for labels and types."),
   charts: z.array(featureChartSchema).describe("Chart definitions (funnel-bar, breakdown-bar). At least one of each required."),
@@ -283,6 +285,39 @@ registry.registerPath({
   },
 });
 
+// ── GET /features/dynasty ────────────────────────────────────────────────
+
+const dynastyResponseSchema = z.object({
+  feature_dynasty_name: z.string().describe("Stable dynasty name (unversioned), e.g. 'Sales Cold Email Sophia'"),
+  feature_dynasty_slug: z.string().describe("Stable dynasty slug (unversioned), e.g. 'sales-cold-email-sophia'"),
+});
+
+registry.register("DynastyResponse", dynastyResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/features/dynasty",
+  summary: "Resolve dynasty identity from a versioned feature slug",
+  description:
+    "Returns the stable, unversioned dynasty identifiers for a given feature slug. " +
+    "Used by workflow-service to compose workflow names.\n\n" +
+    "Example: `?slug=sales-cold-email-sophia-v2` → " +
+    "`{ feature_dynasty_name: 'Sales Cold Email Sophia', feature_dynasty_slug: 'sales-cold-email-sophia' }`\n\n" +
+    "Works for both active and deprecated features.",
+  tags: ["Features"],
+  request: {
+    headers: identityHeaders,
+    query: z.object({
+      slug: z.string().describe("The versioned feature slug to resolve"),
+    }),
+  },
+  responses: {
+    200: { description: "Dynasty identity", content: { "application/json": { schema: dynastyResponseSchema } } },
+    400: { description: "Missing slug parameter", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── POST /features/:slug/prefill ─────────────────────────────────────────
 
 registry.registerPath({
@@ -428,13 +463,18 @@ export const openApiDocument = generator.generateDocument({
       "- The original's `status` is set to `deprecated`\n\n" +
       "This is aligned with workflow-service's fork model (`PUT /workflows/{id}`).\n\n" +
 
-      "## displayName vs name\n\n" +
-      "| Field | Purpose | Changes on fork? | Example |\n" +
-      "|-------|---------|-----------------|--------|\n" +
-      "| `displayName` | Human-readable label for UI | **No** — inherited | `Sales Cold Email Outreach` |\n" +
-      "| `name` | Machine identifier, unique | **Yes** — auto-versioned | `Sales Cold Email Outreach v2` |\n" +
-      "| `slug` | URL-safe machine identifier | **Yes** — derived from name | `sales-cold-email-outreach-v2` |\n\n" +
-      "**Always use `displayName` for UI display.** The `name`/`slug` are for internal routing and deduplication.\n\n" +
+      "## Dynasty Model\n\n" +
+      "Features use a **dynasty model** for versioning, aligned with workflow-service:\n\n" +
+      "| Field | Purpose | Changes on upgrade? | Changes on fork? | Example |\n" +
+      "|-------|---------|--------------------|-----------------|---------|\n" +
+      "| `dynastyName` | Stable dynasty name for UI | **No** | **Yes** — new codename | `Sales Cold Email Sophia` |\n" +
+      "| `dynastySlug` | Stable dynasty slug | **No** | **Yes** | `sales-cold-email-sophia` |\n" +
+      "| `version` | Version within dynasty | **Yes** — incremented | Reset to 1 | `2` |\n" +
+      "| `name` | Versioned unique name | **Yes** | **Yes** | `Sales Cold Email Sophia v2` |\n" +
+      "| `slug` | Versioned unique slug | **Yes** | **Yes** | `sales-cold-email-sophia-v2` |\n\n" +
+      "**Always use `dynastyName` for UI display.** The `name`/`slug` are for internal routing.\n\n" +
+      "On fork, a **codename** is auto-generated (e.g. 'Sophia', 'Berlin') to create a unique dynasty name.\n\n" +
+      "Use `GET /features/dynasty?slug=...` to resolve the stable dynasty identity from any versioned slug.\n\n" +
 
       "## Lineage Chain\n\n" +
       "Each feature can have:\n" +
