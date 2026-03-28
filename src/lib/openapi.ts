@@ -378,6 +378,44 @@ registry.registerPath({
   },
 });
 
+// ── GET /features/dynasties ────────────────────────────────────────────────
+
+const dynastyEntrySchema = z.object({
+  dynastySlug: z.string().describe("Stable dynasty slug (unversioned)"),
+  slugs: z.array(z.string()).describe("All versioned slugs in this dynasty, sorted by version ascending"),
+});
+
+const dynastiesResponseSchema = z.object({
+  dynasties: z.array(dynastyEntrySchema).describe("All dynasties sorted alphabetically by dynastySlug"),
+});
+
+registry.register("DynastyEntry", dynastyEntrySchema);
+registry.register("DynastiesResponse", dynastiesResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/features/dynasties",
+  summary: "List all dynasties with their versioned slugs",
+  description:
+    "Returns every dynasty and all its versioned slugs (active + deprecated). " +
+    "Designed for downstream services that need to build a reverse map from versioned slug → dynasty slug. " +
+    "Dynasties change infrequently — callers should cache the response.\n\n" +
+    "Example response:\n" +
+    "```json\n" +
+    "{ \"dynasties\": [\n" +
+    "  { \"dynastySlug\": \"lead-scoring-basic\", \"slugs\": [\"lead-scoring-basic\", \"lead-scoring-basic-v2\"] },\n" +
+    "  { \"dynastySlug\": \"sales-cold-email-sophia\", \"slugs\": [\"sales-cold-email-sophia\", \"sales-cold-email-sophia-v2\"] }\n" +
+    "] }\n" +
+    "```",
+  tags: ["Features"],
+  request: {
+    headers: identityHeaders,
+  },
+  responses: {
+    200: { description: "All dynasties", content: { "application/json": { schema: dynastiesResponseSchema } } },
+  },
+});
+
 // ── POST /features/:slug/prefill ─────────────────────────────────────────
 
 registry.registerPath({

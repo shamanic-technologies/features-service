@@ -1891,6 +1891,58 @@
           "slugs"
         ]
       },
+      "DynastyEntry": {
+        "type": "object",
+        "properties": {
+          "dynastySlug": {
+            "type": "string",
+            "description": "Stable dynasty slug (unversioned)"
+          },
+          "slugs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All versioned slugs in this dynasty, sorted by version ascending"
+          }
+        },
+        "required": [
+          "dynastySlug",
+          "slugs"
+        ]
+      },
+      "DynastiesResponse": {
+        "type": "object",
+        "properties": {
+          "dynasties": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "dynastySlug": {
+                  "type": "string",
+                  "description": "Stable dynasty slug (unversioned)"
+                },
+                "slugs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "All versioned slugs in this dynasty, sorted by version ascending"
+                }
+              },
+              "required": [
+                "dynastySlug",
+                "slugs"
+              ]
+            },
+            "description": "All dynasties sorted alphabetically by dynastySlug"
+          }
+        },
+        "required": [
+          "dynasties"
+        ]
+      },
       "DynastyStatsResponse": {
         "type": "object",
         "properties": {
@@ -5686,6 +5738,91 @@
                   },
                   "required": [
                     "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/dynasties": {
+      "get": {
+        "summary": "List all dynasties with their versioned slugs",
+        "description": "Returns every dynasty and all its versioned slugs (active + deprecated). Designed for downstream services that need to build a reverse map from versioned slug → dynasty slug. Dynasties change infrequently — callers should cache the response.\n\nExample response:\n```json\n{ \"dynasties\": [\n  { \"dynastySlug\": \"lead-scoring-basic\", \"slugs\": [\"lead-scoring-basic\", \"lead-scoring-basic-v2\"] },\n  { \"dynastySlug\": \"sales-cold-email-sophia\", \"slugs\": [\"sales-cold-email-sophia\", \"sales-cold-email-sophia-v2\"] }\n] }\n```",
+        "tags": [
+          "Features"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All dynasties",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "dynasties": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "dynastySlug": {
+                            "type": "string",
+                            "description": "Stable dynasty slug (unversioned)"
+                          },
+                          "slugs": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "All versioned slugs in this dynasty, sorted by version ascending"
+                          }
+                        },
+                        "required": [
+                          "dynastySlug",
+                          "slugs"
+                        ]
+                      },
+                      "description": "All dynasties sorted alphabetically by dynastySlug"
+                    }
+                  },
+                  "required": [
+                    "dynasties"
                   ]
                 }
               }
