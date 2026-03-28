@@ -68,39 +68,77 @@ type GroupByDimension = "workflowName" | "brandId" | "campaignId" | "featureSlug
 
 const VALID_GROUP_BY: Set<string> = new Set(["workflowName", "brandId", "campaignId", "featureSlug"]);
 
-// ── Lineage resolution ──────────────────────────────────────────────────────
+// ── Lineage resolution (BFS predecessor map) ───────────────────────────────
 
 /**
- * Collect all slugs in a feature's upgrade chain (ancestors + descendants).
- * Traverses forkedFrom upward and upgradedTo downward to build the full dynasty.
- * Used to aggregate stats across the entire lineage of a feature.
+ * Collect all slugs in a feature's upgrade chain using BFS.
+ * Handles convergence where one feature has multiple predecessors
+ * (two dynasties upgraded to produce the same signature).
+ *
+ * Algorithm:
+ * 1. Load all deprecated features with upgradedTo set
+ * 2. Build predecessor map: upgradedTo → [predecessor_ids]
+ * 3. BFS from the target feature, walking predecessors backward
+ * 4. Also walk upgradedTo forward (for querying deprecated features)
+ * 5. Visited set prevents double-counting on convergence
  */
 async function collectLineageSlugs(feature: Feature): Promise<string[]> {
-  const slugs = new Set<string>();
-  slugs.add(feature.slug);
+  // Load all deprecated features to build the predecessor map
+  const deprecated = await db.query.features.findMany({
+    where: eq(features.status, "deprecated"),
+    columns: { id: true, slug: true, upgradedTo: true },
+  });
 
-  // Walk up the chain (ancestors via forkedFrom)
-  let currentId = feature.forkedFrom;
-  const visited = new Set<string>([feature.id]);
-  while (currentId && !visited.has(currentId)) {
-    visited.add(currentId);
-    const ancestor = await db.query.features.findFirst({
-      where: eq(features.id, currentId),
-    });
-    if (!ancestor) break;
-    slugs.add(ancestor.slug);
-    currentId = ancestor.forkedFrom;
+  // Build predecessor map: successorId → [predecessor records]
+  const predecessorMap = new Map<string, Array<{ id: string; slug: string }>>();
+  for (const dep of deprecated) {
+    if (!dep.upgradedTo) continue;
+    const list = predecessorMap.get(dep.upgradedTo) ?? [];
+    list.push({ id: dep.id, slug: dep.slug });
+    predecessorMap.set(dep.upgradedTo, list);
   }
 
-  // Walk down the chain (descendants via upgradedTo)
-  currentId = feature.upgradedTo;
+  const slugs = new Set<string>();
+  const visited = new Set<string>();
+
+  // BFS backward (predecessors)
+  const queue: string[] = [feature.id];
+  slugs.add(feature.slug);
+  visited.add(feature.id);
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    const preds = predecessorMap.get(currentId) ?? [];
+    for (const pred of preds) {
+      if (visited.has(pred.id)) continue;
+      visited.add(pred.id);
+      slugs.add(pred.slug);
+      queue.push(pred.id);
+    }
+  }
+
+  // Walk forward via upgradedTo (for querying deprecated features)
+  let currentId = feature.upgradedTo;
   while (currentId && !visited.has(currentId)) {
     visited.add(currentId);
     const descendant = await db.query.features.findFirst({
       where: eq(features.id, currentId),
+      columns: { id: true, slug: true, upgradedTo: true },
     });
     if (!descendant) break;
     slugs.add(descendant.slug);
+    // Also BFS backward from this descendant to catch converging branches
+    const descQueue: string[] = [descendant.id];
+    while (descQueue.length > 0) {
+      const descId = descQueue.shift()!;
+      const descPreds = predecessorMap.get(descId) ?? [];
+      for (const pred of descPreds) {
+        if (visited.has(pred.id)) continue;
+        visited.add(pred.id);
+        slugs.add(pred.slug);
+        descQueue.push(pred.id);
+      }
+    }
     currentId = descendant.upgradedTo;
   }
 

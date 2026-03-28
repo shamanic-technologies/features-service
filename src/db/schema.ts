@@ -80,14 +80,34 @@ export const features = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
 
-    /** Unique machine-readable identifier, auto-generated from name (e.g. "sales-cold-email-v2") */
+    // ── Dynasty identity (internal) ──────────────────────────────────────────
+
+    /** Root concept name, shared across forked dynasties (e.g. "Sales Cold Email"). Internal only */
+    baseName: text("base_name").notNull(),
+
+    /** Auto-generated codename for forked dynasties (e.g. "Sophia"). NULL for the original */
+    forkName: text("fork_name"),
+
+    // ── Dynasty identity (exposed) ───────────────────────────────────────────
+
+    /** Stable name across all versions: base_name + (fork_name ? " " + fork_name : "") */
+    dynastyName: text("dynasty_name").notNull(),
+
+    /** Stable slug across all versions: slugify(dynasty_name) */
+    dynastySlug: text("dynasty_slug").notNull(),
+
+    /** Version number within the dynasty (1-based). v1 = no suffix in name/slug */
+    version: integer("version").notNull().default(1),
+
+    // ── Versioned identity ───────────────────────────────────────────────────
+
+    /** Globally unique versioned slug: dynasty_slug + (version > 1 ? "-v" + version : "") */
     slug: text("slug").notNull().unique(),
 
-    /** Machine name — unique, changes on fork (e.g. "Sales Cold Email Outreach v2") */
+    /** Globally unique versioned name: dynasty_name + (version > 1 ? " v" + version : "") */
     name: text("name").notNull().unique(),
 
-    /** Human-readable display name — stable across forks (e.g. "Sales Cold Email Outreach") */
-    displayName: text("display_name").notNull(),
+    // ── Definition ───────────────────────────────────────────────────────────
 
     /** Short description of what this feature does */
     description: text("description").notNull(),
@@ -115,8 +135,7 @@ export const features = pgTable(
 
     /**
      * Signature = deterministic hash of sorted(input keys) + sorted(output keys).
-     * Two features with the same signature are the same feature (upsert).
-     * Two features with different signatures but the same name get auto-suffixed (v2, v3…).
+     * Globally unique — forces convergence when two dynasties produce the same definition.
      */
     signature: text("signature").notNull().unique(),
 
@@ -145,6 +164,7 @@ export const features = pgTable(
     uniqueIndex("idx_features_slug").on(table.slug),
     uniqueIndex("idx_features_signature").on(table.signature),
     uniqueIndex("idx_features_name").on(table.name),
+    uniqueIndex("idx_features_dynasty_version").on(table.dynastySlug, table.version),
   ]
 );
 

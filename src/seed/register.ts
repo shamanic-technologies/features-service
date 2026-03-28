@@ -1,30 +1,36 @@
-import { eq, or } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
-import { computeSignature, slugify } from "../lib/signature.js";
+import { computeSignature, slugify, versionedName, versionedSlug, composeDynastyName } from "../lib/signature.js";
 import { SEED_FEATURES } from "./features.js";
 
 /**
  * Register seed features at cold start.
- * Uses the same signature-based upsert logic as PUT /features.
+ * Uses dynasty-aware signature-based upsert logic.
  * Idempotent — safe to call on every boot.
+ *
+ * For each seed feature:
+ * - Same signature exists → update metadata in-place
+ * - Same dynasty (base_name, fork_name=null) but different signature → upgrade (deprecate old, create new version)
+ * - New feature → create new dynasty
  */
 export async function registerSeedFeatures(): Promise<void> {
-  console.log(`[seed] Registering ${SEED_FEATURES.length} features...`);
+  console.log(`[features-service] Registering ${SEED_FEATURES.length} seed features...`);
 
   for (const f of SEED_FEATURES) {
     const inputKeys = f.inputs.map((i) => i.key);
     const outputKeys = f.outputs.map((o) => o.key);
     const signature = computeSignature(inputKeys, outputKeys);
+    const baseName = f.name;
+    const dynastyName = composeDynastyName(baseName, null);
+    const dynastySlugVal = slugify(dynastyName);
 
     // Check if this exact signature already exists
     const bySignature = await db.query.features.findFirst({
       where: eq(features.signature, signature),
     });
 
-    const values = {
-      name: f.name,
-      displayName: f.name, // displayName = the human-readable name
+    const metadataValues = {
       description: f.description,
       icon: f.icon,
       category: f.category,
@@ -39,56 +45,76 @@ export async function registerSeedFeatures(): Promise<void> {
       entities: f.entities,
     };
 
-    const baseSlug = slugify(f.name);
-
     if (bySignature) {
-      // Same signature → upsert metadata.
-      // If the matched row has a different name/slug (e.g. "Feature v2"),
-      // delete any stale row that holds our target name before renaming.
-      if (bySignature.name !== f.name || bySignature.slug !== baseSlug) {
-        const stale = await db.query.features.findFirst({
-          where: or(
-            eq(features.name, f.name),
-            eq(features.slug, baseSlug),
-          ),
-        });
-        if (stale && stale.id !== bySignature.id) {
-          await db.delete(features).where(eq(features.id, stale.id));
-          console.log(`[seed] Removed stale duplicate: ${stale.slug}`);
-        }
-      }
+      // Same signature → upsert metadata in-place
       await db
         .update(features)
-        .set({ ...values, slug: baseSlug, updatedAt: new Date() })
+        .set({ ...metadataValues, updatedAt: new Date() })
         .where(eq(features.id, bySignature.id));
-      console.log(`[seed] Updated (signature match): ${baseSlug}`);
-    } else {
-      // Signature changed or new feature — check if same name already exists
-      const byName = await db.query.features.findFirst({
-        where: or(
-          eq(features.name, f.name),
-          eq(features.slug, baseSlug),
-        ),
-      });
+      console.log(`[features-service] Updated (signature match): ${bySignature.slug}`);
+      continue;
+    }
 
-      if (byName) {
-        // Same name/slug, different signature → update in place (outputs changed)
-        await db
-          .update(features)
-          .set({ ...values, signature, updatedAt: new Date() })
-          .where(eq(features.id, byName.id));
-        console.log(`[seed] Updated (signature changed): ${byName.slug}`);
-      } else {
-        // Truly new feature — insert
-        await db.insert(features).values({
-          slug: baseSlug,
-          signature,
-          ...values,
-        });
-        console.log(`[seed] Created: ${baseSlug}`);
-      }
+    // Signature is new — check if dynasty exists (base_name match, fork_name=null)
+    const activeInDynasty = await db.query.features.findFirst({
+      where: and(
+        eq(features.baseName, baseName),
+        isNull(features.forkName),
+        eq(features.status, "active"),
+      ),
+    });
+
+    if (activeInDynasty) {
+      // Dynasty exists, signature changed → upgrade
+      // Find next version
+      const existing = await db.query.features.findMany({
+        where: eq(features.dynastySlug, dynastySlugVal),
+        columns: { version: true },
+      });
+      const nextVersion = existing.length > 0
+        ? Math.max(...existing.map((e) => e.version)) + 1
+        : 1;
+
+      // Create new version
+      const [created] = await db.insert(features).values({
+        baseName,
+        forkName: null,
+        dynastyName,
+        dynastySlug: dynastySlugVal,
+        version: nextVersion,
+        slug: versionedSlug(dynastySlugVal, nextVersion),
+        name: versionedName(dynastyName, nextVersion),
+        signature,
+        ...metadataValues,
+      }).returning();
+
+      // Deprecate old
+      await db
+        .update(features)
+        .set({
+          status: "deprecated",
+          upgradedTo: created.id,
+          updatedAt: new Date(),
+        })
+        .where(eq(features.id, activeInDynasty.id));
+
+      console.log(`[features-service] Upgraded: ${activeInDynasty.slug} → ${created.slug}`);
+    } else {
+      // New dynasty
+      const [created] = await db.insert(features).values({
+        baseName,
+        forkName: null,
+        dynastyName,
+        dynastySlug: dynastySlugVal,
+        version: 1,
+        slug: versionedSlug(dynastySlugVal, 1),
+        name: versionedName(dynastyName, 1),
+        signature,
+        ...metadataValues,
+      }).returning();
+      console.log(`[features-service] Created: ${created.slug}`);
     }
   }
 
-  console.log(`[seed] Done.`);
+  console.log(`[features-service] Seed registration done.`);
 }

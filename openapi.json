@@ -3,7 +3,7 @@
   "info": {
     "title": "Features Service API",
     "version": "2.0.0",
-    "description": "Manages feature definitions and computes output stats.\n\n## Key Concepts\n\n**Features** define what campaigns can do: inputs (form), outputs (metrics), charts (funnel/breakdown), and entities (detail tabs). Features are **global** — shared across all orgs. They are template definitions, not per-org resources.\n\n## Feature Definition\n\n```typescript\n{\n  inputs:   [{ key, label, type, ... }],           // campaign creation form\n  outputs:  [{ key, displayOrder }],                // metrics (validated against registry)\n  charts:   [{ type: \"funnel-bar\", steps: [...] }], // visualizations\n  entities: [\"leads\", \"companies\", \"emails\"],       // campaign detail tabs\n}\n```\n\n## Fork-on-Write (Immutability)\n\nFeatures are **immutable** once created. No endpoint mutates inputs or outputs in place.\n\n`PUT /features/{slug}` uses **fork-on-write** semantics:\n\n| Scenario | Behavior | HTTP |\n|----------|----------|------|\n| Only metadata changes (description, icon, charts…) | Update in-place | `200` |\n| Inputs or outputs change (different signature) | Create new feature (fork), deprecate original | `201` |\n| New signature already exists elsewhere | Conflict | `409` |\n\nOn fork:\n- The new feature gets an auto-versioned `name` and `slug` (e.g. `Sales Cold Email Outreach v2` / `sales-cold-email-outreach-v2`)\n- The `displayName` is inherited from the original (stable across forks)\n- `forkedFrom` on the new feature points to the original's ID\n- `upgradedTo` on the original points to the new feature's ID\n- The original's `status` is set to `deprecated`\n\nThis is aligned with workflow-service's fork model (`PUT /workflows/{id}`).\n\n## displayName vs name\n\n| Field | Purpose | Changes on fork? | Example |\n|-------|---------|-----------------|--------|\n| `displayName` | Human-readable label for UI | **No** — inherited | `Sales Cold Email Outreach` |\n| `name` | Machine identifier, unique | **Yes** — auto-versioned | `Sales Cold Email Outreach v2` |\n| `slug` | URL-safe machine identifier | **Yes** — derived from name | `sales-cold-email-outreach-v2` |\n\n**Always use `displayName` for UI display.** The `name`/`slug` are for internal routing and deduplication.\n\n## Lineage Chain\n\nEach feature can have:\n- `forkedFrom` (uuid | null) — the parent feature this was forked from\n- `upgradedTo` (uuid | null) — if deprecated, the replacement feature\n\nTo traverse the full lineage of a feature, follow `forkedFrom` upward (ancestors) and `upgradedTo` downward (descendants). Campaigns and workflows keep their original `featureSlug` — they are **never** migrated on fork. This preserves full audit history of which feature version produced which results.\n\n## Stats Aggregation Across the Chain\n\nWhen you request stats for a feature (`GET /features/{slug}/stats`), the service automatically resolves the **full upgrade chain** and aggregates stats across all ancestors and descendants. This means:\n\n- Old campaigns/workflows still referencing a deprecated slug are included in the stats\n- You always get the complete picture regardless of which slug in the chain you query\n- No data is lost on fork — the chain is just extended\n\nThis matches workflow-service behavior: *\"Stats are aggregated across the full upgrade chain (deprecated predecessors included)\"*.\n\n## Stats Registry\n\n`GET /stats/registry` — the finite universe of known stats keys. Each key has a label and type (count, rate, currency). Features reference these keys in outputs and charts.\n\n## Stats Computation\n\nStats endpoints compute values by calling downstream services (email-gateway, runs-service, outlets-service) and returning aggregated results. Keys are either **raw** (fetched from a source) or **derived** (computed as a ratio of two raw keys, e.g. `replyRate = emailsReplied / emailsSent`).\n\n## Registration (Cold Start)\n\n`PUT /features` — idempotent batch upsert, safe to call on every boot. Uses signature-based deduplication: same signature → update metadata, different signature → create or auto-version. This is the equivalent of workflow-service's `PUT /workflows/upgrade`."
+    "description": "Manages feature definitions and computes output stats.\n\n## Key Concepts\n\n**Features** define what campaigns can do: inputs (form), outputs (metrics), charts (funnel/breakdown), and entities (detail tabs). Features are **global** — shared across all orgs. They are template definitions, not per-org resources.\n\n## Feature Definition\n\n```typescript\n{\n  inputs:   [{ key, label, type, ... }],           // campaign creation form\n  outputs:  [{ key, displayOrder }],                // metrics (validated against registry)\n  charts:   [{ type: \"funnel-bar\", steps: [...] }], // visualizations\n  entities: [\"leads\", \"companies\", \"emails\"],       // campaign detail tabs\n}\n```\n\n## Fork-on-Write (Immutability)\n\nFeatures are **immutable** once created. No endpoint mutates inputs or outputs in place.\n\n`PUT /features/{slug}` uses **fork-on-write** semantics:\n\n| Scenario | Behavior | HTTP |\n|----------|----------|------|\n| Only metadata changes (description, icon, charts…) | Update in-place | `200` |\n| Inputs or outputs change (different signature) | Create new feature (fork), deprecate original | `201` |\n| New signature already exists elsewhere | Conflict | `409` |\n\nOn fork:\n- The new feature gets an auto-versioned `name` and `slug` (e.g. `Sales Cold Email Outreach v2` / `sales-cold-email-outreach-v2`)\n- The `displayName` is inherited from the original (stable across forks)\n- `forkedFrom` on the new feature points to the original's ID\n- `upgradedTo` on the original points to the new feature's ID\n- The original's `status` is set to `deprecated`\n\nThis is aligned with workflow-service's fork model (`PUT /workflows/{id}`).\n\n## Dynasty Model\n\nFeatures use a **dynasty model** for versioning, aligned with workflow-service:\n\n| Field | Purpose | Changes on upgrade? | Changes on fork? | Example |\n|-------|---------|--------------------|-----------------|---------|\n| `dynastyName` | Stable dynasty name for UI | **No** | **Yes** — new codename | `Sales Cold Email Sophia` |\n| `dynastySlug` | Stable dynasty slug | **No** | **Yes** | `sales-cold-email-sophia` |\n| `version` | Version within dynasty | **Yes** — incremented | Reset to 1 | `2` |\n| `name` | Versioned unique name | **Yes** | **Yes** | `Sales Cold Email Sophia v2` |\n| `slug` | Versioned unique slug | **Yes** | **Yes** | `sales-cold-email-sophia-v2` |\n\n**Always use `dynastyName` for UI display.** The `name`/`slug` are for internal routing.\n\nOn fork, a **codename** is auto-generated (e.g. 'Sophia', 'Berlin') to create a unique dynasty name.\n\nUse `GET /features/dynasty?slug=...` to resolve the stable dynasty identity from any versioned slug.\n\n## Lineage Chain\n\nEach feature can have:\n- `forkedFrom` (uuid | null) — the parent feature this was forked from\n- `upgradedTo` (uuid | null) — if deprecated, the replacement feature\n\nTo traverse the full lineage of a feature, follow `forkedFrom` upward (ancestors) and `upgradedTo` downward (descendants). Campaigns and workflows keep their original `featureSlug` — they are **never** migrated on fork. This preserves full audit history of which feature version produced which results.\n\n## Stats Aggregation Across the Chain\n\nWhen you request stats for a feature (`GET /features/{slug}/stats`), the service automatically resolves the **full upgrade chain** and aggregates stats across all ancestors and descendants. This means:\n\n- Old campaigns/workflows still referencing a deprecated slug are included in the stats\n- You always get the complete picture regardless of which slug in the chain you query\n- No data is lost on fork — the chain is just extended\n\nThis matches workflow-service behavior: *\"Stats are aggregated across the full upgrade chain (deprecated predecessors included)\"*.\n\n## Stats Registry\n\n`GET /stats/registry` — the finite universe of known stats keys. Each key has a label and type (count, rate, currency). Features reference these keys in outputs and charts.\n\n## Stats Computation\n\nStats endpoints compute values by calling downstream services (email-gateway, runs-service, outlets-service) and returning aggregated results. Keys are either **raw** (fetched from a source) or **derived** (computed as a ratio of two raw keys, e.g. `replyRate = emailsReplied / emailsSent`).\n\n## Registration (Cold Start)\n\n`PUT /features` — idempotent batch upsert, safe to call on every boot. Uses signature-based deduplication: same signature → update metadata, different signature → create or auto-version. This is the equivalent of workflow-service's `PUT /workflows/upgrade`."
   },
   "servers": [
     {
@@ -1047,15 +1047,23 @@
           },
           "slug": {
             "type": "string",
-            "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+            "description": "Globally unique versioned slug (e.g. 'sales-cold-email-sophia-v2'). Composed: dynasty_slug + version suffix."
           },
           "name": {
             "type": "string",
-            "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+            "description": "Globally unique versioned name (e.g. 'Sales Cold Email Sophia v2'). Composed: dynasty_name + version suffix."
           },
-          "displayName": {
+          "dynastyName": {
             "type": "string",
-            "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
+            "description": "Stable name across all versions of this dynasty (e.g. 'Sales Cold Email Sophia'). Use for UI display."
+          },
+          "dynastySlug": {
+            "type": "string",
+            "description": "Stable slug across all versions of this dynasty (e.g. 'sales-cold-email-sophia')."
+          },
+          "version": {
+            "type": "integer",
+            "description": "Version number within the dynasty (1-based). v1 has no suffix in name/slug."
           },
           "description": {
             "type": "string"
@@ -1092,7 +1100,7 @@
           },
           "signature": {
             "type": "string",
-            "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+            "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert and convergence detection"
           },
           "inputs": {
             "type": "array",
@@ -1326,7 +1334,9 @@
           "id",
           "slug",
           "name",
-          "displayName",
+          "dynastyName",
+          "dynastySlug",
+          "version",
           "description",
           "icon",
           "category",
@@ -1848,6 +1858,23 @@
           "name",
           "inputs"
         ]
+      },
+      "DynastyResponse": {
+        "type": "object",
+        "properties": {
+          "feature_dynasty_name": {
+            "type": "string",
+            "description": "Stable dynasty name (unversioned), e.g. 'Sales Cold Email Sophia'"
+          },
+          "feature_dynasty_slug": {
+            "type": "string",
+            "description": "Stable dynasty slug (unversioned), e.g. 'sales-cold-email-sophia'"
+          }
+        },
+        "required": [
+          "feature_dynasty_name",
+          "feature_dynasty_slug"
+        ]
       }
     },
     "parameters": {}
@@ -2211,15 +2238,23 @@
                           },
                           "slug": {
                             "type": "string",
-                            "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+                            "description": "Globally unique versioned slug (e.g. 'sales-cold-email-sophia-v2'). Composed: dynasty_slug + version suffix."
                           },
                           "name": {
                             "type": "string",
-                            "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+                            "description": "Globally unique versioned name (e.g. 'Sales Cold Email Sophia v2'). Composed: dynasty_name + version suffix."
                           },
-                          "displayName": {
+                          "dynastyName": {
                             "type": "string",
-                            "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
+                            "description": "Stable name across all versions of this dynasty (e.g. 'Sales Cold Email Sophia'). Use for UI display."
+                          },
+                          "dynastySlug": {
+                            "type": "string",
+                            "description": "Stable slug across all versions of this dynasty (e.g. 'sales-cold-email-sophia')."
+                          },
+                          "version": {
+                            "type": "integer",
+                            "description": "Version number within the dynasty (1-based). v1 has no suffix in name/slug."
                           },
                           "description": {
                             "type": "string"
@@ -2256,7 +2291,7 @@
                           },
                           "signature": {
                             "type": "string",
-                            "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+                            "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert and convergence detection"
                           },
                           "inputs": {
                             "type": "array",
@@ -2490,7 +2525,9 @@
                           "id",
                           "slug",
                           "name",
-                          "displayName",
+                          "dynastyName",
+                          "dynastySlug",
+                          "version",
                           "description",
                           "icon",
                           "category",
@@ -2886,15 +2923,23 @@
                         },
                         "slug": {
                           "type": "string",
-                          "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+                          "description": "Globally unique versioned slug (e.g. 'sales-cold-email-sophia-v2'). Composed: dynasty_slug + version suffix."
                         },
                         "name": {
                           "type": "string",
-                          "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+                          "description": "Globally unique versioned name (e.g. 'Sales Cold Email Sophia v2'). Composed: dynasty_name + version suffix."
                         },
-                        "displayName": {
+                        "dynastyName": {
                           "type": "string",
-                          "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
+                          "description": "Stable name across all versions of this dynasty (e.g. 'Sales Cold Email Sophia'). Use for UI display."
+                        },
+                        "dynastySlug": {
+                          "type": "string",
+                          "description": "Stable slug across all versions of this dynasty (e.g. 'sales-cold-email-sophia')."
+                        },
+                        "version": {
+                          "type": "integer",
+                          "description": "Version number within the dynasty (1-based). v1 has no suffix in name/slug."
                         },
                         "description": {
                           "type": "string"
@@ -2931,7 +2976,7 @@
                         },
                         "signature": {
                           "type": "string",
-                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert and convergence detection"
                         },
                         "inputs": {
                           "type": "array",
@@ -3165,7 +3210,9 @@
                         "id",
                         "slug",
                         "name",
-                        "displayName",
+                        "dynastyName",
+                        "dynastySlug",
+                        "version",
                         "description",
                         "icon",
                         "category",
@@ -3338,15 +3385,23 @@
                           },
                           "slug": {
                             "type": "string",
-                            "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+                            "description": "Globally unique versioned slug (e.g. 'sales-cold-email-sophia-v2'). Composed: dynasty_slug + version suffix."
                           },
                           "name": {
                             "type": "string",
-                            "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+                            "description": "Globally unique versioned name (e.g. 'Sales Cold Email Sophia v2'). Composed: dynasty_name + version suffix."
                           },
-                          "displayName": {
+                          "dynastyName": {
                             "type": "string",
-                            "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
+                            "description": "Stable name across all versions of this dynasty (e.g. 'Sales Cold Email Sophia'). Use for UI display."
+                          },
+                          "dynastySlug": {
+                            "type": "string",
+                            "description": "Stable slug across all versions of this dynasty (e.g. 'sales-cold-email-sophia')."
+                          },
+                          "version": {
+                            "type": "integer",
+                            "description": "Version number within the dynasty (1-based). v1 has no suffix in name/slug."
                           },
                           "description": {
                             "type": "string"
@@ -3383,7 +3438,7 @@
                           },
                           "signature": {
                             "type": "string",
-                            "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+                            "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert and convergence detection"
                           },
                           "inputs": {
                             "type": "array",
@@ -3617,7 +3672,9 @@
                           "id",
                           "slug",
                           "name",
-                          "displayName",
+                          "dynastyName",
+                          "dynastySlug",
+                          "version",
                           "description",
                           "icon",
                           "category",
@@ -3715,15 +3772,23 @@
                         },
                         "slug": {
                           "type": "string",
-                          "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+                          "description": "Globally unique versioned slug (e.g. 'sales-cold-email-sophia-v2'). Composed: dynasty_slug + version suffix."
                         },
                         "name": {
                           "type": "string",
-                          "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+                          "description": "Globally unique versioned name (e.g. 'Sales Cold Email Sophia v2'). Composed: dynasty_name + version suffix."
                         },
-                        "displayName": {
+                        "dynastyName": {
                           "type": "string",
-                          "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
+                          "description": "Stable name across all versions of this dynasty (e.g. 'Sales Cold Email Sophia'). Use for UI display."
+                        },
+                        "dynastySlug": {
+                          "type": "string",
+                          "description": "Stable slug across all versions of this dynasty (e.g. 'sales-cold-email-sophia')."
+                        },
+                        "version": {
+                          "type": "integer",
+                          "description": "Version number within the dynasty (1-based). v1 has no suffix in name/slug."
                         },
                         "description": {
                           "type": "string"
@@ -3760,7 +3825,7 @@
                         },
                         "signature": {
                           "type": "string",
-                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert and convergence detection"
                         },
                         "inputs": {
                           "type": "array",
@@ -3994,7 +4059,9 @@
                         "id",
                         "slug",
                         "name",
-                        "displayName",
+                        "dynastyName",
+                        "dynastySlug",
+                        "version",
                         "description",
                         "icon",
                         "category",
@@ -4378,15 +4445,23 @@
                         },
                         "slug": {
                           "type": "string",
-                          "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+                          "description": "Globally unique versioned slug (e.g. 'sales-cold-email-sophia-v2'). Composed: dynasty_slug + version suffix."
                         },
                         "name": {
                           "type": "string",
-                          "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+                          "description": "Globally unique versioned name (e.g. 'Sales Cold Email Sophia v2'). Composed: dynasty_name + version suffix."
                         },
-                        "displayName": {
+                        "dynastyName": {
                           "type": "string",
-                          "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
+                          "description": "Stable name across all versions of this dynasty (e.g. 'Sales Cold Email Sophia'). Use for UI display."
+                        },
+                        "dynastySlug": {
+                          "type": "string",
+                          "description": "Stable slug across all versions of this dynasty (e.g. 'sales-cold-email-sophia')."
+                        },
+                        "version": {
+                          "type": "integer",
+                          "description": "Version number within the dynasty (1-based). v1 has no suffix in name/slug."
                         },
                         "description": {
                           "type": "string"
@@ -4423,7 +4498,7 @@
                         },
                         "signature": {
                           "type": "string",
-                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert and convergence detection"
                         },
                         "inputs": {
                           "type": "array",
@@ -4657,7 +4732,9 @@
                         "id",
                         "slug",
                         "name",
-                        "displayName",
+                        "dynastyName",
+                        "dynastySlug",
+                        "version",
                         "description",
                         "icon",
                         "category",
@@ -4701,15 +4778,23 @@
                         },
                         "slug": {
                           "type": "string",
-                          "description": "Unique machine-readable identifier, auto-generated from name (e.g. 'outlet-database-discovery')"
+                          "description": "Globally unique versioned slug (e.g. 'sales-cold-email-sophia-v2'). Composed: dynasty_slug + version suffix."
                         },
                         "name": {
                           "type": "string",
-                          "description": "Machine name — unique, changes on fork (e.g. 'Sales Cold Email Outreach v2')"
+                          "description": "Globally unique versioned name (e.g. 'Sales Cold Email Sophia v2'). Composed: dynasty_name + version suffix."
                         },
-                        "displayName": {
+                        "dynastyName": {
                           "type": "string",
-                          "description": "Human-readable display name — stable across forks (e.g. 'Sales Cold Email Outreach'). Use this for UI display."
+                          "description": "Stable name across all versions of this dynasty (e.g. 'Sales Cold Email Sophia'). Use for UI display."
+                        },
+                        "dynastySlug": {
+                          "type": "string",
+                          "description": "Stable slug across all versions of this dynasty (e.g. 'sales-cold-email-sophia')."
+                        },
+                        "version": {
+                          "type": "integer",
+                          "description": "Version number within the dynasty (1-based). v1 has no suffix in name/slug."
                         },
                         "description": {
                           "type": "string"
@@ -4746,7 +4831,7 @@
                         },
                         "signature": {
                           "type": "string",
-                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert"
+                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert and convergence detection"
                         },
                         "inputs": {
                           "type": "array",
@@ -4980,7 +5065,9 @@
                         "id",
                         "slug",
                         "name",
-                        "displayName",
+                        "dynastyName",
+                        "dynastySlug",
+                        "version",
                         "description",
                         "icon",
                         "category",
@@ -5228,6 +5315,122 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/dynasty": {
+      "get": {
+        "summary": "Resolve dynasty identity from a versioned feature slug",
+        "description": "Returns the stable, unversioned dynasty identifiers for a given feature slug. Used by workflow-service to compose workflow names.\n\nExample: `?slug=sales-cold-email-sophia-v2` → `{ feature_dynasty_name: 'Sales Cold Email Sophia', feature_dynasty_slug: 'sales-cold-email-sophia' }`\n\nWorks for both active and deprecated features.",
+        "tags": [
+          "Features"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The versioned feature slug to resolve"
+            },
+            "required": true,
+            "description": "The versioned feature slug to resolve",
+            "name": "slug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dynasty identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "feature_dynasty_name": {
+                      "type": "string",
+                      "description": "Stable dynasty name (unversioned), e.g. 'Sales Cold Email Sophia'"
+                    },
+                    "feature_dynasty_slug": {
+                      "type": "string",
+                      "description": "Stable dynasty slug (unversioned), e.g. 'sales-cold-email-sophia'"
+                    }
+                  },
+                  "required": [
+                    "feature_dynasty_name",
+                    "feature_dynasty_slug"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing slug parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
             "content": {
               "application/json": {
                 "schema": {

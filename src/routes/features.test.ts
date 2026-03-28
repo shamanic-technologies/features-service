@@ -1,0 +1,198 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import request from "supertest";
+
+// Mock DB before importing app
+const mockFindFirst = vi.fn();
+const mockFindMany = vi.fn();
+const mockInsert = vi.fn();
+const mockUpdate = vi.fn();
+const mockReturning = vi.fn();
+const mockWhere = vi.fn();
+const mockSet = vi.fn();
+const mockValues = vi.fn();
+
+vi.mock("../db/index.js", () => ({
+  db: {
+    query: {
+      features: {
+        findFirst: (...args: unknown[]) => mockFindFirst(...args),
+        findMany: (...args: unknown[]) => mockFindMany(...args),
+      },
+    },
+    insert: () => ({ values: (...args: unknown[]) => {
+      mockValues(...args);
+      return { returning: () => mockReturning() };
+    }}),
+    update: () => ({ set: (...args: unknown[]) => {
+      mockSet(...args);
+      return {
+        where: (...wArgs: unknown[]) => {
+          mockWhere(...wArgs);
+          return { returning: () => mockReturning() };
+        },
+      };
+    }}),
+  },
+  sql: {},
+}));
+
+// Mock env validation
+vi.mock("../lib/env.js", () => ({
+  validateRequiredEnv: vi.fn(),
+  REQUIRED_ENV: [],
+}));
+
+// Mock Sentry
+vi.mock("../instrument.js", () => ({}));
+vi.mock("@sentry/node", () => ({
+  default: { setupExpressErrorHandler: vi.fn() },
+  setupExpressErrorHandler: vi.fn(),
+}));
+
+// Mock seed registration
+vi.mock("../seed/register.js", () => ({
+  registerSeedFeatures: vi.fn(),
+}));
+
+// Mock brand-client
+vi.mock("../lib/brand-client.js", () => ({
+  extractBrandFields: vi.fn(),
+}));
+
+// Set required env vars before importing app
+process.env.FEATURES_SERVICE_API_KEY = "test-key";
+process.env.RUNS_SERVICE_URL = "http://runs:3000";
+process.env.RUNS_SERVICE_API_KEY = "runs-key";
+process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
+process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
+process.env.OUTLETS_SERVICE_URL = "http://outlets:3000";
+process.env.OUTLETS_SERVICE_API_KEY = "outlets-key";
+process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
+process.env.NODE_ENV = "test";
+
+const app = (await import("../index.js")).default;
+
+const AUTH_HEADERS = {
+  "x-api-key": "test-key",
+  "x-org-id": "org-1",
+  "x-user-id": "user-1",
+  "x-run-id": "run-1",
+};
+
+// ── Dynasty resolution endpoint ─────────────────────────────────────────────
+
+describe("GET /features/dynasty", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns dynasty identity for a valid slug", async () => {
+    mockFindFirst.mockResolvedValueOnce({
+      id: "feat-1",
+      slug: "sales-cold-email-sophia-v2",
+      dynastyName: "Sales Cold Email Sophia",
+      dynastySlug: "sales-cold-email-sophia",
+    });
+
+    const res = await request(app)
+      .get("/features/dynasty?slug=sales-cold-email-sophia-v2")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      feature_dynasty_name: "Sales Cold Email Sophia",
+      feature_dynasty_slug: "sales-cold-email-sophia",
+    });
+  });
+
+  it("returns 404 for unknown slug", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .get("/features/dynasty?slug=nonexistent")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 when slug query param is missing", async () => {
+    const res = await request(app)
+      .get("/features/dynasty")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/slug/i);
+  });
+
+  it("works for deprecated features", async () => {
+    mockFindFirst.mockResolvedValueOnce({
+      id: "feat-old",
+      slug: "sales-cold-email-v1",
+      status: "deprecated",
+      dynastyName: "Sales Cold Email",
+      dynastySlug: "sales-cold-email",
+    });
+
+    const res = await request(app)
+      .get("/features/dynasty?slug=sales-cold-email-v1")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.feature_dynasty_name).toBe("Sales Cold Email");
+    expect(res.body.feature_dynasty_slug).toBe("sales-cold-email");
+  });
+});
+
+// ── Signature helpers ───────────────────────────────────────────────────────
+
+describe("signature helpers", () => {
+  it("composeDynastyName without fork name", async () => {
+    const { composeDynastyName } = await import("../lib/signature.js");
+    expect(composeDynastyName("Sales Cold Email", null)).toBe("Sales Cold Email");
+  });
+
+  it("composeDynastyName with fork name", async () => {
+    const { composeDynastyName } = await import("../lib/signature.js");
+    expect(composeDynastyName("Sales Cold Email", "Sophia")).toBe("Sales Cold Email Sophia");
+  });
+
+  it("versionedName v1 has no suffix", async () => {
+    const { versionedName } = await import("../lib/signature.js");
+    expect(versionedName("Sales Cold Email", 1)).toBe("Sales Cold Email");
+  });
+
+  it("versionedName v2+ has suffix", async () => {
+    const { versionedName } = await import("../lib/signature.js");
+    expect(versionedName("Sales Cold Email Sophia", 3)).toBe("Sales Cold Email Sophia v3");
+  });
+
+  it("versionedSlug v1 has no suffix", async () => {
+    const { versionedSlug } = await import("../lib/signature.js");
+    expect(versionedSlug("sales-cold-email", 1)).toBe("sales-cold-email");
+  });
+
+  it("versionedSlug v2+ has suffix", async () => {
+    const { versionedSlug } = await import("../lib/signature.js");
+    expect(versionedSlug("sales-cold-email-sophia", 2)).toBe("sales-cold-email-sophia-v2");
+  });
+
+  it("pickForkName picks first available codename", async () => {
+    const { pickForkName, CODENAMES } = await import("../lib/signature.js");
+    const used = new Set<string>();
+    expect(pickForkName(used)).toBe(CODENAMES[0]);
+  });
+
+  it("pickForkName skips used names", async () => {
+    const { pickForkName, CODENAMES } = await import("../lib/signature.js");
+    const used = new Set([CODENAMES[0], CODENAMES[1]]);
+    expect(pickForkName(used)).toBe(CODENAMES[2]);
+  });
+
+  it("pickForkName falls back when all exhausted", async () => {
+    const { pickForkName, CODENAMES } = await import("../lib/signature.js");
+    const used = new Set(CODENAMES);
+    const result = pickForkName(used);
+    // Should be first codename + random suffix
+    expect(result).toMatch(new RegExp(`^${CODENAMES[0]}-[a-f0-9]{4}$`));
+  });
+});
