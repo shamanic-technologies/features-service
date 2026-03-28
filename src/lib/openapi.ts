@@ -64,7 +64,7 @@ const systemStatsSchema = z.object({
 });
 
 const statsGroupSchema = z.object({
-  workflowName: z.string().nullable().optional(),
+  workflowSlug: z.string().nullable().optional(),
   brandId: z.string().nullable().optional(),
   campaignId: z.string().nullable().optional(),
   systemStats: systemStatsSchema,
@@ -367,7 +367,7 @@ registry.registerPath({
   summary: "Get computed stats for a feature",
   description:
     "Returns computed stats for a feature's outputs and charts. " +
-    "Optionally grouped by workflowName, brandId, or campaignId. " +
+    "Optionally grouped by workflowSlug, brandId, or campaignId. " +
     "System stats (cost, runs, campaigns, dates) are always included.\n\n" +
     "**Lineage aggregation:** Stats are automatically aggregated across the full upgrade chain " +
     "(deprecated ancestors + active descendants). If a feature was forked, querying any slug " +
@@ -380,10 +380,10 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
-      groupBy: z.enum(["workflowName", "brandId", "campaignId"]).optional(),
+      groupBy: z.enum(["workflowSlug", "brandId", "campaignId"]).optional(),
       brandId: z.string().optional(),
       campaignId: z.string().optional(),
-      workflowName: z.string().optional(),
+      workflowSlug: z.string().optional(),
     }),
   },
   responses: {
@@ -401,14 +401,14 @@ registry.registerPath({
   summary: "Global stats across all features",
   description:
     "Cross-feature stats endpoint for performance dashboards and org overview. " +
-    "Supports groupBy: featureSlug, workflowName, brandId, campaignId.\n\n" +
+    "Supports groupBy: featureSlug, workflowSlug, brandId, campaignId.\n\n" +
     "Only active features are included in the computation. " +
     "Stats from deprecated features are aggregated into their active successor via the lineage chain.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
     query: z.object({
-      groupBy: z.string().optional().describe("Comma-separated dimensions: featureSlug, workflowName, brandId, campaignId"),
+      groupBy: z.string().optional().describe("Comma-separated dimensions: featureSlug, workflowSlug, brandId, campaignId"),
       brandId: z.string().optional(),
     }),
   },
