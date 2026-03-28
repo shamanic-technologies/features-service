@@ -150,11 +150,18 @@ registry.registerPath({
   description:
     "Idempotent — safe to call on every cold start. Platform-only (X-API-Key auth).\n\n" +
     "Uses a **signature** (SHA-256 hash of sorted input+output keys) to detect duplicates:\n" +
-    "- Same signature → upsert metadata (labels, descriptions, charts, entities, etc.)\n" +
-    "- Same name but different signature → auto-suffix name/slug with v2, v3, etc.\n" +
-    "- New name and new signature → create new feature\n\n" +
-    "This is the equivalent of workflow-service's `PUT /workflows/upgrade`. " +
-    "The `name` field in the request body becomes the `displayName`.",
+    "- **Same signature** → upsert metadata in-place (labels, descriptions, charts, entities). No version/dynasty change.\n" +
+    "- **Same dynasty, different signature** → upgrade: deprecate old feature, create new version in the same dynasty (same `dynastyName`/`dynastySlug`, incremented `version`).\n" +
+    "- **New name** → create new dynasty (`version: 1`, no version suffix in slug/name).\n\n" +
+    "The `name` field in the request body becomes the `dynastyName` (stable across versions). " +
+    "The versioned `name` and `slug` are auto-computed from `dynastyName` + `version`.\n\n" +
+    "**Example upgrade chain:**\n" +
+    "```\n" +
+    "Boot 1: name='Sales Cold Email', inputs=[a,b] → creates 'sales-cold-email' v1\n" +
+    "Boot 2: name='Sales Cold Email', inputs=[a,b] → same signature, metadata update only\n" +
+    "Boot 3: name='Sales Cold Email', inputs=[a,b,c] → new signature, creates 'sales-cold-email-v2', deprecates v1\n" +
+    "```\n\n" +
+    "This is the equivalent of workflow-service's `PUT /workflows/upgrade`.",
   tags: ["Features"],
   request: { headers: identityHeaders, body: { content: { "application/json": { schema: batchUpsertFeaturesSchema } } } },
   responses: {
@@ -170,10 +177,18 @@ registry.registerPath({
   path: "/features",
   summary: "Create a single feature",
   description:
-    "Creates a brand-new feature. Slug is auto-generated from name if not provided. " +
-    "Returns 409 if a feature with the same slug, name, or signature already exists.\n\n" +
-    "The `name` field becomes both the `name` (machine identifier) and `displayName` (human-readable label) " +
-    "of the created feature. On future forks, `displayName` stays the same while `name` gets versioned.",
+    "Creates a brand-new feature and a new dynasty. Slug is auto-generated from name if not provided. " +
+    "Returns 409 if a feature with the same signature already exists.\n\n" +
+    "The `name` field becomes the `dynastyName`. If a dynasty with the same name already exists, " +
+    "a codename is auto-generated to create a unique dynasty (e.g. 'Sales Cold Email' → 'Sales Cold Email Sophia').\n\n" +
+    "**Example response (new dynasty, no collision):**\n" +
+    "```json\n" +
+    "{ \"feature\": { \"dynastyName\": \"Sales Cold Email\", \"dynastySlug\": \"sales-cold-email\", \"version\": 1, \"slug\": \"sales-cold-email\", \"name\": \"Sales Cold Email\" } }\n" +
+    "```\n\n" +
+    "**Example response (name collision, auto-generated codename):**\n" +
+    "```json\n" +
+    "{ \"feature\": { \"dynastyName\": \"Sales Cold Email Sophia\", \"dynastySlug\": \"sales-cold-email-sophia\", \"version\": 1, \"slug\": \"sales-cold-email-sophia\", \"name\": \"Sales Cold Email Sophia\" } }\n" +
+    "```",
   tags: ["Features"],
   request: { headers: identityHeaders, body: { content: { "application/json": { schema: createFeatureSchema } } } },
   responses: {
@@ -246,16 +261,29 @@ registry.registerPath({
     "because they don't affect the feature's identity (inputs + outputs). Even if you send `inputs` or " +
     "`outputs` in the body, if the resulting signature is unchanged, it's treated as metadata-only.\n\n" +
     "**Different signature (inputs/outputs changed) → 201 (fork):**\n" +
-    "A new feature is created with:\n" +
-    "- Auto-versioned `name`/`slug` (e.g. `Sales Cold Email Outreach v2`)\n" +
-    "- Same `displayName` as the original\n" +
-    "- `forkedFrom` pointing to the original\n" +
+    "A **new dynasty** is created with an auto-generated codename:\n" +
+    "- New `dynastyName` = original's base name + codename (e.g. `Sales Cold Email Sophia`)\n" +
+    "- `version: 1`, `forkedFrom` pointing to the original\n" +
     "- All other fields merged from the update body + the original\n\n" +
     "The original is deprecated (`status: deprecated`, `upgradedTo` set). " +
     "Existing campaigns/workflows referencing the old slug are **not** migrated — " +
     "stats aggregation traverses the full lineage chain automatically.\n\n" +
-    "**409:**\n" +
-    "Returned if the new signature already exists on a different feature.",
+    "**Convergence (different signature matches an existing feature) → 200:**\n" +
+    "If the new signature already exists on another feature, no new record is created. " +
+    "The current feature is deprecated and its `upgradedTo` points to the existing feature with that signature. " +
+    "Both lineages converge on a single active feature. Stats BFS traverses all predecessor branches.\n\n" +
+    "**Example fork:**\n" +
+    "```\n" +
+    "PUT /features/sales-cold-email { inputs: [changed] }\n" +
+    "→ 201: new feature 'Sales Cold Email Sophia' (slug: sales-cold-email-sophia)\n" +
+    "  original 'sales-cold-email' → deprecated, upgradedTo → sophia\n" +
+    "```\n\n" +
+    "**Example convergence:**\n" +
+    "```\n" +
+    "Dynasty A: v1 (sig:abc) → v2 (sig:DEF, active)\n" +
+    "Dynasty B: v1 (sig:xyz) → PUT with new inputs → sig:DEF already exists!\n" +
+    "→ B v1 deprecated, upgradedTo → A v2. Both lineages converge.\n" +
+    "```",
   tags: ["Features"],
   request: {
     headers: identityHeaders,
@@ -430,7 +458,7 @@ export const openApiDocument = generator.generateDocument({
   openapi: "3.0.3",
   info: {
     title: "Features Service API",
-    version: "2.0.0",
+    version: "3.0.0",
     description:
       "Manages feature definitions and computes output stats.\n\n" +
       "## Key Concepts\n\n" +
@@ -456,12 +484,15 @@ export const openApiDocument = generator.generateDocument({
       "| Inputs or outputs change (different signature) | Create new feature (fork), deprecate original | `201` |\n" +
       "| New signature already exists elsewhere | Conflict | `409` |\n\n" +
       "On fork:\n" +
-      "- The new feature gets an auto-versioned `name` and `slug` (e.g. `Sales Cold Email Outreach v2` / `sales-cold-email-outreach-v2`)\n" +
-      "- The `displayName` is inherited from the original (stable across forks)\n" +
+      "- A new **dynasty** is created with an auto-generated codename (e.g. `Sales Cold Email` → `Sales Cold Email Sophia`)\n" +
+      "- `dynastyName`/`dynastySlug` are new and unique, `version` resets to 1\n" +
       "- `forkedFrom` on the new feature points to the original's ID\n" +
       "- `upgradedTo` on the original points to the new feature's ID\n" +
       "- The original's `status` is set to `deprecated`\n\n" +
-      "This is aligned with workflow-service's fork model (`PUT /workflows/{id}`).\n\n" +
+      "On upgrade (same dynasty, signature changed via `PUT /features` batch upsert):\n" +
+      "- `dynastyName`/`dynastySlug` are preserved, `version` is incremented\n" +
+      "- `name` gets version suffix (e.g. `Sales Cold Email v2`), `slug` gets `-v2`\n\n" +
+      "This is aligned with workflow-service's dynasty model.\n\n" +
 
       "## Dynasty Model\n\n" +
       "Features use a **dynasty model** for versioning, aligned with workflow-service:\n\n" +
@@ -486,11 +517,19 @@ export const openApiDocument = generator.generateDocument({
 
       "## Stats Aggregation Across the Chain\n\n" +
       "When you request stats for a feature (`GET /features/{slug}/stats`), the service automatically resolves the **full upgrade chain** " +
-      "and aggregates stats across all ancestors and descendants. This means:\n\n" +
-      "- Old campaigns/workflows still referencing a deprecated slug are included in the stats\n" +
+      "using BFS (breadth-first search) on a predecessor map. This handles:\n\n" +
+      "- **Linear chains:** A v1 → A v2 → A v3 (simple upgrade sequence)\n" +
+      "- **Convergence:** Two dynasties independently produce the same signature — both lineages converge on one active feature. BFS traverses all predecessor branches.\n\n" +
+      "```\n" +
+      "Dynasty A: v1 (deprecated) → A v2 (active, sig:DEF)\n" +
+      "                                    ↑\n" +
+      "Dynasty B: v1 (deprecated) ─────────┘  (B upgraded to same sig:DEF)\n" +
+      "```\n" +
+      "Querying stats for A v2 aggregates data from A v1, B v1, and A v2.\n\n" +
+      "This means:\n" +
+      "- Old campaigns/workflows still referencing a deprecated slug are included\n" +
       "- You always get the complete picture regardless of which slug in the chain you query\n" +
-      "- No data is lost on fork — the chain is just extended\n\n" +
-      "This matches workflow-service behavior: *\"Stats are aggregated across the full upgrade chain (deprecated predecessors included)\"*.\n\n" +
+      "- No data is lost on fork or convergence\n\n" +
 
       "## Stats Registry\n\n" +
       "`GET /stats/registry` — the finite universe of known stats keys. " +
