@@ -1394,10 +1394,6 @@
             "type": "string",
             "nullable": true
           },
-          "workflowDynastySlug": {
-            "type": "string",
-            "nullable": true
-          },
           "brandId": {
             "type": "string",
             "nullable": true
@@ -1500,10 +1496,6 @@
               "type": "object",
               "properties": {
                 "workflowSlug": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "workflowDynastySlug": {
                   "type": "string",
                   "nullable": true
                 },
@@ -1620,10 +1612,6 @@
               "type": "object",
               "properties": {
                 "workflowSlug": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "workflowDynastySlug": {
                   "type": "string",
                   "nullable": true
                 },
@@ -2013,10 +2001,6 @@
               "type": "object",
               "properties": {
                 "workflowSlug": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "workflowDynastySlug": {
                   "type": "string",
                   "nullable": true
                 },
@@ -6184,7 +6168,6 @@
               "type": "string",
               "enum": [
                 "workflowSlug",
-                "workflowDynastySlug",
                 "brandId",
                 "campaignId"
               ]
@@ -6217,16 +6200,6 @@
             "required": false,
             "description": "Filter by exact workflow slug",
             "name": "workflowSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Filter by workflow dynasty slug — resolved to all versioned slugs, takes priority over workflowSlug"
-            },
-            "required": false,
-            "description": "Filter by workflow dynasty slug — resolved to all versioned slugs, takes priority over workflowSlug",
-            "name": "workflowDynastySlug",
             "in": "query"
           },
           {
@@ -6314,10 +6287,6 @@
                         "type": "object",
                         "properties": {
                           "workflowSlug": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "workflowDynastySlug": {
                             "type": "string",
                             "nullable": true
                           },
@@ -6456,7 +6425,6 @@
               "type": "string",
               "enum": [
                 "workflowSlug",
-                "workflowDynastySlug",
                 "brandId",
                 "campaignId"
               ]
@@ -6489,16 +6457,6 @@
             "required": false,
             "description": "Filter by exact workflow slug",
             "name": "workflowSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Filter by workflow dynasty slug — resolved to all versioned slugs, takes priority over workflowSlug"
-            },
-            "required": false,
-            "description": "Filter by workflow dynasty slug — resolved to all versioned slugs, takes priority over workflowSlug",
-            "name": "workflowDynastySlug",
             "in": "query"
           },
           {
@@ -6586,10 +6544,6 @@
                         "type": "object",
                         "properties": {
                           "workflowSlug": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "workflowDynastySlug": {
                             "type": "string",
                             "nullable": true
                           },
@@ -6716,10 +6670,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Dimension: featureSlug, featureDynastySlug, workflowSlug, workflowDynastySlug, brandId, campaignId"
+              "description": "Dimension: featureSlug, featureDynastySlug, workflowSlug, brandId, campaignId"
             },
             "required": false,
-            "description": "Dimension: featureSlug, featureDynastySlug, workflowSlug, workflowDynastySlug, brandId, campaignId",
+            "description": "Dimension: featureSlug, featureDynastySlug, workflowSlug, brandId, campaignId",
             "name": "groupBy",
             "in": "query"
           },
@@ -6759,16 +6713,6 @@
             "required": false,
             "description": "Filter by exact workflow slug",
             "name": "workflowSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Filter by workflow dynasty slug — resolved to all versioned slugs, takes priority over workflowSlug"
-            },
-            "required": false,
-            "description": "Filter by workflow dynasty slug — resolved to all versioned slugs, takes priority over workflowSlug",
-            "name": "workflowDynastySlug",
             "in": "query"
           },
           {
@@ -6861,10 +6805,6 @@
                         "type": "object",
                         "properties": {
                           "workflowSlug": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "workflowDynastySlug": {
                             "type": "string",
                             "nullable": true
                           },
