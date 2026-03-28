@@ -5,7 +5,7 @@ describe("openApiDocument", () => {
   it("has correct metadata", () => {
     expect(openApiDocument.openapi).toBe("3.0.3");
     expect(openApiDocument.info.title).toBe("Features Service API");
-    expect(openApiDocument.info.version).toBe("2.0.0");
+    expect(openApiDocument.info.version).toBe("3.0.0");
   });
 
   it("exposes all feature endpoints", () => {
@@ -49,6 +49,20 @@ describe("openApiDocument", () => {
   it("includes top-level security requirement", () => {
     expect(openApiDocument.security).toBeDefined();
     expect(openApiDocument.security).toContainEqual({ ApiKeyAuth: [] });
+  });
+
+  it("has GET /features/dynasty", () => {
+    const get = (openApiDocument.paths as Record<string, Record<string, unknown>>)["/features/dynasty"]?.["get"] as Record<string, unknown> | undefined;
+    expect(get).toBeDefined();
+    expect(get?.summary).toContain("dynasty");
+  });
+
+  it("Feature schema includes dynasty fields", () => {
+    const schemas = (openApiDocument.components as Record<string, unknown>)?.schemas as Record<string, Record<string, unknown>> | undefined;
+    const featureProps = (schemas?.Feature as Record<string, unknown>)?.properties as Record<string, unknown> | undefined;
+    expect(featureProps?.dynastyName).toBeDefined();
+    expect(featureProps?.dynastySlug).toBeDefined();
+    expect(featureProps?.version).toBeDefined();
   });
 
   it("has component schemas registered", () => {
