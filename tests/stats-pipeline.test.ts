@@ -185,7 +185,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
   });
 
 
-  it("fetches journalistsContacted for PR feature via journalists-service/resolve-journalists", async () => {
+  it("fetches journalistsContacted for PR feature via journalists-service/buffer-next", async () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(PR_FEATURE as any);
 
     mockFetchMulti([
