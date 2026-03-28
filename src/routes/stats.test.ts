@@ -153,3 +153,56 @@ describe("stats route - network error resilience", () => {
     expect(res.body.systemStats.totalCostInUsdCents).toBe(1500);
   });
 });
+
+// ── Dynasty stats endpoint ──────────────────────────────────────────────────
+
+describe("GET /stats/dynasty", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  afterEach(() => {
+    fetchSpy?.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it("returns 400 when dynastySlug query param is missing", async () => {
+    const res = await request(app)
+      .get("/stats/dynasty")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/dynastySlug/i);
+  });
+
+  it("returns 404 when no features match the dynasty slug", async () => {
+    vi.mocked(db.query.features.findMany).mockResolvedValue([]);
+
+    const res = await request(app)
+      .get("/stats/dynasty?dynastySlug=nonexistent")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 200 with zeroed stats when downstream services fail", async () => {
+    vi.mocked(db.query.features.findMany).mockResolvedValue([MOCK_FEATURE as any]);
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(null as any);
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new TypeError("fetch failed"),
+    );
+
+    const res = await request(app)
+      .get("/stats/dynasty?dynastySlug=cold-email")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.dynastySlug).toBe("cold-email");
+    expect(res.body.systemStats.completedRuns).toBe(0);
+  });
+
+  it("requires authentication", async () => {
+    const res = await request(app)
+      .get("/stats/dynasty?dynastySlug=cold-email");
+
+    expect(res.status).toBe(401);
+  });
+});
