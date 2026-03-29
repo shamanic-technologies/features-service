@@ -15,7 +15,7 @@ export interface RawStatsKeyDef {
   kind: "raw";
   type: "count" | "currency";
   label: string;
-  source: "email-gateway" | "runs" | "campaign" | "outlets";
+  source: "email-gateway" | "runs" | "campaign" | "outlets" | "journalists";
   /** For pipeline count keys: count runs matching this service+task filter */
   runFilter?: RunFilter;
 }
@@ -53,7 +53,9 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   // ── Pipeline counts: runs-service (counted via per-task runCount) ─────────
   leadsServed:         { kind: "raw", type: "count",    label: "Leads Served",     source: "runs", runFilter: { serviceName: "lead-service", taskName: "lead-serve" } },
   emailsGenerated:     { kind: "raw", type: "count",    label: "Emails Generated", source: "runs", runFilter: { serviceName: "content-generation-service", taskName: "single-generation" } },
-  journalistsContacted: { kind: "raw", type: "count",   label: "Journalists Contacted", source: "runs", runFilter: { serviceName: "journalists-service", taskName: "buffer-next" } },
+
+  // ── Journalists: journalists-service ────────────────────────────────────────
+  journalistsContacted: { kind: "raw", type: "count",   label: "Journalists Contacted", source: "journalists" },
 
   // ── Cost & runs: runs-service ─────────────────────────────────────────────
   totalCostInUsdCents: { kind: "raw", type: "currency", label: "Total Cost",       source: "runs" },

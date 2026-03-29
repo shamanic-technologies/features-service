@@ -13,6 +13,9 @@ const EMAIL_GATEWAY_SERVICE_URL = process.env.EMAIL_GATEWAY_SERVICE_URL!;
 const EMAIL_GATEWAY_SERVICE_API_KEY = process.env.EMAIL_GATEWAY_SERVICE_API_KEY!;
 const OUTLETS_SERVICE_URL = process.env.OUTLETS_SERVICE_URL!;
 const OUTLETS_SERVICE_API_KEY = process.env.OUTLETS_SERVICE_API_KEY!;
+// Read lazily — not available at module scope in test environments
+function getJournalistsServiceUrl(): string { return process.env.JOURNALISTS_SERVICE_URL!; }
+function getJournalistsServiceApiKey(): string { return process.env.JOURNALISTS_SERVICE_API_KEY!; }
 
 const router = Router();
 
@@ -591,6 +594,60 @@ function extractOutletFields(data: Record<string, unknown>): Record<string, numb
 }
 
 /**
+ * Fetch journalist stats from journalists-service, grouped by the requested dimension.
+ * Returns a map of groupKey → { journalistsContacted: number }.
+ */
+async function fetchJournalistsStats(
+  orgId: string,
+  groupBy: GroupByDimension | null,
+  filters: Record<string, string>,
+  identity: Identity,
+): Promise<Map<string, Record<string, number>>> {
+  const params = new URLSearchParams();
+  // journalists-service supports groupBy: featureSlug, workflowSlug, featureDynastySlug, workflowDynastySlug
+  const supportedGroupBy = new Set(["featureSlug", "workflowSlug", "featureDynastySlug", "workflowDynastySlug"]);
+  if (groupBy && supportedGroupBy.has(groupBy)) params.set("groupBy", groupBy);
+  if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
+  if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
+  if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
+  if (filters.brandId) params.set("brandId", filters.brandId);
+  if (filters.campaignId) params.set("campaignId", filters.campaignId);
+
+  const url = `${getJournalistsServiceUrl()}/stats?${params}`;
+  try {
+    const response = await fetch(url, {
+      headers: buildDownstreamHeaders(getJournalistsServiceApiKey(), orgId, identity),
+    });
+
+    if (!response.ok) {
+      console.error(`[stats] journalists-service /stats failed: ${response.status}`);
+      return new Map();
+    }
+
+    const data = await response.json() as {
+      totalJournalists: number;
+      byStatus: Record<string, number>;
+      groupedBy?: Record<string, { totalJournalists: number; byStatus: Record<string, number> }>;
+    };
+
+    const result = new Map<string, Record<string, number>>();
+
+    if (data.groupedBy && groupBy && supportedGroupBy.has(groupBy)) {
+      for (const [key, group] of Object.entries(data.groupedBy)) {
+        result.set(key, { journalistsContacted: group.totalJournalists });
+      }
+    } else {
+      result.set("__total__", { journalistsContacted: data.totalJournalists });
+    }
+
+    return result;
+  } catch (error) {
+    console.error(`[stats] journalists-service /stats network error:`, (error as Error).message);
+    return new Map();
+  }
+}
+
+/**
  * Fetch active campaign count from campaign-service.
  * Campaign-service /stats doesn't support groupBy, so this returns a flat count.
  */
@@ -736,10 +793,11 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
 
     const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
     const pipelineKeys = collectPipelineKeys(requiredKeys);
-    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
+    const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, slugs, identity) : Promise.resolve(new Map<string, RunsStatsEntry>()),
       sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      sources.has("journalists") ? fetchJournalistsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       pipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, slugs, pipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchActiveCampaigns(orgId, filters, identity),
     ]);
@@ -748,10 +806,11 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       const emailStats = emailStatsMap.get("__total__") ?? {};
       const runsStats = runsStatsMap.get("__total__");
       const outletsStats = outletsStatsMap.get("__total__") ?? {};
+      const journalistsStats = journalistsStatsMap.get("__total__") ?? {};
       const pipelineStats = pipelineStatsMap.get("__total__") ?? {};
 
       const rawStats: Record<string, number> = {
-        ...emailStats, ...outletsStats, ...pipelineStats,
+        ...emailStats, ...outletsStats, ...journalistsStats, ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -767,6 +826,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     for (const key of emailStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of runsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of outletsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
+    for (const key of journalistsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of pipelineStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
 
     const totals = aggregateRunsTotals(runsStatsMap);
@@ -776,10 +836,11 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       const emailStats = emailStatsMap.get(groupKey) ?? {};
       const runsStats = runsStatsMap.get(groupKey);
       const outletsStats = outletsStatsMap.get(groupKey) ?? {};
+      const journalistsStats = journalistsStatsMap.get(groupKey) ?? {};
       const pipelineStats = pipelineStatsMap.get(groupKey) ?? {};
 
       const rawStats: Record<string, number> = {
-        ...emailStats, ...outletsStats, ...pipelineStats,
+        ...emailStats, ...outletsStats, ...journalistsStats, ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -850,10 +911,11 @@ router.get("/stats/dynasty", apiKeyAuth, async (req, res) => {
 
     const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
     const pipelineKeys = collectPipelineKeys(requiredKeys);
-    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
+    const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       sources.has("runs") || true ? fetchRunsStats(orgId, groupBy, filters, lineageSlugs, identity) : Promise.resolve(new Map<string, RunsStatsEntry>()),
       sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      sources.has("journalists") ? fetchJournalistsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       pipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, lineageSlugs, pipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchActiveCampaigns(orgId, filters, identity),
     ]);
@@ -862,11 +924,13 @@ router.get("/stats/dynasty", apiKeyAuth, async (req, res) => {
       const emailStats = emailStatsMap.get("__total__") ?? {};
       const runsStats = runsStatsMap.get("__total__");
       const outletsStats = outletsStatsMap.get("__total__") ?? {};
+      const journalistsStats = journalistsStatsMap.get("__total__") ?? {};
       const pipelineStats = pipelineStatsMap.get("__total__") ?? {};
 
       const rawStats: Record<string, number> = {
         ...emailStats,
         ...outletsStats,
+        ...journalistsStats,
         ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
@@ -883,6 +947,7 @@ router.get("/stats/dynasty", apiKeyAuth, async (req, res) => {
     for (const key of emailStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of runsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of outletsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
+    for (const key of journalistsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of pipelineStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
 
     const totals = aggregateRunsTotals(runsStatsMap);
@@ -892,11 +957,13 @@ router.get("/stats/dynasty", apiKeyAuth, async (req, res) => {
       const emailStats = emailStatsMap.get(groupKey) ?? {};
       const runsStats = runsStatsMap.get(groupKey);
       const outletsStats = outletsStatsMap.get(groupKey) ?? {};
+      const journalistsStats = journalistsStatsMap.get(groupKey) ?? {};
       const pipelineStats = pipelineStatsMap.get(groupKey) ?? {};
 
       const rawStats: Record<string, number> = {
         ...emailStats,
         ...outletsStats,
+        ...journalistsStats,
         ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
@@ -968,10 +1035,11 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
     const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
     const globalPipelineKeys = collectPipelineKeys(allKeys);
     // Dynasty filters and groupBy are passed through to downstream services — they handle resolution natively
-    const [emailStatsMap, runsStatsMap, outletsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
+    const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchRunsStats(orgId, groupBy, filters, undefined, identity),
       sources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
+      sources.has("journalists") ? fetchJournalistsStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       globalPipelineKeys.size > 0 ? fetchPipelineStats(orgId, groupBy, filters, undefined, globalPipelineKeys, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
       fetchActiveCampaigns(orgId, filters, identity),
     ]);
@@ -980,10 +1048,11 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       const emailStats = emailStatsMap.get("__total__") ?? {};
       const runsStats = runsStatsMap.get("__total__");
       const outletsStats = outletsStatsMap.get("__total__") ?? {};
+      const journalistsStats = journalistsStatsMap.get("__total__") ?? {};
       const pipelineStats = pipelineStatsMap.get("__total__") ?? {};
 
       const rawStats: Record<string, number> = {
-        ...emailStats, ...outletsStats, ...pipelineStats,
+        ...emailStats, ...outletsStats, ...journalistsStats, ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
@@ -998,6 +1067,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
     for (const key of emailStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of runsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of outletsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
+    for (const key of journalistsStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
     for (const key of pipelineStatsMap.keys()) if (key !== "__total__") allGroupKeys.add(key);
 
     const totals = aggregateRunsTotals(runsStatsMap);
@@ -1007,10 +1077,11 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       const emailStats = emailStatsMap.get(groupKey) ?? {};
       const runsStats = runsStatsMap.get(groupKey);
       const outletsStats = outletsStatsMap.get(groupKey) ?? {};
+      const journalistsStats = journalistsStatsMap.get(groupKey) ?? {};
       const pipelineStats = pipelineStatsMap.get(groupKey) ?? {};
 
       const rawStats: Record<string, number> = {
-        ...emailStats, ...outletsStats, ...pipelineStats,
+        ...emailStats, ...outletsStats, ...journalistsStats, ...pipelineStats,
         totalCostInUsdCents: runsStats?.totalCostInUsdCents ?? 0,
         completedRuns: runsStats?.completedRuns ?? 0,
       };
