@@ -55,7 +55,7 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   emailsGenerated:     { kind: "raw", type: "count",    label: "Emails Generated", source: "runs", runFilter: { serviceName: "content-generation-service", taskName: "single-generation" } },
 
   // ── Journalists: journalists-service ────────────────────────────────────────
-  journalistsContacted: { kind: "raw", type: "count",   label: "Journalists Contacted", source: "journalists" },
+  journalistsContacted: { kind: "raw", type: "count",   label: "Journalists Found", source: "journalists" },
 
   // ── Cost & runs: runs-service ─────────────────────────────────────────────
   totalCostInUsdCents: { kind: "raw", type: "currency", label: "Total Cost",       source: "runs" },
