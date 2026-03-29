@@ -267,24 +267,26 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     ],
 
     outputs: [
-      { key: "journalistsContacted", displayOrder: 1 },
+      { key: "journalistsFound",     displayOrder: 1 },
       { key: "emailsGenerated",      displayOrder: 2 },
-      { key: "emailsSent",           displayOrder: 3 },
-      { key: "emailsOpened",         displayOrder: 4 },
-      { key: "emailsReplied",        displayOrder: 5 },
-      { key: "replyRate",            displayOrder: 6 },
-      { key: "costPerReplyCents",    displayOrder: 7, defaultSort: true, sortDirection: "asc" },
+      { key: "journalistsContacted", displayOrder: 3 },
+      { key: "emailsSent",           displayOrder: 4 },
+      { key: "emailsOpened",         displayOrder: 5 },
+      { key: "emailsReplied",        displayOrder: 6 },
+      { key: "replyRate",            displayOrder: 7 },
+      { key: "costPerReplyCents",    displayOrder: 8, defaultSort: true, sortDirection: "asc" },
     ],
 
     charts: [
       {
         key: "funnel",
         type: "funnel-bar",
-        title: "Outreach Funnel",
+        title: "Campaign Funnel",
         displayOrder: 1,
         steps: [
-          { key: "journalistsContacted" },
+          { key: "journalistsFound" },
           { key: "emailsGenerated" },
+          { key: "journalistsContacted" },
           { key: "emailsSent" },
           { key: "emailsOpened" },
           { key: "emailsReplied" },
@@ -307,7 +309,7 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
 
     entities: [
       { name: "leads", countKey: "leadsServed" },
-      { name: "journalists", countKey: "journalistsContacted" },
+      { name: "journalists", countKey: "journalistsFound" },
       { name: "emails", countKey: "emailsGenerated" },
       { name: "press-kits" },
     ],

@@ -595,7 +595,7 @@ function extractOutletFields(data: Record<string, unknown>): Record<string, numb
 
 /**
  * Fetch journalist stats from journalists-service, grouped by the requested dimension.
- * Returns a map of groupKey → { journalistsContacted: number }.
+ * Maps totalJournalists → journalistsFound and byStatus.contacted → journalistsContacted.
  */
 async function fetchJournalistsStats(
   orgId: string,
@@ -634,10 +634,10 @@ async function fetchJournalistsStats(
 
     if (data.groupedBy && groupBy && supportedGroupBy.has(groupBy)) {
       for (const [key, group] of Object.entries(data.groupedBy)) {
-        result.set(key, { journalistsContacted: group.totalJournalists });
+        result.set(key, extractJournalistFields(group));
       }
     } else {
-      result.set("__total__", { journalistsContacted: data.totalJournalists });
+      result.set("__total__", extractJournalistFields(data));
     }
 
     return result;
@@ -645,6 +645,13 @@ async function fetchJournalistsStats(
     console.error(`[stats] journalists-service /stats network error:`, (error as Error).message);
     return new Map();
   }
+}
+
+function extractJournalistFields(data: { totalJournalists: number; byStatus: Record<string, number> }): Record<string, number> {
+  return {
+    journalistsFound: data.totalJournalists,
+    journalistsContacted: data.byStatus.contacted ?? 0,
+  };
 }
 
 /**
