@@ -53,8 +53,9 @@ const PR_FEATURE = {
   upgradedTo: null,
   inputs: [],
   outputs: [
-    { key: "journalistsContacted", displayOrder: 1 },
+    { key: "journalistsFound", displayOrder: 1 },
     { key: "emailsGenerated", displayOrder: 2 },
+    { key: "journalistsContacted", displayOrder: 3 },
   ],
   charts: [],
   entityTypes: [],
@@ -187,7 +188,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
   });
 
 
-  it("fetches journalistsContacted from journalists-service /stats endpoint", async () => {
+  it("fetches journalistsFound and journalistsContacted from journalists-service /stats", async () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(PR_FEATURE as any);
 
     mockFetchMulti([
@@ -195,7 +196,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
         match: "journalists-service/stats",
         response: {
           totalJournalists: 25,
-          byStatus: { contacted: 20, pending: 5 },
+          byStatus: { contacted: 20, served: 3, buffered: 2 },
         },
       },
       {
@@ -216,7 +217,8 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
       .set("x-run-id", "run-1")
       .expect(200);
 
-    expect(res.body.stats.journalistsContacted).toBe(25);
+    expect(res.body.stats.journalistsFound).toBe(25);
+    expect(res.body.stats.journalistsContacted).toBe(20);
     expect(res.body.stats.emailsGenerated).toBe(20);
   });
 
