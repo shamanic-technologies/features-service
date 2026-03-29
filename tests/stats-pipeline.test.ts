@@ -9,6 +9,8 @@ vi.stubEnv("EMAIL_GATEWAY_SERVICE_URL", "http://email-gateway");
 vi.stubEnv("EMAIL_GATEWAY_SERVICE_API_KEY", "email-gw-key");
 vi.stubEnv("OUTLETS_SERVICE_URL", "http://outlets-service");
 vi.stubEnv("OUTLETS_SERVICE_API_KEY", "outlets-key");
+vi.stubEnv("JOURNALISTS_SERVICE_URL", "http://journalists-service");
+vi.stubEnv("JOURNALISTS_SERVICE_API_KEY", "journalists-key");
 
 vi.mock("../src/db/index.js", () => ({
   db: {
@@ -185,14 +187,15 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
   });
 
 
-  it("fetches journalistsContacted for PR feature via journalists-service/buffer-next", async () => {
+  it("fetches journalistsContacted from journalists-service /stats endpoint", async () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(PR_FEATURE as any);
 
     mockFetchMulti([
       {
-        match: "serviceName=journalists-service",
+        match: "journalists-service/stats",
         response: {
-          groups: [{ dimensions: { workflowName: null }, runCount: 25, totalCostInUsdCents: "0", actualCostInUsdCents: "0", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0" }],
+          totalJournalists: 25,
+          byStatus: { contacted: 20, pending: 5 },
         },
       },
       {
@@ -215,6 +218,35 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
 
     expect(res.body.stats.journalistsContacted).toBe(25);
     expect(res.body.stats.emailsGenerated).toBe(20);
+  });
+
+  it("calls journalists-service /stats with correct filters", async () => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(PR_FEATURE as any);
+
+    mockFetchMulti([
+      {
+        match: "journalists-service/stats",
+        response: { totalJournalists: 10, byStatus: {} },
+      },
+    ]);
+
+    const app = createApp();
+
+    await request(app)
+      .get("/features/pr-cold-email-outreach/stats?brandId=brand-1&campaignId=camp-1")
+      .set("x-api-key", "test-key")
+      .set("x-org-id", "org-1")
+      .set("x-user-id", "user-1")
+      .set("x-run-id", "run-1")
+      .expect(200);
+
+    const journalistsCalls = fetchSpy.mock.calls.filter(
+      ([url]: [string]) => url.includes("journalists-service/stats"),
+    );
+    expect(journalistsCalls.length).toBe(1);
+    const calledUrl = journalistsCalls[0][0] as string;
+    expect(calledUrl).toContain("brandId=brand-1");
+    expect(calledUrl).toContain("campaignId=camp-1");
   });
 
   it("pipeline stats work with groupBy=campaignId", async () => {

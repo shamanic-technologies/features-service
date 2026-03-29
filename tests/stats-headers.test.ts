@@ -10,6 +10,8 @@ vi.stubEnv("EMAIL_GATEWAY_SERVICE_URL", "http://email-gateway");
 vi.stubEnv("EMAIL_GATEWAY_SERVICE_API_KEY", "email-gw-key");
 vi.stubEnv("OUTLETS_SERVICE_URL", "http://outlets-service");
 vi.stubEnv("OUTLETS_SERVICE_API_KEY", "outlets-key");
+vi.stubEnv("JOURNALISTS_SERVICE_URL", "http://journalists-service");
+vi.stubEnv("JOURNALISTS_SERVICE_API_KEY", "journalists-key");
 
 // Mock the database before importing the router
 vi.mock("../src/db/index.js", () => ({
