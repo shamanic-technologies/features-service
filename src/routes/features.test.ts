@@ -310,6 +310,51 @@ describe("signature helpers", () => {
   });
 });
 
+// ── GET /features/by-dynasty/:dynastySlug — active feature by dynasty slug ──
+
+describe("GET /features/by-dynasty/:dynastySlug", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns active feature for a dynasty slug", async () => {
+    mockFindFirst.mockResolvedValueOnce({
+      id: "feat-v2",
+      slug: "sales-cold-email-v2",
+      dynastyName: "Sales Cold Email",
+      dynastySlug: "sales-cold-email",
+      version: 2,
+      status: "active",
+    });
+
+    const res = await request(app)
+      .get("/features/by-dynasty/sales-cold-email")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.feature.slug).toBe("sales-cold-email-v2");
+    expect(res.body.feature.dynastySlug).toBe("sales-cold-email");
+  });
+
+  it("returns 404 when no active feature exists for dynasty slug", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .get("/features/by-dynasty/nonexistent-dynasty")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/dynasty slug/i);
+  });
+
+  it("requires authentication", async () => {
+    const res = await request(app)
+      .get("/features/by-dynasty/sales-cold-email");
+
+    expect(res.status).toBe(401);
+  });
+});
+
 // ── GET /features/:slug — exact versioned slug only ──────────────────────
 
 describe("GET /features/:slug", () => {

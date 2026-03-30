@@ -3925,10 +3925,417 @@
         }
       }
     },
+    "/features/by-dynasty/{dynastySlug}": {
+      "get": {
+        "summary": "Get the active feature by dynasty slug",
+        "description": "Returns the **active version** of a feature dynasty. The path param must be a **dynasty slug** (e.g. `sales-cold-email`), NOT a versioned slug.\n\nReturns 404 if no active feature exists for this dynasty slug.\n\nUse this when you have a dynasty slug and need the full feature definition (inputs, outputs, charts, entities). For the versioned slug variant, use `GET /features/{slug}`.",
+        "tags": [
+          "Features"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Dynasty slug (e.g. 'sales-cold-email'). Must be a dynasty slug — versioned slugs will 404."
+            },
+            "required": true,
+            "description": "Dynasty slug (e.g. 'sales-cold-email'). Must be a dynasty slug — versioned slugs will 404.",
+            "name": "dynastySlug",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active feature in this dynasty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "feature": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "slug": {
+                          "type": "string",
+                          "description": "Globally unique versioned slug (e.g. 'sales-cold-email-sophia-v2'). Composed: dynasty_slug + version suffix."
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Globally unique versioned name (e.g. 'Sales Cold Email Sophia v2'). Composed: dynasty_name + version suffix."
+                        },
+                        "dynastyName": {
+                          "type": "string",
+                          "description": "Stable name across all versions of this dynasty (e.g. 'Sales Cold Email Sophia'). Use for UI display."
+                        },
+                        "dynastySlug": {
+                          "type": "string",
+                          "description": "Stable slug across all versions of this dynasty (e.g. 'sales-cold-email-sophia')."
+                        },
+                        "version": {
+                          "type": "integer",
+                          "description": "Version number within the dynasty (1-based). v1 has no suffix in name/slug."
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "icon": {
+                          "type": "string",
+                          "description": "Lucide icon name (e.g. 'envelope', 'globe', 'megaphone'). Use as <LucideIcon name={icon} /> or look up at lucide.dev/icons."
+                        },
+                        "category": {
+                          "type": "string",
+                          "description": "Feature category: 'sales', 'pr', 'discovery', etc."
+                        },
+                        "channel": {
+                          "type": "string",
+                          "description": "Communication channel: 'email', 'phone', 'linkedin', 'database', etc."
+                        },
+                        "audienceType": {
+                          "type": "string",
+                          "description": "Form layout type: 'cold-outreach', 'discovery', etc."
+                        },
+                        "implemented": {
+                          "type": "boolean"
+                        },
+                        "displayOrder": {
+                          "type": "integer"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "draft",
+                            "deprecated"
+                          ]
+                        },
+                        "signature": {
+                          "type": "string",
+                          "description": "Deterministic hash of sorted input+output keys — used for idempotent upsert and convergence detection"
+                        },
+                        "inputs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "text",
+                                  "textarea",
+                                  "number",
+                                  "select"
+                                ]
+                              },
+                              "placeholder": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "description": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "extractKey": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "options": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "type",
+                              "placeholder",
+                              "description",
+                              "extractKey"
+                            ]
+                          },
+                          "description": "Input fields for the campaign creation form."
+                        },
+                        "outputs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "displayOrder": {
+                                "type": "integer"
+                              },
+                              "defaultSort": {
+                                "type": "boolean"
+                              },
+                              "sortDirection": {
+                                "type": "string",
+                                "enum": [
+                                  "asc",
+                                  "desc"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "displayOrder"
+                            ]
+                          },
+                          "description": "Output metrics — stats keys from the registry with display config. Use GET /stats/registry for labels and types."
+                        },
+                        "charts": {
+                          "type": "array",
+                          "items": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "funnel-bar"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "displayOrder": {
+                                    "type": "integer"
+                                  },
+                                  "steps": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "key"
+                                      ]
+                                    },
+                                    "minItems": 2
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "type",
+                                  "title",
+                                  "displayOrder",
+                                  "steps"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "breakdown-bar"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "displayOrder": {
+                                    "type": "integer"
+                                  },
+                                  "segments": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "enum": [
+                                            "green",
+                                            "blue",
+                                            "red",
+                                            "gray",
+                                            "orange"
+                                          ]
+                                        },
+                                        "sentiment": {
+                                          "type": "string",
+                                          "enum": [
+                                            "positive",
+                                            "neutral",
+                                            "negative"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "color",
+                                        "sentiment"
+                                      ]
+                                    },
+                                    "minItems": 2
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "type",
+                                  "title",
+                                  "displayOrder",
+                                  "segments"
+                                ]
+                              }
+                            ]
+                          },
+                          "description": "Chart definitions (funnel-bar, breakdown-bar). At least one of each required."
+                        },
+                        "entities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Entity types shown in campaign detail sidebar (e.g. ['leads', 'companies', 'emails'])"
+                        },
+                        "forkedFrom": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "uuid",
+                          "description": "If this feature was forked from another, the ID of the original."
+                        },
+                        "upgradedTo": {
+                          "type": "string",
+                          "nullable": true,
+                          "format": "uuid",
+                          "description": "If deprecated, the ID of the replacement feature."
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "slug",
+                        "name",
+                        "dynastyName",
+                        "dynastySlug",
+                        "version",
+                        "description",
+                        "icon",
+                        "category",
+                        "channel",
+                        "audienceType",
+                        "implemented",
+                        "displayOrder",
+                        "status",
+                        "signature",
+                        "inputs",
+                        "outputs",
+                        "charts",
+                        "entities",
+                        "forkedFrom",
+                        "upgradedTo",
+                        "createdAt",
+                        "updatedAt"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "feature"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No active feature for this dynasty slug",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/features/{slug}": {
       "get": {
         "summary": "Get a single feature by exact versioned slug",
-        "description": "Returns a feature by its **exact versioned slug** (e.g. `sales-cold-email-v2`). Returns 404 if no feature has this exact slug.\n\n**This does NOT accept dynasty slugs.** To look up by dynasty slug, use `GET /features/{dynastySlug}/inputs` or `GET /features/dynasty?slug=...`.",
+        "description": "Returns a feature by its **exact versioned slug** (e.g. `sales-cold-email-v2`). Returns 404 if no feature has this exact slug.\n\n**This does NOT accept dynasty slugs.** To look up by dynasty slug, use `GET /features/by-dynasty/{dynastySlug}`.",
         "tags": [
           "Features"
         ],
