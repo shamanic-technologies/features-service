@@ -367,7 +367,7 @@ describe("GET /features/:featureSlug/stats — press-kits source", () => {
     expect(res.body.stats.costPerPressKitCents).toBeCloseTo(5000 / 3);
   });
 
-  it("passes featureSlug and workflowSlug filters to press-kits-service", async () => {
+  it("passes featureDynastySlug filter to press-kits-service", async () => {
     const capturedUrls: string[] = [];
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
@@ -395,8 +395,7 @@ describe("GET /features/:featureSlug/stats — press-kits source", () => {
     expect(pressKitUrls.length).toBe(2);
     for (const u of pressKitUrls) {
       const parsed = new URL(u);
-      // featureDynastySlug is mapped to featureSlug for press-kits-service
-      expect(parsed.searchParams.get("featureSlug")).toBe("press-kit-page-generation");
+      expect(parsed.searchParams.get("featureDynastySlug")).toBe("press-kit-page-generation");
       expect(parsed.searchParams.get("brandId")).toBe("brand-1");
     }
   });
