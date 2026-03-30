@@ -714,24 +714,50 @@ async function fetchLeadsStats(
  * Calls both /media-kits/stats/views (views + unique visitors) and
  * /media-kits/stats/costs (generation count) in parallel.
  *
- * Note: press-kits-service only supports brandId and campaignId filters.
- * featureDynastySlug, workflowSlug, and groupBy dimensions are not supported yet.
+ * Supported filters: brandId, campaignId, featureSlug, workflowSlug.
+ * Supported groupBy: brandId, campaignId, featureSlug, workflowSlug.
+ *
+ * Note: press-kits-service stores featureSlug / workflowSlug (not dynasty
+ * variants). We pass featureDynastySlug as featureSlug — this works when the
+ * feature is v1 (dynasty slug == feature slug). For v2+ the dynasty slug won't
+ * match; full dynasty-aware filtering requires adding featureDynastySlug to
+ * press-kits-service's schema.
  */
 async function fetchPressKitsStats(
   orgId: string,
-  _groupBy: GroupByDimension | null,
+  groupBy: GroupByDimension | null,
   filters: Record<string, string>,
   identity: Identity,
 ): Promise<Map<string, Record<string, number>>> {
   const headers = buildDownstreamHeaders(getPressKitsServiceApiKey(), orgId, identity);
 
+  // press-kits-service supports: brandId, campaignId, featureSlug, workflowSlug
+  // We map featureDynastySlug → featureSlug and workflowDynastySlug → workflowSlug
+  // as a best-effort approximation (exact match for v1 features).
+  const pressKitsGroupBy = groupBy === "featureDynastySlug" ? "featureSlug"
+    : groupBy === "workflowDynastySlug" ? "workflowSlug"
+    : groupBy;
+  const supportedGroupBy = new Set(["brandId", "campaignId", "featureSlug", "workflowSlug"]);
+
+  function applyFilters(params: URLSearchParams): void {
+    if (filters.brandId) params.set("brandId", filters.brandId);
+    if (filters.campaignId) params.set("campaignId", filters.campaignId);
+    if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
+    if (filters.workflowDynastySlug) params.set("workflowSlug", filters.workflowDynastySlug);
+    if (filters.featureDynastySlug) params.set("featureSlug", filters.featureDynastySlug);
+  }
+
   const viewsParams = new URLSearchParams();
-  if (filters.brandId) viewsParams.set("brandId", filters.brandId);
-  if (filters.campaignId) viewsParams.set("campaignId", filters.campaignId);
+  applyFilters(viewsParams);
+  if (pressKitsGroupBy && supportedGroupBy.has(pressKitsGroupBy)) {
+    viewsParams.set("groupBy", pressKitsGroupBy);
+  }
 
   const costsParams = new URLSearchParams();
-  if (filters.brandId) costsParams.set("brandId", filters.brandId);
-  if (filters.campaignId) costsParams.set("campaignId", filters.campaignId);
+  applyFilters(costsParams);
+  if (pressKitsGroupBy && supportedGroupBy.has(pressKitsGroupBy)) {
+    costsParams.set("groupBy", pressKitsGroupBy);
+  }
 
   try {
     const [viewsRes, costsRes] = await Promise.all([
@@ -739,31 +765,70 @@ async function fetchPressKitsStats(
       fetch(`${getPressKitsServiceUrl()}/media-kits/stats/costs?${costsParams}`, { headers }),
     ]);
 
-    const stats: Record<string, number> = {};
+    // ── Parse views ────────────────────────────────────────────────────────
+    const viewsByGroup = new Map<string, { views: number; unique: number }>();
 
     if (viewsRes.ok) {
-      const viewsData = await viewsRes.json() as { totalViews: number; uniqueVisitors: number };
-      stats.pressKitViews = viewsData.totalViews;
-      stats.pressKitUniqueVisitors = viewsData.uniqueVisitors;
+      const viewsData = await viewsRes.json() as Record<string, unknown>;
+      if (viewsData.groups && Array.isArray(viewsData.groups)) {
+        for (const g of viewsData.groups as Array<Record<string, unknown>>) {
+          const key = String(g.key ?? "__total__");
+          viewsByGroup.set(key, {
+            views: Number(g.totalViews ?? 0),
+            unique: Number(g.uniqueVisitors ?? 0),
+          });
+        }
+      } else {
+        viewsByGroup.set("__total__", {
+          views: Number((viewsData as any).totalViews ?? 0),
+          unique: Number((viewsData as any).uniqueVisitors ?? 0),
+        });
+      }
     } else {
       console.error(`[features-service] press-kits-service /media-kits/stats/views failed: ${viewsRes.status}`);
     }
 
+    // ── Parse costs ────────────────────────────────────────────────────────
+    const costsByGroup = new Map<string, number>();
+
     if (costsRes.ok) {
-      const costsData = await costsRes.json() as { groups: Array<{ runCount: number }> };
-      let totalGenerated = 0;
-      for (const group of costsData.groups) {
-        totalGenerated += group.runCount;
+      const costsData = await costsRes.json() as {
+        groups: Array<{ dimensions: Record<string, string | null>; runCount: number }>;
+      };
+      if (!pressKitsGroupBy || !supportedGroupBy.has(pressKitsGroupBy)) {
+        let total = 0;
+        for (const g of costsData.groups) total += g.runCount;
+        if (costsData.groups.length > 0) costsByGroup.set("__total__", total);
+      } else {
+        for (const g of costsData.groups) {
+          const key = g.dimensions[pressKitsGroupBy] ?? "__total__";
+          costsByGroup.set(key, (costsByGroup.get(key) ?? 0) + g.runCount);
+        }
       }
-      stats.pressKitsGenerated = totalGenerated;
     } else {
       console.error(`[features-service] press-kits-service /media-kits/stats/costs failed: ${costsRes.status}`);
     }
 
+    // ── Merge into result map ──────────────────────────────────────────────
     const result = new Map<string, Record<string, number>>();
-    if (Object.keys(stats).length > 0) {
-      result.set("__total__", stats);
+    const allKeys = new Set([...viewsByGroup.keys(), ...costsByGroup.keys()]);
+
+    for (const key of allKeys) {
+      const stats: Record<string, number> = {};
+      const v = viewsByGroup.get(key);
+      if (v) {
+        stats.pressKitViews = v.views;
+        stats.pressKitUniqueVisitors = v.unique;
+      }
+      const c = costsByGroup.get(key);
+      if (c != null) {
+        stats.pressKitsGenerated = c;
+      }
+      if (Object.keys(stats).length > 0) {
+        result.set(key, stats);
+      }
     }
+
     return result;
   } catch (error) {
     console.error(`[features-service] press-kits-service stats network error:`, (error as Error).message);

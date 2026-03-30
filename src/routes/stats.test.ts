@@ -367,6 +367,91 @@ describe("GET /features/:featureSlug/stats — press-kits source", () => {
     expect(res.body.stats.costPerPressKitCents).toBeCloseTo(5000 / 3);
   });
 
+  it("passes featureSlug and workflowSlug filters to press-kits-service", async () => {
+    const capturedUrls: string[] = [];
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      capturedUrls.push(url);
+
+      if (url.includes("runs:3000")) {
+        return new Response(JSON.stringify({
+          groups: [{ dimensions: { workflowSlug: "__total__" }, totalCostInUsdCents: "0", runCount: 0, minStartedAt: null, maxStartedAt: null }],
+        }), { status: 200 });
+      }
+      if (url.includes("press-kits:3000") && url.includes("/stats/views")) {
+        return new Response(JSON.stringify({ totalViews: 0, uniqueVisitors: 0, lastViewedAt: null, firstViewedAt: null }), { status: 200 });
+      }
+      if (url.includes("press-kits:3000") && url.includes("/stats/costs")) {
+        return new Response(JSON.stringify({ groups: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await request(app)
+      .get("/features/press-kit-page-generation/stats?brandId=brand-1")
+      .set(AUTH_HEADERS);
+
+    const pressKitUrls = capturedUrls.filter((u) => u.includes("press-kits:3000"));
+    expect(pressKitUrls.length).toBe(2);
+    for (const u of pressKitUrls) {
+      const parsed = new URL(u);
+      // featureDynastySlug is mapped to featureSlug for press-kits-service
+      expect(parsed.searchParams.get("featureSlug")).toBe("press-kit-page-generation");
+      expect(parsed.searchParams.get("brandId")).toBe("brand-1");
+    }
+  });
+
+  it("supports groupBy=brandId with grouped press-kits responses", async () => {
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+
+      if (url.includes("runs:3000")) {
+        return new Response(JSON.stringify({
+          groups: [
+            { dimensions: { brandId: "brand-a" }, totalCostInUsdCents: "1000", runCount: 2, minStartedAt: "2026-01-01T00:00:00Z", maxStartedAt: "2026-03-01T00:00:00Z" },
+            { dimensions: { brandId: "brand-b" }, totalCostInUsdCents: "2000", runCount: 3, minStartedAt: "2026-02-01T00:00:00Z", maxStartedAt: "2026-03-15T00:00:00Z" },
+          ],
+        }), { status: 200 });
+      }
+
+      if (url.includes("press-kits:3000") && url.includes("/stats/views")) {
+        return new Response(JSON.stringify({
+          groups: [
+            { key: "brand-a", totalViews: 500, uniqueVisitors: 300, lastViewedAt: "2026-03-29T00:00:00Z" },
+            { key: "brand-b", totalViews: 800, uniqueVisitors: 550, lastViewedAt: "2026-03-28T00:00:00Z" },
+          ],
+        }), { status: 200 });
+      }
+
+      if (url.includes("press-kits:3000") && url.includes("/stats/costs")) {
+        return new Response(JSON.stringify({
+          groups: [
+            { dimensions: { brandId: "brand-a" }, runCount: 2, totalCostInUsdCents: 500, actualCostInUsdCents: 500, provisionedCostInUsdCents: 0 },
+            { dimensions: { brandId: "brand-b" }, runCount: 4, totalCostInUsdCents: 800, actualCostInUsdCents: 800, provisionedCostInUsdCents: 0 },
+          ],
+        }), { status: 200 });
+      }
+
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    const res = await request(app)
+      .get("/features/press-kit-page-generation/stats?groupBy=brandId")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.groups).toBeDefined();
+    expect(res.body.groups.length).toBe(2);
+
+    const brandA = res.body.groups.find((g: any) => g.brandId === "brand-a");
+    const brandB = res.body.groups.find((g: any) => g.brandId === "brand-b");
+    expect(brandA.stats.pressKitViews).toBe(500);
+    expect(brandA.stats.pressKitUniqueVisitors).toBe(300);
+    expect(brandA.stats.pressKitsGenerated).toBe(2);
+    expect(brandB.stats.pressKitViews).toBe(800);
+    expect(brandB.stats.pressKitsGenerated).toBe(4);
+  });
+
   it("returns null press-kits stats when press-kits-service is down", async () => {
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
