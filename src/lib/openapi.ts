@@ -238,7 +238,23 @@ registry.registerPath({
     "The path param must be a **dynasty slug** (e.g. `sales-cold-email`), NOT a versioned slug.\n\n" +
     "Returns 404 if no active feature exists for this dynasty slug.\n\n" +
     "Use this when you have a dynasty slug and need the full feature definition (inputs, outputs, charts, entities). " +
-    "For the versioned slug variant, use `GET /features/{slug}`.",
+    "For the versioned slug variant, use `GET /features/{slug}`.\n\n" +
+    "**Example:** `GET /features/by-dynasty/sales-cold-email`\n" +
+    "```json\n" +
+    "{\n" +
+    "  \"feature\": {\n" +
+    "    \"slug\": \"sales-cold-email-v2\",\n" +
+    "    \"dynastySlug\": \"sales-cold-email\",\n" +
+    "    \"dynastyName\": \"Sales Cold Email\",\n" +
+    "    \"version\": 2,\n" +
+    "    \"status\": \"active\",\n" +
+    "    \"inputs\": [...],\n" +
+    "    \"outputs\": [...],\n" +
+    "    \"charts\": [...],\n" +
+    "    \"entities\": [...]\n" +
+    "  }\n" +
+    "}\n" +
+    "```",
   tags: ["Features"],
   request: { headers: identityHeaders, params: z.object({ dynastySlug: z.string().describe("Dynasty slug (e.g. 'sales-cold-email'). Must be a dynasty slug — versioned slugs will 404.") }) },
   responses: {
@@ -257,7 +273,8 @@ registry.registerPath({
     "Returns a feature by its **exact versioned slug** (e.g. `sales-cold-email-v2`). " +
     "Returns 404 if no feature has this exact slug.\n\n" +
     "**This does NOT accept dynasty slugs.** To look up by dynasty slug, " +
-    "use `GET /features/by-dynasty/{dynastySlug}`.",
+    "use `GET /features/by-dynasty/{dynastySlug}`.\n\n" +
+    "**Example:** `GET /features/sales-cold-email-v2` → `{ \"feature\": { \"slug\": \"sales-cold-email-v2\", \"dynastySlug\": \"sales-cold-email\", \"version\": 2, ... } }`",
   tags: ["Features"],
   request: { headers: identityHeaders, params: z.object({ slug: z.string().describe("Exact versioned slug (e.g. 'sales-cold-email-v2'). NOT a dynasty slug.") }) },
   responses: {
@@ -337,7 +354,19 @@ registry.registerPath({
     "Returns the input field definitions for the **active version** of a dynasty. " +
     "The path param must be a **dynasty slug** (e.g. `sales-cold-email`), NOT a versioned slug.\n\n" +
     "Returns 404 if no active feature exists for this dynasty slug.\n\n" +
-    "The response includes both the resolved `slug` (versioned) and the `dynastySlug` for clarity.",
+    "The response includes both the resolved `slug` (versioned) and the `dynastySlug` for clarity.\n\n" +
+    "**Example:** `GET /features/sales-cold-email/inputs`\n" +
+    "```json\n" +
+    "{\n" +
+    "  \"slug\": \"sales-cold-email-v2\",\n" +
+    "  \"dynastySlug\": \"sales-cold-email\",\n" +
+    "  \"name\": \"Sales Cold Email\",\n" +
+    "  \"inputs\": [\n" +
+    "    { \"key\": \"targetAudience\", \"label\": \"Target Audience\", \"type\": \"textarea\", \"placeholder\": \"Describe your ideal customer...\", \"description\": \"...\", \"extractKey\": \"target_audience\" },\n" +
+    "    { \"key\": \"valueProposition\", \"label\": \"Value Proposition\", \"type\": \"textarea\", \"placeholder\": \"What makes your offering unique?\", \"description\": \"...\", \"extractKey\": \"value_proposition\" }\n" +
+    "  ]\n" +
+    "}\n" +
+    "```",
   tags: ["Features"],
   request: { headers: identityHeaders, params: z.object({ dynastySlug: z.string().describe("Dynasty slug (e.g. 'sales-cold-email'). Must be a dynasty slug — versioned slugs will 404.") }) },
   responses: {
@@ -459,7 +488,23 @@ registry.registerPath({
     "Pre-fills input values by extracting brand data via brand-service. " +
     "The path param must be a **dynasty slug** (e.g. `sales-cold-email`), NOT a versioned slug.\n\n" +
     "Resolves to the **active version** of the dynasty. Returns 404 if no active feature exists.\n\n" +
-    "The response includes the resolved `slug` (versioned) for reference.",
+    "The response includes the resolved `slug` (versioned) for reference.\n\n" +
+    "**Example:** `POST /features/sales-cold-email/prefill?format=text` with body `{ \"brandId\": \"uuid\" }`\n" +
+    "```json\n" +
+    "{\n" +
+    "  \"slug\": \"sales-cold-email-v2\",\n" +
+    "  \"brandId\": \"b1234567-...\",\n" +
+    "  \"format\": \"text\",\n" +
+    "  \"prefilled\": {\n" +
+    "    \"targetAudience\": \"Enterprise SaaS CTOs in North America\",\n" +
+    "    \"valueProposition\": \"AI-powered workflow automation reducing manual ops by 80%\"\n" +
+    "  }\n" +
+    "}\n" +
+    "```\n\n" +
+    "With `format=full`, each value includes cache and source metadata:\n" +
+    "```json\n" +
+    "{ \"targetAudience\": { \"value\": \"Enterprise SaaS CTOs...\", \"cached\": true, \"sourceUrls\": [\"https://example.com/about\"] } }\n" +
+    "```",
   tags: ["Features"],
   request: {
     headers: identityHeaders,
@@ -487,7 +532,20 @@ registry.registerPath({
   method: "get",
   path: "/stats/registry",
   summary: "Get the stats key registry",
-  description: "Returns the complete dictionary of known stats keys with their label and type. Used by the front-end to format and label output columns dynamically.",
+  description:
+    "Returns the complete dictionary of known stats keys with their label and type. " +
+    "Used by the front-end to format and label output columns dynamically.\n\n" +
+    "**Example response:**\n" +
+    "```json\n" +
+    "{\n" +
+    "  \"registry\": {\n" +
+    "    \"emailsSent\": { \"type\": \"count\", \"label\": \"Emails Sent\" },\n" +
+    "    \"emailsReplied\": { \"type\": \"count\", \"label\": \"Emails Replied\" },\n" +
+    "    \"replyRate\": { \"type\": \"rate\", \"label\": \"Reply Rate\" },\n" +
+    "    \"totalCostInUsdCents\": { \"type\": \"currency\", \"label\": \"Total Cost\" }\n" +
+    "  }\n" +
+    "}\n" +
+    "```",
   tags: ["Stats"],
   request: { headers: identityHeaders },
   responses: {
@@ -502,16 +560,34 @@ registry.registerPath({
   path: "/features/{featureSlug}/stats",
   summary: "Get computed stats for a feature",
   description:
-    "Returns computed stats for a **single feature slug** — no lineage traversal. " +
+    "Returns computed stats for a **single exact versioned slug** — no lineage traversal. " +
     "Optionally grouped by workflowSlug, brandId, or campaignId. " +
     "System stats (cost, runs, campaigns, dates) are always included.\n\n" +
-    "**This endpoint requires an exact versioned slug** (e.g. `sales-cold-email-v2`). " +
-    "For dynasty-wide stats, use `GET /stats/dynasty?dynastySlug=...`.\n\n" +
-    "**This endpoint returns stats for the exact slug only.** " +
-    "For aggregated stats across all versions of a dynasty (upgrade chain), use `GET /stats/dynasty?dynastySlug=...`.\n\n" +
+    "**This endpoint requires an exact versioned slug** (e.g. `sales-cold-email-v2`). NOT a dynasty slug. " +
+    "For dynasty-wide aggregated stats, use `GET /stats/dynasty?dynastySlug=...`.\n\n" +
     "Stats keys are either **raw** (fetched from email-gateway, runs-service, or outlets-service) " +
     "or **derived** (computed as a ratio, e.g. `replyRate = emailsReplied / emailsSent`). " +
-    "Use `GET /stats/registry` to discover available keys, their labels, and types.",
+    "Use `GET /stats/registry` to discover available keys, their labels, and types.\n\n" +
+    "**Example:** `GET /features/sales-cold-email-v2/stats?brandId=b123`\n" +
+    "```json\n" +
+    "{\n" +
+    "  \"featureSlug\": \"sales-cold-email-v2\",\n" +
+    "  \"systemStats\": { \"totalCostInUsdCents\": 4200, \"completedRuns\": 15, \"activeCampaigns\": 3, \"firstRunAt\": \"2026-01-10T...\", \"lastRunAt\": \"2026-03-28T...\" },\n" +
+    "  \"stats\": { \"emailsSent\": 1200, \"emailsReplied\": 48, \"replyRate\": 0.04 }\n" +
+    "}\n" +
+    "```\n\n" +
+    "**Example with groupBy:** `GET /features/sales-cold-email-v2/stats?groupBy=campaignId`\n" +
+    "```json\n" +
+    "{\n" +
+    "  \"featureSlug\": \"sales-cold-email-v2\",\n" +
+    "  \"groupBy\": \"campaignId\",\n" +
+    "  \"systemStats\": { ... },\n" +
+    "  \"groups\": [\n" +
+    "    { \"campaignId\": \"camp-1\", \"systemStats\": { ... }, \"stats\": { \"emailsSent\": 600, \"replyRate\": 0.05 } },\n" +
+    "    { \"campaignId\": \"camp-2\", \"systemStats\": { ... }, \"stats\": { \"emailsSent\": 600, \"replyRate\": 0.03 } }\n" +
+    "  ]\n" +
+    "}\n" +
+    "```",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
@@ -551,7 +627,16 @@ registry.registerPath({
     "Returns stats aggregated across the **full upgrade chain** of a dynasty using BFS lineage traversal. " +
     "This handles linear chains (v1 → v2 → v3) and convergence (two dynasties producing the same signature).\n\n" +
     "Use this endpoint when you need dynasty-wide stats. For stats on a single specific slug, use `GET /features/{featureSlug}/stats`.\n\n" +
-    "Supports the same groupBy and filter params as the per-feature stats endpoint.",
+    "Supports the same groupBy and filter params as the per-feature stats endpoint.\n\n" +
+    "**Example:** `GET /stats/dynasty?dynastySlug=sales-cold-email`\n" +
+    "```json\n" +
+    "{\n" +
+    "  \"dynastySlug\": \"sales-cold-email\",\n" +
+    "  \"systemStats\": { \"totalCostInUsdCents\": 12000, \"completedRuns\": 45, \"activeCampaigns\": 5, \"firstRunAt\": \"2025-11-01T...\", \"lastRunAt\": \"2026-03-28T...\" },\n" +
+    "  \"stats\": { \"emailsSent\": 5400, \"emailsReplied\": 216, \"replyRate\": 0.04 }\n" +
+    "}\n" +
+    "```\n\n" +
+    "This aggregates data from all versions (v1, v2, ...) and any converged dynasties.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
@@ -579,9 +664,21 @@ registry.registerPath({
   summary: "Global stats across all features",
   description:
     "Cross-feature stats endpoint for performance dashboards and org overview. " +
-    "Supports groupBy: featureSlug, workflowSlug, brandId, campaignId.\n\n" +
+    "Supports groupBy: featureSlug, featureDynastySlug, workflowSlug, workflowDynastySlug, brandId, campaignId.\n\n" +
     "Only active features are included in the computation. " +
-    "Stats from deprecated features are aggregated into their active successor via the lineage chain.",
+    "Stats from deprecated features are aggregated into their active successor via the lineage chain.\n\n" +
+    "**Example:** `GET /stats?groupBy=featureDynastySlug`\n" +
+    "```json\n" +
+    "{\n" +
+    "  \"groupBy\": \"featureDynastySlug\",\n" +
+    "  \"systemStats\": { \"totalCostInUsdCents\": 25000, \"completedRuns\": 120, \"activeCampaigns\": 8, ... },\n" +
+    "  \"groups\": [\n" +
+    "    { \"featureDynastySlug\": \"sales-cold-email\", \"systemStats\": { ... }, \"stats\": { \"emailsSent\": 5400, ... } },\n" +
+    "    { \"featureDynastySlug\": \"pr-journalist-outreach\", \"systemStats\": { ... }, \"stats\": { \"journalistsContacted\": 320, ... } }\n" +
+    "  ]\n" +
+    "}\n" +
+    "```\n\n" +
+    "**Example with filter:** `GET /stats?brandId=b123&groupBy=campaignId` — stats for a specific brand, grouped by campaign.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
