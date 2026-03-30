@@ -310,7 +310,41 @@ describe("signature helpers", () => {
   });
 });
 
-// ── Dynasty slug resolution on operational endpoints ──────────────────────
+// ── GET /features/:slug — exact versioned slug only ──────────────────────
+
+describe("GET /features/:slug", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns feature by exact versioned slug", async () => {
+    mockFindFirst.mockResolvedValueOnce({
+      id: "feat-v2",
+      slug: "sales-cold-email-v2",
+      dynastySlug: "sales-cold-email",
+      status: "active",
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-v2")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.feature.slug).toBe("sales-cold-email-v2");
+  });
+
+  it("returns 404 when slug does not match (no fallback to dynasty)", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .get("/features/sales-cold-email")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(404);
+  });
+});
+
+// ── GET /features/:dynastySlug/inputs — dynasty slug only ────────────────
 
 const MOCK_FEATURE_V2 = {
   id: "feat-v2",
@@ -326,55 +360,12 @@ const MOCK_FEATURE_V2 = {
   entities: [],
 };
 
-describe("GET /features/:slug — dynasty slug resolution", () => {
+describe("GET /features/:dynastySlug/inputs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("returns feature by exact versioned slug", async () => {
-    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE_V2);
-
-    const res = await request(app)
-      .get("/features/sales-cold-email-v2")
-      .set(AUTH_HEADERS);
-
-    expect(res.status).toBe(200);
-    expect(res.body.feature.slug).toBe("sales-cold-email-v2");
-  });
-
-  it("resolves dynasty slug to active version when exact slug not found", async () => {
-    // First findFirst (exact slug) returns null
-    mockFindFirst.mockResolvedValueOnce(null);
-    // Second findFirst (dynasty slug + active) returns v2
-    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE_V2);
-
-    const res = await request(app)
-      .get("/features/sales-cold-email")
-      .set(AUTH_HEADERS);
-
-    expect(res.status).toBe(200);
-    expect(res.body.feature.slug).toBe("sales-cold-email-v2");
-  });
-
-  it("returns 404 when neither slug nor dynasty slug matches", async () => {
-    mockFindFirst.mockResolvedValueOnce(null);
-    mockFindFirst.mockResolvedValueOnce(null);
-
-    const res = await request(app)
-      .get("/features/nonexistent")
-      .set(AUTH_HEADERS);
-
-    expect(res.status).toBe(404);
-  });
-});
-
-describe("GET /features/:slug/inputs — dynasty slug resolution", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("resolves dynasty slug to active version", async () => {
-    mockFindFirst.mockResolvedValueOnce(null);
+  it("resolves dynasty slug to active version and returns inputs", async () => {
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE_V2);
 
     const res = await request(app)
@@ -383,35 +374,37 @@ describe("GET /features/:slug/inputs — dynasty slug resolution", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.slug).toBe("sales-cold-email-v2");
+    expect(res.body.dynastySlug).toBe("sales-cold-email");
     expect(res.body.name).toBe("Sales Cold Email");
     expect(res.body.inputs).toEqual(MOCK_FEATURE_V2.inputs);
   });
 
-  it("returns 404 when neither slug nor dynasty slug matches", async () => {
-    mockFindFirst.mockResolvedValueOnce(null);
+  it("returns 404 when no active feature exists for dynasty slug", async () => {
     mockFindFirst.mockResolvedValueOnce(null);
 
     const res = await request(app)
-      .get("/features/nonexistent/inputs")
+      .get("/features/nonexistent-dynasty/inputs")
       .set(AUTH_HEADERS);
 
     expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/dynasty slug/i);
   });
 });
 
-describe("POST /features/:slug/prefill — dynasty slug resolution", () => {
+// ── POST /features/:dynastySlug/prefill — dynasty slug only ──────────────
+
+describe("POST /features/:dynastySlug/prefill", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("resolves dynasty slug to active version", async () => {
+  it("resolves dynasty slug to active version and prefills", async () => {
     const { extractBrandFields } = await import("../lib/brand-client.js");
     const mockExtract = vi.mocked(extractBrandFields);
     mockExtract.mockResolvedValueOnce({
       target: { value: "Enterprise", cached: false, sourceUrls: [] },
     });
 
-    mockFindFirst.mockResolvedValueOnce(null);
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE_V2);
 
     const res = await request(app)
@@ -423,15 +416,15 @@ describe("POST /features/:slug/prefill — dynasty slug resolution", () => {
     expect(res.body.slug).toBe("sales-cold-email-v2");
   });
 
-  it("returns 404 when neither slug nor dynasty slug matches", async () => {
-    mockFindFirst.mockResolvedValueOnce(null);
+  it("returns 404 when no active feature exists for dynasty slug", async () => {
     mockFindFirst.mockResolvedValueOnce(null);
 
     const res = await request(app)
-      .post("/features/nonexistent/prefill")
+      .post("/features/nonexistent-dynasty/prefill")
       .set(AUTH_HEADERS)
       .send({ brandId: "00000000-0000-0000-0000-000000000001" });
 
     expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/dynasty slug/i);
   });
 });

@@ -12,8 +12,8 @@ describe("openApiDocument", () => {
     const paths = Object.keys(openApiDocument.paths ?? {});
     expect(paths).toContain("/features");
     expect(paths).toContain("/features/{slug}");
-    expect(paths).toContain("/features/{slug}/inputs");
-    expect(paths).toContain("/features/{slug}/prefill");
+    expect(paths).toContain("/features/{dynastySlug}/inputs");
+    expect(paths).toContain("/features/{dynastySlug}/prefill");
   });
 
   it("exposes stats endpoints", () => {
