@@ -309,3 +309,129 @@ describe("signature helpers", () => {
     expect(result).toMatch(new RegExp(`^${CODENAMES[0]}-[a-f0-9]{4}$`));
   });
 });
+
+// ── Dynasty slug resolution on operational endpoints ──────────────────────
+
+const MOCK_FEATURE_V2 = {
+  id: "feat-v2",
+  slug: "sales-cold-email-v2",
+  name: "Sales Cold Email v2",
+  dynastyName: "Sales Cold Email",
+  dynastySlug: "sales-cold-email",
+  version: 2,
+  status: "active",
+  inputs: [{ key: "target", label: "Target", type: "text", placeholder: "...", description: "desc", extractKey: "target" }],
+  outputs: [{ key: "emailsSent", displayOrder: 1 }],
+  charts: [],
+  entities: [],
+};
+
+describe("GET /features/:slug — dynasty slug resolution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns feature by exact versioned slug", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE_V2);
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-v2")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.feature.slug).toBe("sales-cold-email-v2");
+  });
+
+  it("resolves dynasty slug to active version when exact slug not found", async () => {
+    // First findFirst (exact slug) returns null
+    mockFindFirst.mockResolvedValueOnce(null);
+    // Second findFirst (dynasty slug + active) returns v2
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE_V2);
+
+    const res = await request(app)
+      .get("/features/sales-cold-email")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.feature.slug).toBe("sales-cold-email-v2");
+  });
+
+  it("returns 404 when neither slug nor dynasty slug matches", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    mockFindFirst.mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .get("/features/nonexistent")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /features/:slug/inputs — dynasty slug resolution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("resolves dynasty slug to active version", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE_V2);
+
+    const res = await request(app)
+      .get("/features/sales-cold-email/inputs")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.slug).toBe("sales-cold-email-v2");
+    expect(res.body.name).toBe("Sales Cold Email");
+    expect(res.body.inputs).toEqual(MOCK_FEATURE_V2.inputs);
+  });
+
+  it("returns 404 when neither slug nor dynasty slug matches", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    mockFindFirst.mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .get("/features/nonexistent/inputs")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /features/:slug/prefill — dynasty slug resolution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("resolves dynasty slug to active version", async () => {
+    const { extractBrandFields } = await import("../lib/brand-client.js");
+    const mockExtract = vi.mocked(extractBrandFields);
+    mockExtract.mockResolvedValueOnce({
+      target: { value: "Enterprise", cached: false, sourceUrls: [] },
+    });
+
+    mockFindFirst.mockResolvedValueOnce(null);
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE_V2);
+
+    const res = await request(app)
+      .post("/features/sales-cold-email/prefill")
+      .set(AUTH_HEADERS)
+      .send({ brandId: "00000000-0000-0000-0000-000000000001" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.slug).toBe("sales-cold-email-v2");
+  });
+
+  it("returns 404 when neither slug nor dynasty slug matches", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    mockFindFirst.mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .post("/features/nonexistent/prefill")
+      .set(AUTH_HEADERS)
+      .send({ brandId: "00000000-0000-0000-0000-000000000001" });
+
+    expect(res.status).toBe(404);
+  });
+});

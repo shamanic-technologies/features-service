@@ -3922,16 +3922,19 @@
     },
     "/features/{slug}": {
       "get": {
-        "summary": "Get a single feature by slug",
+        "summary": "Get a single feature by slug or dynasty slug",
+        "description": "Accepts either a **versioned slug** (e.g. `sales-cold-email-v2`) or a **dynasty slug** (e.g. `sales-cold-email`). When a dynasty slug is provided and no exact slug match exists, resolves to the **active version** in that dynasty.\n\nThis allows the dashboard to use stable dynasty slugs without tracking the current version number.",
         "tags": [
           "Features"
         ],
         "parameters": [
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Versioned feature slug or dynasty slug. Dynasty slugs resolve to the active version."
             },
             "required": true,
+            "description": "Versioned feature slug or dynasty slug. Dynasty slugs resolve to the active version.",
             "name": "slug",
             "in": "path"
           },
@@ -5403,15 +5406,18 @@
     "/features/{slug}/inputs": {
       "get": {
         "summary": "Get input definitions for a feature",
+        "description": "Returns the input field definitions for a feature. Accepts either a **versioned slug** or a **dynasty slug** — dynasty slugs resolve to the active version.\n\nThe response always returns the **resolved versioned slug** in the `slug` field, not the dynasty slug.",
         "tags": [
           "Features"
         ],
         "parameters": [
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Versioned feature slug or dynasty slug. Dynasty slugs resolve to the active version."
             },
             "required": true,
+            "description": "Versioned feature slug or dynasty slug. Dynasty slugs resolve to the active version.",
             "name": "slug",
             "in": "path"
           },
@@ -5866,15 +5872,18 @@
     "/features/{slug}/prefill": {
       "post": {
         "summary": "Pre-fill input values for a feature from brand data",
+        "description": "Pre-fills input values by extracting brand data via brand-service. Accepts either a **versioned slug** or a **dynasty slug** — dynasty slugs resolve to the active version.\n\nThe response always returns the **resolved versioned slug** in the `slug` field.",
         "tags": [
           "Features"
         ],
         "parameters": [
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Versioned feature slug or dynasty slug. Dynasty slugs resolve to the active version."
             },
             "required": true,
+            "description": "Versioned feature slug or dynasty slug. Dynasty slugs resolve to the active version.",
             "name": "slug",
             "in": "path"
           },
@@ -6166,16 +6175,18 @@
     "/features/{featureSlug}/stats": {
       "get": {
         "summary": "Get computed stats for a feature",
-        "description": "Returns computed stats for a **single feature slug** — no lineage traversal. Optionally grouped by workflowSlug, brandId, or campaignId. System stats (cost, runs, campaigns, dates) are always included.\n\n**This endpoint returns stats for the exact slug only.** For aggregated stats across all versions of a dynasty (upgrade chain), use `GET /stats/dynasty?dynastySlug=...`.\n\nStats keys are either **raw** (fetched from email-gateway, runs-service, or outlets-service) or **derived** (computed as a ratio, e.g. `replyRate = emailsReplied / emailsSent`). Use `GET /stats/registry` to discover available keys, their labels, and types.",
+        "description": "Returns computed stats for a **single feature slug** — no lineage traversal. Optionally grouped by workflowSlug, brandId, or campaignId. System stats (cost, runs, campaigns, dates) are always included.\n\nAccepts either a **versioned slug** or a **dynasty slug** — dynasty slugs resolve to the active version.\n\n**This endpoint returns stats for the exact resolved slug only.** For aggregated stats across all versions of a dynasty (upgrade chain), use `GET /stats/dynasty?dynastySlug=...`.\n\nStats keys are either **raw** (fetched from email-gateway, runs-service, or outlets-service) or **derived** (computed as a ratio, e.g. `replyRate = emailsReplied / emailsSent`). Use `GET /stats/registry` to discover available keys, their labels, and types.",
         "tags": [
           "Stats"
         ],
         "parameters": [
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Versioned feature slug or dynasty slug. Dynasty slugs resolve to the active version."
             },
             "required": true,
+            "description": "Versioned feature slug or dynasty slug. Dynasty slugs resolve to the active version.",
             "name": "featureSlug",
             "in": "path"
           },

@@ -4,6 +4,7 @@ import { db } from "../db/index.js";
 import { features, type Feature, type FeatureChart } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { STATS_REGISTRY, getPublicRegistry, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
+import { resolveBySlugOrDynasty } from "./features.js";
 // dynasty-client is used by features.ts for resolution endpoints;
 // stats.ts passes dynasty params through to downstream services directly.
 
@@ -828,9 +829,8 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     const { featureSlug } = req.params;
     const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
 
-    const feature = await db.query.features.findFirst({
-      where: eq(features.slug, featureSlug),
-    });
+    // Accepts versioned slug or dynasty slug (resolves to active version)
+    const feature = await resolveBySlugOrDynasty(featureSlug);
 
     if (!feature) {
       return res.status(404).json({ error: "Feature not found" });
