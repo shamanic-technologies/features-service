@@ -8,6 +8,7 @@ import { db } from "./db/index.js";
 import healthRoutes from "./routes/health.js";
 import featuresRoutes from "./routes/features.js";
 import statsRoutes from "./routes/stats.js";
+import publicRoutes from "./routes/public.js";
 import { registerSeedFeatures } from "./seed/register.js";
 
 // ── Required env vars — crash at startup if missing ─────────────────────────
@@ -32,6 +33,7 @@ app.use(express.json());
 
 // Routes
 app.use(healthRoutes);
+app.use(publicRoutes);
 app.use(featuresRoutes);
 app.use(statsRoutes);
 

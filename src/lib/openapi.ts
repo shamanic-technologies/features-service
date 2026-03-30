@@ -428,6 +428,7 @@ registry.registerPath({
     "`{ slugs: ['sales-cold-email-sophia', 'sales-cold-email-sophia-v2', 'sales-cold-email-sophia-v3'] }`",
   tags: ["Features"],
   request: {
+    headers: identityHeaders,
     query: z.object({
       dynastySlug: z.string().describe("The stable dynasty slug (unversioned)"),
     }),
@@ -694,6 +695,67 @@ registry.registerPath({
   responses: {
     200: { description: "Global stats", content: { "application/json": { schema: globalStatsResponseSchema } } },
     400: { description: "Missing required identity headers", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PUBLIC ENDPOINTS (no auth)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── GET /public/features ──────────────────────────────────────────────────
+
+const publicFeatureSchema = z.object({
+  dynastyName: z.string().describe("Stable dynasty display name"),
+  dynastySlug: z.string().describe("Stable dynasty slug (unversioned)"),
+  description: z.string(),
+  icon: z.string().describe("Lucide icon name"),
+  category: z.string(),
+  channel: z.string(),
+  audienceType: z.string(),
+  displayOrder: z.number().int(),
+});
+
+registry.register("PublicFeature", publicFeatureSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/public/features",
+  summary: "List active features (public, no auth)",
+  description:
+    "Returns all active features with display-safe fields only. " +
+    "Designed for landing pages and public-facing UIs. " +
+    "No API key or identity headers required.\n\n" +
+    "Sorted by `displayOrder` ascending.",
+  tags: ["Public"],
+  responses: {
+    200: {
+      description: "Active features",
+      content: { "application/json": { schema: z.object({ features: z.array(publicFeatureSchema) }) } },
+    },
+  },
+});
+
+// ── GET /public/features/dynasty/slugs ────────────────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/public/features/dynasty/slugs",
+  summary: "List all versioned slugs for a dynasty (public, no auth)",
+  description:
+    "Public mirror of `GET /features/dynasty/slugs`. Returns all feature slugs " +
+    "(active + deprecated) belonging to the given dynasty slug.\n\n" +
+    "Example: `?dynastySlug=sales-cold-email-sophia` → " +
+    "`{ slugs: ['sales-cold-email-sophia', 'sales-cold-email-sophia-v2'] }`",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      dynastySlug: z.string().describe("The stable dynasty slug (unversioned)"),
+    }),
+  },
+  responses: {
+    200: { description: "Dynasty slugs", content: { "application/json": { schema: dynastySlugsResponseSchema } } },
+    400: { description: "Missing dynastySlug parameter", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No features found for this dynasty slug", content: { "application/json": { schema: errorResponse } } },
   },
 });
 
