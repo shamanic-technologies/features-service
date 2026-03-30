@@ -428,7 +428,6 @@ registry.registerPath({
     "`{ slugs: ['sales-cold-email-sophia', 'sales-cold-email-sophia-v2', 'sales-cold-email-sophia-v3'] }`",
   tags: ["Features"],
   request: {
-    headers: identityHeaders,
     query: z.object({
       dynastySlug: z.string().describe("The stable dynasty slug (unversioned)"),
     }),
