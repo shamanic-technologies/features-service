@@ -15,7 +15,7 @@ export interface RawStatsKeyDef {
   kind: "raw";
   type: "count" | "currency";
   label: string;
-  source: "email-gateway" | "runs" | "campaign" | "outlets" | "journalists";
+  source: "email-gateway" | "runs" | "campaign" | "outlets" | "journalists" | "leads";
   /** For pipeline count keys: count runs matching this service+task filter */
   runFilter?: RunFilter;
 }
@@ -51,7 +51,7 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   repliesWrongContact:  { kind: "raw", type: "count",   label: "Wrong Contact",    source: "email-gateway" },
 
   // ── Pipeline counts: runs-service (counted via per-task runCount) ─────────
-  leadsServed:         { kind: "raw", type: "count",    label: "Leads Served",     source: "runs", runFilter: { serviceName: "lead-service", taskName: "lead-serve" } },
+  leadsServed:         { kind: "raw", type: "count",    label: "Leads Served",     source: "leads" },
   emailsGenerated:     { kind: "raw", type: "count",    label: "Emails Generated", source: "runs", runFilter: { serviceName: "content-generation-service", taskName: "single-generation" } },
 
   // ── Journalists: journalists-service ────────────────────────────────────────

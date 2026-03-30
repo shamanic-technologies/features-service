@@ -11,6 +11,8 @@ vi.stubEnv("OUTLETS_SERVICE_URL", "http://outlets-service");
 vi.stubEnv("OUTLETS_SERVICE_API_KEY", "outlets-key");
 vi.stubEnv("JOURNALISTS_SERVICE_URL", "http://journalists-service");
 vi.stubEnv("JOURNALISTS_SERVICE_API_KEY", "journalists-key");
+vi.stubEnv("LEAD_SERVICE_URL", "http://lead-service");
+vi.stubEnv("LEAD_SERVICE_API_KEY", "lead-key");
 
 vi.mock("../src/db/index.js", () => ({
   db: {
@@ -117,7 +119,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     });
   }
 
-  it("fetches leadsServed from runs-service with serviceName=lead-service&taskName=lead-serve", async () => {
+  it("fetches leadsServed from lead-service /stats", async () => {
     mockFetch("_never_match_", { groups: [] });
     const app = createApp();
 
@@ -129,13 +131,10 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
       .set("x-run-id", "run-1")
       .expect(200);
 
-    // Find the pipeline call for lead-service
-    const pipelineCalls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) =>
-        url.includes("serviceName=lead-service") &&
-        url.includes("taskName=lead-serve"),
+    const leadCalls = fetchSpy.mock.calls.filter(
+      ([url]: [string]) => url.includes("lead-service/stats"),
     );
-    expect(pipelineCalls.length).toBeGreaterThan(0);
+    expect(leadCalls.length).toBeGreaterThan(0);
   });
 
   it("fetches emailsGenerated from runs-service with serviceName=content-generation-service", async () => {
@@ -161,10 +160,8 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
   it("returns pipeline counts in stats response", async () => {
     mockFetchMulti([
       {
-        match: "serviceName=lead-service",
-        response: {
-          groups: [{ dimensions: { workflowName: null }, runCount: 42, totalCostInUsdCents: "0", actualCostInUsdCents: "0", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0" }],
-        },
+        match: "lead-service/stats",
+        response: { served: 42, contacted: 10, buffered: 0, skipped: 0, apollo: { enrichedLeadsCount: 0, searchCount: 0, fetchedPeopleCount: 0, totalMatchingPeople: 0 } },
       },
       {
         match: "serviceName=content-generation-service",
@@ -254,11 +251,11 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
   it("pipeline stats work with groupBy=campaignId", async () => {
     mockFetchMulti([
       {
-        match: "serviceName=lead-service",
+        match: "lead-service/stats",
         response: {
           groups: [
-            { dimensions: { campaignId: "camp-a" }, runCount: 15, totalCostInUsdCents: "0", actualCostInUsdCents: "0", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0" },
-            { dimensions: { campaignId: "camp-b" }, runCount: 27, totalCostInUsdCents: "0", actualCostInUsdCents: "0", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0" },
+            { key: "camp-a", served: 15, contacted: 0, buffered: 0, skipped: 0 },
+            { key: "camp-b", served: 27, contacted: 0, buffered: 0, skipped: 0 },
           ],
         },
       },
@@ -331,7 +328,7 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
     }
   });
 
-  it("forwards campaignId to runs-service pipeline stats calls", async () => {
+  it("forwards campaignId to lead-service /stats and runs-service pipeline stats calls", async () => {
     const app = createApp();
 
     await request(app)
@@ -342,6 +339,16 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
       .set("x-run-id", "run-1")
       .expect(200);
 
+    // lead-service /stats should receive campaignId
+    const leadCalls = fetchSpy.mock.calls.filter(
+      ([url]: [string]) => url.includes("lead-service/stats"),
+    );
+    expect(leadCalls.length).toBeGreaterThan(0);
+    for (const [url] of leadCalls) {
+      expect(url).toContain("campaignId=camp-456");
+    }
+
+    // pipeline calls (emailsGenerated) should also receive campaignId
     const pipelineCalls = fetchSpy.mock.calls.filter(
       ([url]: [string]) => url.includes("serviceName="),
     );
@@ -369,14 +376,10 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
 
   it("returns non-zero pipeline stats when no groupBy is specified", async () => {
     fetchSpy.mockImplementation((url: string) => {
-      if (url.includes("serviceName=lead-service")) {
+      if (url.includes("lead-service/stats")) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({
-            groups: [
-              { dimensions: { workflowName: "sales-email-cold-outreach-herald" }, runCount: 3, totalCostInUsdCents: "0" },
-            ],
-          }),
+          json: () => Promise.resolve({ served: 3, contacted: 0, buffered: 0, skipped: 0, apollo: { enrichedLeadsCount: 0, searchCount: 0, fetchedPeopleCount: 0, totalMatchingPeople: 0 } }),
         });
       }
       if (url.includes("serviceName=content-generation-service")) {
@@ -412,24 +415,17 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
       .set("x-run-id", "run-1")
       .expect(200);
 
-    // Before the fix, these were null/0 because runs-service returned groups keyed by
-    // workflowName but the caller looked for "__total__"
     expect(res.body.stats.leadsServed).toBe(3);
     expect(res.body.stats.emailsGenerated).toBe(3);
     expect(res.body.systemStats.completedRuns).toBe(3);
   });
 
-  it("aggregates multiple workflow groups into __total__ when no groupBy", async () => {
+  it("aggregates lead-service stats into __total__ when no groupBy", async () => {
     fetchSpy.mockImplementation((url: string) => {
-      if (url.includes("serviceName=lead-service")) {
+      if (url.includes("lead-service/stats")) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({
-            groups: [
-              { dimensions: { workflowName: "wf-a" }, runCount: 5, totalCostInUsdCents: "0" },
-              { dimensions: { workflowName: "wf-b" }, runCount: 7, totalCostInUsdCents: "0" },
-            ],
-          }),
+          json: () => Promise.resolve({ served: 12, contacted: 0, buffered: 0, skipped: 0, apollo: { enrichedLeadsCount: 0, searchCount: 0, fetchedPeopleCount: 0, totalMatchingPeople: 0 } }),
         });
       }
       if (url.includes("/v1/stats/costs") && !url.includes("serviceName=")) {
@@ -456,7 +452,7 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
       .set("x-run-id", "run-1")
       .expect(200);
 
-    expect(res.body.stats.leadsServed).toBe(12); // 5 + 7
+    expect(res.body.stats.leadsServed).toBe(12);
     expect(res.body.systemStats.completedRuns).toBe(30); // 10 + 20
     expect(res.body.systemStats.totalCostInUsdCents).toBe(500); // 200 + 300
     expect(res.body.systemStats.firstRunAt).toBe("2026-01-01T00:00:00Z");
