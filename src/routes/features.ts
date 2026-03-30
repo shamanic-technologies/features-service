@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, and, isNull } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { features } from "../db/schema.js";
+import { features, type Feature } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { batchUpsertFeaturesSchema, createFeatureSchema, updateFeatureSchema, prefillRequestSchema } from "../lib/schemas.js";
 import { computeSignature, slugify, versionedName, versionedSlug, composeDynastyName, pickForkName } from "../lib/signature.js";
@@ -9,6 +9,34 @@ import { extractBrandFields } from "../lib/brand-client.js";
 import { flattenValue } from "../lib/flatten.js";
 
 const router = Router();
+
+// ── Slug resolution ─────────────────────────────────────────────────────────
+
+/**
+ * Resolve a feature by slug. Accepts either a versioned slug (exact match)
+ * or a dynasty slug (resolves to the active version in that dynasty).
+ *
+ * 1. Try exact slug match (handles versioned slugs like "sales-cold-email-v2")
+ * 2. Fall back to dynasty slug match → return the active version
+ *
+ * This allows operational endpoints (inputs, prefill, stats) to accept
+ * dynasty slugs from the dashboard without requiring callers to know
+ * the current versioned slug.
+ */
+export async function resolveBySlugOrDynasty(slug: string): Promise<Feature | null> {
+  const exact = await db.query.features.findFirst({
+    where: eq(features.slug, slug),
+  });
+  if (exact) return exact;
+
+  const active = await db.query.features.findFirst({
+    where: and(
+      eq(features.dynastySlug, slug),
+      eq(features.status, "active"),
+    ),
+  });
+  return active;
+}
 
 // ── Dynasty helpers ─────────────────────────────────────────────────────────
 
@@ -563,15 +591,13 @@ router.get("/features", apiKeyAuth, async (req, res) => {
   }
 });
 
-// ── GET /features/:slug — Get a single feature by slug ──────────────────────
+// ── GET /features/:slug — Get a single feature by slug or dynasty slug ───────
 
 router.get("/features/:slug", apiKeyAuth, async (req, res) => {
   try {
     const { slug } = req.params;
 
-    const feature = await db.query.features.findFirst({
-      where: eq(features.slug, slug),
-    });
+    const feature = await resolveBySlugOrDynasty(slug);
 
     if (!feature) {
       return res.status(404).json({ error: "Feature not found" });
@@ -585,14 +611,13 @@ router.get("/features/:slug", apiKeyAuth, async (req, res) => {
 });
 
 // ── GET /features/:slug/inputs — Get only the inputs for a feature ──────────
+// Accepts versioned slug or dynasty slug (resolves to active version)
 
 router.get("/features/:slug/inputs", apiKeyAuth, async (req, res) => {
   try {
     const { slug } = req.params;
 
-    const feature = await db.query.features.findFirst({
-      where: eq(features.slug, slug),
-    });
+    const feature = await resolveBySlugOrDynasty(slug);
 
     if (!feature) {
       return res.status(404).json({ error: "Feature not found" });
@@ -610,6 +635,7 @@ router.get("/features/:slug/inputs", apiKeyAuth, async (req, res) => {
 });
 
 // ── POST /features/:slug/prefill — Pre-fill input values ────────────────────
+// Accepts versioned slug or dynasty slug (resolves to active version)
 
 router.post("/features/:slug/prefill", apiKeyAuth, async (req, res) => {
   try {
@@ -627,9 +653,7 @@ router.post("/features/:slug/prefill", apiKeyAuth, async (req, res) => {
 
     const { brandId } = parsed.data;
 
-    const feature = await db.query.features.findFirst({
-      where: eq(features.slug, slug),
-    });
+    const feature = await resolveBySlugOrDynasty(slug);
 
     if (!feature) {
       return res.status(404).json({ error: "Feature not found" });

@@ -231,9 +231,13 @@ registry.registerPath({
 registry.registerPath({
   method: "get",
   path: "/features/{slug}",
-  summary: "Get a single feature by slug",
+  summary: "Get a single feature by slug or dynasty slug",
+  description:
+    "Accepts either a **versioned slug** (e.g. `sales-cold-email-v2`) or a **dynasty slug** (e.g. `sales-cold-email`). " +
+    "When a dynasty slug is provided and no exact slug match exists, resolves to the **active version** in that dynasty.\n\n" +
+    "This allows the dashboard to use stable dynasty slugs without tracking the current version number.",
   tags: ["Features"],
-  request: { headers: identityHeaders, params: z.object({ slug: z.string() }) },
+  request: { headers: identityHeaders, params: z.object({ slug: z.string().describe("Versioned feature slug or dynasty slug. Dynasty slugs resolve to the active version.") }) },
   responses: {
     200: { description: "Feature details", content: { "application/json": { schema: z.object({ feature: featureResponseSchema }) } } },
     404: { description: "Not found", content: { "application/json": { schema: errorResponse } } },
@@ -307,8 +311,12 @@ registry.registerPath({
   method: "get",
   path: "/features/{slug}/inputs",
   summary: "Get input definitions for a feature",
+  description:
+    "Returns the input field definitions for a feature. " +
+    "Accepts either a **versioned slug** or a **dynasty slug** — dynasty slugs resolve to the active version.\n\n" +
+    "The response always returns the **resolved versioned slug** in the `slug` field, not the dynasty slug.",
   tags: ["Features"],
-  request: { headers: identityHeaders, params: z.object({ slug: z.string() }) },
+  request: { headers: identityHeaders, params: z.object({ slug: z.string().describe("Versioned feature slug or dynasty slug. Dynasty slugs resolve to the active version.") }) },
   responses: {
     200: { description: "Feature inputs", content: { "application/json": { schema: inputsResponseSchema } } },
     404: { description: "Not found", content: { "application/json": { schema: errorResponse } } },
@@ -424,10 +432,14 @@ registry.registerPath({
   method: "post",
   path: "/features/{slug}/prefill",
   summary: "Pre-fill input values for a feature from brand data",
+  description:
+    "Pre-fills input values by extracting brand data via brand-service. " +
+    "Accepts either a **versioned slug** or a **dynasty slug** — dynasty slugs resolve to the active version.\n\n" +
+    "The response always returns the **resolved versioned slug** in the `slug` field.",
   tags: ["Features"],
   request: {
     headers: identityHeaders,
-    params: z.object({ slug: z.string() }),
+    params: z.object({ slug: z.string().describe("Versioned feature slug or dynasty slug. Dynasty slugs resolve to the active version.") }),
     query: z.object({ format: z.enum(["text", "full"]).optional() }),
     body: { content: { "application/json": { schema: prefillRequestSchema } } },
   },
@@ -469,7 +481,8 @@ registry.registerPath({
     "Returns computed stats for a **single feature slug** — no lineage traversal. " +
     "Optionally grouped by workflowSlug, brandId, or campaignId. " +
     "System stats (cost, runs, campaigns, dates) are always included.\n\n" +
-    "**This endpoint returns stats for the exact slug only.** " +
+    "Accepts either a **versioned slug** or a **dynasty slug** — dynasty slugs resolve to the active version.\n\n" +
+    "**This endpoint returns stats for the exact resolved slug only.** " +
     "For aggregated stats across all versions of a dynasty (upgrade chain), use `GET /stats/dynasty?dynastySlug=...`.\n\n" +
     "Stats keys are either **raw** (fetched from email-gateway, runs-service, or outlets-service) " +
     "or **derived** (computed as a ratio, e.g. `replyRate = emailsReplied / emailsSent`). " +
@@ -477,7 +490,7 @@ registry.registerPath({
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
-    params: z.object({ featureSlug: z.string() }),
+    params: z.object({ featureSlug: z.string().describe("Versioned feature slug or dynasty slug. Dynasty slugs resolve to the active version.") }),
     query: z.object({
       groupBy: z.enum(["workflowSlug", "workflowDynastySlug", "brandId", "campaignId"]).optional(),
       brandId: z.string().optional(),
