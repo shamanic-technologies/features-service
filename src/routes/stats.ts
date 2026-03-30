@@ -714,14 +714,8 @@ async function fetchLeadsStats(
  * Calls both /media-kits/stats/views (views + unique visitors) and
  * /media-kits/stats/costs (generation count) in parallel.
  *
- * Supported filters: brandId, campaignId, featureSlug, workflowSlug.
- * Supported groupBy: brandId, campaignId, featureSlug, workflowSlug.
- *
- * Note: press-kits-service stores featureSlug / workflowSlug (not dynasty
- * variants). We pass featureDynastySlug as featureSlug — this works when the
- * feature is v1 (dynasty slug == feature slug). For v2+ the dynasty slug won't
- * match; full dynasty-aware filtering requires adding featureDynastySlug to
- * press-kits-service's schema.
+ * Supported filters: brandId, campaignId, featureDynastySlug, workflowDynastySlug.
+ * Supported groupBy: brandId, campaignId, featureDynastySlug, workflowDynastySlug.
  */
 async function fetchPressKitsStats(
   orgId: string,
@@ -731,32 +725,25 @@ async function fetchPressKitsStats(
 ): Promise<Map<string, Record<string, number>>> {
   const headers = buildDownstreamHeaders(getPressKitsServiceApiKey(), orgId, identity);
 
-  // press-kits-service supports: brandId, campaignId, featureSlug, workflowSlug
-  // We map featureDynastySlug → featureSlug and workflowDynastySlug → workflowSlug
-  // as a best-effort approximation (exact match for v1 features).
-  const pressKitsGroupBy = groupBy === "featureDynastySlug" ? "featureSlug"
-    : groupBy === "workflowDynastySlug" ? "workflowSlug"
-    : groupBy;
-  const supportedGroupBy = new Set(["brandId", "campaignId", "featureSlug", "workflowSlug"]);
+  const supportedGroupBy = new Set(["brandId", "campaignId", "featureDynastySlug", "workflowDynastySlug"]);
 
   function applyFilters(params: URLSearchParams): void {
     if (filters.brandId) params.set("brandId", filters.brandId);
     if (filters.campaignId) params.set("campaignId", filters.campaignId);
-    if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
-    if (filters.workflowDynastySlug) params.set("workflowSlug", filters.workflowDynastySlug);
-    if (filters.featureDynastySlug) params.set("featureSlug", filters.featureDynastySlug);
+    if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
+    if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
   }
 
   const viewsParams = new URLSearchParams();
   applyFilters(viewsParams);
-  if (pressKitsGroupBy && supportedGroupBy.has(pressKitsGroupBy)) {
-    viewsParams.set("groupBy", pressKitsGroupBy);
+  if (groupBy && supportedGroupBy.has(groupBy)) {
+    viewsParams.set("groupBy", groupBy);
   }
 
   const costsParams = new URLSearchParams();
   applyFilters(costsParams);
-  if (pressKitsGroupBy && supportedGroupBy.has(pressKitsGroupBy)) {
-    costsParams.set("groupBy", pressKitsGroupBy);
+  if (groupBy && supportedGroupBy.has(groupBy)) {
+    costsParams.set("groupBy", groupBy);
   }
 
   try {
@@ -795,13 +782,13 @@ async function fetchPressKitsStats(
       const costsData = await costsRes.json() as {
         groups: Array<{ dimensions: Record<string, string | null>; runCount: number }>;
       };
-      if (!pressKitsGroupBy || !supportedGroupBy.has(pressKitsGroupBy)) {
+      if (!groupBy || !supportedGroupBy.has(groupBy)) {
         let total = 0;
         for (const g of costsData.groups) total += g.runCount;
         if (costsData.groups.length > 0) costsByGroup.set("__total__", total);
       } else {
         for (const g of costsData.groups) {
-          const key = g.dimensions[pressKitsGroupBy] ?? "__total__";
+          const key = g.dimensions[groupBy] ?? "__total__";
           costsByGroup.set(key, (costsByGroup.get(key) ?? 0) + g.runCount);
         }
       }
