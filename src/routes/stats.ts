@@ -845,7 +845,10 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     if (req.query.workflowSlug) filters.workflowSlug = req.query.workflowSlug as string;
     if (req.query.workflowDynastySlug) filters.workflowDynastySlug = req.query.workflowDynastySlug as string;
 
-    // Stats for this exact feature slug only
+    // Scope ALL downstream calls to this feature's dynasty
+    filters.featureDynastySlug = feature.dynastySlug;
+
+    // Stats for this exact feature slug only (used by runs-service which filters by slug)
     const slugs = [featureSlug];
 
     const requiredKeys = collectRequiredKeys(feature);
@@ -969,6 +972,9 @@ router.get("/stats/dynasty", apiKeyAuth, async (req, res) => {
     if (req.query.campaignId) filters.campaignId = req.query.campaignId as string;
     if (req.query.workflowSlug) filters.workflowSlug = req.query.workflowSlug as string;
     if (req.query.workflowDynastySlug) filters.workflowDynastySlug = req.query.workflowDynastySlug as string;
+
+    // Scope ALL downstream calls to this dynasty
+    filters.featureDynastySlug = dynastySlug;
 
     const requiredKeys = collectRequiredKeys(activeFeature);
     const sources = requiredSources(requiredKeys);
