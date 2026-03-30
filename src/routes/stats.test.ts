@@ -40,6 +40,8 @@ process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
 process.env.OUTLETS_SERVICE_URL = "http://outlets:3000";
 process.env.OUTLETS_SERVICE_API_KEY = "outlets-key";
+process.env.PRESS_KITS_SERVICE_URL = "http://press-kits:3000";
+process.env.PRESS_KITS_SERVICE_API_KEY = "press-kits-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
@@ -254,5 +256,147 @@ describe("GET /stats/dynasty", () => {
       .get("/stats/dynasty?dynastySlug=cold-email");
 
     expect(res.status).toBe(401);
+  });
+});
+
+// ── Press-kits stats integration ────────────────────────────────────────────
+
+const MOCK_PRESS_KIT_FEATURE = {
+  ...MOCK_FEATURE,
+  id: "feat-pk-1",
+  slug: "press-kit-page-generation",
+  name: "Press Kit Page Generation",
+  baseName: "Press Kit Page Generation",
+  dynastyName: "Press Kit Page Generation",
+  dynastySlug: "press-kit-page-generation",
+  category: "pr",
+  channel: "page",
+  outputs: [
+    { key: "pressKitsGenerated", displayOrder: 1 },
+    { key: "pressKitViews", displayOrder: 2 },
+    { key: "pressKitUniqueVisitors", displayOrder: 3 },
+    { key: "costPerPressKitCents", displayOrder: 4 },
+  ],
+  charts: [
+    {
+      key: "pressKitFunnel",
+      type: "funnel-bar" as const,
+      title: "Press Kit Funnel",
+      displayOrder: 1,
+      steps: [
+        { key: "pressKitsGenerated" },
+        { key: "pressKitViews" },
+        { key: "pressKitUniqueVisitors" },
+      ],
+    },
+    {
+      key: "viewsBreakdown",
+      type: "breakdown-bar" as const,
+      title: "Views Breakdown",
+      displayOrder: 2,
+      segments: [
+        { key: "pressKitViews", color: "blue", sentiment: "neutral" },
+        { key: "pressKitUniqueVisitors", color: "green", sentiment: "positive" },
+      ],
+    },
+  ],
+};
+
+describe("GET /features/:featureSlug/stats — press-kits source", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(MOCK_PRESS_KIT_FEATURE as any);
+    vi.mocked(db.query.features.findMany).mockResolvedValue([MOCK_PRESS_KIT_FEATURE as any]);
+  });
+
+  afterEach(() => {
+    fetchSpy?.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it("fetches press-kits stats and returns pressKitsGenerated, pressKitViews, pressKitUniqueVisitors", async () => {
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+
+      if (url.includes("runs:3000")) {
+        return new Response(JSON.stringify({
+          groups: [{
+            dimensions: { workflowSlug: "__total__" },
+            totalCostInUsdCents: "5000",
+            runCount: 5,
+            minStartedAt: "2026-01-01T00:00:00Z",
+            maxStartedAt: "2026-03-01T00:00:00Z",
+          }],
+        }), { status: 200 });
+      }
+
+      if (url.includes("press-kits:3000") && url.includes("/stats/views")) {
+        return new Response(JSON.stringify({
+          totalViews: 1250,
+          uniqueVisitors: 843,
+          lastViewedAt: "2026-03-29T14:32:00.000Z",
+          firstViewedAt: "2026-03-01T09:15:00.000Z",
+        }), { status: 200 });
+      }
+
+      if (url.includes("press-kits:3000") && url.includes("/stats/costs")) {
+        return new Response(JSON.stringify({
+          groups: [{
+            dimensions: {},
+            totalCostInUsdCents: 2050,
+            actualCostInUsdCents: 2050,
+            provisionedCostInUsdCents: 0,
+            runCount: 3,
+          }],
+        }), { status: 200 });
+      }
+
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    const res = await request(app)
+      .get("/features/press-kit-page-generation/stats")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.stats.pressKitsGenerated).toBe(3);
+    expect(res.body.stats.pressKitViews).toBe(1250);
+    expect(res.body.stats.pressKitUniqueVisitors).toBe(843);
+    // costPerPressKitCents = totalCostInUsdCents (5000) / pressKitsGenerated (3)
+    expect(res.body.stats.costPerPressKitCents).toBeCloseTo(5000 / 3);
+  });
+
+  it("returns null press-kits stats when press-kits-service is down", async () => {
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+
+      if (url.includes("runs:3000")) {
+        return new Response(JSON.stringify({
+          groups: [{
+            dimensions: { workflowSlug: "__total__" },
+            totalCostInUsdCents: "0",
+            runCount: 0,
+            minStartedAt: null,
+            maxStartedAt: null,
+          }],
+        }), { status: 200 });
+      }
+
+      if (url.includes("press-kits:3000")) {
+        throw new TypeError("fetch failed");
+      }
+
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    const res = await request(app)
+      .get("/features/press-kit-page-generation/stats")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.stats.pressKitsGenerated).toBeNull();
+    expect(res.body.stats.pressKitViews).toBeNull();
+    expect(res.body.stats.pressKitUniqueVisitors).toBeNull();
   });
 });
