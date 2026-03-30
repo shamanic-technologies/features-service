@@ -45,11 +45,25 @@ describe("STATS_REGISTRY", () => {
     expect(VALID_STATS_KEYS.has("replyRate")).toBe(true);
   });
 
+  it("contains press-kits stats keys", () => {
+    expect(VALID_STATS_KEYS.has("pressKitsGenerated")).toBe(true);
+    expect(VALID_STATS_KEYS.has("pressKitViews")).toBe(true);
+    expect(VALID_STATS_KEYS.has("pressKitUniqueVisitors")).toBe(true);
+  });
+
+  it("press-kits keys have source 'press-kits'", () => {
+    expect(STATS_REGISTRY.pressKitsGenerated).toMatchObject({ kind: "raw", source: "press-kits" });
+    expect(STATS_REGISTRY.pressKitViews).toMatchObject({ kind: "raw", source: "press-kits" });
+    expect(STATS_REGISTRY.pressKitUniqueVisitors).toMatchObject({ kind: "raw", source: "press-kits" });
+  });
+
   it("contains derived cost-per keys", () => {
     expect(VALID_STATS_KEYS.has("costPerOpenCents")).toBe(true);
     expect(VALID_STATS_KEYS.has("costPerClickCents")).toBe(true);
     expect(VALID_STATS_KEYS.has("costPerReplyCents")).toBe(true);
     expect(VALID_STATS_KEYS.has("costPerOutletCents")).toBe(true);
+    expect(VALID_STATS_KEYS.has("costPerPressKitCents")).toBe(true);
+    expect(VALID_STATS_KEYS.has("costPerPressKitViewCents")).toBe(true);
   });
 
   it("derived keys reference valid raw keys", () => {

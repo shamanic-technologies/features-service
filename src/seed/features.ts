@@ -314,4 +314,83 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
       { name: "press-kits" },
     ],
   },
+
+  // ─── Press Kit Page Generation ────────────────────────────────────────────
+  {
+    name: "Press Kit Page Generation",
+    description: "Generate and publish branded press kit pages with AI-powered content.",
+    icon: "file-text",
+    category: "pr",
+    channel: "page",
+    audienceType: "content-generation",
+    implemented: true,
+    displayOrder: 4,
+    status: "active",
+
+    inputs: [
+      {
+        key: "prAngle",
+        label: "PR Angle",
+        type: "text",
+        placeholder: "Series B funding announcement, product launch...",
+        description:
+          "The editorial hook or story angle for the press kit. Should be newsworthy and specific. Examples: 'Series B funding of $25M led by Sequoia', 'Launch of AI-powered compliance platform'. The LLM uses this as the core narrative for the press kit.",
+        extractKey: "suggestedAngles",
+      },
+      {
+        key: "companyContext",
+        label: "Company Context",
+        type: "text",
+        placeholder: "What does your company do and why is this relevant now?",
+        description:
+          "Brief background on the company. Include founding date, traction metrics, notable customers, or market position. Examples: 'Founded 2022, 500+ enterprise customers', 'Only platform certified for EU AI Act compliance'. Gives the LLM credibility context for the press kit content.",
+        extractKey: "companyDescription",
+      },
+      {
+        key: "spokesperson",
+        label: "Spokesperson",
+        type: "text",
+        placeholder: "Jane Doe, CEO — available for interviews",
+        description:
+          "Who is available for interviews or quotes. Include name, title, and any notable credentials. Examples: 'John Smith, CTO — ex-Google, published AI researcher'. The LLM includes this in the press kit's contact section.",
+        extractKey: "spokesperson",
+      },
+    ],
+
+    outputs: [
+      { key: "pressKitsGenerated",        displayOrder: 1 },
+      { key: "pressKitViews",             displayOrder: 2 },
+      { key: "pressKitUniqueVisitors",    displayOrder: 3 },
+      { key: "costPerPressKitCents",      displayOrder: 4, defaultSort: true, sortDirection: "asc" },
+      { key: "costPerPressKitViewCents",  displayOrder: 5 },
+    ],
+
+    charts: [
+      {
+        key: "pressKitFunnel",
+        type: "funnel-bar",
+        title: "Press Kit Funnel",
+        displayOrder: 1,
+        steps: [
+          { key: "pressKitsGenerated" },
+          { key: "pressKitViews" },
+          { key: "pressKitUniqueVisitors" },
+        ],
+      },
+      {
+        key: "viewsBreakdown",
+        type: "breakdown-bar",
+        title: "Views Breakdown",
+        displayOrder: 2,
+        segments: [
+          { key: "pressKitViews",          color: "blue",  sentiment: "neutral" },
+          { key: "pressKitUniqueVisitors", color: "green", sentiment: "positive" },
+        ],
+      },
+    ],
+
+    entities: [
+      { name: "press-kits", countKey: "pressKitsGenerated" },
+    ],
+  },
 ];

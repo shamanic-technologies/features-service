@@ -15,7 +15,7 @@ export interface RawStatsKeyDef {
   kind: "raw";
   type: "count" | "currency";
   label: string;
-  source: "email-gateway" | "runs" | "campaign" | "outlets" | "journalists" | "leads";
+  source: "email-gateway" | "runs" | "campaign" | "outlets" | "journalists" | "leads" | "press-kits";
   /** For pipeline count keys: count runs matching this service+task filter */
   runFilter?: RunFilter;
 }
@@ -58,6 +58,11 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   journalistsFound:     { kind: "raw", type: "count",   label: "Journalists Found",     source: "journalists" },
   journalistsContacted: { kind: "raw", type: "count",   label: "Journalists Contacted", source: "journalists" },
 
+  // ── Press kits: press-kits-service ──────────────────────────────────────────
+  pressKitsGenerated:      { kind: "raw", type: "count", label: "Kits Generated",     source: "press-kits" },
+  pressKitViews:           { kind: "raw", type: "count", label: "Page Views",         source: "press-kits" },
+  pressKitUniqueVisitors:  { kind: "raw", type: "count", label: "Unique Visitors",    source: "press-kits" },
+
   // ── Cost & runs: runs-service ─────────────────────────────────────────────
   totalCostInUsdCents: { kind: "raw", type: "currency", label: "Total Cost",       source: "runs" },
   completedRuns:       { kind: "raw", type: "count",    label: "Runs",             source: "runs" },
@@ -78,10 +83,12 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   coverageRate:        { kind: "derived", type: "rate",     label: "Coverage Rate", numerator: "repliesInterested",    denominator: "emailsSent" },
 
   // ── Derived cost-per ──────────────────────────────────────────────────────
-  costPerOpenCents:    { kind: "derived", type: "currency", label: "$/Open",        numerator: "totalCostInUsdCents",  denominator: "emailsOpened" },
-  costPerClickCents:   { kind: "derived", type: "currency", label: "$/Click",       numerator: "totalCostInUsdCents",  denominator: "emailsClicked" },
-  costPerReplyCents:   { kind: "derived", type: "currency", label: "$/Reply",       numerator: "totalCostInUsdCents",  denominator: "emailsReplied" },
-  costPerOutletCents:  { kind: "derived", type: "currency", label: "$/Outlet",      numerator: "totalCostInUsdCents",  denominator: "outletsDiscovered" },
+  costPerOpenCents:       { kind: "derived", type: "currency", label: "$/Open",        numerator: "totalCostInUsdCents",  denominator: "emailsOpened" },
+  costPerClickCents:      { kind: "derived", type: "currency", label: "$/Click",       numerator: "totalCostInUsdCents",  denominator: "emailsClicked" },
+  costPerReplyCents:      { kind: "derived", type: "currency", label: "$/Reply",       numerator: "totalCostInUsdCents",  denominator: "emailsReplied" },
+  costPerOutletCents:     { kind: "derived", type: "currency", label: "$/Outlet",      numerator: "totalCostInUsdCents",  denominator: "outletsDiscovered" },
+  costPerPressKitCents:   { kind: "derived", type: "currency", label: "$/Kit",         numerator: "totalCostInUsdCents",  denominator: "pressKitsGenerated" },
+  costPerPressKitViewCents: { kind: "derived", type: "currency", label: "$/View",      numerator: "totalCostInUsdCents",  denominator: "pressKitViews" },
 };
 
 /** All valid stats key names */
