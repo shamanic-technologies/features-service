@@ -227,6 +227,26 @@ registry.registerPath({
   },
 });
 
+// ── GET /features/by-dynasty/:dynastySlug ─────────────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/features/by-dynasty/{dynastySlug}",
+  summary: "Get the active feature by dynasty slug",
+  description:
+    "Returns the **active version** of a feature dynasty. " +
+    "The path param must be a **dynasty slug** (e.g. `sales-cold-email`), NOT a versioned slug.\n\n" +
+    "Returns 404 if no active feature exists for this dynasty slug.\n\n" +
+    "Use this when you have a dynasty slug and need the full feature definition (inputs, outputs, charts, entities). " +
+    "For the versioned slug variant, use `GET /features/{slug}`.",
+  tags: ["Features"],
+  request: { headers: identityHeaders, params: z.object({ dynastySlug: z.string().describe("Dynasty slug (e.g. 'sales-cold-email'). Must be a dynasty slug — versioned slugs will 404.") }) },
+  responses: {
+    200: { description: "Active feature in this dynasty", content: { "application/json": { schema: z.object({ feature: featureResponseSchema }) } } },
+    404: { description: "No active feature for this dynasty slug", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /features/:slug ──────────────────────────────────────────────────
 
 registry.registerPath({
@@ -237,7 +257,7 @@ registry.registerPath({
     "Returns a feature by its **exact versioned slug** (e.g. `sales-cold-email-v2`). " +
     "Returns 404 if no feature has this exact slug.\n\n" +
     "**This does NOT accept dynasty slugs.** To look up by dynasty slug, " +
-    "use `GET /features/{dynastySlug}/inputs` or `GET /features/dynasty?slug=...`.",
+    "use `GET /features/by-dynasty/{dynastySlug}`.",
   tags: ["Features"],
   request: { headers: identityHeaders, params: z.object({ slug: z.string().describe("Exact versioned slug (e.g. 'sales-cold-email-v2'). NOT a dynasty slug.") }) },
   responses: {

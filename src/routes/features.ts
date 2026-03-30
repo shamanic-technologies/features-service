@@ -563,6 +563,30 @@ router.get("/features", apiKeyAuth, async (req, res) => {
   }
 });
 
+// ── GET /features/by-dynasty/:dynastySlug — Get active feature by dynasty slug ─
+
+router.get("/features/by-dynasty/:dynastySlug", apiKeyAuth, async (req, res) => {
+  try {
+    const { dynastySlug } = req.params;
+
+    const feature = await db.query.features.findFirst({
+      where: and(
+        eq(features.dynastySlug, dynastySlug),
+        eq(features.status, "active"),
+      ),
+    });
+
+    if (!feature) {
+      return res.status(404).json({ error: `No active feature found for dynasty slug "${dynastySlug}"` });
+    }
+
+    res.json({ feature });
+  } catch (error) {
+    console.error("[features-service] Get feature by dynasty slug error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // ── GET /features/:slug — Get a single feature by exact versioned slug ───────
 
 router.get("/features/:slug", apiKeyAuth, async (req, res) => {
