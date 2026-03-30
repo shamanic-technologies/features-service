@@ -154,6 +154,56 @@ describe("stats route - network error resilience", () => {
   });
 });
 
+// ── Feature stats scoping — regression test for cross-feature bleed ─────────
+
+describe("GET /features/:featureSlug/stats — feature scoping", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(MOCK_FEATURE as any);
+    vi.mocked(db.query.features.findMany).mockResolvedValue([MOCK_FEATURE as any]);
+  });
+
+  afterEach(() => {
+    fetchSpy?.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it("passes featureDynastySlug to all downstream services", async () => {
+    const urls: string[] = [];
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      urls.push(url);
+
+      if (url.includes("runs:3000")) {
+        return new Response(JSON.stringify({
+          groups: [{
+            dimensions: { workflowSlug: "__total__" },
+            totalCostInUsdCents: "0",
+            runCount: 0,
+            minStartedAt: null,
+            maxStartedAt: null,
+          }],
+        }), { status: 200 });
+      }
+      if (url.includes("email:3000")) {
+        return new Response(JSON.stringify({ broadcast: {}, transactional: {} }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await request(app)
+      .get("/features/cold-email-v1/stats?brandId=brand-1")
+      .set(AUTH_HEADERS);
+
+    // Every downstream call should include featureDynastySlug=cold-email
+    for (const url of urls) {
+      const parsed = new URL(url);
+      expect(parsed.searchParams.get("featureDynastySlug")).toBe("cold-email");
+    }
+  });
+});
+
 // ── Dynasty stats endpoint ──────────────────────────────────────────────────
 
 describe("GET /stats/dynasty", () => {
