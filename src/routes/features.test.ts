@@ -150,7 +150,7 @@ describe("GET /features/dynasty/slugs", () => {
     vi.clearAllMocks();
   });
 
-  it("returns all versioned slugs sorted by version without auth", async () => {
+  it("returns all versioned slugs sorted by version", async () => {
     mockFindMany.mockResolvedValueOnce([
       { slug: "sales-cold-email-sophia-v2", version: 2 },
       { slug: "sales-cold-email-sophia", version: 1 },
@@ -158,7 +158,8 @@ describe("GET /features/dynasty/slugs", () => {
     ]);
 
     const res = await request(app)
-      .get("/features/dynasty/slugs?dynastySlug=sales-cold-email-sophia");
+      .get("/features/dynasty/slugs?dynastySlug=sales-cold-email-sophia")
+      .set(AUTH_HEADERS);
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
@@ -174,7 +175,8 @@ describe("GET /features/dynasty/slugs", () => {
     mockFindMany.mockResolvedValueOnce([]);
 
     const res = await request(app)
-      .get("/features/dynasty/slugs?dynastySlug=nonexistent-dynasty");
+      .get("/features/dynasty/slugs?dynastySlug=nonexistent-dynasty")
+      .set(AUTH_HEADERS);
 
     expect(res.status).toBe(404);
     expect(res.body.error).toMatch(/no features found/i);
@@ -182,7 +184,8 @@ describe("GET /features/dynasty/slugs", () => {
 
   it("returns 400 when dynastySlug query param is missing", async () => {
     const res = await request(app)
-      .get("/features/dynasty/slugs");
+      .get("/features/dynasty/slugs")
+      .set(AUTH_HEADERS);
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/dynastySlug/i);
@@ -194,21 +197,18 @@ describe("GET /features/dynasty/slugs", () => {
     ]);
 
     const res = await request(app)
-      .get("/features/dynasty/slugs?dynastySlug=pr-journalist-outreach");
+      .get("/features/dynasty/slugs?dynastySlug=pr-journalist-outreach")
+      .set(AUTH_HEADERS);
 
     expect(res.status).toBe(200);
     expect(res.body.slugs).toEqual(["pr-journalist-outreach"]);
   });
 
-  it("is accessible without authentication (public endpoint)", async () => {
-    mockFindMany.mockResolvedValueOnce([
-      { slug: "sales-cold-email", version: 1 },
-    ]);
-
+  it("requires authentication", async () => {
     const res = await request(app)
       .get("/features/dynasty/slugs?dynastySlug=sales-cold-email");
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(401);
   });
 });
 

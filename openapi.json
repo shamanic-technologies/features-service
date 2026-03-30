@@ -2094,6 +2094,48 @@
           "dynastySlug",
           "systemStats"
         ]
+      },
+      "PublicFeature": {
+        "type": "object",
+        "properties": {
+          "dynastyName": {
+            "type": "string",
+            "description": "Stable dynasty display name"
+          },
+          "dynastySlug": {
+            "type": "string",
+            "description": "Stable dynasty slug (unversioned)"
+          },
+          "description": {
+            "type": "string"
+          },
+          "icon": {
+            "type": "string",
+            "description": "Lucide icon name"
+          },
+          "category": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "audienceType": {
+            "type": "string"
+          },
+          "displayOrder": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dynastyName",
+          "dynastySlug",
+          "description",
+          "icon",
+          "category",
+          "channel",
+          "audienceType",
+          "displayOrder"
+        ]
       }
     },
     "parameters": {}
@@ -6104,6 +6146,39 @@
             "description": "The stable dynasty slug (unversioned)",
             "name": "dynastySlug",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
           }
         ],
         "responses": {
@@ -7337,6 +7412,158 @@
           },
           "400": {
             "description": "Missing required identity headers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/features": {
+      "get": {
+        "summary": "List active features (public, no auth)",
+        "description": "Returns all active features with display-safe fields only. Designed for landing pages and public-facing UIs. No API key or identity headers required.\n\nSorted by `displayOrder` ascending.",
+        "tags": [
+          "Public"
+        ],
+        "responses": {
+          "200": {
+            "description": "Active features",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "features": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "dynastyName": {
+                            "type": "string",
+                            "description": "Stable dynasty display name"
+                          },
+                          "dynastySlug": {
+                            "type": "string",
+                            "description": "Stable dynasty slug (unversioned)"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string",
+                            "description": "Lucide icon name"
+                          },
+                          "category": {
+                            "type": "string"
+                          },
+                          "channel": {
+                            "type": "string"
+                          },
+                          "audienceType": {
+                            "type": "string"
+                          },
+                          "displayOrder": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "dynastyName",
+                          "dynastySlug",
+                          "description",
+                          "icon",
+                          "category",
+                          "channel",
+                          "audienceType",
+                          "displayOrder"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "features"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/features/dynasty/slugs": {
+      "get": {
+        "summary": "List all versioned slugs for a dynasty (public, no auth)",
+        "description": "Public mirror of `GET /features/dynasty/slugs`. Returns all feature slugs (active + deprecated) belonging to the given dynasty slug.\n\nExample: `?dynastySlug=sales-cold-email-sophia` → `{ slugs: ['sales-cold-email-sophia', 'sales-cold-email-sophia-v2'] }`",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The stable dynasty slug (unversioned)"
+            },
+            "required": true,
+            "description": "The stable dynasty slug (unversioned)",
+            "name": "dynastySlug",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dynasty slugs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "slugs": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "All versioned slugs in the dynasty, sorted by version ascending"
+                    }
+                  },
+                  "required": [
+                    "slugs"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing dynastySlug parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No features found for this dynasty slug",
             "content": {
               "application/json": {
                 "schema": {

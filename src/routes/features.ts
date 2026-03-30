@@ -484,7 +484,7 @@ router.get("/features/dynasty", apiKeyAuth, async (req, res) => {
 
 // ── GET /features/dynasty/slugs — All versioned slugs in a dynasty ──────────
 
-router.get("/features/dynasty/slugs", async (req, res) => {
+router.get("/features/dynasty/slugs", apiKeyAuth, async (req, res) => {
   try {
     const dynastySlug = req.query.dynastySlug as string | undefined;
     if (!dynastySlug) {
