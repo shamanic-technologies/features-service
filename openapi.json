@@ -1782,22 +1782,16 @@
                   "nullable": true,
                   "description": "Extracted value — can be a string, array, or object depending on the field"
                 },
-                "cached": {
-                  "type": "boolean",
-                  "description": "Whether the value was served from cache"
-                },
-                "sourceUrls": {
-                  "type": "array",
-                  "nullable": true,
-                  "items": {
-                    "type": "string"
+                "byBrand": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
                   },
-                  "description": "URLs from the brand's website used to extract this value"
+                  "description": "Per-brand values keyed by brand domain"
                 }
               },
               "required": [
-                "cached",
-                "sourceUrls"
+                "byBrand"
               ]
             },
             "description": "Map of input key → full extraction result."
@@ -1809,7 +1803,7 @@
           "format",
           "prefilled"
         ],
-        "description": "Pre-filled values with metadata (cache status, source URLs)"
+        "description": "Pre-filled values with per-brand breakdown"
       },
       "InputsResponse": {
         "type": "object",
@@ -6429,7 +6423,7 @@
     "/features/{dynastySlug}/prefill": {
       "post": {
         "summary": "Pre-fill input values by dynasty slug",
-        "description": "Pre-fills input values by extracting brand data via brand-service. The path param must be a **dynasty slug** (e.g. `sales-cold-email`), NOT a versioned slug.\n\nResolves to the **active version** of the dynasty. Returns 404 if no active feature exists.\n\n**Brand IDs are read from the `x-brand-id` header** (comma-separated UUIDs for multi-brand campaigns).\n\nThe response includes the resolved `slug` (versioned) for reference.\n\n**Example:** `POST /features/sales-cold-email/prefill?format=text` with header `x-brand-id: uuid1,uuid2`\n```json\n{\n  \"slug\": \"sales-cold-email-v2\",\n  \"brandId\": \"uuid1,uuid2\",\n  \"format\": \"text\",\n  \"prefilled\": {\n    \"targetAudience\": \"Enterprise SaaS CTOs in North America\",\n    \"valueProposition\": \"AI-powered workflow automation reducing manual ops by 80%\"\n  }\n}\n```\n\nWith `format=full`, each value includes cache and source metadata:\n```json\n{ \"targetAudience\": { \"value\": \"Enterprise SaaS CTOs...\", \"cached\": true, \"sourceUrls\": [\"https://example.com/about\"] } }\n```",
+        "description": "Pre-fills input values by extracting brand data via brand-service. The path param must be a **dynasty slug** (e.g. `sales-cold-email`), NOT a versioned slug.\n\nResolves to the **active version** of the dynasty. Returns 404 if no active feature exists.\n\n**Brand IDs are read from the `x-brand-id` header** (comma-separated UUIDs for multi-brand campaigns).\n\nThe response includes the resolved `slug` (versioned) for reference.\n\n**Example:** `POST /features/sales-cold-email/prefill?format=text` with header `x-brand-id: uuid1,uuid2`\n```json\n{\n  \"slug\": \"sales-cold-email-v2\",\n  \"brandId\": \"uuid1,uuid2\",\n  \"format\": \"text\",\n  \"prefilled\": {\n    \"targetAudience\": \"Enterprise SaaS CTOs in North America\",\n    \"valueProposition\": \"AI-powered workflow automation reducing manual ops by 80%\"\n  }\n}\n```\n\nWith `format=full`, each value includes per-brand breakdown:\n```json\n{ \"targetAudience\": { \"value\": \"Enterprise SaaS CTOs...\", \"byBrand\": { \"acme.com\": \"Enterprise SaaS CTOs...\" } } }\n```",
         "tags": [
           "Features"
         ],
@@ -6567,22 +6561,16 @@
                                 "nullable": true,
                                 "description": "Extracted value — can be a string, array, or object depending on the field"
                               },
-                              "cached": {
-                                "type": "boolean",
-                                "description": "Whether the value was served from cache"
-                              },
-                              "sourceUrls": {
-                                "type": "array",
-                                "nullable": true,
-                                "items": {
-                                  "type": "string"
+                              "byBrand": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "nullable": true
                                 },
-                                "description": "URLs from the brand's website used to extract this value"
+                                "description": "Per-brand values keyed by brand domain"
                               }
                             },
                             "required": [
-                              "cached",
-                              "sourceUrls"
+                              "byBrand"
                             ]
                           },
                           "description": "Map of input key → full extraction result."
@@ -6594,7 +6582,7 @@
                         "format",
                         "prefilled"
                       ],
-                      "description": "Pre-filled values with metadata (cache status, source URLs)"
+                      "description": "Pre-filled values with per-brand breakdown"
                     }
                   ]
                 }
