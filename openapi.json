@@ -1731,8 +1731,7 @@
           },
           "brandId": {
             "type": "string",
-            "format": "uuid",
-            "description": "Brand that was used for pre-fill"
+            "description": "Brand UUID(s) used for pre-fill (CSV string from x-brand-id header)"
           },
           "format": {
             "type": "string",
@@ -1766,8 +1765,7 @@
           },
           "brandId": {
             "type": "string",
-            "format": "uuid",
-            "description": "Brand that was used for pre-fill"
+            "description": "Brand UUID(s) used for pre-fill (CSV string from x-brand-id header)"
           },
           "format": {
             "type": "string",
@@ -2180,6 +2178,16 @@
             "required": true,
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
             "in": "header"
           }
         ],
@@ -2875,6 +2883,16 @@
             "required": true,
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
             "in": "header"
           }
         ],
@@ -3625,6 +3643,16 @@
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
             "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
+            "in": "header"
           }
         ],
         "responses": {
@@ -4016,6 +4044,16 @@
             "required": true,
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
             "in": "header"
           }
         ],
@@ -4424,6 +4462,16 @@
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
             "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
+            "in": "header"
           }
         ],
         "responses": {
@@ -4826,6 +4874,16 @@
             "required": true,
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
             "in": "header"
           }
         ],
@@ -5907,6 +5965,16 @@
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
             "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
+            "in": "header"
           }
         ],
         "responses": {
@@ -6063,6 +6131,16 @@
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
             "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
+            "in": "header"
           }
         ],
         "responses": {
@@ -6179,6 +6257,16 @@
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
             "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
+            "in": "header"
           }
         ],
         "responses": {
@@ -6283,6 +6371,16 @@
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
             "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
+            "in": "header"
           }
         ],
         "responses": {
@@ -6331,7 +6429,7 @@
     "/features/{dynastySlug}/prefill": {
       "post": {
         "summary": "Pre-fill input values by dynasty slug",
-        "description": "Pre-fills input values by extracting brand data via brand-service. The path param must be a **dynasty slug** (e.g. `sales-cold-email`), NOT a versioned slug.\n\nResolves to the **active version** of the dynasty. Returns 404 if no active feature exists.\n\nThe response includes the resolved `slug` (versioned) for reference.\n\n**Example:** `POST /features/sales-cold-email/prefill?format=text` with body `{ \"brandId\": \"uuid\" }`\n```json\n{\n  \"slug\": \"sales-cold-email-v2\",\n  \"brandId\": \"b1234567-...\",\n  \"format\": \"text\",\n  \"prefilled\": {\n    \"targetAudience\": \"Enterprise SaaS CTOs in North America\",\n    \"valueProposition\": \"AI-powered workflow automation reducing manual ops by 80%\"\n  }\n}\n```\n\nWith `format=full`, each value includes cache and source metadata:\n```json\n{ \"targetAudience\": { \"value\": \"Enterprise SaaS CTOs...\", \"cached\": true, \"sourceUrls\": [\"https://example.com/about\"] } }\n```",
+        "description": "Pre-fills input values by extracting brand data via brand-service. The path param must be a **dynasty slug** (e.g. `sales-cold-email`), NOT a versioned slug.\n\nResolves to the **active version** of the dynasty. Returns 404 if no active feature exists.\n\n**Brand IDs are read from the `x-brand-id` header** (comma-separated UUIDs for multi-brand campaigns).\n\nThe response includes the resolved `slug` (versioned) for reference.\n\n**Example:** `POST /features/sales-cold-email/prefill?format=text` with header `x-brand-id: uuid1,uuid2`\n```json\n{\n  \"slug\": \"sales-cold-email-v2\",\n  \"brandId\": \"uuid1,uuid2\",\n  \"format\": \"text\",\n  \"prefilled\": {\n    \"targetAudience\": \"Enterprise SaaS CTOs in North America\",\n    \"valueProposition\": \"AI-powered workflow automation reducing manual ops by 80%\"\n  }\n}\n```\n\nWith `format=full`, each value includes cache and source metadata:\n```json\n{ \"targetAudience\": { \"value\": \"Enterprise SaaS CTOs...\", \"cached\": true, \"sourceUrls\": [\"https://example.com/about\"] } }\n```",
         "tags": [
           "Features"
         ],
@@ -6390,26 +6488,18 @@
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
             "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
+            "in": "header"
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "brandId": {
-                    "type": "string",
-                    "format": "uuid"
-                  }
-                },
-                "required": [
-                  "brandId"
-                ]
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Pre-filled values",
@@ -6426,8 +6516,7 @@
                         },
                         "brandId": {
                           "type": "string",
-                          "format": "uuid",
-                          "description": "Brand that was used for pre-fill"
+                          "description": "Brand UUID(s) used for pre-fill (CSV string from x-brand-id header)"
                         },
                         "format": {
                           "type": "string",
@@ -6461,8 +6550,7 @@
                         },
                         "brandId": {
                           "type": "string",
-                          "format": "uuid",
-                          "description": "Brand that was used for pre-fill"
+                          "description": "Brand UUID(s) used for pre-fill (CSV string from x-brand-id header)"
                         },
                         "format": {
                           "type": "string",
@@ -6591,6 +6679,16 @@
             "required": true,
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
             "in": "header"
           }
         ],
@@ -6730,6 +6828,16 @@
             "required": true,
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
             "in": "header"
           }
         ],
@@ -7002,6 +7110,16 @@
             "required": true,
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
             "in": "header"
           }
         ],
@@ -7280,6 +7398,16 @@
             "required": true,
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
             "in": "header"
           }
         ],

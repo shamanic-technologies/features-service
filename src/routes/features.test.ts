@@ -443,7 +443,7 @@ describe("POST /features/:dynastySlug/prefill", () => {
     vi.clearAllMocks();
   });
 
-  it("resolves dynasty slug to active version and prefills", async () => {
+  it("resolves dynasty slug to active version and prefills using x-brand-id header", async () => {
     const { extractBrandFields } = await import("../lib/brand-client.js");
     const mockExtract = vi.mocked(extractBrandFields);
     mockExtract.mockResolvedValueOnce({
@@ -454,11 +454,40 @@ describe("POST /features/:dynastySlug/prefill", () => {
 
     const res = await request(app)
       .post("/features/sales-cold-email/prefill")
-      .set(AUTH_HEADERS)
-      .send({ brandId: "00000000-0000-0000-0000-000000000001" });
+      .set({ ...AUTH_HEADERS, "x-brand-id": "00000000-0000-0000-0000-000000000001" })
+      .send({});
 
     expect(res.status).toBe(200);
     expect(res.body.slug).toBe("sales-cold-email-v2");
+    expect(res.body.brandId).toBe("00000000-0000-0000-0000-000000000001");
+  });
+
+  it("supports CSV brand IDs in x-brand-id header", async () => {
+    const { extractBrandFields } = await import("../lib/brand-client.js");
+    const mockExtract = vi.mocked(extractBrandFields);
+    mockExtract.mockResolvedValueOnce({
+      target: { value: "Enterprise", cached: false, sourceUrls: [], extractedAt: "2026-03-01T00:00:00Z", expiresAt: "2026-04-01T00:00:00Z" },
+    });
+
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE_V2);
+
+    const res = await request(app)
+      .post("/features/sales-cold-email/prefill")
+      .set({ ...AUTH_HEADERS, "x-brand-id": "00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002" })
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body.brandId).toBe("00000000-0000-0000-0000-000000000001,00000000-0000-0000-0000-000000000002");
+  });
+
+  it("returns 400 when x-brand-id header is missing", async () => {
+    const res = await request(app)
+      .post("/features/sales-cold-email/prefill")
+      .set(AUTH_HEADERS)
+      .send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/x-brand-id/i);
   });
 
   it("returns 404 when no active feature exists for dynasty slug", async () => {
@@ -466,8 +495,8 @@ describe("POST /features/:dynastySlug/prefill", () => {
 
     const res = await request(app)
       .post("/features/nonexistent-dynasty/prefill")
-      .set(AUTH_HEADERS)
-      .send({ brandId: "00000000-0000-0000-0000-000000000001" });
+      .set({ ...AUTH_HEADERS, "x-brand-id": "00000000-0000-0000-0000-000000000001" })
+      .send({});
 
     expect(res.status).toBe(404);
     expect(res.body.error).toMatch(/dynasty slug/i);

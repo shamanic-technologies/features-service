@@ -8,7 +8,6 @@ import {
   batchUpsertFeaturesSchema,
   createFeatureSchema,
   updateFeatureSchema,
-  prefillRequestSchema,
 } from "./schemas.js";
 
 const registry = new OpenAPIRegistry();
@@ -105,7 +104,7 @@ registry.register("RegistryResponse", registryResponseSchema);
 
 const prefillTextResponseSchema = z.object({
   slug: z.string().describe("Feature slug"),
-  brandId: z.string().uuid().describe("Brand that was used for pre-fill"),
+  brandId: z.string().describe("Brand UUID(s) used for pre-fill (CSV string from x-brand-id header)"),
   format: z.literal("text"),
   prefilled: z.record(z.string(), z.string().nullable()).describe(
     "Map of input key → flattened text value (or null if extraction failed)."
@@ -114,7 +113,7 @@ const prefillTextResponseSchema = z.object({
 
 const prefillFullResponseSchema = z.object({
   slug: z.string().describe("Feature slug"),
-  brandId: z.string().uuid().describe("Brand that was used for pre-fill"),
+  brandId: z.string().describe("Brand UUID(s) used for pre-fill (CSV string from x-brand-id header)"),
   format: z.literal("full"),
   prefilled: z.record(z.string(), z.object({
     value: z.any().describe("Extracted value — can be a string, array, or object depending on the field"),
@@ -142,6 +141,7 @@ const identityHeaders = z.object({
   "x-org-id": z.string().uuid().describe("Internal org UUID from client-service"),
   "x-user-id": z.string().uuid().describe("Internal user UUID from client-service"),
   "x-run-id": z.string().uuid().describe("Run ID for tracking and billing"),
+  "x-brand-id": z.string().optional().describe("Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."),
 });
 
 // ── PUT /features — batch upsert ──────────────────────────────────────────
@@ -488,12 +488,13 @@ registry.registerPath({
     "Pre-fills input values by extracting brand data via brand-service. " +
     "The path param must be a **dynasty slug** (e.g. `sales-cold-email`), NOT a versioned slug.\n\n" +
     "Resolves to the **active version** of the dynasty. Returns 404 if no active feature exists.\n\n" +
+    "**Brand IDs are read from the `x-brand-id` header** (comma-separated UUIDs for multi-brand campaigns).\n\n" +
     "The response includes the resolved `slug` (versioned) for reference.\n\n" +
-    "**Example:** `POST /features/sales-cold-email/prefill?format=text` with body `{ \"brandId\": \"uuid\" }`\n" +
+    "**Example:** `POST /features/sales-cold-email/prefill?format=text` with header `x-brand-id: uuid1,uuid2`\n" +
     "```json\n" +
     "{\n" +
     "  \"slug\": \"sales-cold-email-v2\",\n" +
-    "  \"brandId\": \"b1234567-...\",\n" +
+    "  \"brandId\": \"uuid1,uuid2\",\n" +
     "  \"format\": \"text\",\n" +
     "  \"prefilled\": {\n" +
     "    \"targetAudience\": \"Enterprise SaaS CTOs in North America\",\n" +
@@ -510,7 +511,7 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ dynastySlug: z.string().describe("Dynasty slug (e.g. 'sales-cold-email'). Must be a dynasty slug — versioned slugs will 404.") }),
     query: z.object({ format: z.enum(["text", "full"]).optional() }),
-    body: { content: { "application/json": { schema: prefillRequestSchema } } },
+    // No body required — brand IDs come from x-brand-id header
   },
   responses: {
     200: {

@@ -123,10 +123,10 @@ export const batchUpsertFeaturesSchema = z.object({
 });
 
 // ── Prefill request ────────────────────────────────────────────────────────
+// Brand IDs are now read from the x-brand-id header (CSV format), no body required.
+// Keep the schema as an empty object for backwards compatibility (empty body accepted).
 
-export const prefillRequestSchema = z.object({
-  brandId: z.string().uuid(),
-});
+export const prefillRequestSchema = z.object({}).passthrough();
 
 // ── Single feature create (dashboard) ────────────────────────────────────
 
@@ -157,4 +157,3 @@ export type UpsertFeatureBody = z.infer<typeof upsertFeatureSchema>;
 export type BatchUpsertFeaturesBody = z.infer<typeof batchUpsertFeaturesSchema>;
 export type CreateFeatureBody = z.infer<typeof createFeatureSchema>;
 export type UpdateFeatureBody = z.infer<typeof updateFeatureSchema>;
-export type PrefillRequestBody = z.infer<typeof prefillRequestSchema>;
