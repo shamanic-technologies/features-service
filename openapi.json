@@ -1785,9 +1785,42 @@
                 "byBrand": {
                   "type": "object",
                   "additionalProperties": {
-                    "nullable": true
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "nullable": true,
+                        "description": "Extracted value for this brand"
+                      },
+                      "cached": {
+                        "type": "boolean",
+                        "description": "Whether the value was served from cache"
+                      },
+                      "extractedAt": {
+                        "type": "string",
+                        "description": "ISO timestamp of extraction"
+                      },
+                      "expiresAt": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "ISO timestamp when cache expires"
+                      },
+                      "sourceUrls": {
+                        "type": "array",
+                        "nullable": true,
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "URLs used to extract this value"
+                      }
+                    },
+                    "required": [
+                      "cached",
+                      "extractedAt",
+                      "expiresAt",
+                      "sourceUrls"
+                    ]
                   },
-                  "description": "Per-brand values keyed by brand domain"
+                  "description": "Per-brand extraction details keyed by brand domain"
                 }
               },
               "required": [
@@ -6423,7 +6456,7 @@
     "/features/{dynastySlug}/prefill": {
       "post": {
         "summary": "Pre-fill input values by dynasty slug",
-        "description": "Pre-fills input values by extracting brand data via brand-service. The path param must be a **dynasty slug** (e.g. `sales-cold-email`), NOT a versioned slug.\n\nResolves to the **active version** of the dynasty. Returns 404 if no active feature exists.\n\n**Brand IDs are read from the `x-brand-id` header** (comma-separated UUIDs for multi-brand campaigns).\n\nThe response includes the resolved `slug` (versioned) for reference.\n\n**Example:** `POST /features/sales-cold-email/prefill?format=text` with header `x-brand-id: uuid1,uuid2`\n```json\n{\n  \"slug\": \"sales-cold-email-v2\",\n  \"brandId\": \"uuid1,uuid2\",\n  \"format\": \"text\",\n  \"prefilled\": {\n    \"targetAudience\": \"Enterprise SaaS CTOs in North America\",\n    \"valueProposition\": \"AI-powered workflow automation reducing manual ops by 80%\"\n  }\n}\n```\n\nWith `format=full`, each value includes per-brand breakdown:\n```json\n{ \"targetAudience\": { \"value\": \"Enterprise SaaS CTOs...\", \"byBrand\": { \"acme.com\": \"Enterprise SaaS CTOs...\" } } }\n```",
+        "description": "Pre-fills input values by extracting brand data via brand-service. The path param must be a **dynasty slug** (e.g. `sales-cold-email`), NOT a versioned slug.\n\nResolves to the **active version** of the dynasty. Returns 404 if no active feature exists.\n\n**Brand IDs are read from the `x-brand-id` header** (comma-separated UUIDs for multi-brand campaigns).\n\nThe response includes the resolved `slug` (versioned) for reference.\n\n**Example:** `POST /features/sales-cold-email/prefill?format=text` with header `x-brand-id: uuid1,uuid2`\n```json\n{\n  \"slug\": \"sales-cold-email-v2\",\n  \"brandId\": \"uuid1,uuid2\",\n  \"format\": \"text\",\n  \"prefilled\": {\n    \"targetAudience\": \"Enterprise SaaS CTOs in North America\",\n    \"valueProposition\": \"AI-powered workflow automation reducing manual ops by 80%\"\n  }\n}\n```\n\nWith `format=full`, each value includes per-brand metadata:\n```json\n{ \"targetAudience\": { \"value\": \"Enterprise SaaS CTOs...\", \"byBrand\": { \"acme.com\": { \"value\": \"Enterprise SaaS CTOs...\", \"cached\": true, \"extractedAt\": \"2026-03-15T10:00:00Z\", \"expiresAt\": \"2026-04-14T10:00:00Z\", \"sourceUrls\": [\"https://acme.com/about\"] } } } }\n```",
         "tags": [
           "Features"
         ],
@@ -6564,9 +6597,42 @@
                               "byBrand": {
                                 "type": "object",
                                 "additionalProperties": {
-                                  "nullable": true
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "nullable": true,
+                                      "description": "Extracted value for this brand"
+                                    },
+                                    "cached": {
+                                      "type": "boolean",
+                                      "description": "Whether the value was served from cache"
+                                    },
+                                    "extractedAt": {
+                                      "type": "string",
+                                      "description": "ISO timestamp of extraction"
+                                    },
+                                    "expiresAt": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "description": "ISO timestamp when cache expires"
+                                    },
+                                    "sourceUrls": {
+                                      "type": "array",
+                                      "nullable": true,
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "description": "URLs used to extract this value"
+                                    }
+                                  },
+                                  "required": [
+                                    "cached",
+                                    "extractedAt",
+                                    "expiresAt",
+                                    "sourceUrls"
+                                  ]
                                 },
-                                "description": "Per-brand values keyed by brand domain"
+                                "description": "Per-brand extraction details keyed by brand domain"
                               }
                             },
                             "required": [

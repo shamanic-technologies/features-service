@@ -117,7 +117,13 @@ const prefillFullResponseSchema = z.object({
   format: z.literal("full"),
   prefilled: z.record(z.string(), z.object({
     value: z.any().describe("Extracted value — can be a string, array, or object depending on the field"),
-    byBrand: z.record(z.string(), z.any()).describe("Per-brand values keyed by brand domain"),
+    byBrand: z.record(z.string(), z.object({
+      value: z.any().describe("Extracted value for this brand"),
+      cached: z.boolean().describe("Whether the value was served from cache"),
+      extractedAt: z.string().describe("ISO timestamp of extraction"),
+      expiresAt: z.string().nullable().describe("ISO timestamp when cache expires"),
+      sourceUrls: z.array(z.string()).nullable().describe("URLs used to extract this value"),
+    })).describe("Per-brand extraction details keyed by brand domain"),
   })).describe(
     "Map of input key → full extraction result."
   ),
@@ -501,9 +507,9 @@ registry.registerPath({
     "  }\n" +
     "}\n" +
     "```\n\n" +
-    "With `format=full`, each value includes per-brand breakdown:\n" +
+    "With `format=full`, each value includes per-brand metadata:\n" +
     "```json\n" +
-    "{ \"targetAudience\": { \"value\": \"Enterprise SaaS CTOs...\", \"byBrand\": { \"acme.com\": \"Enterprise SaaS CTOs...\" } } }\n" +
+    "{ \"targetAudience\": { \"value\": \"Enterprise SaaS CTOs...\", \"byBrand\": { \"acme.com\": { \"value\": \"Enterprise SaaS CTOs...\", \"cached\": true, \"extractedAt\": \"2026-03-15T10:00:00Z\", \"expiresAt\": \"2026-04-14T10:00:00Z\", \"sourceUrls\": [\"https://acme.com/about\"] } } } }\n" +
     "```",
   tags: ["Features"],
   request: {

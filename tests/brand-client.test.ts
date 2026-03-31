@@ -27,11 +27,27 @@ describe("extractBrandFields", () => {
       fields: {
         biography: {
           value: "A leading AI company",
-          byBrand: { "example.com": "A leading AI company" },
+          byBrand: {
+            "example.com": {
+              value: "A leading AI company",
+              cached: true,
+              extractedAt: "2026-03-15T10:00:00Z",
+              expiresAt: "2026-04-14T10:00:00Z",
+              sourceUrls: ["https://example.com/about"],
+            },
+          },
         },
         keyProjects: {
           value: ["Project A", "Project B"],
-          byBrand: { "example.com": ["Project A", "Project B"] },
+          byBrand: {
+            "example.com": {
+              value: ["Project A", "Project B"],
+              cached: false,
+              extractedAt: "2026-03-26T00:00:00Z",
+              expiresAt: null,
+              sourceUrls: null,
+            },
+          },
         },
       },
     };
@@ -62,9 +78,11 @@ describe("extractBrandFields", () => {
     expect(results).toHaveProperty("biography");
     expect(results).toHaveProperty("keyProjects");
     expect(results.biography.value).toBe("A leading AI company");
-    expect(results.biography.byBrand).toEqual({ "example.com": "A leading AI company" });
+    expect(results.biography.byBrand["example.com"].value).toBe("A leading AI company");
+    expect(results.biography.byBrand["example.com"].cached).toBe(true);
+    expect(results.biography.byBrand["example.com"].sourceUrls).toEqual(["https://example.com/about"]);
     expect(results.keyProjects.value).toEqual(["Project A", "Project B"]);
-    expect(results.keyProjects.byBrand).toEqual({ "example.com": ["Project A", "Project B"] });
+    expect(results.keyProjects.byBrand["example.com"].cached).toBe(false);
   });
 
   it("supports CSV brand IDs in x-brand-id header", async () => {
