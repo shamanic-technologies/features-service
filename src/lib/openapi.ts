@@ -803,7 +803,7 @@ const rankedQueryParams = z.object({
   featureDynastySlug: z.string().describe("Feature dynasty slug (required)"),
   objective: z.string().describe("Stats key to rank by (e.g. 'emailsReplied')"),
   brandId: z.string().optional().describe("Filter by brand ID"),
-  groupBy: z.enum(["brand"]).optional().describe("Group by brand instead of workflow"),
+  groupBy: z.enum(["workflow", "brand"]).describe("Group results by workflow or by brand"),
   limit: z.string().optional().describe("Max results (default 10, max 100)"),
 });
 
@@ -860,7 +860,7 @@ registry.register("BestEntryBrand", bestEntryBrandSchema);
 const bestQueryParams = z.object({
   featureDynastySlug: z.string().describe("Feature dynasty slug (required)"),
   brandId: z.string().optional().describe("Filter by brand ID"),
-  by: z.enum(["workflow", "brand"]).optional().describe("Best workflow (default) or best brand"),
+  by: z.enum(["workflow", "brand"]).describe("Best per workflow or best per brand"),
 });
 
 registry.registerPath({
