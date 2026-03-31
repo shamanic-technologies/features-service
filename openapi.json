@@ -8002,12 +8002,13 @@
             "schema": {
               "type": "string",
               "enum": [
+                "workflow",
                 "brand"
               ],
-              "description": "Group by brand instead of workflow"
+              "description": "Group results by workflow or by brand"
             },
-            "required": false,
-            "description": "Group by brand instead of workflow",
+            "required": true,
+            "description": "Group results by workflow or by brand",
             "name": "groupBy",
             "in": "query"
           },
@@ -8208,12 +8209,13 @@
             "schema": {
               "type": "string",
               "enum": [
+                "workflow",
                 "brand"
               ],
-              "description": "Group by brand instead of workflow"
+              "description": "Group results by workflow or by brand"
             },
-            "required": false,
-            "description": "Group by brand instead of workflow",
+            "required": true,
+            "description": "Group results by workflow or by brand",
             "name": "groupBy",
             "in": "query"
           },
@@ -8258,6 +8260,16 @@
             "required": true,
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
             "in": "header"
           }
         ],
@@ -8435,10 +8447,10 @@
                 "workflow",
                 "brand"
               ],
-              "description": "Best workflow (default) or best brand"
+              "description": "Best per workflow or best per brand"
             },
-            "required": false,
-            "description": "Best workflow (default) or best brand",
+            "required": true,
+            "description": "Best per workflow or best per brand",
             "name": "by",
             "in": "query"
           }
@@ -8567,10 +8579,10 @@
                 "workflow",
                 "brand"
               ],
-              "description": "Best workflow (default) or best brand"
+              "description": "Best per workflow or best per brand"
             },
-            "required": false,
-            "description": "Best workflow (default) or best brand",
+            "required": true,
+            "description": "Best per workflow or best per brand",
             "name": "by",
             "in": "query"
           },
@@ -8605,6 +8617,16 @@
             "required": true,
             "description": "Run ID for tracking and billing",
             "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
             "in": "header"
           }
         ],

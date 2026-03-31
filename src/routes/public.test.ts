@@ -262,7 +262,7 @@ describe("GET /public/stats/ranked", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied");
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied&groupBy=workflow");
 
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(2);
@@ -275,7 +275,7 @@ describe("GET /public/stats/ranked", () => {
 
   it("returns 400 when featureDynastySlug is missing", async () => {
     const res = await request(app)
-      .get("/public/stats/ranked?objective=emailsReplied");
+      .get("/public/stats/ranked?objective=emailsReplied&groupBy=workflow");
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/featureDynastySlug/i);
@@ -283,17 +283,25 @@ describe("GET /public/stats/ranked", () => {
 
   it("returns 400 when objective is missing", async () => {
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email");
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&groupBy=workflow");
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/objective/i);
+  });
+
+  it("returns 400 when groupBy is missing", async () => {
+    const res = await request(app)
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/groupBy/i);
   });
 
   it("returns 404 when no features in dynasty", async () => {
     mockFindMany.mockResolvedValueOnce([]);
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=nonexistent&objective=emailsReplied");
+      .get("/public/stats/ranked?featureDynastySlug=nonexistent&objective=emailsReplied&groupBy=workflow");
 
     expect(res.status).toBe(404);
   });
@@ -311,7 +319,7 @@ describe("GET /public/stats/ranked", () => {
     });
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied");
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied&groupBy=workflow");
 
     expect(res.status).toBe(200);
     expect(res.body.results[0].stats.costPerOutcome).toBe(100);
@@ -324,7 +332,7 @@ describe("GET /public/stats/ranked", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied&limit=1");
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied&groupBy=workflow&limit=1");
 
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(1);
@@ -374,7 +382,7 @@ describe("GET /public/stats/best", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/best?featureDynastySlug=sales-cold-email");
+      .get("/public/stats/best?featureDynastySlug=sales-cold-email&by=workflow");
 
     expect(res.status).toBe(200);
     // emailsReplied: Alpha 1000/10=100, Beta 2000/5=400 → Alpha wins
@@ -384,10 +392,17 @@ describe("GET /public/stats/best", () => {
   });
 
   it("returns 400 when featureDynastySlug is missing", async () => {
-    const res = await request(app).get("/public/stats/best");
+    const res = await request(app).get("/public/stats/best?by=workflow");
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/featureDynastySlug/i);
+  });
+
+  it("returns 400 when by is missing", async () => {
+    const res = await request(app).get("/public/stats/best?featureDynastySlug=sales-cold-email");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/by/i);
   });
 
   it("returns null for metrics with no data", async () => {
@@ -403,7 +418,7 @@ describe("GET /public/stats/best", () => {
     });
 
     const res = await request(app)
-      .get("/public/stats/best?featureDynastySlug=sales-cold-email");
+      .get("/public/stats/best?featureDynastySlug=sales-cold-email&by=workflow");
 
     expect(res.status).toBe(200);
     expect(res.body.best.emailsReplied).toBeNull();
@@ -447,7 +462,7 @@ describe("GET /stats/ranked (authenticated)", () => {
 
   it("requires auth headers", async () => {
     const res = await request(app)
-      .get("/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied");
+      .get("/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied&groupBy=workflow");
 
     expect(res.status).toBe(401);
   });
@@ -458,7 +473,7 @@ describe("GET /stats/ranked (authenticated)", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied")
+      .get("/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied&groupBy=workflow")
       .set("x-api-key", "test-key")
       .set("x-org-id", "org-1")
       .set("x-user-id", "user-1")
@@ -477,7 +492,7 @@ describe("GET /stats/best (authenticated)", () => {
 
   it("requires auth headers", async () => {
     const res = await request(app)
-      .get("/stats/best?featureDynastySlug=sales-cold-email");
+      .get("/stats/best?featureDynastySlug=sales-cold-email&by=workflow");
 
     expect(res.status).toBe(401);
   });
@@ -488,7 +503,7 @@ describe("GET /stats/best (authenticated)", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/stats/best?featureDynastySlug=sales-cold-email")
+      .get("/stats/best?featureDynastySlug=sales-cold-email&by=workflow")
       .set("x-api-key", "test-key")
       .set("x-org-id", "org-1")
       .set("x-user-id", "user-1")

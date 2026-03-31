@@ -302,6 +302,10 @@ export async function handleRanked(
     res.status(400).json({ error: "Query parameter 'objective' is required" });
     return;
   }
+  if (groupBy !== "workflow" && groupBy !== "brand") {
+    res.status(400).json({ error: "Query parameter 'groupBy' is required and must be 'workflow' or 'brand'" });
+    return;
+  }
 
   const resolved = await resolveFeatureAndSlugs(featureDynastySlug);
   if (!resolved) {
@@ -385,6 +389,10 @@ export async function handleBest(
 ): Promise<void> {
   if (!featureDynastySlug) {
     res.status(400).json({ error: "Query parameter 'featureDynastySlug' is required" });
+    return;
+  }
+  if (by !== "workflow" && by !== "brand") {
+    res.status(400).json({ error: "Query parameter 'by' is required and must be 'workflow' or 'brand'" });
     return;
   }
 
