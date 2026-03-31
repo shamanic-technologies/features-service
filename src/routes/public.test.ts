@@ -382,7 +382,7 @@ describe("GET /public/stats/best", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/best?featureDynastySlug=sales-cold-email&by=workflow");
+      .get("/public/stats/best?featureDynastySlug=sales-cold-email&groupBy=workflow");
 
     expect(res.status).toBe(200);
     // emailsReplied: Alpha 1000/10=100, Beta 2000/5=400 → Alpha wins
@@ -392,17 +392,17 @@ describe("GET /public/stats/best", () => {
   });
 
   it("returns 400 when featureDynastySlug is missing", async () => {
-    const res = await request(app).get("/public/stats/best?by=workflow");
+    const res = await request(app).get("/public/stats/best?groupBy=workflow");
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/featureDynastySlug/i);
   });
 
-  it("returns 400 when by is missing", async () => {
+  it("returns 400 when groupBy is missing", async () => {
     const res = await request(app).get("/public/stats/best?featureDynastySlug=sales-cold-email");
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/by/i);
+    expect(res.body.error).toMatch(/groupBy/i);
   });
 
   it("returns null for metrics with no data", async () => {
@@ -418,13 +418,13 @@ describe("GET /public/stats/best", () => {
     });
 
     const res = await request(app)
-      .get("/public/stats/best?featureDynastySlug=sales-cold-email&by=workflow");
+      .get("/public/stats/best?featureDynastySlug=sales-cold-email&groupBy=workflow");
 
     expect(res.status).toBe(200);
     expect(res.body.best.emailsReplied).toBeNull();
   });
 
-  it("supports by=brand", async () => {
+  it("supports groupBy=brand", async () => {
     mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
     mockFetchResponses({
@@ -443,7 +443,7 @@ describe("GET /public/stats/best", () => {
     });
 
     const res = await request(app)
-      .get("/public/stats/best?featureDynastySlug=sales-cold-email&by=brand");
+      .get("/public/stats/best?featureDynastySlug=sales-cold-email&groupBy=brand");
 
     expect(res.status).toBe(200);
     // brand-1: 500/5=100, brand-2: 1500/3=500 → brand-1 wins
@@ -492,7 +492,7 @@ describe("GET /stats/best (authenticated)", () => {
 
   it("requires auth headers", async () => {
     const res = await request(app)
-      .get("/stats/best?featureDynastySlug=sales-cold-email&by=workflow");
+      .get("/stats/best?featureDynastySlug=sales-cold-email&groupBy=workflow");
 
     expect(res.status).toBe(401);
   });
@@ -503,7 +503,7 @@ describe("GET /stats/best (authenticated)", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/stats/best?featureDynastySlug=sales-cold-email&by=workflow")
+      .get("/stats/best?featureDynastySlug=sales-cold-email&groupBy=workflow")
       .set("x-api-key", "test-key")
       .set("x-org-id", "org-1")
       .set("x-user-id", "user-1")
