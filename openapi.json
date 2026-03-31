@@ -2161,6 +2161,201 @@
           "audienceType",
           "displayOrder"
         ]
+      },
+      "RankedWorkflow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "dynastyName": {
+            "type": "string"
+          },
+          "dynastySlug": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "featureSlug": {
+            "type": "string"
+          },
+          "createdForBrandId": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "slug"
+        ]
+      },
+      "RankedBrand": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "brandId"
+        ]
+      },
+      "RankedStats": {
+        "type": "object",
+        "properties": {
+          "totalCostInUsdCents": {
+            "type": "number",
+            "description": "Total cost in USD cents"
+          },
+          "totalOutcomes": {
+            "type": "number",
+            "description": "Total outcome count for the objective metric"
+          },
+          "costPerOutcome": {
+            "type": "number",
+            "nullable": true,
+            "description": "Cost per outcome (null if no outcomes)"
+          },
+          "completedRuns": {
+            "type": "number",
+            "description": "Number of completed runs"
+          }
+        },
+        "required": [
+          "totalCostInUsdCents",
+          "totalOutcomes",
+          "costPerOutcome",
+          "completedRuns"
+        ]
+      },
+      "RankedResult": {
+        "type": "object",
+        "properties": {
+          "workflow": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "dynastyName": {
+                "type": "string"
+              },
+              "dynastySlug": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              },
+              "featureSlug": {
+                "type": "string"
+              },
+              "createdForBrandId": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "slug"
+            ]
+          },
+          "brand": {
+            "type": "object",
+            "properties": {
+              "brandId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "brandId"
+            ]
+          },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "totalCostInUsdCents": {
+                "type": "number",
+                "description": "Total cost in USD cents"
+              },
+              "totalOutcomes": {
+                "type": "number",
+                "description": "Total outcome count for the objective metric"
+              },
+              "costPerOutcome": {
+                "type": "number",
+                "nullable": true,
+                "description": "Cost per outcome (null if no outcomes)"
+              },
+              "completedRuns": {
+                "type": "number",
+                "description": "Number of completed runs"
+              }
+            },
+            "required": [
+              "totalCostInUsdCents",
+              "totalOutcomes",
+              "costPerOutcome",
+              "completedRuns"
+            ]
+          }
+        },
+        "required": [
+          "stats"
+        ]
+      },
+      "BestEntryWorkflow": {
+        "type": "object",
+        "properties": {
+          "workflowSlug": {
+            "type": "string"
+          },
+          "workflowName": {
+            "type": "string"
+          },
+          "createdForBrandId": {
+            "type": "string",
+            "nullable": true
+          },
+          "value": {
+            "type": "number",
+            "description": "Best (lowest) cost-per-outcome in USD cents"
+          }
+        },
+        "required": [
+          "workflowSlug",
+          "workflowName",
+          "createdForBrandId",
+          "value"
+        ]
+      },
+      "BestEntryBrand": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number",
+            "description": "Best (lowest) cost-per-outcome in USD cents"
+          }
+        },
+        "required": [
+          "brandId",
+          "value"
+        ]
       }
     },
     "parameters": {}
@@ -7728,6 +7923,738 @@
           },
           "400": {
             "description": "Missing dynastySlug parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No features found for this dynasty slug",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/stats/ranked": {
+      "get": {
+        "summary": "Ranked workflows by cost-per-outcome (public, no auth)",
+        "description": "Returns workflows ranked by cost-per-outcome for a single objective metric. Stats are aggregated across the full workflow upgrade chain.\n\nUse `groupBy=brand` to aggregate by brand instead of workflow.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature dynasty slug (required)"
+            },
+            "required": true,
+            "description": "Feature dynasty slug (required)",
+            "name": "featureDynastySlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Stats key to rank by (e.g. 'emailsReplied')"
+            },
+            "required": true,
+            "description": "Stats key to rank by (e.g. 'emailsReplied')",
+            "name": "objective",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Filter by brand ID"
+            },
+            "required": false,
+            "description": "Filter by brand ID",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "brand"
+              ],
+              "description": "Group by brand instead of workflow"
+            },
+            "required": false,
+            "description": "Group by brand instead of workflow",
+            "name": "groupBy",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Max results (default 10, max 100)"
+            },
+            "required": false,
+            "description": "Max results (default 10, max 100)",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ranked results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "workflow": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "dynastyName": {
+                                "type": "string"
+                              },
+                              "dynastySlug": {
+                                "type": "string"
+                              },
+                              "version": {
+                                "type": "integer"
+                              },
+                              "featureSlug": {
+                                "type": "string"
+                              },
+                              "createdForBrandId": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "slug"
+                            ]
+                          },
+                          "brand": {
+                            "type": "object",
+                            "properties": {
+                              "brandId": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "brandId"
+                            ]
+                          },
+                          "stats": {
+                            "type": "object",
+                            "properties": {
+                              "totalCostInUsdCents": {
+                                "type": "number",
+                                "description": "Total cost in USD cents"
+                              },
+                              "totalOutcomes": {
+                                "type": "number",
+                                "description": "Total outcome count for the objective metric"
+                              },
+                              "costPerOutcome": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Cost per outcome (null if no outcomes)"
+                              },
+                              "completedRuns": {
+                                "type": "number",
+                                "description": "Number of completed runs"
+                              }
+                            },
+                            "required": [
+                              "totalCostInUsdCents",
+                              "totalOutcomes",
+                              "costPerOutcome",
+                              "completedRuns"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "stats"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "results"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing required parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No features found for this dynasty slug",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stats/ranked": {
+      "get": {
+        "summary": "Ranked workflows by cost-per-outcome (authenticated)",
+        "description": "Authenticated version of `GET /public/stats/ranked`. Same logic, same params, same response. Requires x-api-key and identity headers.",
+        "tags": [
+          "Stats"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature dynasty slug (required)"
+            },
+            "required": true,
+            "description": "Feature dynasty slug (required)",
+            "name": "featureDynastySlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Stats key to rank by (e.g. 'emailsReplied')"
+            },
+            "required": true,
+            "description": "Stats key to rank by (e.g. 'emailsReplied')",
+            "name": "objective",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Filter by brand ID"
+            },
+            "required": false,
+            "description": "Filter by brand ID",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "brand"
+              ],
+              "description": "Group by brand instead of workflow"
+            },
+            "required": false,
+            "description": "Group by brand instead of workflow",
+            "name": "groupBy",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Max results (default 10, max 100)"
+            },
+            "required": false,
+            "description": "Max results (default 10, max 100)",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ranked results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "workflow": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "dynastyName": {
+                                "type": "string"
+                              },
+                              "dynastySlug": {
+                                "type": "string"
+                              },
+                              "version": {
+                                "type": "integer"
+                              },
+                              "featureSlug": {
+                                "type": "string"
+                              },
+                              "createdForBrandId": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "slug"
+                            ]
+                          },
+                          "brand": {
+                            "type": "object",
+                            "properties": {
+                              "brandId": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "brandId"
+                            ]
+                          },
+                          "stats": {
+                            "type": "object",
+                            "properties": {
+                              "totalCostInUsdCents": {
+                                "type": "number",
+                                "description": "Total cost in USD cents"
+                              },
+                              "totalOutcomes": {
+                                "type": "number",
+                                "description": "Total outcome count for the objective metric"
+                              },
+                              "costPerOutcome": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Cost per outcome (null if no outcomes)"
+                              },
+                              "completedRuns": {
+                                "type": "number",
+                                "description": "Number of completed runs"
+                              }
+                            },
+                            "required": [
+                              "totalCostInUsdCents",
+                              "totalOutcomes",
+                              "costPerOutcome",
+                              "completedRuns"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "stats"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "results"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing required parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No features found for this dynasty slug",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/stats/best": {
+      "get": {
+        "summary": "Best cost-per-outcome per metric (public, no auth)",
+        "description": "Returns the single best (lowest cost-per-outcome) workflow or brand for each of the feature's declared count-type output metrics. Stats are aggregated across upgrade chains.\n\nUse `by=brand` to find the best brand instead of the best workflow.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature dynasty slug (required)"
+            },
+            "required": true,
+            "description": "Feature dynasty slug (required)",
+            "name": "featureDynastySlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Filter by brand ID"
+            },
+            "required": false,
+            "description": "Filter by brand ID",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "workflow",
+                "brand"
+              ],
+              "description": "Best workflow (default) or best brand"
+            },
+            "required": false,
+            "description": "Best workflow (default) or best brand",
+            "name": "by",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Best records per metric",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "best": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "workflowSlug": {
+                            "type": "string"
+                          },
+                          "workflowName": {
+                            "type": "string"
+                          },
+                          "createdForBrandId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "value": {
+                            "type": "number",
+                            "description": "Best (lowest) cost-per-outcome in USD cents"
+                          }
+                        },
+                        "required": [
+                          "workflowSlug",
+                          "workflowName",
+                          "createdForBrandId",
+                          "value"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "best"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing required parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No features found for this dynasty slug",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stats/best": {
+      "get": {
+        "summary": "Best cost-per-outcome per metric (authenticated)",
+        "description": "Authenticated version of `GET /public/stats/best`. Same logic, same params, same response. Requires x-api-key and identity headers.",
+        "tags": [
+          "Stats"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature dynasty slug (required)"
+            },
+            "required": true,
+            "description": "Feature dynasty slug (required)",
+            "name": "featureDynastySlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Filter by brand ID"
+            },
+            "required": false,
+            "description": "Filter by brand ID",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "workflow",
+                "brand"
+              ],
+              "description": "Best workflow (default) or best brand"
+            },
+            "required": false,
+            "description": "Best workflow (default) or best brand",
+            "name": "by",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Best records per metric",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "best": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "workflowSlug": {
+                            "type": "string"
+                          },
+                          "workflowName": {
+                            "type": "string"
+                          },
+                          "createdForBrandId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "value": {
+                            "type": "number",
+                            "description": "Best (lowest) cost-per-outcome in USD cents"
+                          }
+                        },
+                        "required": [
+                          "workflowSlug",
+                          "workflowName",
+                          "createdForBrandId",
+                          "value"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "best"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing required parameters",
             "content": {
               "application/json": {
                 "schema": {
