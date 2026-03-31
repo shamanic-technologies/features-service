@@ -15,16 +15,27 @@ export interface ExtractedFieldResult {
 }
 
 /**
- * Call brand-service to extract fields for a brand via AI.
+ * Call brand-service to extract fields for brands via AI.
+ * brand-service reads the brand IDs from the x-brand-id header (CSV format).
  * Results are cached per field for 30 days by brand-service.
  */
 export async function extractBrandFields(
-  brandId: string,
   fields: ExtractFieldItem[],
-  headers: { orgId: string; userId: string; runId: string; campaignId?: string; featureSlug?: string },
+  headers: {
+    orgId: string;
+    userId: string;
+    runId: string;
+    brandId?: string;
+    campaignId?: string;
+    featureSlug?: string;
+  },
 ): Promise<Record<string, ExtractedFieldResult>> {
   if (!BRAND_SERVICE_URL || !BRAND_SERVICE_API_KEY) {
     throw new Error("BRAND_SERVICE_URL or BRAND_SERVICE_API_KEY not configured");
+  }
+
+  if (!headers.brandId) {
+    throw new Error("x-brand-id header is required for brand extraction");
   }
 
   const reqHeaders: Record<string, string> = {
@@ -33,11 +44,12 @@ export async function extractBrandFields(
     "x-org-id": headers.orgId,
     "x-user-id": headers.userId,
     "x-run-id": headers.runId,
+    "x-brand-id": headers.brandId,
   };
   if (headers.campaignId) reqHeaders["x-campaign-id"] = headers.campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const response = await fetch(`${BRAND_SERVICE_URL}/brands/${brandId}/extract-fields`, {
+  const response = await fetch(`${BRAND_SERVICE_URL}/brands/extract-fields`, {
     method: "POST",
     headers: reqHeaders,
     body: JSON.stringify({ fields }),
@@ -48,7 +60,7 @@ export async function extractBrandFields(
     throw new Error(`brand-service extract-fields failed (${response.status}): ${text}`);
   }
 
-  const data = await response.json() as { brandId: string; results: Array<{ key: string } & ExtractedFieldResult> };
+  const data = await response.json() as { results: Array<{ key: string } & ExtractedFieldResult> };
   const map: Record<string, ExtractedFieldResult> = {};
   for (const r of data.results) {
     map[r.key] = r;

@@ -3,7 +3,7 @@ import { eq, and, isNull } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { batchUpsertFeaturesSchema, createFeatureSchema, updateFeatureSchema, prefillRequestSchema } from "../lib/schemas.js";
+import { batchUpsertFeaturesSchema, createFeatureSchema, updateFeatureSchema } from "../lib/schemas.js";
 import { computeSignature, slugify, versionedName, versionedSlug, composeDynastyName, pickForkName } from "../lib/signature.js";
 import { extractBrandFields } from "../lib/brand-client.js";
 import { flattenValue } from "../lib/flatten.js";
@@ -650,12 +650,11 @@ router.post("/features/:dynastySlug/prefill", apiKeyAuth, async (req, res) => {
       return res.status(400).json({ error: "format must be 'text' or 'full'" });
     }
 
-    const parsed = prefillRequestSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.flatten() });
-    }
+    const auth = req as AuthenticatedRequest;
 
-    const { brandId } = parsed.data;
+    if (!auth.brandId) {
+      return res.status(400).json({ error: "x-brand-id header is required" });
+    }
 
     const feature = await db.query.features.findFirst({
       where: and(
@@ -674,11 +673,11 @@ router.post("/features/:dynastySlug/prefill", apiKeyAuth, async (req, res) => {
       description: input.description,
     }));
 
-    const auth = req as AuthenticatedRequest;
-    const extractedResults = await extractBrandFields(brandId, fields, {
+    const extractedResults = await extractBrandFields(fields, {
       orgId: auth.orgId,
       userId: auth.userId,
       runId: auth.runId,
+      brandId: auth.brandId,
       campaignId: auth.campaignId,
       featureSlug: auth.featureSlug,
     });
@@ -690,7 +689,7 @@ router.post("/features/:dynastySlug/prefill", apiKeyAuth, async (req, res) => {
         const result = extractedResults[input.extractKey];
         prefilled[input.key] = flattenValue(result?.value ?? null);
       }
-      return res.json({ slug: feature.slug, brandId, format: "text", prefilled });
+      return res.json({ slug: feature.slug, brandId: auth.brandId, format: "text", prefilled });
     }
 
     // format === "full"
@@ -706,7 +705,7 @@ router.post("/features/:dynastySlug/prefill", apiKeyAuth, async (req, res) => {
 
     res.json({
       slug: feature.slug,
-      brandId,
+      brandId: auth.brandId,
       format: "full",
       prefilled,
     });

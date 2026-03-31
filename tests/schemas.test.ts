@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { upsertFeatureSchema, batchUpsertFeaturesSchema, createFeatureSchema, updateFeatureSchema, prefillRequestSchema } from "../src/lib/schemas.js";
 
+
 const validInput = {
   key: "targetAudience",
   label: "Target Audience",
@@ -383,18 +384,13 @@ describe("updateFeatureSchema", () => {
 });
 
 describe("prefillRequestSchema", () => {
-  it("accepts a valid brandId UUID", () => {
-    const result = prefillRequestSchema.safeParse({ brandId: "550e8400-e29b-41d4-a716-446655440000" });
+  it("accepts empty body (brand IDs come from x-brand-id header)", () => {
+    const result = prefillRequestSchema.safeParse({});
     expect(result.success).toBe(true);
   });
 
-  it("rejects non-UUID brandId", () => {
-    const result = prefillRequestSchema.safeParse({ brandId: "not-a-uuid" });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects missing brandId", () => {
-    const result = prefillRequestSchema.safeParse({});
-    expect(result.success).toBe(false);
+  it("accepts body with extra fields (passthrough)", () => {
+    const result = prefillRequestSchema.safeParse({ someField: "value" });
+    expect(result.success).toBe(true);
   });
 });

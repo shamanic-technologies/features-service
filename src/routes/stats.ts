@@ -28,6 +28,7 @@ const router = Router();
 interface Identity {
   userId: string;
   runId: string;
+  brandId?: string;
   campaignId?: string;
   featureSlug?: string;
 }
@@ -43,6 +44,7 @@ function buildDownstreamHeaders(
     "x-user-id": identity.userId,
     "x-run-id": identity.runId,
   };
+  if (identity.brandId) h["x-brand-id"] = identity.brandId;
   if (identity.campaignId) h["x-campaign-id"] = identity.campaignId;
   if (identity.featureSlug) h["x-feature-slug"] = identity.featureSlug;
   return h;
@@ -942,7 +944,7 @@ router.get("/stats/registry", apiKeyAuth, async (_req, res) => {
 router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
   try {
     const { featureSlug } = req.params;
-    const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
+    const { orgId, userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
 
     const feature = await db.query.features.findFirst({
       where: eq(features.slug, featureSlug),
@@ -970,7 +972,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     const requiredKeys = collectRequiredKeys(feature);
     const sources = requiredSources(requiredKeys);
 
-    const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
+    const identity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };
     const pipelineKeys = collectPipelineKeys(requiredKeys);
     const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, pressKitsStatsMap, activeCampaigns] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
@@ -1066,7 +1068,7 @@ router.get("/stats/dynasty", apiKeyAuth, async (req, res) => {
       return res.status(400).json({ error: "Query parameter 'dynastySlug' is required" });
     }
 
-    const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
+    const { orgId, userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
 
     // Find any feature in this dynasty to use as the source of keys/charts
     const dynastyFeatures = await db.query.features.findMany({
@@ -1099,7 +1101,7 @@ router.get("/stats/dynasty", apiKeyAuth, async (req, res) => {
     const requiredKeys = collectRequiredKeys(activeFeature);
     const sources = requiredSources(requiredKeys);
 
-    const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
+    const identity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };
     const pipelineKeys = collectPipelineKeys(requiredKeys);
     const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, pressKitsStatsMap, activeCampaigns] = await Promise.all([
       sources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : Promise.resolve(new Map<string, Record<string, number>>()),
@@ -1208,7 +1210,7 @@ router.get("/stats/dynasty", apiKeyAuth, async (req, res) => {
  */
 router.get("/stats", apiKeyAuth, async (req, res) => {
   try {
-    const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
+    const { orgId, userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
 
     const groupByParam = req.query.groupBy as string | undefined;
     const filters: Record<string, string> = {};
@@ -1234,7 +1236,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
 
     const groupBy = (groupByParam?.split(",")[0] ?? null) as GroupByDimension | null;
 
-    const identity: Identity = { userId, runId, campaignId, featureSlug: headerFeatureSlug };
+    const identity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };
     const globalPipelineKeys = collectPipelineKeys(allKeys);
     // Dynasty filters and groupBy are passed through to downstream services — they handle resolution natively
     const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([

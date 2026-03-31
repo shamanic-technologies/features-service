@@ -21,9 +21,8 @@ describe("extractBrandFields", () => {
     delete process.env.BRAND_SERVICE_API_KEY;
   });
 
-  it("converts array response from brand-service into keyed Record", async () => {
+  it("calls POST /brands/extract-fields with x-brand-id header", async () => {
     const arrayResponse = {
-      brandId: "brand-123",
       results: [
         {
           key: "biography",
@@ -44,20 +43,28 @@ describe("extractBrandFields", () => {
       ],
     };
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
+    const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(arrayResponse),
     });
+    globalThis.fetch = mockFetch;
 
     const { extractBrandFields } = await import("../src/lib/brand-client.js");
     const results = await extractBrandFields(
-      "brand-123",
       [
         { key: "biography", description: "Company biography" },
         { key: "keyProjects", description: "Key projects" },
       ],
-      { orgId: "org-1", userId: "user-1", runId: "run-1" },
+      { orgId: "org-1", userId: "user-1", runId: "run-1", brandId: "brand-123" },
     );
+
+    // Verify URL uses /brands/extract-fields (no brandId in path)
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toBe(`${BRAND_SERVICE_URL}/brands/extract-fields`);
+
+    // Verify x-brand-id header is forwarded
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(opts.headers["x-brand-id"]).toBe("brand-123");
 
     expect(results).toHaveProperty("biography");
     expect(results).toHaveProperty("keyProjects");
@@ -65,6 +72,23 @@ describe("extractBrandFields", () => {
     expect(results.biography.cached).toBe(true);
     expect(results.keyProjects.value).toEqual(["Project A", "Project B"]);
     expect(results.keyProjects.cached).toBe(false);
+  });
+
+  it("supports CSV brand IDs in x-brand-id header", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: [] }),
+    });
+    globalThis.fetch = mockFetch;
+
+    const { extractBrandFields } = await import("../src/lib/brand-client.js");
+    await extractBrandFields(
+      [{ key: "bio", description: "Bio" }],
+      { orgId: "org-1", userId: "user-1", runId: "run-1", brandId: "uuid1,uuid2,uuid3" },
+    );
+
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(opts.headers["x-brand-id"]).toBe("uuid1,uuid2,uuid3");
   });
 
   it("throws on non-ok response", async () => {
@@ -78,24 +102,33 @@ describe("extractBrandFields", () => {
 
     await expect(
       extractBrandFields(
-        "brand-123",
+        [{ key: "bio", description: "Bio" }],
+        { orgId: "org-1", userId: "user-1", runId: "run-1", brandId: "brand-123" },
+      ),
+    ).rejects.toThrow("brand-service extract-fields failed (500)");
+  });
+
+  it("throws when brandId header is missing", async () => {
+    const { extractBrandFields } = await import("../src/lib/brand-client.js");
+
+    await expect(
+      extractBrandFields(
         [{ key: "bio", description: "Bio" }],
         { orgId: "org-1", userId: "user-1", runId: "run-1" },
       ),
-    ).rejects.toThrow("brand-service extract-fields failed (500)");
+    ).rejects.toThrow("x-brand-id header is required");
   });
 
   it("handles empty results array", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ brandId: "brand-123", results: [] }),
+      json: () => Promise.resolve({ results: [] }),
     });
 
     const { extractBrandFields } = await import("../src/lib/brand-client.js");
     const results = await extractBrandFields(
-      "brand-123",
       [{ key: "biography", description: "Bio" }],
-      { orgId: "org-1", userId: "user-1", runId: "run-1" },
+      { orgId: "org-1", userId: "user-1", runId: "run-1", brandId: "brand-123" },
     );
 
     expect(Object.keys(results)).toHaveLength(0);
@@ -105,15 +138,14 @@ describe("extractBrandFields", () => {
   it("forwards x-campaign-id and x-feature-slug when provided", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ brandId: "brand-123", results: [] }),
+      json: () => Promise.resolve({ results: [] }),
     });
     globalThis.fetch = mockFetch;
 
     const { extractBrandFields } = await import("../src/lib/brand-client.js");
     await extractBrandFields(
-      "brand-123",
       [{ key: "bio", description: "Bio" }],
-      { orgId: "org-1", userId: "user-1", runId: "run-1", campaignId: "camp-42", featureSlug: "pr-outreach" },
+      { orgId: "org-1", userId: "user-1", runId: "run-1", brandId: "brand-123", campaignId: "camp-42", featureSlug: "pr-outreach" },
     );
 
     const [, opts] = mockFetch.mock.calls[0];
@@ -124,15 +156,14 @@ describe("extractBrandFields", () => {
   it("omits x-campaign-id and x-feature-slug when not provided", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ brandId: "brand-123", results: [] }),
+      json: () => Promise.resolve({ results: [] }),
     });
     globalThis.fetch = mockFetch;
 
     const { extractBrandFields } = await import("../src/lib/brand-client.js");
     await extractBrandFields(
-      "brand-123",
       [{ key: "bio", description: "Bio" }],
-      { orgId: "org-1", userId: "user-1", runId: "run-1" },
+      { orgId: "org-1", userId: "user-1", runId: "run-1", brandId: "brand-123" },
     );
 
     const [, opts] = mockFetch.mock.calls[0];
