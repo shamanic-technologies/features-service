@@ -27,10 +27,6 @@ export interface CostGroup {
   maxStartedAt: string | null;
 }
 
-export interface PublicFilters {
-  brandId?: string;
-}
-
 // ── Workflow metadata ────────────────────────────────────────────────────────
 
 export async function fetchPublicWorkflows(
@@ -56,10 +52,8 @@ export async function fetchPublicWorkflows(
 export async function fetchPublicCosts(
   featureSlugs: string,
   groupBy: string,
-  filters?: PublicFilters,
 ): Promise<CostGroup[]> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
-  if (filters?.brandId) params.set("brandId", filters.brandId);
 
   const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs?${params}`;
   const response = await fetch(url, {
@@ -80,10 +74,8 @@ export async function fetchPublicCosts(
 export async function fetchPublicEmailStats(
   featureSlugs: string,
   groupBy: string,
-  filters?: PublicFilters,
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
-  if (filters?.brandId) params.set("brandId", filters.brandId);
 
   const url = `${process.env.EMAIL_GATEWAY_SERVICE_URL}/stats/public?${params}`;
   const response = await fetch(url, {
@@ -131,10 +123,8 @@ function extractBroadcastEmailFields(data: Record<string, unknown>): Record<stri
 export async function fetchPublicJournalistsStats(
   featureSlugs: string,
   groupBy: string,
-  filters?: PublicFilters,
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
-  if (filters?.brandId) params.set("brandId", filters.brandId);
 
   const url = `${process.env.JOURNALISTS_SERVICE_URL}/stats/public?${params}`;
   const response = await fetch(url, {

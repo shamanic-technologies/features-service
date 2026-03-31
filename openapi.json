@@ -7991,16 +7991,6 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter by brand ID"
-            },
-            "required": false,
-            "description": "Filter by brand ID",
-            "name": "brandId",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
               "enum": [
                 "workflow",
                 "brand"
@@ -8193,16 +8183,6 @@
             "required": true,
             "description": "Stats key to rank by (e.g. 'emailsReplied')",
             "name": "objective",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Filter by brand ID"
-            },
-            "required": false,
-            "description": "Filter by brand ID",
-            "name": "brandId",
             "in": "query"
           },
           {
@@ -8433,25 +8413,15 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter by brand ID"
-            },
-            "required": false,
-            "description": "Filter by brand ID",
-            "name": "brandId",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
               "enum": [
                 "workflow",
                 "brand"
               ],
-              "description": "Best per workflow or best per brand"
+              "description": "Group results by workflow or by brand"
             },
             "required": true,
-            "description": "Best per workflow or best per brand",
-            "name": "by",
+            "description": "Group results by workflow or by brand",
+            "name": "groupBy",
             "in": "query"
           }
         ],
@@ -8565,25 +8535,15 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter by brand ID"
-            },
-            "required": false,
-            "description": "Filter by brand ID",
-            "name": "brandId",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
               "enum": [
                 "workflow",
                 "brand"
               ],
-              "description": "Best per workflow or best per brand"
+              "description": "Group results by workflow or by brand"
             },
             "required": true,
-            "description": "Best per workflow or best per brand",
-            "name": "by",
+            "description": "Group results by workflow or by brand",
+            "name": "groupBy",
             "in": "query"
           },
           {
