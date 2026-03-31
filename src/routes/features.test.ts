@@ -447,7 +447,7 @@ describe("POST /features/:dynastySlug/prefill", () => {
     const { extractBrandFields } = await import("../lib/brand-client.js");
     const mockExtract = vi.mocked(extractBrandFields);
     mockExtract.mockResolvedValueOnce({
-      target: { value: "Enterprise", byBrand: { "example.com": "Enterprise" } },
+      target: { value: "Enterprise", byBrand: { "example.com": { value: "Enterprise", cached: false, extractedAt: "2026-03-01T00:00:00Z", expiresAt: null, sourceUrls: [] } } },
     });
 
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE_V2);
@@ -466,7 +466,7 @@ describe("POST /features/:dynastySlug/prefill", () => {
     const { extractBrandFields } = await import("../lib/brand-client.js");
     const mockExtract = vi.mocked(extractBrandFields);
     mockExtract.mockResolvedValueOnce({
-      target: { value: "Enterprise", byBrand: { "example.com": "Enterprise" } },
+      target: { value: "Enterprise", byBrand: { "example.com": { value: "Enterprise", cached: false, extractedAt: "2026-03-01T00:00:00Z", expiresAt: null, sourceUrls: [] } } },
     });
 
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE_V2);

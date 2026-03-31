@@ -6,9 +6,19 @@ export interface ExtractFieldItem {
   description: string;
 }
 
+type FieldValue = string | string[] | Record<string, unknown> | null;
+
+export interface BrandFieldDetail {
+  value: FieldValue;
+  cached: boolean;
+  extractedAt: string;
+  expiresAt: string | null;
+  sourceUrls: string[] | null;
+}
+
 export interface ExtractedFieldResult {
-  value: string | string[] | Record<string, unknown> | null;
-  byBrand: Record<string, string | string[] | Record<string, unknown> | null>;
+  value: FieldValue;
+  byBrand: Record<string, BrandFieldDetail>;
 }
 
 /**
@@ -59,7 +69,7 @@ export async function extractBrandFields(
 
   const data = await response.json() as {
     brands: Array<{ brandId: string; domain: string; name: string }>;
-    fields: Record<string, { value: string | string[] | Record<string, unknown> | null; byBrand: Record<string, string | string[] | Record<string, unknown> | null> }>;
+    fields: Record<string, ExtractedFieldResult>;
   };
   const map: Record<string, ExtractedFieldResult> = {};
   for (const [key, field] of Object.entries(data.fields)) {
