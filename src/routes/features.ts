@@ -693,13 +693,12 @@ router.post("/features/:dynastySlug/prefill", apiKeyAuth, async (req, res) => {
     }
 
     // format === "full"
-    const prefilled: Record<string, { value: unknown; cached: boolean; sourceUrls: string[] | null }> = {};
+    const prefilled: Record<string, { value: unknown; byBrand: Record<string, unknown> }> = {};
     for (const input of feature.inputs) {
       const result = extractedResults[input.extractKey];
       prefilled[input.key] = {
         value: result?.value ?? null,
-        cached: result?.cached ?? false,
-        sourceUrls: result?.sourceUrls ?? null,
+        byBrand: result?.byBrand ?? {},
       };
     }
 

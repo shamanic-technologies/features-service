@@ -8,10 +8,7 @@ export interface ExtractFieldItem {
 
 export interface ExtractedFieldResult {
   value: string | string[] | Record<string, unknown> | null;
-  cached: boolean;
-  extractedAt: string;
-  expiresAt: string | null;
-  sourceUrls: string[] | null;
+  byBrand: Record<string, string | string[] | Record<string, unknown> | null>;
 }
 
 /**
@@ -60,10 +57,13 @@ export async function extractBrandFields(
     throw new Error(`brand-service extract-fields failed (${response.status}): ${text}`);
   }
 
-  const data = await response.json() as { results: Array<{ key: string } & ExtractedFieldResult> };
+  const data = await response.json() as {
+    brands: Array<{ brandId: string; domain: string; name: string }>;
+    fields: Record<string, { value: string | string[] | Record<string, unknown> | null; byBrand: Record<string, string | string[] | Record<string, unknown> | null> }>;
+  };
   const map: Record<string, ExtractedFieldResult> = {};
-  for (const r of data.results) {
-    map[r.key] = r;
+  for (const [key, field] of Object.entries(data.fields)) {
+    map[key] = field;
   }
   return map;
 }

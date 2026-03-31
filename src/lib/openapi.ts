@@ -117,12 +117,11 @@ const prefillFullResponseSchema = z.object({
   format: z.literal("full"),
   prefilled: z.record(z.string(), z.object({
     value: z.any().describe("Extracted value — can be a string, array, or object depending on the field"),
-    cached: z.boolean().describe("Whether the value was served from cache"),
-    sourceUrls: z.array(z.string()).nullable().describe("URLs from the brand's website used to extract this value"),
+    byBrand: z.record(z.string(), z.any()).describe("Per-brand values keyed by brand domain"),
   })).describe(
     "Map of input key → full extraction result."
   ),
-}).describe("Pre-filled values with metadata (cache status, source URLs)");
+}).describe("Pre-filled values with per-brand breakdown");
 
 const inputsResponseSchema = z.object({
   slug: z.string().describe("Resolved versioned slug (e.g. 'sales-cold-email-v2')"),
@@ -502,9 +501,9 @@ registry.registerPath({
     "  }\n" +
     "}\n" +
     "```\n\n" +
-    "With `format=full`, each value includes cache and source metadata:\n" +
+    "With `format=full`, each value includes per-brand breakdown:\n" +
     "```json\n" +
-    "{ \"targetAudience\": { \"value\": \"Enterprise SaaS CTOs...\", \"cached\": true, \"sourceUrls\": [\"https://example.com/about\"] } }\n" +
+    "{ \"targetAudience\": { \"value\": \"Enterprise SaaS CTOs...\", \"byBrand\": { \"acme.com\": \"Enterprise SaaS CTOs...\" } } }\n" +
     "```",
   tags: ["Features"],
   request: {

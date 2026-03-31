@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // We test the brand-client module by mocking global fetch
-// to verify it correctly converts the array response from brand-service
+// to verify it correctly converts the { brands, fields } response from brand-service
 // into a keyed Record for features-service consumption.
 
 describe("extractBrandFields", () => {
@@ -22,30 +22,23 @@ describe("extractBrandFields", () => {
   });
 
   it("calls POST /brands/extract-fields with x-brand-id header", async () => {
-    const arrayResponse = {
-      results: [
-        {
-          key: "biography",
+    const brandResponse = {
+      brands: [{ brandId: "brand-123", domain: "example.com", name: "Example" }],
+      fields: {
+        biography: {
           value: "A leading AI company",
-          cached: true,
-          extractedAt: "2026-03-01T00:00:00Z",
-          expiresAt: "2026-04-01T00:00:00Z",
-          sourceUrls: ["https://example.com"],
+          byBrand: { "example.com": "A leading AI company" },
         },
-        {
-          key: "keyProjects",
+        keyProjects: {
           value: ["Project A", "Project B"],
-          cached: false,
-          extractedAt: "2026-03-26T00:00:00Z",
-          expiresAt: null,
-          sourceUrls: null,
+          byBrand: { "example.com": ["Project A", "Project B"] },
         },
-      ],
+      },
     };
 
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve(arrayResponse),
+      json: () => Promise.resolve(brandResponse),
     });
     globalThis.fetch = mockFetch;
 
@@ -69,15 +62,15 @@ describe("extractBrandFields", () => {
     expect(results).toHaveProperty("biography");
     expect(results).toHaveProperty("keyProjects");
     expect(results.biography.value).toBe("A leading AI company");
-    expect(results.biography.cached).toBe(true);
+    expect(results.biography.byBrand).toEqual({ "example.com": "A leading AI company" });
     expect(results.keyProjects.value).toEqual(["Project A", "Project B"]);
-    expect(results.keyProjects.cached).toBe(false);
+    expect(results.keyProjects.byBrand).toEqual({ "example.com": ["Project A", "Project B"] });
   });
 
   it("supports CSV brand IDs in x-brand-id header", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ results: [] }),
+      json: () => Promise.resolve({ brands: [], fields: {} }),
     });
     globalThis.fetch = mockFetch;
 
@@ -119,10 +112,10 @@ describe("extractBrandFields", () => {
     ).rejects.toThrow("x-brand-id header is required");
   });
 
-  it("handles empty results array", async () => {
+  it("handles empty fields object", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ results: [] }),
+      json: () => Promise.resolve({ brands: [], fields: {} }),
     });
 
     const { extractBrandFields } = await import("../src/lib/brand-client.js");
@@ -138,7 +131,7 @@ describe("extractBrandFields", () => {
   it("forwards x-campaign-id and x-feature-slug when provided", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ results: [] }),
+      json: () => Promise.resolve({ brands: [], fields: {} }),
     });
     globalThis.fetch = mockFetch;
 
@@ -156,7 +149,7 @@ describe("extractBrandFields", () => {
   it("omits x-campaign-id and x-feature-slug when not provided", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ results: [] }),
+      json: () => Promise.resolve({ brands: [], fields: {} }),
     });
     globalThis.fetch = mockFetch;
 
