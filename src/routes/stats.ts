@@ -1319,4 +1319,43 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
   }
 });
 
+// ── GET /stats/ranked — Authenticated version ───────────────────────────────
+
+import { handleRanked, handleBest } from "./public.js";
+
+router.get("/stats/ranked", apiKeyAuth, async (req, res) => {
+  try {
+    const limitParam = parseInt(req.query.limit as string, 10);
+    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 10;
+
+    await handleRanked(
+      req.query.featureDynastySlug as string | undefined,
+      req.query.objective as string | undefined,
+      req.query.brandId as string | undefined,
+      req.query.groupBy as string | undefined,
+      limit,
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] Stats ranked error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /stats/best — Authenticated version ─────────────────────────────────
+
+router.get("/stats/best", apiKeyAuth, async (req, res) => {
+  try {
+    await handleBest(
+      req.query.featureDynastySlug as string | undefined,
+      req.query.brandId as string | undefined,
+      req.query.by as string | undefined,
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] Stats best error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 export default router;

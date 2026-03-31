@@ -765,6 +765,138 @@ registry.registerPath({
   },
 });
 
+// ── GET /public/stats/ranked ──────────────────────────────────────────────
+
+const rankedWorkflowSchema = z.object({
+  id: z.string().uuid().optional(),
+  slug: z.string(),
+  name: z.string().optional(),
+  dynastyName: z.string().optional(),
+  dynastySlug: z.string().optional(),
+  version: z.number().int().optional(),
+  featureSlug: z.string().optional(),
+  createdForBrandId: z.string().nullable().optional(),
+});
+registry.register("RankedWorkflow", rankedWorkflowSchema);
+
+const rankedBrandSchema = z.object({
+  brandId: z.string(),
+});
+registry.register("RankedBrand", rankedBrandSchema);
+
+const rankedStatsSchema = z.object({
+  totalCostInUsdCents: z.number().describe("Total cost in USD cents"),
+  totalOutcomes: z.number().describe("Total outcome count for the objective metric"),
+  costPerOutcome: z.number().nullable().describe("Cost per outcome (null if no outcomes)"),
+  completedRuns: z.number().describe("Number of completed runs"),
+});
+registry.register("RankedStats", rankedStatsSchema);
+
+const rankedResultSchema = z.object({
+  workflow: rankedWorkflowSchema.optional(),
+  brand: rankedBrandSchema.optional(),
+  stats: rankedStatsSchema,
+});
+registry.register("RankedResult", rankedResultSchema);
+
+const rankedQueryParams = z.object({
+  featureDynastySlug: z.string().describe("Feature dynasty slug (required)"),
+  objective: z.string().describe("Stats key to rank by (e.g. 'emailsReplied')"),
+  brandId: z.string().optional().describe("Filter by brand ID"),
+  groupBy: z.enum(["brand"]).optional().describe("Group by brand instead of workflow"),
+  limit: z.string().optional().describe("Max results (default 10, max 100)"),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/ranked",
+  summary: "Ranked workflows by cost-per-outcome (public, no auth)",
+  description:
+    "Returns workflows ranked by cost-per-outcome for a single objective metric. " +
+    "Stats are aggregated across the full workflow upgrade chain.\n\n" +
+    "Use `groupBy=brand` to aggregate by brand instead of workflow.",
+  tags: ["Public"],
+  request: { query: rankedQueryParams },
+  responses: {
+    200: { description: "Ranked results", content: { "application/json": { schema: z.object({ results: z.array(rankedResultSchema) }) } } },
+    400: { description: "Missing required parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No features found for this dynasty slug", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/stats/ranked",
+  summary: "Ranked workflows by cost-per-outcome (authenticated)",
+  description:
+    "Authenticated version of `GET /public/stats/ranked`. Same logic, same params, same response. " +
+    "Requires x-api-key and identity headers.",
+  tags: ["Stats"],
+  security: [{ ApiKeyAuth: [] }],
+  request: { headers: identityHeaders, query: rankedQueryParams },
+  responses: {
+    200: { description: "Ranked results", content: { "application/json": { schema: z.object({ results: z.array(rankedResultSchema) }) } } },
+    400: { description: "Missing required parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No features found for this dynasty slug", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/best ───────────────────────────────────────────────
+
+const bestEntryWorkflowSchema = z.object({
+  workflowSlug: z.string(),
+  workflowName: z.string(),
+  createdForBrandId: z.string().nullable(),
+  value: z.number().describe("Best (lowest) cost-per-outcome in USD cents"),
+});
+registry.register("BestEntryWorkflow", bestEntryWorkflowSchema);
+
+const bestEntryBrandSchema = z.object({
+  brandId: z.string(),
+  value: z.number().describe("Best (lowest) cost-per-outcome in USD cents"),
+});
+registry.register("BestEntryBrand", bestEntryBrandSchema);
+
+const bestQueryParams = z.object({
+  featureDynastySlug: z.string().describe("Feature dynasty slug (required)"),
+  brandId: z.string().optional().describe("Filter by brand ID"),
+  by: z.enum(["workflow", "brand"]).optional().describe("Best workflow (default) or best brand"),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/best",
+  summary: "Best cost-per-outcome per metric (public, no auth)",
+  description:
+    "Returns the single best (lowest cost-per-outcome) workflow or brand for each of the feature's " +
+    "declared count-type output metrics. Stats are aggregated across upgrade chains.\n\n" +
+    "Use `by=brand` to find the best brand instead of the best workflow.",
+  tags: ["Public"],
+  request: { query: bestQueryParams },
+  responses: {
+    200: { description: "Best records per metric", content: { "application/json": { schema: z.object({ best: z.record(z.string(), bestEntryWorkflowSchema.nullable()) }) } } },
+    400: { description: "Missing required parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No features found for this dynasty slug", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/stats/best",
+  summary: "Best cost-per-outcome per metric (authenticated)",
+  description:
+    "Authenticated version of `GET /public/stats/best`. Same logic, same params, same response. " +
+    "Requires x-api-key and identity headers.",
+  tags: ["Stats"],
+  security: [{ ApiKeyAuth: [] }],
+  request: { headers: identityHeaders, query: bestQueryParams },
+  responses: {
+    200: { description: "Best records per metric", content: { "application/json": { schema: z.object({ best: z.record(z.string(), bestEntryWorkflowSchema.nullable()) }) } } },
+    400: { description: "Missing required parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No features found for this dynasty slug", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 registry.registerComponent("securitySchemes", "ApiKeyAuth", {
   type: "apiKey",
   in: "header",
