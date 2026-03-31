@@ -7991,16 +7991,6 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter by brand ID"
-            },
-            "required": false,
-            "description": "Filter by brand ID",
-            "name": "brandId",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
               "enum": [
                 "workflow",
                 "brand"
@@ -8193,16 +8183,6 @@
             "required": true,
             "description": "Stats key to rank by (e.g. 'emailsReplied')",
             "name": "objective",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Filter by brand ID"
-            },
-            "required": false,
-            "description": "Filter by brand ID",
-            "name": "brandId",
             "in": "query"
           },
           {
@@ -8433,16 +8413,6 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter by brand ID"
-            },
-            "required": false,
-            "description": "Filter by brand ID",
-            "name": "brandId",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
               "enum": [
                 "workflow",
                 "brand"
@@ -8560,16 +8530,6 @@
             "required": true,
             "description": "Feature dynasty slug (required)",
             "name": "featureDynastySlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Filter by brand ID"
-            },
-            "required": false,
-            "description": "Filter by brand ID",
-            "name": "brandId",
             "in": "query"
           },
           {

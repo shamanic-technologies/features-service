@@ -1331,7 +1331,6 @@ router.get("/stats/ranked", apiKeyAuth, async (req, res) => {
     await handleRanked(
       req.query.featureDynastySlug as string | undefined,
       req.query.objective as string | undefined,
-      req.query.brandId as string | undefined,
       req.query.groupBy as string | undefined,
       limit,
       res,
@@ -1348,7 +1347,6 @@ router.get("/stats/best", apiKeyAuth, async (req, res) => {
   try {
     await handleBest(
       req.query.featureDynastySlug as string | undefined,
-      req.query.brandId as string | undefined,
       req.query.by as string | undefined,
       res,
     );

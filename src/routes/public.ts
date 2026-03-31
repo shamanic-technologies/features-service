@@ -10,7 +10,6 @@ import {
   fetchPublicEmailStats,
   fetchPublicJournalistsStats,
   type WorkflowMetadata,
-  type PublicFilters,
 } from "../lib/public-stats-clients.js";
 
 const router = Router();
@@ -126,17 +125,16 @@ async function fetchOutcomeStats(
   featureSlugsStr: string,
   groupBy: string,
   keys: string[],
-  filters?: PublicFilters,
 ): Promise<Map<string, Record<string, number>>> {
   const sources = requiredSources(keys);
   const merged = new Map<string, Record<string, number>>();
 
   const promises: Promise<Map<string, Record<string, number>>>[] = [];
   if (sources.has("email-gateway")) {
-    promises.push(fetchPublicEmailStats(featureSlugsStr, groupBy, filters));
+    promises.push(fetchPublicEmailStats(featureSlugsStr, groupBy));
   }
   if (sources.has("journalists")) {
-    promises.push(fetchPublicJournalistsStats(featureSlugsStr, groupBy, filters));
+    promises.push(fetchPublicJournalistsStats(featureSlugsStr, groupBy));
   }
 
   const results = await Promise.all(promises);
@@ -289,7 +287,6 @@ function aggregateAcrossChains(
 export async function handleRanked(
   featureDynastySlug: string | undefined,
   objective: string | undefined,
-  brandId: string | undefined,
   groupBy: string | undefined,
   limit: number,
   res: import("express").Response,
@@ -315,16 +312,14 @@ export async function handleRanked(
 
   const { feature, featureSlugs } = resolved;
   const featureSlugsStr = featureSlugs.join(",");
-  const filters: PublicFilters = {};
-  if (brandId) filters.brandId = brandId;
 
   const isBrandGrouping = groupBy === "brand";
   const statsGroupBy = isBrandGrouping ? "brandId" : "workflowSlug";
 
   const [workflows, costGroups, outcomeMap] = await Promise.all([
     isBrandGrouping ? Promise.resolve([]) : fetchPublicWorkflows(featureSlugsStr, "all"),
-    fetchPublicCosts(featureSlugsStr, statsGroupBy, filters),
-    fetchOutcomeStats(featureSlugsStr, statsGroupBy, [objective], filters),
+    fetchPublicCosts(featureSlugsStr, statsGroupBy),
+    fetchOutcomeStats(featureSlugsStr, statsGroupBy, [objective]),
   ]);
 
   let scored: Map<string, ScoredEntry>;
@@ -383,7 +378,6 @@ export async function handleRanked(
 
 export async function handleBest(
   featureDynastySlug: string | undefined,
-  brandId: string | undefined,
   by: string | undefined,
   res: import("express").Response,
 ): Promise<void> {
@@ -405,16 +399,14 @@ export async function handleBest(
   const { feature, featureSlugs } = resolved;
   const countKeys = getCountOutputKeys(feature);
   const featureSlugsStr = featureSlugs.join(",");
-  const filters: PublicFilters = {};
-  if (brandId) filters.brandId = brandId;
 
   const isBrandMode = by === "brand";
   const statsGroupBy = isBrandMode ? "brandId" : "workflowSlug";
 
   const [workflows, costGroups, outcomeMap] = await Promise.all([
     isBrandMode ? Promise.resolve([]) : fetchPublicWorkflows(featureSlugsStr, "all"),
-    fetchPublicCosts(featureSlugsStr, statsGroupBy, filters),
-    fetchOutcomeStats(featureSlugsStr, statsGroupBy, countKeys, filters),
+    fetchPublicCosts(featureSlugsStr, statsGroupBy),
+    fetchOutcomeStats(featureSlugsStr, statsGroupBy, countKeys),
   ]);
 
   let costMap: Map<string, { totalCostInUsdCents: number; completedRuns: number }>;
@@ -490,7 +482,6 @@ router.get("/public/stats/ranked", async (req, res) => {
     await handleRanked(
       req.query.featureDynastySlug as string | undefined,
       req.query.objective as string | undefined,
-      req.query.brandId as string | undefined,
       req.query.groupBy as string | undefined,
       limit,
       res,
@@ -507,7 +498,6 @@ router.get("/public/stats/best", async (req, res) => {
   try {
     await handleBest(
       req.query.featureDynastySlug as string | undefined,
-      req.query.brandId as string | undefined,
       req.query.by as string | undefined,
       res,
     );
