@@ -217,7 +217,7 @@ async function fetchEmailStats(
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams();
   if (groupBy) params.set("groupBy", groupBy);
-  if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
+  if (filters.workflowSlug) params.set("workflowSlugs", filters.workflowSlug);
   if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
   if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
