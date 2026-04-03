@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features, type Feature, type FeatureChart } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { STATS_REGISTRY, getPublicRegistry, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
+import { STATS_REGISTRY, getPublicRegistry, getEntityRegistry, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
 // dynasty-client is used by features.ts for resolution endpoints;
 // stats.ts passes dynasty params through to downstream services directly.
 
@@ -937,6 +937,17 @@ function buildSystemStats(
  */
 router.get("/stats/registry", apiKeyAuth, async (_req, res) => {
   res.json({ registry: getPublicRegistry() });
+});
+
+// ── GET /entities/registry ──────────────────────────────────────────────────
+
+/**
+ * Returns the complete entity type registry with label, icon, pathSuffix,
+ * and description for each known entity type.
+ * The front-end uses this to render campaign sidebar tabs dynamically.
+ */
+router.get("/entities/registry", apiKeyAuth, async (_req, res) => {
+  res.json({ registry: getEntityRegistry() });
 });
 
 // ── GET /features/:featureSlug/stats ─────────────────────────────────────────

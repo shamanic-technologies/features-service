@@ -484,3 +484,56 @@ describe("GET /features/:featureSlug/stats — press-kits source", () => {
     expect(res.body.stats.pressKitUniqueVisitors).toBeNull();
   });
 });
+
+// ── GET /entities/registry ──────────────────────────────────────────────────
+
+describe("GET /entities/registry", () => {
+  it("returns the entity type registry with metadata for each type", async () => {
+    const res = await request(app)
+      .get("/entities/registry")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.registry).toBeDefined();
+
+    // Verify known entity types are present
+    const reg = res.body.registry;
+    expect(reg.leads).toEqual({
+      label: "Leads",
+      icon: "users",
+      pathSuffix: "leads",
+      description: expect.any(String),
+    });
+    expect(reg.outlets).toEqual({
+      label: "Outlets",
+      icon: "newspaper",
+      pathSuffix: "outlets",
+      description: expect.any(String),
+    });
+    expect(reg.journalists).toEqual({
+      label: "Journalists",
+      icon: "pen-tool",
+      pathSuffix: "journalists",
+      description: expect.any(String),
+    });
+    expect(reg["press-kits"]).toEqual({
+      label: "Press Kits",
+      icon: "file-text",
+      pathSuffix: "press-kits",
+      description: expect.any(String),
+    });
+
+    // Every entry must have all four fields
+    for (const [key, def] of Object.entries(reg) as [string, Record<string, string>][]) {
+      expect(def.label).toBeTruthy();
+      expect(def.icon).toBeTruthy();
+      expect(def.pathSuffix).toBeTruthy();
+      expect(def.description).toBeTruthy();
+    }
+  });
+
+  it("rejects requests without API key", async () => {
+    const res = await request(app).get("/entities/registry");
+    expect(res.status).toBe(401);
+  });
+});

@@ -559,6 +559,81 @@ registry.registerPath({
   },
 });
 
+// ── GET /entities/registry ───────────────────────────────────────────────
+
+const entityTypeDefSchema = z.object({
+  label: z.string().describe("Human-readable label for the sidebar button (e.g. 'Outlets', 'Press Kits')"),
+  icon: z.string().describe("Lucide icon name — use as <LucideIcon name={icon} /> or look up at lucide.dev/icons (e.g. 'newspaper', 'pen-tool')"),
+  pathSuffix: z.string().describe("URL path suffix appended to /campaigns/{id}/ to form the detail page route (e.g. 'outlets' → /campaigns/{id}/outlets)"),
+  description: z.string().describe("Brief explanation of what this entity type represents"),
+});
+
+const entityRegistryResponseSchema = z.object({
+  registry: z.record(z.string(), entityTypeDefSchema).describe(
+    "Map of entity type name → metadata. Keys are the same strings used in feature.entities[].name."
+  ),
+});
+
+registry.register("EntityTypeDef", entityTypeDefSchema);
+registry.register("EntityRegistryResponse", entityRegistryResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/entities/registry",
+  summary: "Get the entity type registry",
+  description:
+    "Returns the complete dictionary of known entity types with their display metadata. " +
+    "The dashboard uses this to **dynamically render campaign sidebar tabs** instead of hardcoding them.\n\n" +
+    "Each entity type maps to a sidebar button + detail page in the campaign view. " +
+    "When a feature declares `entities: [{ name: \"outlets\" }, { name: \"journalists\" }]`, " +
+    "the dashboard looks up each name in this registry to get the label, icon, and route.\n\n" +
+    "**How to use in the dashboard:**\n" +
+    "1. Fetch `GET /entities/registry` once at app startup (or cache with SWR/React Query)\n" +
+    "2. For each entity in the active feature's `entities` array, look up its `name` in the registry\n" +
+    "3. Render a sidebar button with `label` and `icon`\n" +
+    "4. Route clicks to `/campaigns/{id}/{pathSuffix}`\n" +
+    "5. Skip any entity name not found in the registry (forward-compatibility)\n\n" +
+    "**Example: building the sidebar from a feature definition**\n" +
+    "```typescript\n" +
+    "// Feature has: entities: [{ name: \"outlets\" }, { name: \"journalists\" }, { name: \"emails\" }]\n" +
+    "// Registry returns:\n" +
+    "// {\n" +
+    "//   \"outlets\":      { label: \"Outlets\",      icon: \"newspaper\", pathSuffix: \"outlets\",      description: \"...\" },\n" +
+    "//   \"journalists\":  { label: \"Journalists\",  icon: \"pen-tool\",  pathSuffix: \"journalists\", description: \"...\" },\n" +
+    "//   \"emails\":       { label: \"Emails\",       icon: \"mail\",      pathSuffix: \"emails\",      description: \"...\" }\n" +
+    "// }\n" +
+    "const tabs = feature.entities\n" +
+    "  .map(e => ({ ...entityRegistry[e.name], key: e.name }))\n" +
+    "  .filter(Boolean);\n" +
+    "// → [{ key: \"outlets\", label: \"Outlets\", icon: \"newspaper\", pathSuffix: \"outlets\" }, ...]\n" +
+    "```\n\n" +
+    "**Example response:**\n" +
+    "```json\n" +
+    "{\n" +
+    "  \"registry\": {\n" +
+    "    \"leads\":        { \"label\": \"Leads\",       \"icon\": \"users\",       \"pathSuffix\": \"leads\",       \"description\": \"Sales leads discovered or imported for outreach\" },\n" +
+    "    \"companies\":    { \"label\": \"Companies\",   \"icon\": \"building-2\",  \"pathSuffix\": \"companies\",   \"description\": \"Target companies identified for the campaign\" },\n" +
+    "    \"emails\":       { \"label\": \"Emails\",      \"icon\": \"mail\",        \"pathSuffix\": \"emails\",      \"description\": \"Email messages generated and sent by the campaign\" },\n" +
+    "    \"outlets\":      { \"label\": \"Outlets\",     \"icon\": \"newspaper\",   \"pathSuffix\": \"outlets\",     \"description\": \"Media outlets discovered for PR outreach\" },\n" +
+    "    \"journalists\":  { \"label\": \"Journalists\", \"icon\": \"pen-tool\",    \"pathSuffix\": \"journalists\", \"description\": \"Journalists found at discovered outlets\" },\n" +
+    "    \"press-kits\":   { \"label\": \"Press Kits\",  \"icon\": \"file-text\",   \"pathSuffix\": \"press-kits\",  \"description\": \"Press kits generated for media pitching\" },\n" +
+    "    \"articles\":     { \"label\": \"Articles\",    \"icon\": \"scroll-text\", \"pathSuffix\": \"articles\",    \"description\": \"Published articles resulting from PR campaigns\" }\n" +
+    "  }\n" +
+    "}\n" +
+    "```\n\n" +
+    "**Adding a new entity type:** Add an entry to the `ENTITY_REGISTRY` in features-service, " +
+    "then implement the corresponding campaign detail page in the dashboard. " +
+    "The sidebar picks it up automatically — no dashboard hardcoding needed.\n\n" +
+    "**Validation:** Features-service validates entity names at creation time. " +
+    "If a feature references an unknown entity type (e.g. `{ name: \"podcasters\" }`), " +
+    "the request is rejected with 400. This registry is the source of truth for valid entity names.",
+  tags: ["Entities"],
+  request: { headers: identityHeaders },
+  responses: {
+    200: { description: "Entity type registry", content: { "application/json": { schema: entityRegistryResponseSchema } } },
+  },
+});
+
 // ── GET /features/:featureSlug/stats ─────────────────────────────────────
 
 registry.registerPath({
@@ -983,6 +1058,11 @@ export const openApiDocument = generator.generateDocument({
       "## Stats Registry\n\n" +
       "`GET /stats/registry` — the finite universe of known stats keys. " +
       "Each key has a label and type (count, rate, currency). Features reference these keys in outputs and charts.\n\n" +
+
+      "## Entity Registry\n\n" +
+      "`GET /entities/registry` — the finite universe of known entity types. " +
+      "Each entry has a label, icon, pathSuffix, and description. Features reference these in their `entities` array. " +
+      "The dashboard uses this registry to dynamically render campaign sidebar tabs.\n\n" +
 
       "## Stats Computation\n\n" +
       "Stats endpoints compute values by calling downstream services " +

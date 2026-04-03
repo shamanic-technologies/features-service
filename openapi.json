@@ -3,7 +3,7 @@
   "info": {
     "title": "Features Service API",
     "version": "3.0.0",
-    "description": "Manages feature definitions and computes output stats.\n\n## Key Concepts\n\n**Features** define what campaigns can do: inputs (form), outputs (metrics), charts (funnel/breakdown), and entities (detail tabs). Features are **global** — shared across all orgs. They are template definitions, not per-org resources.\n\n## Feature Definition\n\n```typescript\n{\n  inputs:   [{ key, label, type, ... }],           // campaign creation form\n  outputs:  [{ key, displayOrder }],                // metrics (validated against registry)\n  charts:   [{ type: \"funnel-bar\", steps: [...] }], // visualizations\n  entities: [\"leads\", \"companies\", \"emails\"],       // campaign detail tabs\n}\n```\n\n## Fork-on-Write (Immutability)\n\nFeatures are **immutable** once created. No endpoint mutates inputs or outputs in place.\n\n`PUT /features/{slug}` uses **fork-on-write** semantics:\n\n| Scenario | Behavior | HTTP |\n|----------|----------|------|\n| Only metadata changes (description, icon, charts…) | Update in-place | `200` |\n| Inputs or outputs change (different signature) | Create new feature (fork), deprecate original | `201` |\n| New signature already exists elsewhere | Conflict | `409` |\n\nOn fork:\n- A new **dynasty** is created with an auto-generated codename (e.g. `Sales Cold Email` → `Sales Cold Email Sophia`)\n- `dynastyName`/`dynastySlug` are new and unique, `version` resets to 1\n- `forkedFrom` on the new feature points to the original's ID\n- `upgradedTo` on the original points to the new feature's ID\n- The original's `status` is set to `deprecated`\n\nOn upgrade (same dynasty, signature changed via `PUT /features` batch upsert):\n- `dynastyName`/`dynastySlug` are preserved, `version` is incremented\n- `name` gets version suffix (e.g. `Sales Cold Email v2`), `slug` gets `-v2`\n\nThis is aligned with workflow-service's dynasty model.\n\n## Dynasty Model\n\nFeatures use a **dynasty model** for versioning, aligned with workflow-service:\n\n| Field | Purpose | Changes on upgrade? | Changes on fork? | Example |\n|-------|---------|--------------------|-----------------|---------|\n| `dynastyName` | Stable dynasty name for UI | **No** | **Yes** — new codename | `Sales Cold Email Sophia` |\n| `dynastySlug` | Stable dynasty slug | **No** | **Yes** | `sales-cold-email-sophia` |\n| `version` | Version within dynasty | **Yes** — incremented | Reset to 1 | `2` |\n| `name` | Versioned unique name | **Yes** | **Yes** | `Sales Cold Email Sophia v2` |\n| `slug` | Versioned unique slug | **Yes** | **Yes** | `sales-cold-email-sophia-v2` |\n\n**Always use `dynastyName` for UI display.** The `name`/`slug` are for internal routing.\n\nOn fork, a **codename** is auto-generated (e.g. 'Sophia', 'Berlin') to create a unique dynasty name.\n\nUse `GET /features/dynasty?slug=...` to resolve the stable dynasty identity from any versioned slug.\n\n## Lineage Chain\n\nEach feature can have:\n- `forkedFrom` (uuid | null) — the parent feature this was forked from\n- `upgradedTo` (uuid | null) — if deprecated, the replacement feature\n\nTo traverse the full lineage of a feature, follow `forkedFrom` upward (ancestors) and `upgradedTo` downward (descendants). Campaigns and workflows keep their original `featureSlug` — they are **never** migrated on fork. This preserves full audit history of which feature version produced which results.\n\n## Stats Aggregation Across the Chain\n\nWhen you request stats for a feature (`GET /features/{slug}/stats`), the service automatically resolves the **full upgrade chain** using BFS (breadth-first search) on a predecessor map. This handles:\n\n- **Linear chains:** A v1 → A v2 → A v3 (simple upgrade sequence)\n- **Convergence:** Two dynasties independently produce the same signature — both lineages converge on one active feature. BFS traverses all predecessor branches.\n\n```\nDynasty A: v1 (deprecated) → A v2 (active, sig:DEF)\n                                    ↑\nDynasty B: v1 (deprecated) ─────────┘  (B upgraded to same sig:DEF)\n```\nQuerying stats for A v2 aggregates data from A v1, B v1, and A v2.\n\nThis means:\n- Old campaigns/workflows still referencing a deprecated slug are included\n- You always get the complete picture regardless of which slug in the chain you query\n- No data is lost on fork or convergence\n\n## Stats Registry\n\n`GET /stats/registry` — the finite universe of known stats keys. Each key has a label and type (count, rate, currency). Features reference these keys in outputs and charts.\n\n## Stats Computation\n\nStats endpoints compute values by calling downstream services (email-gateway, runs-service, outlets-service) and returning aggregated results. Keys are either **raw** (fetched from a source) or **derived** (computed as a ratio of two raw keys, e.g. `replyRate = emailsReplied / emailsSent`).\n\n## Registration (Cold Start)\n\n`PUT /features` — idempotent batch upsert, safe to call on every boot. Uses signature-based deduplication: same signature → update metadata, different signature → create or auto-version. This is the equivalent of workflow-service's `PUT /workflows/upgrade`."
+    "description": "Manages feature definitions and computes output stats.\n\n## Key Concepts\n\n**Features** define what campaigns can do: inputs (form), outputs (metrics), charts (funnel/breakdown), and entities (detail tabs). Features are **global** — shared across all orgs. They are template definitions, not per-org resources.\n\n## Feature Definition\n\n```typescript\n{\n  inputs:   [{ key, label, type, ... }],           // campaign creation form\n  outputs:  [{ key, displayOrder }],                // metrics (validated against registry)\n  charts:   [{ type: \"funnel-bar\", steps: [...] }], // visualizations\n  entities: [\"leads\", \"companies\", \"emails\"],       // campaign detail tabs\n}\n```\n\n## Fork-on-Write (Immutability)\n\nFeatures are **immutable** once created. No endpoint mutates inputs or outputs in place.\n\n`PUT /features/{slug}` uses **fork-on-write** semantics:\n\n| Scenario | Behavior | HTTP |\n|----------|----------|------|\n| Only metadata changes (description, icon, charts…) | Update in-place | `200` |\n| Inputs or outputs change (different signature) | Create new feature (fork), deprecate original | `201` |\n| New signature already exists elsewhere | Conflict | `409` |\n\nOn fork:\n- A new **dynasty** is created with an auto-generated codename (e.g. `Sales Cold Email` → `Sales Cold Email Sophia`)\n- `dynastyName`/`dynastySlug` are new and unique, `version` resets to 1\n- `forkedFrom` on the new feature points to the original's ID\n- `upgradedTo` on the original points to the new feature's ID\n- The original's `status` is set to `deprecated`\n\nOn upgrade (same dynasty, signature changed via `PUT /features` batch upsert):\n- `dynastyName`/`dynastySlug` are preserved, `version` is incremented\n- `name` gets version suffix (e.g. `Sales Cold Email v2`), `slug` gets `-v2`\n\nThis is aligned with workflow-service's dynasty model.\n\n## Dynasty Model\n\nFeatures use a **dynasty model** for versioning, aligned with workflow-service:\n\n| Field | Purpose | Changes on upgrade? | Changes on fork? | Example |\n|-------|---------|--------------------|-----------------|---------|\n| `dynastyName` | Stable dynasty name for UI | **No** | **Yes** — new codename | `Sales Cold Email Sophia` |\n| `dynastySlug` | Stable dynasty slug | **No** | **Yes** | `sales-cold-email-sophia` |\n| `version` | Version within dynasty | **Yes** — incremented | Reset to 1 | `2` |\n| `name` | Versioned unique name | **Yes** | **Yes** | `Sales Cold Email Sophia v2` |\n| `slug` | Versioned unique slug | **Yes** | **Yes** | `sales-cold-email-sophia-v2` |\n\n**Always use `dynastyName` for UI display.** The `name`/`slug` are for internal routing.\n\nOn fork, a **codename** is auto-generated (e.g. 'Sophia', 'Berlin') to create a unique dynasty name.\n\nUse `GET /features/dynasty?slug=...` to resolve the stable dynasty identity from any versioned slug.\n\n## Lineage Chain\n\nEach feature can have:\n- `forkedFrom` (uuid | null) — the parent feature this was forked from\n- `upgradedTo` (uuid | null) — if deprecated, the replacement feature\n\nTo traverse the full lineage of a feature, follow `forkedFrom` upward (ancestors) and `upgradedTo` downward (descendants). Campaigns and workflows keep their original `featureSlug` — they are **never** migrated on fork. This preserves full audit history of which feature version produced which results.\n\n## Stats Aggregation Across the Chain\n\nWhen you request stats for a feature (`GET /features/{slug}/stats`), the service automatically resolves the **full upgrade chain** using BFS (breadth-first search) on a predecessor map. This handles:\n\n- **Linear chains:** A v1 → A v2 → A v3 (simple upgrade sequence)\n- **Convergence:** Two dynasties independently produce the same signature — both lineages converge on one active feature. BFS traverses all predecessor branches.\n\n```\nDynasty A: v1 (deprecated) → A v2 (active, sig:DEF)\n                                    ↑\nDynasty B: v1 (deprecated) ─────────┘  (B upgraded to same sig:DEF)\n```\nQuerying stats for A v2 aggregates data from A v1, B v1, and A v2.\n\nThis means:\n- Old campaigns/workflows still referencing a deprecated slug are included\n- You always get the complete picture regardless of which slug in the chain you query\n- No data is lost on fork or convergence\n\n## Stats Registry\n\n`GET /stats/registry` — the finite universe of known stats keys. Each key has a label and type (count, rate, currency). Features reference these keys in outputs and charts.\n\n## Entity Registry\n\n`GET /entities/registry` — the finite universe of known entity types. Each entry has a label, icon, pathSuffix, and description. Features reference these in their `entities` array. The dashboard uses this registry to dynamically render campaign sidebar tabs.\n\n## Stats Computation\n\nStats endpoints compute values by calling downstream services (email-gateway, runs-service, outlets-service) and returning aggregated results. Keys are either **raw** (fetched from a source) or **derived** (computed as a ratio of two raw keys, e.g. `replyRate = emailsReplied / emailsSent`).\n\n## Registration (Cold Start)\n\n`PUT /features` — idempotent batch upsert, safe to call on every boot. Uses signature-based deduplication: same signature → update metadata, different signature → create or auto-version. This is the equivalent of workflow-service's `PUT /workflows/upgrade`."
   },
   "servers": [
     {
@@ -1995,6 +1995,72 @@
         },
         "required": [
           "dynasties"
+        ]
+      },
+      "EntityTypeDef": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Human-readable label for the sidebar button (e.g. 'Outlets', 'Press Kits')"
+          },
+          "icon": {
+            "type": "string",
+            "description": "Lucide icon name — use as <LucideIcon name={icon} /> or look up at lucide.dev/icons (e.g. 'newspaper', 'pen-tool')"
+          },
+          "pathSuffix": {
+            "type": "string",
+            "description": "URL path suffix appended to /campaigns/{id}/ to form the detail page route (e.g. 'outlets' → /campaigns/{id}/outlets)"
+          },
+          "description": {
+            "type": "string",
+            "description": "Brief explanation of what this entity type represents"
+          }
+        },
+        "required": [
+          "label",
+          "icon",
+          "pathSuffix",
+          "description"
+        ]
+      },
+      "EntityRegistryResponse": {
+        "type": "object",
+        "properties": {
+          "registry": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "description": "Human-readable label for the sidebar button (e.g. 'Outlets', 'Press Kits')"
+                },
+                "icon": {
+                  "type": "string",
+                  "description": "Lucide icon name — use as <LucideIcon name={icon} /> or look up at lucide.dev/icons (e.g. 'newspaper', 'pen-tool')"
+                },
+                "pathSuffix": {
+                  "type": "string",
+                  "description": "URL path suffix appended to /campaigns/{id}/ to form the detail page route (e.g. 'outlets' → /campaigns/{id}/outlets)"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Brief explanation of what this entity type represents"
+                }
+              },
+              "required": [
+                "label",
+                "icon",
+                "pathSuffix",
+                "description"
+              ]
+            },
+            "description": "Map of entity type name → metadata. Keys are the same strings used in feature.entities[].name."
+          }
+        },
+        "required": [
+          "registry"
         ]
       },
       "DynastyStatsResponse": {
@@ -6966,6 +7032,108 @@
                           "label"
                         ]
                       }
+                    }
+                  },
+                  "required": [
+                    "registry"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/entities/registry": {
+      "get": {
+        "summary": "Get the entity type registry",
+        "description": "Returns the complete dictionary of known entity types with their display metadata. The dashboard uses this to **dynamically render campaign sidebar tabs** instead of hardcoding them.\n\nEach entity type maps to a sidebar button + detail page in the campaign view. When a feature declares `entities: [{ name: \"outlets\" }, { name: \"journalists\" }]`, the dashboard looks up each name in this registry to get the label, icon, and route.\n\n**How to use in the dashboard:**\n1. Fetch `GET /entities/registry` once at app startup (or cache with SWR/React Query)\n2. For each entity in the active feature's `entities` array, look up its `name` in the registry\n3. Render a sidebar button with `label` and `icon`\n4. Route clicks to `/campaigns/{id}/{pathSuffix}`\n5. Skip any entity name not found in the registry (forward-compatibility)\n\n**Example: building the sidebar from a feature definition**\n```typescript\n// Feature has: entities: [{ name: \"outlets\" }, { name: \"journalists\" }, { name: \"emails\" }]\n// Registry returns:\n// {\n//   \"outlets\":      { label: \"Outlets\",      icon: \"newspaper\", pathSuffix: \"outlets\",      description: \"...\" },\n//   \"journalists\":  { label: \"Journalists\",  icon: \"pen-tool\",  pathSuffix: \"journalists\", description: \"...\" },\n//   \"emails\":       { label: \"Emails\",       icon: \"mail\",      pathSuffix: \"emails\",      description: \"...\" }\n// }\nconst tabs = feature.entities\n  .map(e => ({ ...entityRegistry[e.name], key: e.name }))\n  .filter(Boolean);\n// → [{ key: \"outlets\", label: \"Outlets\", icon: \"newspaper\", pathSuffix: \"outlets\" }, ...]\n```\n\n**Example response:**\n```json\n{\n  \"registry\": {\n    \"leads\":        { \"label\": \"Leads\",       \"icon\": \"users\",       \"pathSuffix\": \"leads\",       \"description\": \"Sales leads discovered or imported for outreach\" },\n    \"companies\":    { \"label\": \"Companies\",   \"icon\": \"building-2\",  \"pathSuffix\": \"companies\",   \"description\": \"Target companies identified for the campaign\" },\n    \"emails\":       { \"label\": \"Emails\",      \"icon\": \"mail\",        \"pathSuffix\": \"emails\",      \"description\": \"Email messages generated and sent by the campaign\" },\n    \"outlets\":      { \"label\": \"Outlets\",     \"icon\": \"newspaper\",   \"pathSuffix\": \"outlets\",     \"description\": \"Media outlets discovered for PR outreach\" },\n    \"journalists\":  { \"label\": \"Journalists\", \"icon\": \"pen-tool\",    \"pathSuffix\": \"journalists\", \"description\": \"Journalists found at discovered outlets\" },\n    \"press-kits\":   { \"label\": \"Press Kits\",  \"icon\": \"file-text\",   \"pathSuffix\": \"press-kits\",  \"description\": \"Press kits generated for media pitching\" },\n    \"articles\":     { \"label\": \"Articles\",    \"icon\": \"scroll-text\", \"pathSuffix\": \"articles\",    \"description\": \"Published articles resulting from PR campaigns\" }\n  }\n}\n```\n\n**Adding a new entity type:** Add an entry to the `ENTITY_REGISTRY` in features-service, then implement the corresponding campaign detail page in the dashboard. The sidebar picks it up automatically — no dashboard hardcoding needed.\n\n**Validation:** Features-service validates entity names at creation time. If a feature references an unknown entity type (e.g. `{ name: \"podcasters\" }`), the request is rejected with 400. This registry is the source of truth for valid entity names.",
+        "tags": [
+          "Entities"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill."
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated for multi-brand campaigns (e.g. 'uuid1,uuid2,uuid3'). Required for prefill.",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Entity type registry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "registry": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "description": "Human-readable label for the sidebar button (e.g. 'Outlets', 'Press Kits')"
+                          },
+                          "icon": {
+                            "type": "string",
+                            "description": "Lucide icon name — use as <LucideIcon name={icon} /> or look up at lucide.dev/icons (e.g. 'newspaper', 'pen-tool')"
+                          },
+                          "pathSuffix": {
+                            "type": "string",
+                            "description": "URL path suffix appended to /campaigns/{id}/ to form the detail page route (e.g. 'outlets' → /campaigns/{id}/outlets)"
+                          },
+                          "description": {
+                            "type": "string",
+                            "description": "Brief explanation of what this entity type represents"
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "icon",
+                          "pathSuffix",
+                          "description"
+                        ]
+                      },
+                      "description": "Map of entity type name → metadata. Keys are the same strings used in feature.entities[].name."
                     }
                   },
                   "required": [
