@@ -94,15 +94,47 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
 /** All valid stats key names */
 export const VALID_STATS_KEYS = new Set(Object.keys(STATS_REGISTRY));
 
+/** Entity type definition — metadata for each entity shown in campaign sidebar */
+export interface EntityTypeDef {
+  /** Human-readable label for the sidebar button */
+  label: string;
+  /** Lucide icon name (lucide.dev/icons) */
+  icon: string;
+  /** URL path suffix appended to /campaigns/{id}/ */
+  pathSuffix: string;
+  /** Brief description of what this entity represents */
+  description: string;
+}
+
+/**
+ * Entity Registry — the finite set of entity types that features can reference.
+ *
+ * Each entry defines how a campaign sidebar tab is rendered:
+ * - `label`:       Button text in the sidebar
+ * - `icon`:        Lucide icon name (e.g. "users", "building-2")
+ * - `pathSuffix`:  URL segment for the campaign detail page
+ * - `description`: What this entity type represents
+ *
+ * When a feature declares `entities: [{ name: "outlets" }]`, the dashboard
+ * looks up "outlets" in this registry to render the sidebar button and route.
+ *
+ * To add a new entity type:
+ * 1. Add an entry here
+ * 2. Implement the corresponding campaign detail page in the dashboard
+ * 3. The sidebar will pick it up automatically via GET /entities/registry
+ */
+export const ENTITY_REGISTRY: Record<string, EntityTypeDef> = {
+  leads:        { label: "Leads",       icon: "users",        pathSuffix: "leads",       description: "Sales leads discovered or imported for outreach" },
+  companies:    { label: "Companies",   icon: "building-2",   pathSuffix: "companies",   description: "Target companies identified for the campaign" },
+  emails:       { label: "Emails",      icon: "mail",         pathSuffix: "emails",      description: "Email messages generated and sent by the campaign" },
+  outlets:      { label: "Outlets",     icon: "newspaper",    pathSuffix: "outlets",      description: "Media outlets discovered for PR outreach" },
+  journalists:  { label: "Journalists", icon: "pen-tool",     pathSuffix: "journalists", description: "Journalists found at discovered outlets" },
+  "press-kits": { label: "Press Kits",  icon: "file-text",    pathSuffix: "press-kits",  description: "Press kits generated for media pitching" },
+  articles:     { label: "Articles",    icon: "scroll-text",  pathSuffix: "articles",    description: "Published articles resulting from PR campaigns" },
+};
+
 /** Known entity types for feature.entities */
-export const VALID_ENTITY_TYPES = new Set([
-  "leads",
-  "companies",
-  "emails",
-  "outlets",
-  "journalists",
-  "press-kits",
-]);
+export const VALID_ENTITY_TYPES = new Set(Object.keys(ENTITY_REGISTRY));
 
 /** System stats — always present in stats responses, not declared by features */
 export const SYSTEM_STATS_KEYS = [
@@ -123,6 +155,14 @@ export function getPublicRegistry(): Record<string, { type: string; label: strin
     result[key] = { type: def.type, label: def.label };
   }
   return result;
+}
+
+/**
+ * Get the entity registry (label, icon, pathSuffix, description for each entity type).
+ * Exposed via GET /entities/registry for the front-end.
+ */
+export function getEntityRegistry(): Record<string, EntityTypeDef> {
+  return { ...ENTITY_REGISTRY };
 }
 
 /**
