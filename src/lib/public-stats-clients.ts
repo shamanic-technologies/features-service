@@ -77,13 +77,13 @@ export async function fetchPublicEmailStats(
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
 
-  const url = `${process.env.EMAIL_GATEWAY_SERVICE_URL}/stats/public?${params}`;
+  const url = `${process.env.EMAIL_GATEWAY_SERVICE_URL}/public/stats?${params}`;
   const response = await fetch(url, {
     headers: { "x-api-key": process.env.EMAIL_GATEWAY_SERVICE_API_KEY! },
   });
 
   if (!response.ok) {
-    console.error(`[features-service] email-gateway /stats/public failed: ${response.status}`);
+    console.error(`[features-service] email-gateway /public/stats failed: ${response.status}`);
     return new Map();
   }
 

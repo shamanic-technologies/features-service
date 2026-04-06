@@ -223,14 +223,14 @@ async function fetchEmailStats(
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
-  const url = `${EMAIL_GATEWAY_SERVICE_URL}/stats?${params}`;
+  const url = `${EMAIL_GATEWAY_SERVICE_URL}/orgs/stats?${params}`;
   try {
     const response = await fetch(url, {
       headers: buildDownstreamHeaders(EMAIL_GATEWAY_SERVICE_API_KEY, orgId, identity),
     });
 
     if (!response.ok) {
-      console.error(`[stats] email-gateway /stats failed: ${response.status}`);
+      console.error(`[stats] email-gateway /orgs/stats failed: ${response.status}`);
       return new Map();
     }
 
@@ -250,7 +250,7 @@ async function fetchEmailStats(
 
     return result;
   } catch (error) {
-    console.error(`[stats] email-gateway /stats network error:`, (error as Error).message);
+    console.error(`[stats] email-gateway /orgs/stats network error:`, (error as Error).message);
     return new Map();
   }
 }
