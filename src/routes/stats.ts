@@ -558,14 +558,14 @@ async function fetchOutletsStats(
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
-  const url = `${OUTLETS_SERVICE_URL}/org/outlets/stats?${params}`;
+  const url = `${OUTLETS_SERVICE_URL}/orgs/outlets/stats?${params}`;
   try {
     const response = await fetch(url, {
       headers: buildDownstreamHeaders(OUTLETS_SERVICE_API_KEY, orgId, identity),
     });
 
     if (!response.ok) {
-      console.error(`[stats] outlets-service /org/outlets/stats failed: ${response.status}`);
+      console.error(`[stats] outlets-service /orgs/outlets/stats failed: ${response.status}`);
       return new Map();
     }
 
@@ -583,7 +583,7 @@ async function fetchOutletsStats(
 
     return result;
   } catch (error) {
-    console.error(`[stats] outlets-service /org/outlets/stats network error:`, (error as Error).message);
+    console.error(`[stats] outlets-service /orgs/outlets/stats network error:`, (error as Error).message);
     return new Map();
   }
 }
