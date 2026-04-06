@@ -661,7 +661,7 @@ function extractJournalistFields(data: { totalJournalists: number; byStatus: Rec
 }
 
 /**
- * Fetch lead stats from lead-service /stats endpoint.
+ * Fetch lead stats from lead-service /orgs/stats endpoint.
  * Maps served → leadsServed.
  */
 async function fetchLeadsStats(
@@ -679,14 +679,14 @@ async function fetchLeadsStats(
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
-  const url = `${getLeadServiceUrl()}/stats?${params}`;
+  const url = `${getLeadServiceUrl()}/orgs/stats?${params}`;
   try {
     const response = await fetch(url, {
       headers: buildDownstreamHeaders(getLeadServiceApiKey(), orgId, identity),
     });
 
     if (!response.ok) {
-      console.error(`[features-service] lead-service /stats failed: ${response.status}`);
+      console.error(`[features-service] lead-service /orgs/stats failed: ${response.status}`);
       return new Map();
     }
 
@@ -706,7 +706,7 @@ async function fetchLeadsStats(
 
     return result;
   } catch (error) {
-    console.error(`[features-service] lead-service /stats network error:`, (error as Error).message);
+    console.error(`[features-service] lead-service /orgs/stats network error:`, (error as Error).message);
     return new Map();
   }
 }
