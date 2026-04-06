@@ -619,14 +619,14 @@ async function fetchJournalistsStats(
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
-  const url = `${getJournalistsServiceUrl()}/stats?${params}`;
+  const url = `${getJournalistsServiceUrl()}/orgs/stats?${params}`;
   try {
     const response = await fetch(url, {
       headers: buildDownstreamHeaders(getJournalistsServiceApiKey(), orgId, identity),
     });
 
     if (!response.ok) {
-      console.error(`[stats] journalists-service /stats failed: ${response.status}`);
+      console.error(`[stats] journalists-service /orgs/stats failed: ${response.status}`);
       return new Map();
     }
 
@@ -648,7 +648,7 @@ async function fetchJournalistsStats(
 
     return result;
   } catch (error) {
-    console.error(`[stats] journalists-service /stats network error:`, (error as Error).message);
+    console.error(`[stats] journalists-service /orgs/stats network error:`, (error as Error).message);
     return new Map();
   }
 }

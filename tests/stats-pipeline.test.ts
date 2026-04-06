@@ -190,7 +190,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
 
     mockFetchMulti([
       {
-        match: "journalists-service/stats",
+        match: "journalists-service/orgs/stats",
         response: {
           totalJournalists: 25,
           byStatus: { contacted: 20, served: 3, buffered: 2 },
@@ -224,7 +224,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
 
     mockFetchMulti([
       {
-        match: "journalists-service/stats",
+        match: "journalists-service/orgs/stats",
         response: { totalJournalists: 10, byStatus: {} },
       },
     ]);
@@ -240,7 +240,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
       .expect(200);
 
     const journalistsCalls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("journalists-service/stats"),
+      ([url]: [string]) => url.includes("journalists-service/orgs/stats"),
     );
     expect(journalistsCalls.length).toBe(1);
     const calledUrl = journalistsCalls[0][0] as string;

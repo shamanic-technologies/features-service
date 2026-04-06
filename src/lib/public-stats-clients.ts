@@ -126,13 +126,13 @@ export async function fetchPublicJournalistsStats(
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
 
-  const url = `${process.env.JOURNALISTS_SERVICE_URL}/stats/public?${params}`;
+  const url = `${process.env.JOURNALISTS_SERVICE_URL}/public/stats?${params}`;
   const response = await fetch(url, {
     headers: { "x-api-key": process.env.JOURNALISTS_SERVICE_API_KEY! },
   });
 
   if (!response.ok) {
-    console.error(`[features-service] journalists-service /stats/public failed: ${response.status}`);
+    console.error(`[features-service] journalists-service /public/stats failed: ${response.status}`);
     return new Map();
   }
 
