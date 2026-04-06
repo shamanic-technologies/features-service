@@ -225,8 +225,8 @@ function mockFetchResponses(overrides: Record<string, unknown> = {}) {
         { dimensions: { workflowSlug: "sales-outreach-beta" }, totalCostInUsdCents: "2000", runCount: 8, minStartedAt: null, maxStartedAt: null },
       ],
     },
-    // email-gateway: GET /stats/public
-    "http://email:3000/stats/public": {
+    // email-gateway: GET /public/stats
+    "http://email:3000/public/stats": {
       groups: [
         { key: "sales-outreach-alpha", broadcast: { emailsReplied: 10, emailsSent: 100 } },
         { key: "sales-outreach-beta", broadcast: { emailsReplied: 5, emailsSent: 80 } },
@@ -310,7 +310,7 @@ describe("GET /public/stats/ranked", () => {
     mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
     mockFetchResponses({
-      "http://email:3000/stats/public": {
+      "http://email:3000/public/stats": {
         groups: [
           { key: "sales-outreach-alpha", broadcast: { emailsReplied: 10, emailsSent: 100 } },
           { key: "sales-outreach-beta", broadcast: { emailsReplied: 0, emailsSent: 80 } },
@@ -349,7 +349,7 @@ describe("GET /public/stats/ranked", () => {
           { dimensions: { brandId: "brand-2" }, totalCostInUsdCents: "1500", runCount: 7, minStartedAt: null, maxStartedAt: null },
         ],
       },
-      "http://email:3000/stats/public": {
+      "http://email:3000/public/stats": {
         groups: [
           { key: "brand-1", broadcast: { emailsReplied: 5, emailsSent: 50 } },
           { key: "brand-2", broadcast: { emailsReplied: 3, emailsSent: 60 } },
@@ -409,7 +409,7 @@ describe("GET /public/stats/best", () => {
     mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
     mockFetchResponses({
-      "http://email:3000/stats/public": {
+      "http://email:3000/public/stats": {
         groups: [
           { key: "sales-outreach-alpha", broadcast: { emailsReplied: 0, emailsSent: 0 } },
           { key: "sales-outreach-beta", broadcast: { emailsReplied: 0, emailsSent: 0 } },
@@ -434,7 +434,7 @@ describe("GET /public/stats/best", () => {
           { dimensions: { brandId: "brand-2" }, totalCostInUsdCents: "1500", runCount: 7, minStartedAt: null, maxStartedAt: null },
         ],
       },
-      "http://email:3000/stats/public": {
+      "http://email:3000/public/stats": {
         groups: [
           { key: "brand-1", broadcast: { emailsReplied: 5, emailsSent: 50 } },
           { key: "brand-2", broadcast: { emailsReplied: 3, emailsSent: 60 } },
