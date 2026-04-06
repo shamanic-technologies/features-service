@@ -132,7 +132,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
       .expect(200);
 
     const leadCalls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("lead-service/stats"),
+      ([url]: [string]) => url.includes("lead-service/orgs/stats"),
     );
     expect(leadCalls.length).toBeGreaterThan(0);
   });
@@ -160,7 +160,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
   it("returns pipeline counts in stats response", async () => {
     mockFetchMulti([
       {
-        match: "lead-service/stats",
+        match: "lead-service/orgs/stats",
         response: { served: 42, contacted: 10, buffered: 0, skipped: 0, apollo: { enrichedLeadsCount: 0, searchCount: 0, fetchedPeopleCount: 0, totalMatchingPeople: 0 } },
       },
       {
@@ -251,7 +251,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
   it("pipeline stats work with groupBy=campaignId", async () => {
     mockFetchMulti([
       {
-        match: "lead-service/stats",
+        match: "lead-service/orgs/stats",
         response: {
           groups: [
             { key: "camp-a", served: 15, contacted: 0, buffered: 0, skipped: 0 },
@@ -341,7 +341,7 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
 
     // lead-service /stats should receive campaignId
     const leadCalls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("lead-service/stats"),
+      ([url]: [string]) => url.includes("lead-service/orgs/stats"),
     );
     expect(leadCalls.length).toBeGreaterThan(0);
     for (const [url] of leadCalls) {
@@ -376,7 +376,7 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
 
   it("returns non-zero pipeline stats when no groupBy is specified", async () => {
     fetchSpy.mockImplementation((url: string) => {
-      if (url.includes("lead-service/stats")) {
+      if (url.includes("lead-service/orgs/stats")) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({ served: 3, contacted: 0, buffered: 0, skipped: 0, apollo: { enrichedLeadsCount: 0, searchCount: 0, fetchedPeopleCount: 0, totalMatchingPeople: 0 } }),
@@ -422,7 +422,7 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
 
   it("aggregates lead-service stats into __total__ when no groupBy", async () => {
     fetchSpy.mockImplementation((url: string) => {
-      if (url.includes("lead-service/stats")) {
+      if (url.includes("lead-service/orgs/stats")) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({ served: 12, contacted: 0, buffered: 0, skipped: 0, apollo: { enrichedLeadsCount: 0, searchCount: 0, fetchedPeopleCount: 0, totalMatchingPeople: 0 } }),
