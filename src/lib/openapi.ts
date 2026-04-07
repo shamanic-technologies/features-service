@@ -855,16 +855,16 @@ const rankedWorkflowSchema = z.object({
 registry.register("RankedWorkflow", rankedWorkflowSchema);
 
 const rankedBrandSchema = z.object({
-  brandId: z.string(),
+  id: z.string().describe("Brand UUID"),
+  name: z.string().nullable().describe("Brand name (from brand-service)"),
+  domain: z.string().nullable().describe("Brand domain (from brand-service, used for logo)"),
 });
 registry.register("RankedBrand", rankedBrandSchema);
 
-const rankedStatsSchema = z.object({
-  totalCostInUsdCents: z.number().describe("Total cost in USD cents"),
-  totalOutcomes: z.number().describe("Total outcome count for the objective metric"),
-  costPerOutcome: z.number().nullable().describe("Cost per outcome (null if no outcomes)"),
-  completedRuns: z.number().describe("Number of completed runs"),
-});
+const rankedStatsSchema = z.record(z.string(), z.number().nullable()).describe(
+  "All output stats for the feature (raw counts + derived rates + system stats). " +
+  "Keys match the feature's output definitions. Always includes totalCostInUsdCents and completedRuns.",
+);
 registry.register("RankedStats", rankedStatsSchema);
 
 const rankedResultSchema = z.object({
@@ -874,25 +874,33 @@ const rankedResultSchema = z.object({
 });
 registry.register("RankedResult", rankedResultSchema);
 
+const rankedResponseSchema = z.object({
+  objective: z.string().describe("The stats key used for sorting"),
+  sortDirection: z.enum(["asc", "desc"]).describe("Sort direction applied"),
+  results: z.array(rankedResultSchema),
+});
+registry.register("RankedResponse", rankedResponseSchema);
+
 const rankedQueryParams = z.object({
   featureDynastySlug: z.string().describe("Feature dynasty slug (required)"),
-  objective: z.string().describe("Stats key to rank by (e.g. 'emailsReplied')"),
+  objective: z.string().optional().describe("Stats key to sort by (defaults to the feature's defaultSort output)"),
   groupBy: z.enum(["workflow", "brand"]).describe("Group results by workflow or by brand"),
-  limit: z.string().optional().describe("Max results (default 10, max 100)"),
+  limit: z.string().optional().describe("Max results (default 3, max 100)"),
 });
 
 registry.registerPath({
   method: "get",
   path: "/public/stats/ranked",
-  summary: "Ranked workflows by cost-per-outcome (public, no auth)",
+  summary: "Top workflows or brands ranked by output metric (public, no auth)",
   description:
-    "Returns workflows ranked by cost-per-outcome for a single objective metric. " +
-    "Stats are aggregated across the full workflow upgrade chain.\n\n" +
-    "Use `groupBy=brand` to aggregate by brand instead of workflow.",
+    "Returns top workflows or brands ranked by an output metric for a feature. " +
+    "Each result includes all output stats (raw counts + derived rates). " +
+    "Brand results are enriched with name and domain from brand-service.\n\n" +
+    "If `objective` is omitted, defaults to the feature's output with `defaultSort: true`.",
   tags: ["Public"],
   request: { query: rankedQueryParams },
   responses: {
-    200: { description: "Ranked results", content: { "application/json": { schema: z.object({ results: z.array(rankedResultSchema) }) } } },
+    200: { description: "Ranked results", content: { "application/json": { schema: rankedResponseSchema } } },
     400: { description: "Missing required parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "No features found for this dynasty slug", content: { "application/json": { schema: errorResponse } } },
   },
@@ -901,7 +909,7 @@ registry.registerPath({
 registry.registerPath({
   method: "get",
   path: "/stats/ranked",
-  summary: "Ranked workflows by cost-per-outcome (authenticated)",
+  summary: "Top workflows or brands ranked by output metric (authenticated)",
   description:
     "Authenticated version of `GET /public/stats/ranked`. Same logic, same params, same response. " +
     "Requires x-api-key and identity headers.",
@@ -909,7 +917,7 @@ registry.registerPath({
   security: [{ ApiKeyAuth: [] }],
   request: { headers: identityHeaders, query: rankedQueryParams },
   responses: {
-    200: { description: "Ranked results", content: { "application/json": { schema: z.object({ results: z.array(rankedResultSchema) }) } } },
+    200: { description: "Ranked results", content: { "application/json": { schema: rankedResponseSchema } } },
     400: { description: "Missing required parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "No features found for this dynasty slug", content: { "application/json": { schema: errorResponse } } },
   },

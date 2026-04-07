@@ -156,3 +156,53 @@ function extractJournalistFields(data: Record<string, unknown>): Record<string, 
     journalistsContacted: Number((data.byStatus as Record<string, number> | undefined)?.contacted ?? 0),
   };
 }
+
+// ── Brand info (brand-service) ──────────────────────────────────────────────
+
+export interface BrandInfo {
+  id: string;
+  name: string | null;
+  domain: string | null;
+}
+
+/**
+ * Fetch brand display info (name, domain) for a list of brand IDs.
+ * Calls GET /brands/{id} for each brand in parallel.
+ * Returns what it can — individual failures are logged, not thrown.
+ */
+export async function fetchBrandInfoBatch(brandIds: string[]): Promise<Map<string, BrandInfo>> {
+  const brandServiceUrl = process.env.BRAND_SERVICE_URL;
+  const brandServiceApiKey = process.env.BRAND_SERVICE_API_KEY;
+
+  if (!brandServiceUrl || !brandServiceApiKey) {
+    console.error("[features-service] BRAND_SERVICE_URL or BRAND_SERVICE_API_KEY not configured, skipping brand enrichment");
+    return new Map();
+  }
+
+  const results = await Promise.all(
+    brandIds.map(async (brandId): Promise<[string, BrandInfo] | null> => {
+      try {
+        const response = await fetch(`${brandServiceUrl}/brands/${brandId}`, {
+          headers: { "x-api-key": brandServiceApiKey },
+        });
+
+        if (!response.ok) {
+          console.error(`[features-service] brand-service GET /brands/${brandId} failed: ${response.status}`);
+          return null;
+        }
+
+        const data = await response.json() as { brand: { id: string; name: string | null; domain: string | null } };
+        return [brandId, { id: data.brand.id, name: data.brand.name, domain: data.brand.domain }];
+      } catch (error) {
+        console.error(`[features-service] brand-service GET /brands/${brandId} error:`, (error as Error).message);
+        return null;
+      }
+    }),
+  );
+
+  const map = new Map<string, BrandInfo>();
+  for (const result of results) {
+    if (result) map.set(result[0], result[1]);
+  }
+  return map;
+}
