@@ -2265,41 +2265,34 @@
       "RankedBrand": {
         "type": "object",
         "properties": {
-          "brandId": {
-            "type": "string"
+          "id": {
+            "type": "string",
+            "description": "Brand UUID"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true,
+            "description": "Brand name (from brand-service)"
+          },
+          "domain": {
+            "type": "string",
+            "nullable": true,
+            "description": "Brand domain (from brand-service, used for logo)"
           }
         },
         "required": [
-          "brandId"
+          "id",
+          "name",
+          "domain"
         ]
       },
       "RankedStats": {
         "type": "object",
-        "properties": {
-          "totalCostInUsdCents": {
-            "type": "number",
-            "description": "Total cost in USD cents"
-          },
-          "totalOutcomes": {
-            "type": "number",
-            "description": "Total outcome count for the objective metric"
-          },
-          "costPerOutcome": {
-            "type": "number",
-            "nullable": true,
-            "description": "Cost per outcome (null if no outcomes)"
-          },
-          "completedRuns": {
-            "type": "number",
-            "description": "Number of completed runs"
-          }
+        "additionalProperties": {
+          "type": "number",
+          "nullable": true
         },
-        "required": [
-          "totalCostInUsdCents",
-          "totalOutcomes",
-          "costPerOutcome",
-          "completedRuns"
-        ]
+        "description": "All output stats for the feature (raw counts + derived rates + system stats). Keys match the feature's output definitions. Always includes totalCostInUsdCents and completedRuns."
       },
       "RankedResult": {
         "type": "object",
@@ -2341,45 +2334,137 @@
           "brand": {
             "type": "object",
             "properties": {
-              "brandId": {
-                "type": "string"
+              "id": {
+                "type": "string",
+                "description": "Brand UUID"
+              },
+              "name": {
+                "type": "string",
+                "nullable": true,
+                "description": "Brand name (from brand-service)"
+              },
+              "domain": {
+                "type": "string",
+                "nullable": true,
+                "description": "Brand domain (from brand-service, used for logo)"
               }
             },
             "required": [
-              "brandId"
+              "id",
+              "name",
+              "domain"
             ]
           },
           "stats": {
             "type": "object",
-            "properties": {
-              "totalCostInUsdCents": {
-                "type": "number",
-                "description": "Total cost in USD cents"
-              },
-              "totalOutcomes": {
-                "type": "number",
-                "description": "Total outcome count for the objective metric"
-              },
-              "costPerOutcome": {
-                "type": "number",
-                "nullable": true,
-                "description": "Cost per outcome (null if no outcomes)"
-              },
-              "completedRuns": {
-                "type": "number",
-                "description": "Number of completed runs"
-              }
+            "additionalProperties": {
+              "type": "number",
+              "nullable": true
             },
-            "required": [
-              "totalCostInUsdCents",
-              "totalOutcomes",
-              "costPerOutcome",
-              "completedRuns"
-            ]
+            "description": "All output stats for the feature (raw counts + derived rates + system stats). Keys match the feature's output definitions. Always includes totalCostInUsdCents and completedRuns."
           }
         },
         "required": [
           "stats"
+        ]
+      },
+      "RankedResponse": {
+        "type": "object",
+        "properties": {
+          "objective": {
+            "type": "string",
+            "description": "The stats key used for sorting"
+          },
+          "sortDirection": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "description": "Sort direction applied"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "workflow": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "slug": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "dynastyName": {
+                      "type": "string"
+                    },
+                    "dynastySlug": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "integer"
+                    },
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "createdForBrandId": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "slug"
+                  ]
+                },
+                "brand": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "Brand UUID"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Brand name (from brand-service)"
+                    },
+                    "domain": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Brand domain (from brand-service, used for logo)"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "domain"
+                  ]
+                },
+                "stats": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "description": "All output stats for the feature (raw counts + derived rates + system stats). Keys match the feature's output definitions. Always includes totalCostInUsdCents and completedRuns."
+                }
+              },
+              "required": [
+                "stats"
+              ]
+            }
+          }
+        },
+        "required": [
+          "objective",
+          "sortDirection",
+          "results"
         ]
       },
       "BestEntryWorkflow": {
@@ -8130,8 +8215,8 @@
     },
     "/public/stats/ranked": {
       "get": {
-        "summary": "Ranked workflows by cost-per-outcome (public, no auth)",
-        "description": "Returns workflows ranked by cost-per-outcome for a single objective metric. Stats are aggregated across the full workflow upgrade chain.\n\nUse `groupBy=brand` to aggregate by brand instead of workflow.",
+        "summary": "Top workflows or brands ranked by output metric (public, no auth)",
+        "description": "Returns top workflows or brands ranked by an output metric for a feature. Each result includes all output stats (raw counts + derived rates). Brand results are enriched with name and domain from brand-service.\n\nIf `objective` is omitted, defaults to the feature's output with `defaultSort: true`.",
         "tags": [
           "Public"
         ],
@@ -8149,10 +8234,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Stats key to rank by (e.g. 'emailsReplied')"
+              "description": "Stats key to sort by (defaults to the feature's defaultSort output)"
             },
-            "required": true,
-            "description": "Stats key to rank by (e.g. 'emailsReplied')",
+            "required": false,
+            "description": "Stats key to sort by (defaults to the feature's defaultSort output)",
             "name": "objective",
             "in": "query"
           },
@@ -8173,10 +8258,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Max results (default 10, max 100)"
+              "description": "Max results (default 3, max 100)"
             },
             "required": false,
-            "description": "Max results (default 10, max 100)",
+            "description": "Max results (default 3, max 100)",
             "name": "limit",
             "in": "query"
           }
@@ -8189,6 +8274,18 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "objective": {
+                      "type": "string",
+                      "description": "The stats key used for sorting"
+                    },
+                    "sortDirection": {
+                      "type": "string",
+                      "enum": [
+                        "asc",
+                        "desc"
+                      ],
+                      "description": "Sort direction applied"
+                    },
                     "results": {
                       "type": "array",
                       "items": {
@@ -8231,41 +8328,34 @@
                           "brand": {
                             "type": "object",
                             "properties": {
-                              "brandId": {
-                                "type": "string"
+                              "id": {
+                                "type": "string",
+                                "description": "Brand UUID"
+                              },
+                              "name": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Brand name (from brand-service)"
+                              },
+                              "domain": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Brand domain (from brand-service, used for logo)"
                               }
                             },
                             "required": [
-                              "brandId"
+                              "id",
+                              "name",
+                              "domain"
                             ]
                           },
                           "stats": {
                             "type": "object",
-                            "properties": {
-                              "totalCostInUsdCents": {
-                                "type": "number",
-                                "description": "Total cost in USD cents"
-                              },
-                              "totalOutcomes": {
-                                "type": "number",
-                                "description": "Total outcome count for the objective metric"
-                              },
-                              "costPerOutcome": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Cost per outcome (null if no outcomes)"
-                              },
-                              "completedRuns": {
-                                "type": "number",
-                                "description": "Number of completed runs"
-                              }
+                            "additionalProperties": {
+                              "type": "number",
+                              "nullable": true
                             },
-                            "required": [
-                              "totalCostInUsdCents",
-                              "totalOutcomes",
-                              "costPerOutcome",
-                              "completedRuns"
-                            ]
+                            "description": "All output stats for the feature (raw counts + derived rates + system stats). Keys match the feature's output definitions. Always includes totalCostInUsdCents and completedRuns."
                           }
                         },
                         "required": [
@@ -8275,6 +8365,8 @@
                     }
                   },
                   "required": [
+                    "objective",
+                    "sortDirection",
                     "results"
                   ]
                 }
@@ -8322,7 +8414,7 @@
     },
     "/stats/ranked": {
       "get": {
-        "summary": "Ranked workflows by cost-per-outcome (authenticated)",
+        "summary": "Top workflows or brands ranked by output metric (authenticated)",
         "description": "Authenticated version of `GET /public/stats/ranked`. Same logic, same params, same response. Requires x-api-key and identity headers.",
         "tags": [
           "Stats"
@@ -8346,10 +8438,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Stats key to rank by (e.g. 'emailsReplied')"
+              "description": "Stats key to sort by (defaults to the feature's defaultSort output)"
             },
-            "required": true,
-            "description": "Stats key to rank by (e.g. 'emailsReplied')",
+            "required": false,
+            "description": "Stats key to sort by (defaults to the feature's defaultSort output)",
             "name": "objective",
             "in": "query"
           },
@@ -8370,10 +8462,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Max results (default 10, max 100)"
+              "description": "Max results (default 3, max 100)"
             },
             "required": false,
-            "description": "Max results (default 10, max 100)",
+            "description": "Max results (default 3, max 100)",
             "name": "limit",
             "in": "query"
           },
@@ -8429,6 +8521,18 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "objective": {
+                      "type": "string",
+                      "description": "The stats key used for sorting"
+                    },
+                    "sortDirection": {
+                      "type": "string",
+                      "enum": [
+                        "asc",
+                        "desc"
+                      ],
+                      "description": "Sort direction applied"
+                    },
                     "results": {
                       "type": "array",
                       "items": {
@@ -8471,41 +8575,34 @@
                           "brand": {
                             "type": "object",
                             "properties": {
-                              "brandId": {
-                                "type": "string"
+                              "id": {
+                                "type": "string",
+                                "description": "Brand UUID"
+                              },
+                              "name": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Brand name (from brand-service)"
+                              },
+                              "domain": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Brand domain (from brand-service, used for logo)"
                               }
                             },
                             "required": [
-                              "brandId"
+                              "id",
+                              "name",
+                              "domain"
                             ]
                           },
                           "stats": {
                             "type": "object",
-                            "properties": {
-                              "totalCostInUsdCents": {
-                                "type": "number",
-                                "description": "Total cost in USD cents"
-                              },
-                              "totalOutcomes": {
-                                "type": "number",
-                                "description": "Total outcome count for the objective metric"
-                              },
-                              "costPerOutcome": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Cost per outcome (null if no outcomes)"
-                              },
-                              "completedRuns": {
-                                "type": "number",
-                                "description": "Number of completed runs"
-                              }
+                            "additionalProperties": {
+                              "type": "number",
+                              "nullable": true
                             },
-                            "required": [
-                              "totalCostInUsdCents",
-                              "totalOutcomes",
-                              "costPerOutcome",
-                              "completedRuns"
-                            ]
+                            "description": "All output stats for the feature (raw counts + derived rates + system stats). Keys match the feature's output definitions. Always includes totalCostInUsdCents and completedRuns."
                           }
                         },
                         "required": [
@@ -8515,6 +8612,8 @@
                     }
                   },
                   "required": [
+                    "objective",
+                    "sortDirection",
                     "results"
                   ]
                 }

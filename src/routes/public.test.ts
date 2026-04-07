@@ -51,6 +51,8 @@ process.env.WORKFLOW_SERVICE_URL = "http://workflow:3000";
 process.env.WORKFLOW_SERVICE_API_KEY = "workflow-key";
 process.env.JOURNALISTS_SERVICE_URL = "http://journalists:3000";
 process.env.JOURNALISTS_SERVICE_API_KEY = "journalists-key";
+process.env.BRAND_SERVICE_URL = "http://brand:3000";
+process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
@@ -176,8 +178,9 @@ const MOCK_FEATURE = {
   signature: "abc123",
   inputs: [],
   outputs: [
-    { key: "emailsReplied", displayOrder: 0 },
+    { key: "emailsReplied", displayOrder: 0, defaultSort: true, sortDirection: "desc" as const },
     { key: "emailsSent", displayOrder: 1 },
+    { key: "replyRate", displayOrder: 2 },
   ],
   charts: [],
   entities: [],
@@ -228,9 +231,16 @@ function mockFetchResponses(overrides: Record<string, unknown> = {}) {
     // email-gateway: GET /public/stats
     "http://email:3000/public/stats": {
       groups: [
-        { key: "sales-outreach-alpha", broadcast: { emailsReplied: 10, emailsSent: 100 } },
-        { key: "sales-outreach-beta", broadcast: { emailsReplied: 5, emailsSent: 80 } },
+        { key: "sales-outreach-alpha", broadcast: { emailsReplied: 10, emailsSent: 100, emailsOpened: 50 } },
+        { key: "sales-outreach-beta", broadcast: { emailsReplied: 20, emailsSent: 80, emailsOpened: 40 } },
       ],
+    },
+    // brand-service: GET /brands/{id}
+    "http://brand:3000/brands/brand-1": {
+      brand: { id: "brand-1", name: "Acme Corp", domain: "acme.com" },
+    },
+    "http://brand:3000/brands/brand-2": {
+      brand: { id: "brand-2", name: "Beta Inc", domain: "beta.io" },
     },
     ...overrides,
   };
@@ -254,10 +264,8 @@ describe("GET /public/stats/ranked", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns workflows ranked by costPerOutcome ascending", async () => {
-    // resolveFeatureDynastySlugs calls findMany
+  it("returns workflows ranked by objective value descending, with full stats", async () => {
     mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
-    // resolveFeatureAndSlugs calls findFirst for the active feature
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
     mockFetchResponses();
 
@@ -265,12 +273,35 @@ describe("GET /public/stats/ranked", () => {
       .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied&groupBy=workflow");
 
     expect(res.status).toBe(200);
+    expect(res.body.objective).toBe("emailsReplied");
+    expect(res.body.sortDirection).toBe("desc");
     expect(res.body.results).toHaveLength(2);
-    // Alpha: 1000/10 = 100, Beta: 2000/5 = 400 → Alpha first
-    expect(res.body.results[0].workflow.slug).toBe("sales-outreach-alpha");
-    expect(res.body.results[0].stats.costPerOutcome).toBe(100);
-    expect(res.body.results[1].workflow.slug).toBe("sales-outreach-beta");
-    expect(res.body.results[1].stats.costPerOutcome).toBe(400);
+    // Beta: 20 replies, Alpha: 10 replies → Beta first (desc)
+    expect(res.body.results[0].workflow.slug).toBe("sales-outreach-beta");
+    expect(res.body.results[0].stats.emailsReplied).toBe(20);
+    expect(res.body.results[0].stats.emailsSent).toBe(80);
+    expect(res.body.results[0].stats.totalCostInUsdCents).toBe(2000);
+    expect(res.body.results[0].stats.completedRuns).toBe(8);
+    // Derived: replyRate = emailsReplied / emailsSent = 20/80 = 0.25
+    expect(res.body.results[0].stats.replyRate).toBeCloseTo(0.25);
+    expect(res.body.results[1].workflow.slug).toBe("sales-outreach-alpha");
+    expect(res.body.results[1].stats.emailsReplied).toBe(10);
+  });
+
+  it("uses defaultSort output when objective is not provided", async () => {
+    mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockFetchResponses();
+
+    const res = await request(app)
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&groupBy=workflow");
+
+    expect(res.status).toBe(200);
+    // Should default to emailsReplied (the output with defaultSort: true)
+    expect(res.body.objective).toBe("emailsReplied");
+    expect(res.body.results).toHaveLength(2);
+    // Still sorted desc by emailsReplied: Beta(20) > Alpha(10)
+    expect(res.body.results[0].workflow.slug).toBe("sales-outreach-beta");
   });
 
   it("returns 400 when featureDynastySlug is missing", async () => {
@@ -279,14 +310,6 @@ describe("GET /public/stats/ranked", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/featureDynastySlug/i);
-  });
-
-  it("returns 400 when objective is missing", async () => {
-    const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&groupBy=workflow");
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/objective/i);
   });
 
   it("returns 400 when groupBy is missing", async () => {
@@ -306,14 +329,14 @@ describe("GET /public/stats/ranked", () => {
     expect(res.status).toBe(404);
   });
 
-  it("handles zero outcomes (costPerOutcome = null, ranked last)", async () => {
+  it("handles zero outcomes (null stats ranked last)", async () => {
     mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
     mockFetchResponses({
       "http://email:3000/public/stats": {
         groups: [
-          { key: "sales-outreach-alpha", broadcast: { emailsReplied: 10, emailsSent: 100 } },
-          { key: "sales-outreach-beta", broadcast: { emailsReplied: 0, emailsSent: 80 } },
+          { key: "sales-outreach-alpha", broadcast: { emailsReplied: 10, emailsSent: 100, emailsOpened: 50 } },
+          { key: "sales-outreach-beta", broadcast: { emailsReplied: 0, emailsSent: 80, emailsOpened: 0 } },
         ],
       },
     });
@@ -322,11 +345,12 @@ describe("GET /public/stats/ranked", () => {
       .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied&groupBy=workflow");
 
     expect(res.status).toBe(200);
-    expect(res.body.results[0].stats.costPerOutcome).toBe(100);
-    expect(res.body.results[1].stats.costPerOutcome).toBeNull();
+    // Alpha has 10, Beta has 0 → Alpha first
+    expect(res.body.results[0].stats.emailsReplied).toBe(10);
+    expect(res.body.results[1].stats.emailsReplied).toBe(0);
   });
 
-  it("respects limit parameter", async () => {
+  it("respects limit parameter (default is 3)", async () => {
     mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
     mockFetchResponses();
@@ -336,10 +360,10 @@ describe("GET /public/stats/ranked", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(1);
-    expect(res.body.results[0].workflow.slug).toBe("sales-outreach-alpha");
+    expect(res.body.results[0].workflow.slug).toBe("sales-outreach-beta");
   });
 
-  it("supports groupBy=brand", async () => {
+  it("supports groupBy=brand with enriched brand info", async () => {
     mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
     mockFetchResponses({
@@ -351,8 +375,8 @@ describe("GET /public/stats/ranked", () => {
       },
       "http://email:3000/public/stats": {
         groups: [
-          { key: "brand-1", broadcast: { emailsReplied: 5, emailsSent: 50 } },
-          { key: "brand-2", broadcast: { emailsReplied: 3, emailsSent: 60 } },
+          { key: "brand-1", broadcast: { emailsReplied: 5, emailsSent: 50, emailsOpened: 25 } },
+          { key: "brand-2", broadcast: { emailsReplied: 15, emailsSent: 60, emailsOpened: 30 } },
         ],
       },
     });
@@ -362,9 +386,43 @@ describe("GET /public/stats/ranked", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(2);
-    // brand-1: 500/5 = 100, brand-2: 1500/3 = 500
-    expect(res.body.results[0].brand.brandId).toBe("brand-1");
-    expect(res.body.results[0].stats.costPerOutcome).toBe(100);
+    // brand-2: 15 replies, brand-1: 5 replies → brand-2 first (desc)
+    expect(res.body.results[0].brand.id).toBe("brand-2");
+    expect(res.body.results[0].brand.name).toBe("Beta Inc");
+    expect(res.body.results[0].brand.domain).toBe("beta.io");
+    expect(res.body.results[0].stats.emailsReplied).toBe(15);
+    expect(res.body.results[0].stats.emailsSent).toBe(60);
+    expect(res.body.results[1].brand.id).toBe("brand-1");
+    expect(res.body.results[1].brand.name).toBe("Acme Corp");
+    expect(res.body.results[1].brand.domain).toBe("acme.com");
+    expect(res.body.results[1].stats.emailsReplied).toBe(5);
+  });
+
+  it("returns null brand name/domain when brand-service fails", async () => {
+    mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockFetchResponses({
+      "http://runs:3000/v1/stats/public/costs": {
+        groups: [
+          { dimensions: { brandId: "brand-unknown" }, totalCostInUsdCents: "500", runCount: 3, minStartedAt: null, maxStartedAt: null },
+        ],
+      },
+      "http://email:3000/public/stats": {
+        groups: [
+          { key: "brand-unknown", broadcast: { emailsReplied: 5, emailsSent: 50, emailsOpened: 25 } },
+        ],
+      },
+    });
+
+    const res = await request(app)
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied&groupBy=brand");
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    // brand-unknown doesn't match any mock → null name/domain
+    expect(res.body.results[0].brand.id).toBe("brand-unknown");
+    expect(res.body.results[0].brand.name).toBeNull();
+    expect(res.body.results[0].brand.domain).toBeNull();
   });
 });
 
@@ -385,9 +443,8 @@ describe("GET /public/stats/best", () => {
       .get("/public/stats/best?featureDynastySlug=sales-cold-email&groupBy=workflow");
 
     expect(res.status).toBe(200);
-    // emailsReplied: Alpha 1000/10=100, Beta 2000/5=400 → Alpha wins
+    // emailsReplied: Alpha 1000/10=100, Beta 2000/20=100 → tied, either wins
     expect(res.body.best.emailsReplied).not.toBeNull();
-    expect(res.body.best.emailsReplied.workflowSlug).toBe("sales-outreach-alpha");
     expect(res.body.best.emailsReplied.value).toBe(100);
   });
 
@@ -411,8 +468,8 @@ describe("GET /public/stats/best", () => {
     mockFetchResponses({
       "http://email:3000/public/stats": {
         groups: [
-          { key: "sales-outreach-alpha", broadcast: { emailsReplied: 0, emailsSent: 0 } },
-          { key: "sales-outreach-beta", broadcast: { emailsReplied: 0, emailsSent: 0 } },
+          { key: "sales-outreach-alpha", broadcast: { emailsReplied: 0, emailsSent: 0, emailsOpened: 0 } },
+          { key: "sales-outreach-beta", broadcast: { emailsReplied: 0, emailsSent: 0, emailsOpened: 0 } },
         ],
       },
     });
@@ -436,8 +493,8 @@ describe("GET /public/stats/best", () => {
       },
       "http://email:3000/public/stats": {
         groups: [
-          { key: "brand-1", broadcast: { emailsReplied: 5, emailsSent: 50 } },
-          { key: "brand-2", broadcast: { emailsReplied: 3, emailsSent: 60 } },
+          { key: "brand-1", broadcast: { emailsReplied: 5, emailsSent: 50, emailsOpened: 25 } },
+          { key: "brand-2", broadcast: { emailsReplied: 3, emailsSent: 60, emailsOpened: 30 } },
         ],
       },
     });

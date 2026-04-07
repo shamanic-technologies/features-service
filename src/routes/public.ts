@@ -9,6 +9,7 @@ import {
   fetchPublicCosts,
   fetchPublicEmailStats,
   fetchPublicJournalistsStats,
+  fetchBrandInfoBatch,
   type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
 
@@ -70,7 +71,7 @@ router.get("/public/features/dynasty/slugs", async (req, res) => {
   }
 });
 
-// ── Shared scoring helpers ───────────────────────────────────────────────────
+// ── Shared helpers ──────────────────────────────────────────────────────────
 
 /**
  * Resolve a dynasty slug to its active feature and all versioned slugs.
@@ -88,7 +89,7 @@ async function resolveFeatureAndSlugs(dynastySlug: string): Promise<{ feature: F
 }
 
 /**
- * Get count-type output keys from a feature (used by `best` to iterate all metrics).
+ * Get all count-type output keys from a feature's outputs.
  */
 function getCountOutputKeys(feature: Feature): string[] {
   return feature.outputs
@@ -97,6 +98,45 @@ function getCountOutputKeys(feature: Feature): string[] {
       const def = STATS_REGISTRY[key];
       return def && def.kind === "raw" && def.type === "count";
     });
+}
+
+/**
+ * Get all output keys from a feature, plus the raw dependencies of any derived keys.
+ */
+function collectAllOutputKeys(feature: Feature): string[] {
+  const keys = new Set<string>();
+  for (const output of feature.outputs) {
+    keys.add(output.key);
+    const def = STATS_REGISTRY[output.key];
+    if (def?.kind === "derived") {
+      keys.add(def.numerator);
+      keys.add(def.denominator);
+    }
+  }
+  return [...keys];
+}
+
+/**
+ * Resolve the effective objective key and sort direction from the feature's outputs.
+ * Falls back to the first output if no defaultSort is set.
+ */
+function resolveObjective(feature: Feature, requestedObjective: string | undefined): { key: string; direction: "asc" | "desc" } | null {
+  if (requestedObjective) {
+    const output = feature.outputs.find((o) => o.key === requestedObjective);
+    return { key: requestedObjective, direction: output?.sortDirection ?? "desc" };
+  }
+
+  const defaultOutput = feature.outputs.find((o) => o.defaultSort);
+  if (defaultOutput) {
+    return { key: defaultOutput.key, direction: defaultOutput.sortDirection ?? "desc" };
+  }
+
+  const firstOutput = feature.outputs[0];
+  if (firstOutput) {
+    return { key: firstOutput.key, direction: firstOutput.sortDirection ?? "desc" };
+  }
+
+  return null;
 }
 
 /**
@@ -149,11 +189,41 @@ async function fetchOutcomeStats(
   return merged;
 }
 
-interface ScoredEntry {
-  totalCostInUsdCents: number;
-  totalOutcomes: number;
-  costPerOutcome: number | null;
-  completedRuns: number;
+/**
+ * Compute all stats (raw + derived) for a single group from its raw values.
+ * Only includes keys that are in the feature's output list.
+ */
+function computeGroupStats(
+  rawOutcomes: Record<string, number>,
+  cost: { totalCostInUsdCents: number; completedRuns: number },
+  feature: Feature,
+): Record<string, number | null> {
+  const allRaw: Record<string, number> = {
+    ...rawOutcomes,
+    totalCostInUsdCents: cost.totalCostInUsdCents,
+    completedRuns: cost.completedRuns,
+  };
+
+  const result: Record<string, number | null> = {};
+
+  for (const output of feature.outputs) {
+    const def = STATS_REGISTRY[output.key];
+    if (!def) continue;
+
+    if (def.kind === "raw") {
+      result[output.key] = allRaw[output.key] ?? 0;
+    } else if (def.kind === "derived") {
+      const num = allRaw[def.numerator];
+      const den = allRaw[def.denominator];
+      result[output.key] = (num != null && den != null && den > 0) ? num / den : null;
+    }
+  }
+
+  // Always include system stats
+  result.totalCostInUsdCents = cost.totalCostInUsdCents;
+  result.completedRuns = cost.completedRuns;
+
+  return result;
 }
 
 /**
@@ -161,7 +231,6 @@ interface ScoredEntry {
  * in its upgrade chain (deprecated predecessors that upgraded to it).
  */
 function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]> {
-  // upgradedTo ID → workflow slugs that upgraded to it
   const predecessorMap = new Map<string, string[]>();
   const idToSlug = new Map<string, string>();
   const activeWorkflows: WorkflowMetadata[] = [];
@@ -186,11 +255,9 @@ function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]
 
     while (queue.length > 0) {
       const currentId = queue.shift()!;
-      // Find workflows whose upgradedTo points to currentId
       const preds = predecessorMap.get(currentId) ?? [];
       for (const predSlug of preds) {
         slugs.add(predSlug);
-        // Find the ID for this predecessor slug to continue BFS
         for (const [id, slug] of idToSlug) {
           if (slug === predSlug && !visited.has(id)) {
             visited.add(id);
@@ -207,32 +274,7 @@ function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]
 }
 
 /**
- * Score workflows or brands by cost-per-outcome for a single objective.
- * Returns entries sorted ascending by costPerOutcome (nulls last).
- */
-function scoreByObjective(
-  costMap: Map<string, { totalCostInUsdCents: number; completedRuns: number }>,
-  outcomeMap: Map<string, Record<string, number>>,
-  objectiveKey: string,
-): Map<string, ScoredEntry> {
-  const scored = new Map<string, ScoredEntry>();
-
-  for (const [key, cost] of costMap) {
-    const outcomes = outcomeMap.get(key)?.[objectiveKey] ?? 0;
-    scored.set(key, {
-      totalCostInUsdCents: cost.totalCostInUsdCents,
-      totalOutcomes: outcomes,
-      costPerOutcome: outcomes > 0 ? cost.totalCostInUsdCents / outcomes : null,
-      completedRuns: cost.completedRuns,
-    });
-  }
-
-  return scored;
-}
-
-/**
  * Aggregate costs and outcomes across workflow upgrade chains.
- * Returns maps keyed by active workflow slug with summed stats.
  */
 function aggregateAcrossChains(
   chains: Map<string, string[]>,
@@ -240,7 +282,6 @@ function aggregateAcrossChains(
   outcomeMap: Map<string, Record<string, number>>,
   dimensionKey: string,
 ): { costMap: Map<string, { totalCostInUsdCents: number; completedRuns: number }>; aggregatedOutcomes: Map<string, Record<string, number>> } {
-  // Build per-slug cost lookup
   const perSlugCost = new Map<string, { totalCostInUsdCents: number; completedRuns: number }>();
   for (const group of costGroups) {
     const slug = group.dimensions[dimensionKey];
@@ -282,21 +323,17 @@ function aggregateAcrossChains(
   return { costMap, aggregatedOutcomes };
 }
 
-// ── Ranked/Best handler logic ────────────────────────────────────────────────
+// ── Ranked handler ──────────────────────────────────────────────────────────
 
 export async function handleRanked(
   featureDynastySlug: string | undefined,
-  objective: string | undefined,
+  requestedObjective: string | undefined,
   groupBy: string | undefined,
   limit: number,
   res: import("express").Response,
 ): Promise<void> {
   if (!featureDynastySlug) {
     res.status(400).json({ error: "Query parameter 'featureDynastySlug' is required" });
-    return;
-  }
-  if (!objective) {
-    res.status(400).json({ error: "Query parameter 'objective' is required" });
     return;
   }
   if (groupBy !== "workflow" && groupBy !== "brand") {
@@ -311,22 +348,31 @@ export async function handleRanked(
   }
 
   const { feature, featureSlugs } = resolved;
-  const featureSlugsStr = featureSlugs.join(",");
+  const objective = resolveObjective(feature, requestedObjective);
+  if (!objective) {
+    res.status(400).json({ error: "Feature has no outputs defined" });
+    return;
+  }
 
+  const featureSlugsStr = featureSlugs.join(",");
   const isBrandGrouping = groupBy === "brand";
   const statsGroupBy = isBrandGrouping ? "brandId" : "workflowSlug";
+
+  // Fetch ALL output stats (not just the objective) so we return full stats per group
+  const allKeys = collectAllOutputKeys(feature);
 
   const [workflows, costGroups, outcomeMap] = await Promise.all([
     isBrandGrouping ? Promise.resolve([]) : fetchPublicWorkflows(featureSlugsStr, "all"),
     fetchPublicCosts(featureSlugsStr, statsGroupBy),
-    fetchOutcomeStats(featureSlugsStr, statsGroupBy, [objective]),
+    fetchOutcomeStats(featureSlugsStr, statsGroupBy, allKeys),
   ]);
 
-  let scored: Map<string, ScoredEntry>;
+  let costMap: Map<string, { totalCostInUsdCents: number; completedRuns: number }>;
+  let aggregatedOutcomes: Map<string, Record<string, number>>;
 
   if (isBrandGrouping) {
-    // Direct brand aggregation — no upgrade chains needed
-    const costMap = new Map<string, { totalCostInUsdCents: number; completedRuns: number }>();
+    costMap = new Map();
+    aggregatedOutcomes = outcomeMap;
     for (const group of costGroups) {
       const key = group.dimensions.brandId;
       if (!key) continue;
@@ -335,27 +381,52 @@ export async function handleRanked(
         completedRuns: group.runCount,
       });
     }
-    scored = scoreByObjective(costMap, outcomeMap, objective);
   } else {
-    // Aggregate across workflow upgrade chains
     const chains = buildUpgradeChains(workflows);
-    const { costMap, aggregatedOutcomes } = aggregateAcrossChains(chains, costGroups, outcomeMap, "workflowSlug");
-    scored = scoreByObjective(costMap, aggregatedOutcomes, objective);
+    const agg = aggregateAcrossChains(chains, costGroups, outcomeMap, "workflowSlug");
+    costMap = agg.costMap;
+    aggregatedOutcomes = agg.aggregatedOutcomes;
   }
 
-  // Sort: lowest costPerOutcome first, nulls last
-  const sorted = [...scored.entries()].sort(([, a], [, b]) => {
-    if (a.costPerOutcome === null && b.costPerOutcome === null) return 0;
-    if (a.costPerOutcome === null) return 1;
-    if (b.costPerOutcome === null) return -1;
-    return a.costPerOutcome - b.costPerOutcome;
-  }).slice(0, limit);
+  // Build full stats for each group, then sort by objective
+  const entries: { key: string; stats: Record<string, number | null> }[] = [];
+  for (const [key, cost] of costMap) {
+    const rawOutcomes = aggregatedOutcomes.get(key) ?? {};
+    const stats = computeGroupStats(rawOutcomes, cost, feature);
+    entries.push({ key, stats });
+  }
+
+  // Sort by objective value
+  entries.sort((a, b) => {
+    const aVal = a.stats[objective.key];
+    const bVal = b.stats[objective.key];
+    if (aVal == null && bVal == null) return 0;
+    if (aVal == null) return 1;
+    if (bVal == null) return -1;
+    return objective.direction === "asc" ? aVal - bVal : bVal - aVal;
+  });
+
+  const top = entries.slice(0, limit);
+
+  // Enrich brands with name/domain from brand-service
+  let brandInfoMap = new Map<string, { id: string; name: string | null; domain: string | null }>();
+  if (isBrandGrouping && top.length > 0) {
+    brandInfoMap = await fetchBrandInfoBatch(top.map((e) => e.key));
+  }
 
   const workflowBySlug = new Map(workflows.map((w) => [w.slug, w]));
 
-  const results = sorted.map(([key, stats]) => {
+  const results = top.map(({ key, stats }) => {
     if (isBrandGrouping) {
-      return { brand: { brandId: key }, stats };
+      const brand = brandInfoMap.get(key);
+      return {
+        brand: {
+          id: key,
+          name: brand?.name ?? null,
+          domain: brand?.domain ?? null,
+        },
+        stats,
+      };
     }
     const wf = workflowBySlug.get(key);
     return {
@@ -373,8 +444,14 @@ export async function handleRanked(
     };
   });
 
-  res.json({ results });
+  res.json({
+    objective: objective.key,
+    sortDirection: objective.direction,
+    results,
+  });
 }
+
+// ── Best handler ────────────────────────────────────────────────────────────
 
 export async function handleBest(
   featureDynastySlug: string | undefined,
@@ -477,7 +554,7 @@ export async function handleBest(
 router.get("/public/stats/ranked", async (req, res) => {
   try {
     const limitParam = parseInt(req.query.limit as string, 10);
-    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 10;
+    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 3;
 
     await handleRanked(
       req.query.featureDynastySlug as string | undefined,
