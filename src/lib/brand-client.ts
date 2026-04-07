@@ -56,7 +56,7 @@ export async function extractBrandFields(
   if (headers.campaignId) reqHeaders["x-campaign-id"] = headers.campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const response = await fetch(`${BRAND_SERVICE_URL}/brands/extract-fields`, {
+  const response = await fetch(`${BRAND_SERVICE_URL}/orgs/brands/extract-fields`, {
     method: "POST",
     headers: reqHeaders,
     body: JSON.stringify({ fields }),
