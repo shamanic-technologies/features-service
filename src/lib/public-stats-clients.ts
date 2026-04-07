@@ -182,19 +182,19 @@ export async function fetchBrandInfoBatch(brandIds: string[]): Promise<Map<strin
   const results = await Promise.all(
     brandIds.map(async (brandId): Promise<[string, BrandInfo] | null> => {
       try {
-        const response = await fetch(`${brandServiceUrl}/brands/${brandId}`, {
+        const response = await fetch(`${brandServiceUrl}/internal/brands/${brandId}`, {
           headers: { "x-api-key": brandServiceApiKey },
         });
 
         if (!response.ok) {
-          console.error(`[features-service] brand-service GET /brands/${brandId} failed: ${response.status}`);
+          console.error(`[features-service] brand-service GET /internal/brands/${brandId} failed: ${response.status}`);
           return null;
         }
 
         const data = await response.json() as { brand: { id: string; name: string | null; domain: string | null } };
         return [brandId, { id: data.brand.id, name: data.brand.name, domain: data.brand.domain }];
       } catch (error) {
-        console.error(`[features-service] brand-service GET /brands/${brandId} error:`, (error as Error).message);
+        console.error(`[features-service] brand-service GET /internal/brands/${brandId} error:`, (error as Error).message);
         return null;
       }
     }),

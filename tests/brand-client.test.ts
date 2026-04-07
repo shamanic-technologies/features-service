@@ -67,9 +67,9 @@ describe("extractBrandFields", () => {
       { orgId: "org-1", userId: "user-1", runId: "run-1", brandId: "brand-123" },
     );
 
-    // Verify URL uses /brands/extract-fields (no brandId in path)
+    // Verify URL uses /orgs/brands/extract-fields
     const [url] = mockFetch.mock.calls[0];
-    expect(url).toBe(`${BRAND_SERVICE_URL}/brands/extract-fields`);
+    expect(url).toBe(`${BRAND_SERVICE_URL}/orgs/brands/extract-fields`);
 
     // Verify x-brand-id header is forwarded
     const [, opts] = mockFetch.mock.calls[0];
