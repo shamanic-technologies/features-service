@@ -193,7 +193,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
         match: "journalists-service/orgs/stats",
         response: {
           totalJournalists: 25,
-          byStatus: { contacted: 20, served: 3, buffered: 2 },
+          byOutreachStatus: { contacted: 20, served: 3, buffered: 2 },
         },
       },
       {
@@ -225,7 +225,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     mockFetchMulti([
       {
         match: "journalists-service/orgs/stats",
-        response: { totalJournalists: 10, byStatus: {} },
+        response: { totalJournalists: 10, byOutreachStatus: {} },
       },
     ]);
 
