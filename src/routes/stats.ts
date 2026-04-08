@@ -230,7 +230,7 @@ async function fetchEmailStats(
     });
 
     if (!response.ok) {
-      console.error(`[stats] email-gateway /orgs/stats failed: ${response.status}`);
+      console.error(`[features-service] email-gateway /orgs/stats failed: ${response.status}`);
       return new Map();
     }
 
@@ -250,7 +250,7 @@ async function fetchEmailStats(
 
     return result;
   } catch (error) {
-    console.error(`[stats] email-gateway /orgs/stats network error:`, (error as Error).message);
+    console.error(`[features-service] email-gateway /orgs/stats network error:`, (error as Error).message);
     return new Map();
   }
 }
@@ -346,7 +346,7 @@ async function fetchRunsStatsForSlug(
     });
 
     if (!response.ok) {
-      console.error(`[stats] runs-service /v1/stats/costs failed: ${response.status}`);
+      console.error(`[features-service] runs-service /v1/stats/costs failed: ${response.status}`);
       return new Map();
     }
 
@@ -395,7 +395,7 @@ async function fetchRunsStatsForSlug(
 
     return result;
   } catch (error) {
-    console.error(`[stats] runs-service /v1/stats/costs network error:`, (error as Error).message);
+    console.error(`[features-service] runs-service /v1/stats/costs network error:`, (error as Error).message);
     return new Map();
   }
 }
@@ -506,7 +506,7 @@ async function fetchPipelineStatsForFilter(
     });
 
     if (!response.ok) {
-      console.error(`[stats] runs-service pipeline stats failed: ${response.status} (${runFilter.serviceName}/${runFilter.taskName})`);
+      console.error(`[features-service] runs-service pipeline stats failed: ${response.status} (${runFilter.serviceName}/${runFilter.taskName})`);
       return new Map();
     }
 
@@ -536,7 +536,7 @@ async function fetchPipelineStatsForFilter(
 
     return result;
   } catch (error) {
-    console.error(`[stats] runs-service pipeline stats network error (${runFilter.serviceName}/${runFilter.taskName}):`, (error as Error).message);
+    console.error(`[features-service] runs-service pipeline stats network error (${runFilter.serviceName}/${runFilter.taskName}):`, (error as Error).message);
     return new Map();
   }
 }
@@ -565,7 +565,7 @@ async function fetchOutletsStats(
     });
 
     if (!response.ok) {
-      console.error(`[stats] outlets-service /orgs/outlets/stats failed: ${response.status}`);
+      console.error(`[features-service] outlets-service /orgs/outlets/stats failed: ${response.status}`);
       return new Map();
     }
 
@@ -583,7 +583,7 @@ async function fetchOutletsStats(
 
     return result;
   } catch (error) {
-    console.error(`[stats] outlets-service /orgs/outlets/stats network error:`, (error as Error).message);
+    console.error(`[features-service] outlets-service /orgs/outlets/stats network error:`, (error as Error).message);
     return new Map();
   }
 }
@@ -626,14 +626,14 @@ async function fetchJournalistsStats(
     });
 
     if (!response.ok) {
-      console.error(`[stats] journalists-service /orgs/stats failed: ${response.status}`);
+      console.error(`[features-service] journalists-service /orgs/stats failed: ${response.status}`);
       return new Map();
     }
 
     const data = await response.json() as {
       totalJournalists: number;
-      byStatus: Record<string, number>;
-      groupedBy?: Record<string, { totalJournalists: number; byStatus: Record<string, number> }>;
+      byOutreachStatus: Record<string, number>;
+      groupedBy?: Record<string, { totalJournalists: number; byOutreachStatus: Record<string, number> }>;
     };
 
     const result = new Map<string, Record<string, number>>();
@@ -648,15 +648,15 @@ async function fetchJournalistsStats(
 
     return result;
   } catch (error) {
-    console.error(`[stats] journalists-service /orgs/stats network error:`, (error as Error).message);
+    console.error(`[features-service] journalists-service /orgs/stats network error:`, (error as Error).message);
     return new Map();
   }
 }
 
-function extractJournalistFields(data: { totalJournalists: number; byStatus: Record<string, number> }): Record<string, number> {
+function extractJournalistFields(data: { totalJournalists: number; byOutreachStatus: Record<string, number> }): Record<string, number> {
   return {
     journalistsFound: data.totalJournalists,
-    journalistsContacted: data.byStatus.contacted ?? 0,
+    journalistsContacted: data.byOutreachStatus.contacted ?? 0,
   };
 }
 
@@ -849,7 +849,7 @@ async function fetchActiveCampaigns(
     });
 
     if (!response.ok) {
-      console.error(`[stats] campaign-service /stats failed: ${response.status}`);
+      console.error(`[features-service] campaign-service /stats failed: ${response.status}`);
       return 0;
     }
 
@@ -861,7 +861,7 @@ async function fetchActiveCampaigns(
 
     return data.stats.byStatus?.active ?? data.stats.byStatus?.running ?? 0;
   } catch (error) {
-    console.error(`[stats] campaign-service /stats network error:`, (error as Error).message);
+    console.error(`[features-service] campaign-service /stats network error:`, (error as Error).message);
     return 0;
   }
 }
