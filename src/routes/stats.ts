@@ -1337,7 +1337,7 @@ import { handleRanked, handleBest } from "./public.js";
 router.get("/stats/ranked", apiKeyAuth, async (req, res) => {
   try {
     const limitParam = parseInt(req.query.limit as string, 10);
-    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 10;
+    const limit = Number.isFinite(limitParam) && limitParam >= 1 ? limitParam : 10;
 
     await handleRanked(
       req.query.featureDynastySlug as string | undefined,
