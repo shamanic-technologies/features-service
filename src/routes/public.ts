@@ -554,7 +554,7 @@ export async function handleBest(
 router.get("/public/stats/ranked", async (req, res) => {
   try {
     const limitParam = parseInt(req.query.limit as string, 10);
-    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 3;
+    const limit = Number.isFinite(limitParam) && limitParam >= 1 ? limitParam : 3;
 
     await handleRanked(
       req.query.featureDynastySlug as string | undefined,
