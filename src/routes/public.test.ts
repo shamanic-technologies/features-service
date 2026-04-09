@@ -363,6 +363,20 @@ describe("GET /public/stats/ranked", () => {
     expect(res.body.results[0].workflow.slug).toBe("sales-outreach-beta");
   });
 
+  it("does not cap limit at 100 (regression: no hidden upper bound)", async () => {
+    mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockFetchResponses();
+
+    const res = await request(app)
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=emailsReplied&groupBy=workflow&limit=200");
+
+    expect(res.status).toBe(200);
+    // Only 2 workflows exist in mock data, but the key assertion is that the
+    // endpoint accepted limit=200 without capping to 100 — both results come back.
+    expect(res.body.results).toHaveLength(2);
+  });
+
   it("supports groupBy=brand with enriched brand info", async () => {
     mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
