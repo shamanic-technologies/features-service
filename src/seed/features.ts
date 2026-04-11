@@ -84,13 +84,15 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     ],
 
     outputs: [
-      { key: "leadsServed",       displayOrder: 1 },
-      { key: "emailsGenerated",   displayOrder: 2 },
-      { key: "emailsSent",        displayOrder: 3 },
-      { key: "emailsOpened",      displayOrder: 4 },
-      { key: "emailsReplied",     displayOrder: 5 },
-      { key: "replyRate",         displayOrder: 6 },
-      { key: "costPerReplyCents", displayOrder: 7, defaultSort: true, sortDirection: "asc" },
+      { key: "leadsServed",              displayOrder: 1 },
+      { key: "emailsGenerated",          displayOrder: 2 },
+      { key: "emailsSent",              displayOrder: 3 },
+      { key: "emailsOpened",            displayOrder: 4 },
+      { key: "repliesPositive",          displayOrder: 5 },
+      { key: "repliesNegative",          displayOrder: 6 },
+      { key: "repliesNeutral",           displayOrder: 7 },
+      { key: "positiveReplyRate",        displayOrder: 8 },
+      { key: "costPerPositiveReplyCents", displayOrder: 9, defaultSort: true, sortDirection: "asc" },
     ],
 
     charts: [
@@ -104,7 +106,7 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
           { key: "emailsGenerated" },
           { key: "emailsSent" },
           { key: "emailsOpened" },
-          { key: "emailsReplied" },
+          { key: "repliesPositive" },
         ],
       },
       {
@@ -266,14 +268,16 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     ],
 
     outputs: [
-      { key: "journalistsFound",     displayOrder: 1 },
-      { key: "emailsGenerated",      displayOrder: 2 },
-      { key: "journalistsContacted", displayOrder: 3 },
-      { key: "emailsSent",           displayOrder: 4 },
-      { key: "emailsOpened",         displayOrder: 5 },
-      { key: "emailsReplied",        displayOrder: 6 },
-      { key: "replyRate",            displayOrder: 7 },
-      { key: "costPerReplyCents",    displayOrder: 8, defaultSort: true, sortDirection: "asc" },
+      { key: "journalistsFound",        displayOrder: 1 },
+      { key: "emailsGenerated",         displayOrder: 2 },
+      { key: "journalistsContacted",    displayOrder: 3 },
+      { key: "emailsSent",              displayOrder: 4 },
+      { key: "emailsOpened",            displayOrder: 5 },
+      { key: "repliesPositive",          displayOrder: 6 },
+      { key: "repliesNegative",          displayOrder: 7 },
+      { key: "repliesNeutral",           displayOrder: 8 },
+      { key: "positiveReplyRate",        displayOrder: 9 },
+      { key: "costPerPositiveReplyCents", displayOrder: 10, defaultSort: true, sortDirection: "asc" },
     ],
 
     charts: [
@@ -288,7 +292,7 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
           { key: "journalistsContacted" },
           { key: "emailsSent" },
           { key: "emailsOpened" },
-          { key: "emailsReplied" },
+          { key: "repliesPositive" },
         ],
       },
       {

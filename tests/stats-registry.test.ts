@@ -11,7 +11,7 @@ import {
 describe("STATS_REGISTRY", () => {
   it("contains email stats keys", () => {
     expect(VALID_STATS_KEYS.has("emailsSent")).toBe(true);
-    expect(VALID_STATS_KEYS.has("emailsReplied")).toBe(true);
+    expect(VALID_STATS_KEYS.has("emailsDelivered")).toBe(true);
     expect(VALID_STATS_KEYS.has("emailsOpened")).toBe(true);
     expect(VALID_STATS_KEYS.has("emailsClicked")).toBe(true);
   });
@@ -43,7 +43,9 @@ describe("STATS_REGISTRY", () => {
   it("contains derived rate keys", () => {
     expect(VALID_STATS_KEYS.has("openRate")).toBe(true);
     expect(VALID_STATS_KEYS.has("clickRate")).toBe(true);
-    expect(VALID_STATS_KEYS.has("replyRate")).toBe(true);
+    expect(VALID_STATS_KEYS.has("positiveReplyRate")).toBe(true);
+    expect(VALID_STATS_KEYS.has("negativeReplyRate")).toBe(true);
+    expect(VALID_STATS_KEYS.has("neutralReplyRate")).toBe(true);
   });
 
   it("contains press-kits stats keys", () => {
@@ -61,7 +63,7 @@ describe("STATS_REGISTRY", () => {
   it("contains derived cost-per keys", () => {
     expect(VALID_STATS_KEYS.has("costPerOpenCents")).toBe(true);
     expect(VALID_STATS_KEYS.has("costPerClickCents")).toBe(true);
-    expect(VALID_STATS_KEYS.has("costPerReplyCents")).toBe(true);
+    expect(VALID_STATS_KEYS.has("costPerPositiveReplyCents")).toBe(true);
     expect(VALID_STATS_KEYS.has("costPerOutletCents")).toBe(true);
     expect(VALID_STATS_KEYS.has("costPerPressKitCents")).toBe(true);
     expect(VALID_STATS_KEYS.has("costPerPressKitViewCents")).toBe(true);
@@ -100,8 +102,8 @@ describe("getPublicRegistry", () => {
   it("returns label and type for each key", () => {
     const pub = getPublicRegistry();
     expect(pub.emailsSent).toEqual({ type: "count", label: "Sent" });
-    expect(pub.replyRate).toEqual({ type: "rate", label: "% Replies" });
-    expect(pub.costPerReplyCents).toEqual({ type: "currency", label: "$/Reply" });
+    expect(pub.positiveReplyRate).toEqual({ type: "rate", label: "% Positive" });
+    expect(pub.costPerPositiveReplyCents).toEqual({ type: "currency", label: "$/Positive Reply" });
   });
 
   it("has same number of entries as STATS_REGISTRY", () => {
@@ -112,7 +114,7 @@ describe("getPublicRegistry", () => {
 
 describe("validateStatsKeys", () => {
   it("returns empty array for valid keys", () => {
-    expect(validateStatsKeys(["emailsSent", "replyRate"])).toEqual([]);
+    expect(validateStatsKeys(["emailsSent", "positiveReplyRate"])).toEqual([]);
   });
 
   it("returns invalid keys", () => {

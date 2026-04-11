@@ -104,7 +104,7 @@ export async function fetchPublicEmailStats(
 
 const EMAIL_FIELDS = [
   "emailsContacted", "emailsSent", "emailsDelivered", "emailsOpened",
-  "emailsClicked", "emailsReplied", "emailsBounced", "recipients",
+  "emailsClicked", "emailsBounced", "recipients",
   "repliesPositive", "repliesNegative", "repliesNeutral", "repliesAutoReply",
 ];
 

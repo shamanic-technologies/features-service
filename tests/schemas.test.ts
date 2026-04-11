@@ -18,7 +18,7 @@ const validOutput = {
 };
 
 const validOutputWithSort = {
-  key: "costPerReplyCents",
+  key: "costPerPositiveReplyCents",
   displayOrder: 2,
   defaultSort: true,
   sortDirection: "asc" as const,

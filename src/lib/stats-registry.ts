@@ -37,7 +37,6 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   emailsDelivered:     { kind: "raw", type: "count",    label: "Delivered",        source: "email-gateway" },
   emailsOpened:        { kind: "raw", type: "count",    label: "Opens",            source: "email-gateway" },
   emailsClicked:       { kind: "raw", type: "count",    label: "Clicks",           source: "email-gateway" },
-  emailsReplied:       { kind: "raw", type: "count",    label: "Replies",          source: "email-gateway" },
   emailsBounced:       { kind: "raw", type: "count",    label: "Bounces",          source: "email-gateway" },
   recipients:          { kind: "raw", type: "count",    label: "Recipients",       source: "email-gateway" },
 
@@ -75,13 +74,14 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   // ── Derived rates ─────────────────────────────────────────────────────────
   openRate:            { kind: "derived", type: "rate",     label: "% Opens",       numerator: "emailsOpened",   denominator: "emailsSent" },
   clickRate:           { kind: "derived", type: "rate",     label: "% Clicks",      numerator: "emailsClicked",  denominator: "emailsSent" },
-  replyRate:           { kind: "derived", type: "rate",     label: "% Replies",     numerator: "emailsReplied",  denominator: "emailsSent" },
-  positiveReplyRate:   { kind: "derived", type: "rate",     label: "% Positive",    numerator: "repliesPositive", denominator: "emailsDelivered" },
+  positiveReplyRate:   { kind: "derived", type: "rate",     label: "% Positive",    numerator: "repliesPositive",  denominator: "emailsDelivered" },
+  negativeReplyRate:   { kind: "derived", type: "rate",     label: "% Negative",    numerator: "repliesNegative",  denominator: "emailsDelivered" },
+  neutralReplyRate:    { kind: "derived", type: "rate",     label: "% Neutral",     numerator: "repliesNeutral",   denominator: "emailsDelivered" },
 
   // ── Derived cost-per ──────────────────────────────────────────────────────
   costPerOpenCents:       { kind: "derived", type: "currency", label: "$/Open",        numerator: "totalCostInUsdCents",  denominator: "emailsOpened" },
   costPerClickCents:      { kind: "derived", type: "currency", label: "$/Click",       numerator: "totalCostInUsdCents",  denominator: "emailsClicked" },
-  costPerReplyCents:      { kind: "derived", type: "currency", label: "$/Reply",       numerator: "totalCostInUsdCents",  denominator: "emailsReplied" },
+  costPerPositiveReplyCents: { kind: "derived", type: "currency", label: "$/Positive Reply", numerator: "totalCostInUsdCents", denominator: "repliesPositive" },
   costPerOutletCents:     { kind: "derived", type: "currency", label: "$/Outlet",      numerator: "totalCostInUsdCents",  denominator: "outletsDiscovered" },
   costPerPressKitCents:   { kind: "derived", type: "currency", label: "$/Kit",         numerator: "totalCostInUsdCents",  denominator: "pressKitsGenerated" },
   costPerPressKitViewCents: { kind: "derived", type: "currency", label: "$/View",      numerator: "totalCostInUsdCents",  denominator: "pressKitViews" },
