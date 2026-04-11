@@ -105,8 +105,7 @@ export async function fetchPublicEmailStats(
 const EMAIL_FIELDS = [
   "emailsContacted", "emailsSent", "emailsDelivered", "emailsOpened",
   "emailsClicked", "emailsReplied", "emailsBounced", "recipients",
-  "repliesWillingToMeet", "repliesInterested", "repliesNotInterested",
-  "repliesOutOfOffice", "repliesUnsubscribe", "repliesMoreInfo", "repliesWrongContact",
+  "repliesPositive", "repliesNegative", "repliesNeutral", "repliesAutoReply",
 ];
 
 function extractBroadcastEmailFields(data: Record<string, unknown>): Record<string, number> {

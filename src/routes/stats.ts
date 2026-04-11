@@ -263,8 +263,7 @@ function mergeEmailChannels(data: Record<string, unknown>): Record<string, numbe
   const emailFields = [
     "emailsContacted", "emailsSent", "emailsDelivered", "emailsOpened",
     "emailsClicked", "emailsReplied", "emailsBounced", "recipients",
-    "repliesWillingToMeet", "repliesInterested", "repliesNotInterested",
-    "repliesOutOfOffice", "repliesUnsubscribe", "repliesMoreInfo", "repliesWrongContact",
+    "repliesPositive", "repliesNegative", "repliesNeutral", "repliesAutoReply",
   ];
 
   const broadcast = (data.broadcast ?? {}) as Record<string, number>;

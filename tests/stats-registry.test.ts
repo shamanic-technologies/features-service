@@ -16,10 +16,11 @@ describe("STATS_REGISTRY", () => {
     expect(VALID_STATS_KEYS.has("emailsClicked")).toBe(true);
   });
 
-  it("contains reply breakdown keys", () => {
-    expect(VALID_STATS_KEYS.has("repliesWillingToMeet")).toBe(true);
-    expect(VALID_STATS_KEYS.has("repliesInterested")).toBe(true);
-    expect(VALID_STATS_KEYS.has("repliesNotInterested")).toBe(true);
+  it("contains reply aggregate keys", () => {
+    expect(VALID_STATS_KEYS.has("repliesPositive")).toBe(true);
+    expect(VALID_STATS_KEYS.has("repliesNegative")).toBe(true);
+    expect(VALID_STATS_KEYS.has("repliesNeutral")).toBe(true);
+    expect(VALID_STATS_KEYS.has("repliesAutoReply")).toBe(true);
   });
 
   it("contains cost/runs keys", () => {

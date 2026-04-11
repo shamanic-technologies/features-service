@@ -41,14 +41,11 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   emailsBounced:       { kind: "raw", type: "count",    label: "Bounces",          source: "email-gateway" },
   recipients:          { kind: "raw", type: "count",    label: "Recipients",       source: "email-gateway" },
 
-  // ── Reply breakdown: email-gateway ────────────────────────────────────────
-  repliesWillingToMeet: { kind: "raw", type: "count",   label: "Willing to Meet",  source: "email-gateway" },
-  repliesInterested:    { kind: "raw", type: "count",   label: "Interested",       source: "email-gateway" },
-  repliesNotInterested: { kind: "raw", type: "count",   label: "Not Interested",   source: "email-gateway" },
-  repliesOutOfOffice:   { kind: "raw", type: "count",   label: "Out of Office",    source: "email-gateway" },
-  repliesUnsubscribe:   { kind: "raw", type: "count",   label: "Unsubscribe",      source: "email-gateway" },
-  repliesMoreInfo:      { kind: "raw", type: "count",   label: "Wants More Info",  source: "email-gateway" },
-  repliesWrongContact:  { kind: "raw", type: "count",   label: "Wrong Contact",    source: "email-gateway" },
+  // ── Reply aggregates: email-gateway ───────────────────────────────────────
+  repliesPositive:      { kind: "raw", type: "count",   label: "Positive",         source: "email-gateway" },
+  repliesNegative:      { kind: "raw", type: "count",   label: "Negative",         source: "email-gateway" },
+  repliesNeutral:       { kind: "raw", type: "count",   label: "Neutral",          source: "email-gateway" },
+  repliesAutoReply:     { kind: "raw", type: "count",   label: "Auto-Reply",       source: "email-gateway" },
 
   // ── Pipeline counts: runs-service (counted via per-task runCount) ─────────
   leadsServed:         { kind: "raw", type: "count",    label: "Leads Served",     source: "leads" },
@@ -79,8 +76,7 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   openRate:            { kind: "derived", type: "rate",     label: "% Opens",       numerator: "emailsOpened",   denominator: "emailsSent" },
   clickRate:           { kind: "derived", type: "rate",     label: "% Clicks",      numerator: "emailsClicked",  denominator: "emailsSent" },
   replyRate:           { kind: "derived", type: "rate",     label: "% Replies",     numerator: "emailsReplied",  denominator: "emailsSent" },
-  positiveReplyRate:   { kind: "derived", type: "rate",     label: "% Positive",    numerator: "repliesWillingToMeet", denominator: "emailsSent" },
-  coverageRate:        { kind: "derived", type: "rate",     label: "Coverage Rate", numerator: "repliesInterested",    denominator: "emailsSent" },
+  positiveReplyRate:   { kind: "derived", type: "rate",     label: "% Positive",    numerator: "repliesPositive", denominator: "emailsDelivered" },
 
   // ── Derived cost-per ──────────────────────────────────────────────────────
   costPerOpenCents:       { kind: "derived", type: "currency", label: "$/Open",        numerator: "totalCostInUsdCents",  denominator: "emailsOpened" },
