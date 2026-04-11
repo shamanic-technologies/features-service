@@ -546,8 +546,8 @@ registry.registerPath({
     "{\n" +
     "  \"registry\": {\n" +
     "    \"emailsSent\": { \"type\": \"count\", \"label\": \"Emails Sent\" },\n" +
-    "    \"emailsReplied\": { \"type\": \"count\", \"label\": \"Emails Replied\" },\n" +
-    "    \"replyRate\": { \"type\": \"rate\", \"label\": \"Reply Rate\" },\n" +
+    "    \"repliesPositive\": { \"type\": \"count\", \"label\": \"Positive\" },\n" +
+    "    \"positiveReplyRate\": { \"type\": \"rate\", \"label\": \"% Positive\" },\n" +
     "    \"totalCostInUsdCents\": { \"type\": \"currency\", \"label\": \"Total Cost\" }\n" +
     "  }\n" +
     "}\n" +
@@ -647,14 +647,14 @@ registry.registerPath({
     "**This endpoint requires an exact versioned slug** (e.g. `sales-cold-email-v2`). NOT a dynasty slug. " +
     "For dynasty-wide aggregated stats, use `GET /stats/dynasty?dynastySlug=...`.\n\n" +
     "Stats keys are either **raw** (fetched from email-gateway, runs-service, or outlets-service) " +
-    "or **derived** (computed as a ratio, e.g. `replyRate = emailsReplied / emailsSent`). " +
+    "or **derived** (computed as a ratio, e.g. `positiveReplyRate = repliesPositive / emailsDelivered`). " +
     "Use `GET /stats/registry` to discover available keys, their labels, and types.\n\n" +
     "**Example:** `GET /features/sales-cold-email-v2/stats?brandId=b123`\n" +
     "```json\n" +
     "{\n" +
     "  \"featureSlug\": \"sales-cold-email-v2\",\n" +
     "  \"systemStats\": { \"totalCostInUsdCents\": 4200, \"completedRuns\": 15, \"activeCampaigns\": 3, \"firstRunAt\": \"2026-01-10T...\", \"lastRunAt\": \"2026-03-28T...\" },\n" +
-    "  \"stats\": { \"emailsSent\": 1200, \"emailsReplied\": 48, \"replyRate\": 0.04 }\n" +
+    "  \"stats\": { \"emailsSent\": 1200, \"repliesPositive\": 48, \"positiveReplyRate\": 0.04 }\n" +
     "}\n" +
     "```\n\n" +
     "**Example with groupBy:** `GET /features/sales-cold-email-v2/stats?groupBy=campaignId`\n" +
@@ -664,8 +664,8 @@ registry.registerPath({
     "  \"groupBy\": \"campaignId\",\n" +
     "  \"systemStats\": { ... },\n" +
     "  \"groups\": [\n" +
-    "    { \"campaignId\": \"camp-1\", \"systemStats\": { ... }, \"stats\": { \"emailsSent\": 600, \"replyRate\": 0.05 } },\n" +
-    "    { \"campaignId\": \"camp-2\", \"systemStats\": { ... }, \"stats\": { \"emailsSent\": 600, \"replyRate\": 0.03 } }\n" +
+    "    { \"campaignId\": \"camp-1\", \"systemStats\": { ... }, \"stats\": { \"emailsSent\": 600, \"positiveReplyRate\": 0.05 } },\n" +
+    "    { \"campaignId\": \"camp-2\", \"systemStats\": { ... }, \"stats\": { \"emailsSent\": 600, \"positiveReplyRate\": 0.03 } }\n" +
     "  ]\n" +
     "}\n" +
     "```",
@@ -714,7 +714,7 @@ registry.registerPath({
     "{\n" +
     "  \"dynastySlug\": \"sales-cold-email\",\n" +
     "  \"systemStats\": { \"totalCostInUsdCents\": 12000, \"completedRuns\": 45, \"activeCampaigns\": 5, \"firstRunAt\": \"2025-11-01T...\", \"lastRunAt\": \"2026-03-28T...\" },\n" +
-    "  \"stats\": { \"emailsSent\": 5400, \"emailsReplied\": 216, \"replyRate\": 0.04 }\n" +
+    "  \"stats\": { \"emailsSent\": 5400, \"repliesPositive\": 216, \"positiveReplyRate\": 0.04 }\n" +
     "}\n" +
     "```\n\n" +
     "This aggregates data from all versions (v1, v2, ...) and any converged dynasties.",
@@ -1075,7 +1075,7 @@ export const openApiDocument = generator.generateDocument({
       "## Stats Computation\n\n" +
       "Stats endpoints compute values by calling downstream services " +
       "(email-gateway, runs-service, outlets-service) and returning aggregated results. " +
-      "Keys are either **raw** (fetched from a source) or **derived** (computed as a ratio of two raw keys, e.g. `replyRate = emailsReplied / emailsSent`).\n\n" +
+      "Keys are either **raw** (fetched from a source) or **derived** (computed as a ratio of two raw keys, e.g. `positiveReplyRate = repliesPositive / emailsDelivered`).\n\n" +
 
       "## Registration (Cold Start)\n\n" +
       "`PUT /features` — idempotent batch upsert, safe to call on every boot. " +

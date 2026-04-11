@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, staging]
 
 jobs:
   test:
@@ -40,3 +40,4 @@ jobs:
         run: pnpm db:migrate:prod
         env:
           FEATURES_SERVICE_DATABASE_URL: ${{ secrets.FEATURES_SERVICE_DATABASE_URL }}
+

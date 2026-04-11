@@ -460,7 +460,7 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
   });
 });
 
-describe("repliesMoreInfo and repliesWrongContact extraction", () => {
+describe("reply aggregate extraction", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
 
   const PR_FEATURE_WITH_REPLIES = {
@@ -481,8 +481,10 @@ describe("repliesMoreInfo and repliesWrongContact extraction", () => {
         title: "Reply Breakdown",
         displayOrder: 1,
         segments: [
-          { key: "repliesMoreInfo", color: "blue", sentiment: "positive" },
-          { key: "repliesWrongContact", color: "orange", sentiment: "negative" },
+          { key: "repliesPositive", color: "green", sentiment: "positive" },
+          { key: "repliesNegative", color: "red", sentiment: "negative" },
+          { key: "repliesNeutral", color: "gray", sentiment: "neutral" },
+          { key: "repliesAutoReply", color: "orange", sentiment: "neutral" },
         ],
       },
     ],
@@ -502,17 +504,19 @@ describe("repliesMoreInfo and repliesWrongContact extraction", () => {
     vi.unstubAllGlobals();
   });
 
-  it("extracts repliesMoreInfo and repliesWrongContact from email-gateway broadcast stats", async () => {
+  it("extracts reply aggregates from email-gateway broadcast stats", async () => {
     fetchSpy.mockImplementation((url: string) => {
       if (url.includes("/stats?")) {
-        // email-gateway response
+        // email-gateway response with new aggregate fields
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({
             broadcast: {
               emailsSent: 100,
-              repliesMoreInfo: 8,
-              repliesWrongContact: 3,
+              repliesPositive: 12,
+              repliesNegative: 5,
+              repliesNeutral: 3,
+              repliesAutoReply: 2,
             },
           }),
         });
@@ -535,8 +539,10 @@ describe("repliesMoreInfo and repliesWrongContact extraction", () => {
       .set("x-run-id", "run-1")
       .expect(200);
 
-    expect(res.body.stats.repliesMoreInfo).toBe(8);
-    expect(res.body.stats.repliesWrongContact).toBe(3);
+    expect(res.body.stats.repliesPositive).toBe(12);
+    expect(res.body.stats.repliesNegative).toBe(5);
+    expect(res.body.stats.repliesNeutral).toBe(3);
+    expect(res.body.stats.repliesAutoReply).toBe(2);
   });
 });
 
