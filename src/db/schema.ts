@@ -22,7 +22,7 @@ export interface FeatureInput {
 // ── Output metric definition ────────────────────────────────────────────────
 
 export interface FeatureOutput {
-  /** Stats key from the registry, e.g. "emailsReplied", "replyRate" */
+  /** Stats key from the registry, e.g. "repliesPositive", "positiveReplyRate" */
   key: string;
   /** Display order in tables */
   displayOrder: number;

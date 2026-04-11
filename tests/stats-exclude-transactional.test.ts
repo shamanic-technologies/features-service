@@ -39,7 +39,7 @@ const MOCK_FEATURE = {
   outputs: [
     { key: "emailsSent", displayOrder: 1 },
     { key: "emailsOpened", displayOrder: 2 },
-    { key: "emailsReplied", displayOrder: 3 },
+    { key: "repliesPositive", displayOrder: 3 },
   ],
   charts: [],
   entityTypes: [],
@@ -73,8 +73,8 @@ describe("stats exclude transactional emails", () => {
           ok: true,
           json: () =>
             Promise.resolve({
-              broadcast: { emailsSent: 100, emailsOpened: 40, emailsReplied: 10 },
-              transactional: { emailsSent: 500, emailsOpened: 200, emailsReplied: 50 },
+              broadcast: { emailsSent: 100, emailsOpened: 40, repliesPositive: 10 },
+              transactional: { emailsSent: 500, emailsOpened: 200, repliesPositive: 50 },
             }),
         });
       }
@@ -107,7 +107,7 @@ describe("stats exclude transactional emails", () => {
     // Should only include broadcast numbers, not broadcast + transactional
     expect(res.body.stats.emailsSent).toBe(100);
     expect(res.body.stats.emailsOpened).toBe(40);
-    expect(res.body.stats.emailsReplied).toBe(10);
+    expect(res.body.stats.repliesPositive).toBe(10);
   });
 
   it("returns zero when only transactional stats exist", async () => {
@@ -117,7 +117,7 @@ describe("stats exclude transactional emails", () => {
           ok: true,
           json: () =>
             Promise.resolve({
-              transactional: { emailsSent: 500, emailsOpened: 200, emailsReplied: 50 },
+              transactional: { emailsSent: 500, emailsOpened: 200, repliesPositive: 50 },
             }),
         });
       }
@@ -149,7 +149,7 @@ describe("stats exclude transactional emails", () => {
     // No broadcast data → all zeros
     expect(res.body.stats.emailsSent).toBe(0);
     expect(res.body.stats.emailsOpened).toBe(0);
-    expect(res.body.stats.emailsReplied).toBe(0);
+    expect(res.body.stats.repliesPositive).toBe(0);
   });
 
   it("works with grouped response — only broadcast per group", async () => {
@@ -162,8 +162,8 @@ describe("stats exclude transactional emails", () => {
               groups: [
                 {
                   key: "brand-1",
-                  broadcast: { emailsSent: 50, emailsOpened: 20, emailsReplied: 5 },
-                  transactional: { emailsSent: 300, emailsOpened: 150, emailsReplied: 30 },
+                  broadcast: { emailsSent: 50, emailsOpened: 20, repliesPositive: 5 },
+                  transactional: { emailsSent: 300, emailsOpened: 150, repliesPositive: 30 },
                 },
               ],
             }),
@@ -197,6 +197,6 @@ describe("stats exclude transactional emails", () => {
     const group = res.body.groups[0];
     expect(group.stats.emailsSent).toBe(50);
     expect(group.stats.emailsOpened).toBe(20);
-    expect(group.stats.emailsReplied).toBe(5);
+    expect(group.stats.repliesPositive).toBe(5);
   });
 });

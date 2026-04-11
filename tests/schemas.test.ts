@@ -18,7 +18,7 @@ const validOutput = {
 };
 
 const validOutputWithSort = {
-  key: "costPerReplyCents",
+  key: "costPerPositiveReplyCents",
   displayOrder: 2,
   defaultSort: true,
   sortDirection: "asc" as const,
@@ -41,8 +41,8 @@ const validBreakdownChart = {
   title: "Reply Breakdown",
   displayOrder: 2,
   segments: [
-    { key: "repliesWillingToMeet", color: "green" as const, sentiment: "positive" as const },
-    { key: "repliesNotInterested", color: "red" as const, sentiment: "negative" as const },
+    { key: "repliesPositive", color: "green" as const, sentiment: "positive" as const },
+    { key: "repliesNegative", color: "red" as const, sentiment: "negative" as const },
   ],
 };
 

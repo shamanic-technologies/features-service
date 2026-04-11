@@ -32,11 +32,11 @@ describe("SEED_FEATURES", () => {
     expect(new Set(sigs).size).toBe(sigs.length);
   });
 
-  it("Sales Cold Email has 7 inputs and 7 outputs", () => {
+  it("Sales Cold Email has 7 inputs and 9 outputs", () => {
     const sales = SEED_FEATURES.find((f) => f.name === "Sales Cold Email Outreach");
     expect(sales).toBeDefined();
     expect(sales!.inputs).toHaveLength(7);
-    expect(sales!.outputs).toHaveLength(7);
+    expect(sales!.outputs).toHaveLength(9);
   });
 
   it("Sales Cold Email has funnel and breakdown charts", () => {
@@ -71,11 +71,11 @@ describe("SEED_FEATURES", () => {
     expect(outlets!.charts[1].type).toBe("breakdown-bar");
   });
 
-  it("PR Cold Email Outreach has 5 inputs and 8 outputs", () => {
+  it("PR Cold Email Outreach has 5 inputs and 10 outputs", () => {
     const pr = SEED_FEATURES.find((f) => f.name === "PR Cold Email Outreach");
     expect(pr).toBeDefined();
     expect(pr!.inputs).toHaveLength(5);
-    expect(pr!.outputs).toHaveLength(8);
+    expect(pr!.outputs).toHaveLength(10);
     expect(pr!.category).toBe("pr");
     expect(pr!.channel).toBe("email");
   });
