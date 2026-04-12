@@ -886,6 +886,7 @@ const rankedQueryParams = z.object({
   objective: z.string().optional().describe("Stats key to sort by (defaults to the feature's defaultSort output)"),
   groupBy: z.enum(["workflow", "brand"]).describe("Group results by workflow or by brand"),
   limit: z.string().optional().describe("Max results (default 3, max 100)"),
+  minRuns: z.string().optional().describe("Minimum number of completed runs to include a group in results (default 100). Groups with fewer runs are excluded to ensure statistical significance."),
 });
 
 registry.registerPath({
