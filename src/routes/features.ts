@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
@@ -66,11 +66,10 @@ async function resolveDynastyIdentity(
   }
 
   if (opts.isUpsert) {
-    // Batch upsert: match dynasty by base_name + fork_name=null (seed features)
+    // Batch upsert: match dynasty by dynastyName (works for both original and forked dynasties)
     const activeInDynasty = await db.query.features.findFirst({
       where: and(
-        eq(features.baseName, name),
-        isNull(features.forkName),
+        eq(features.dynastyName, name),
         eq(features.status, "active"),
       ),
     });

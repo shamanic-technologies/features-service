@@ -502,3 +502,140 @@ describe("POST /features/:dynastySlug/prefill", () => {
     expect(res.body.error).toMatch(/dynasty slug/i);
   });
 });
+
+// ── PUT /features — Batch upsert (dynasty matching) ─────────────────────────
+
+describe("PUT /features — dynasty matching", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("upgrades a forked dynasty when signature changes", async () => {
+    // Signature lookup: no existing feature with this signature
+    mockFindFirst.mockResolvedValueOnce(null);
+    // Dynasty lookup: finds active forked feature by dynastyName
+    mockFindFirst.mockResolvedValueOnce({
+      id: "sophia-v1-id",
+      baseName: "PR Cold Email Outreach",
+      forkName: "Sophia",
+      dynastyName: "PR Cold Email Outreach Sophia",
+      dynastySlug: "pr-cold-email-outreach-sophia",
+      version: 1,
+      status: "active",
+    });
+    // nextVersionInDynasty: findMany returns existing versions
+    mockFindMany.mockResolvedValueOnce([{ version: 1 }]);
+    // deprecate old feature (update().set().where())
+    mockSet.mockReturnValueOnce({ where: () => Promise.resolve() });
+    // insert new feature
+    mockReturning.mockResolvedValueOnce([{
+      id: "sophia-v2-id",
+      slug: "pr-cold-email-outreach-sophia-v2",
+      name: "PR Cold Email Outreach Sophia v2",
+      dynastyName: "PR Cold Email Outreach Sophia",
+      dynastySlug: "pr-cold-email-outreach-sophia",
+      version: 2,
+      status: "active",
+    }]);
+    // link predecessor (update().set().where())
+    mockSet.mockReturnValueOnce({ where: () => Promise.resolve() });
+
+    const res = await request(app)
+      .put("/features")
+      .set(AUTH_HEADERS)
+      .send({
+        features: [{
+          name: "PR Cold Email Outreach Sophia",
+          description: "Pitch journalists with personalized cold emails.",
+          icon: "megaphone",
+          category: "pr",
+          channel: "email",
+          audienceType: "cold-outreach",
+          implemented: true,
+          displayOrder: 3,
+          status: "active",
+          inputs: [
+            { key: "targetOutlets", label: "Target Outlets", type: "text", placeholder: "TechCrunch", description: "Outlets", extractKey: "targetOutlets" },
+          ],
+          outputs: [
+            { key: "repliesPositive", displayOrder: 1 },
+            { key: "repliesNegative", displayOrder: 2 },
+          ],
+          charts: [
+            { key: "funnel", type: "funnel-bar", title: "Funnel", displayOrder: 1, steps: [{ key: "emailsSent" }, { key: "repliesPositive" }] },
+            { key: "breakdown", type: "breakdown-bar", title: "Breakdown", displayOrder: 2, segments: [{ key: "repliesPositive", color: "green", sentiment: "positive" }, { key: "repliesNegative", color: "red", sentiment: "negative" }] },
+          ],
+          entities: [{ name: "journalists" }],
+        }],
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.features).toHaveLength(1);
+    expect(res.body.features[0].dynastyName).toBe("PR Cold Email Outreach Sophia");
+    expect(res.body.features[0].version).toBe(2);
+  });
+
+  it("upgrades an original (non-forked) dynasty when signature changes", async () => {
+    // Signature lookup: no match
+    mockFindFirst.mockResolvedValueOnce(null);
+    // Dynasty lookup: finds active original feature by dynastyName
+    mockFindFirst.mockResolvedValueOnce({
+      id: "sales-v1-id",
+      baseName: "Sales Cold Email Outreach",
+      forkName: null,
+      dynastyName: "Sales Cold Email Outreach",
+      dynastySlug: "sales-cold-email-outreach",
+      version: 1,
+      status: "active",
+    });
+    // nextVersionInDynasty
+    mockFindMany.mockResolvedValueOnce([{ version: 1 }]);
+    // deprecate
+    mockSet.mockReturnValueOnce({ where: () => Promise.resolve() });
+    // insert
+    mockReturning.mockResolvedValueOnce([{
+      id: "sales-v2-id",
+      slug: "sales-cold-email-outreach-v2",
+      name: "Sales Cold Email Outreach v2",
+      dynastyName: "Sales Cold Email Outreach",
+      dynastySlug: "sales-cold-email-outreach",
+      version: 2,
+      status: "active",
+    }]);
+    // link predecessor
+    mockSet.mockReturnValueOnce({ where: () => Promise.resolve() });
+
+    const res = await request(app)
+      .put("/features")
+      .set(AUTH_HEADERS)
+      .send({
+        features: [{
+          name: "Sales Cold Email Outreach",
+          description: "Find leads, generate cold emails.",
+          icon: "envelope",
+          category: "sales",
+          channel: "email",
+          audienceType: "cold-outreach",
+          implemented: true,
+          displayOrder: 1,
+          status: "active",
+          inputs: [
+            { key: "targetAudience", label: "Target", type: "text", placeholder: "CTOs", description: "Who", extractKey: "targetAudience" },
+          ],
+          outputs: [
+            { key: "repliesPositive", displayOrder: 1 },
+          ],
+          charts: [
+            { key: "funnel", type: "funnel-bar", title: "Funnel", displayOrder: 1, steps: [{ key: "emailsSent" }, { key: "repliesPositive" }] },
+            { key: "breakdown", type: "breakdown-bar", title: "Breakdown", displayOrder: 2, segments: [{ key: "repliesPositive", color: "green", sentiment: "positive" }, { key: "repliesNegative", color: "red", sentiment: "negative" }] },
+          ],
+          entities: [{ name: "leads" }],
+        }],
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.features).toHaveLength(1);
+    expect(res.body.features[0].dynastyName).toBe("Sales Cold Email Outreach");
+    expect(res.body.features[0].version).toBe(2);
+  });
+});
