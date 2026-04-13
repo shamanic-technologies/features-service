@@ -655,7 +655,7 @@ async function fetchJournalistsStats(
 function extractJournalistFields(data: { totalJournalists: number; byOutreachStatus: Record<string, number> }): Record<string, number> {
   return {
     journalistsFound: data.totalJournalists,
-    journalistsContacted: data.byOutreachStatus.contacted ?? 0,
+    journalistsContacted: data.byOutreachStatus.contacted,
   };
 }
 
