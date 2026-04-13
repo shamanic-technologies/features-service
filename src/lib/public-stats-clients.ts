@@ -150,9 +150,10 @@ export async function fetchPublicJournalistsStats(
 }
 
 function extractJournalistFields(data: Record<string, unknown>): Record<string, number> {
+  const byOutreachStatus = data.byOutreachStatus as Record<string, number>;
   return {
-    journalistsFound: Number(data.totalJournalists ?? 0),
-    journalistsContacted: Number((data.byStatus as Record<string, number> | undefined)?.contacted ?? 0),
+    journalistsFound: Number(data.totalJournalists),
+    journalistsContacted: Number(byOutreachStatus.contacted),
   };
 }
 
