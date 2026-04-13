@@ -1337,12 +1337,15 @@ router.get("/stats/ranked", apiKeyAuth, async (req, res) => {
   try {
     const limitParam = parseInt(req.query.limit as string, 10);
     const limit = Number.isFinite(limitParam) && limitParam >= 1 ? limitParam : 10;
+    const minRunsParam = parseInt(req.query.minRuns as string, 10);
+    const minRuns = Number.isFinite(minRunsParam) && minRunsParam >= 0 ? minRunsParam : 100;
 
     await handleRanked(
       req.query.featureDynastySlug as string | undefined,
       req.query.objective as string | undefined,
       req.query.groupBy as string | undefined,
       limit,
+      minRuns,
       res,
     );
   } catch (error) {
