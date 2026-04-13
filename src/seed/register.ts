@@ -1,4 +1,4 @@
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { computeSignature, slugify, versionedName, versionedSlug, composeDynastyName } from "../lib/signature.js";
@@ -11,7 +11,7 @@ import { SEED_FEATURES } from "./features.js";
  *
  * For each seed feature:
  * - Same signature exists → update metadata in-place
- * - Same dynasty (base_name, fork_name=null) but different signature → upgrade (deprecate old, create new version)
+ * - Same dynastyName with active feature but different signature → upgrade (deprecate old, create new version)
  * - New feature → create new dynasty
  */
 export async function registerSeedFeatures(): Promise<void> {
@@ -21,8 +21,7 @@ export async function registerSeedFeatures(): Promise<void> {
     const inputKeys = f.inputs.map((i) => i.key);
     const outputKeys = f.outputs.map((o) => o.key);
     const signature = computeSignature(inputKeys, outputKeys);
-    const baseName = f.name;
-    const dynastyName = composeDynastyName(baseName, null);
+    const dynastyName = f.name;
     const dynastySlugVal = slugify(dynastyName);
 
     // Check if this exact signature already exists
@@ -55,35 +54,35 @@ export async function registerSeedFeatures(): Promise<void> {
       continue;
     }
 
-    // Signature is new — check if dynasty exists (base_name match, fork_name=null)
+    // Signature is new — check if dynasty exists by dynastyName (works for both original and forked dynasties)
     const activeInDynasty = await db.query.features.findFirst({
       where: and(
-        eq(features.baseName, baseName),
-        isNull(features.forkName),
+        eq(features.dynastyName, dynastyName),
         eq(features.status, "active"),
       ),
     });
 
     if (activeInDynasty) {
       // Dynasty exists, signature changed → upgrade
-      // Find next version
+      // Preserve the existing feature's baseName/forkName (important for forked dynasties)
+      const dSlug = activeInDynasty.dynastySlug;
       const existing = await db.query.features.findMany({
-        where: eq(features.dynastySlug, dynastySlugVal),
+        where: eq(features.dynastySlug, dSlug),
         columns: { version: true },
       });
       const nextVersion = existing.length > 0
         ? Math.max(...existing.map((e) => e.version)) + 1
         : 1;
 
-      // Create new version
+      // Create new version — inherit dynasty identity from existing feature
       const [created] = await db.insert(features).values({
-        baseName,
-        forkName: null,
-        dynastyName,
-        dynastySlug: dynastySlugVal,
+        baseName: activeInDynasty.baseName,
+        forkName: activeInDynasty.forkName,
+        dynastyName: activeInDynasty.dynastyName,
+        dynastySlug: dSlug,
         version: nextVersion,
-        slug: versionedSlug(dynastySlugVal, nextVersion),
-        name: versionedName(dynastyName, nextVersion),
+        slug: versionedSlug(dSlug, nextVersion),
+        name: versionedName(activeInDynasty.dynastyName, nextVersion),
         signature,
         ...metadataValues,
       }).returning();
@@ -102,7 +101,7 @@ export async function registerSeedFeatures(): Promise<void> {
     } else {
       // New dynasty
       const [created] = await db.insert(features).values({
-        baseName,
+        baseName: dynastyName,
         forkName: null,
         dynastyName,
         dynastySlug: dynastySlugVal,
