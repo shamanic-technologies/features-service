@@ -13,6 +13,8 @@ vi.stubEnv("JOURNALISTS_SERVICE_URL", "http://journalists-service");
 vi.stubEnv("JOURNALISTS_SERVICE_API_KEY", "journalists-key");
 vi.stubEnv("LEAD_SERVICE_URL", "http://lead-service");
 vi.stubEnv("LEAD_SERVICE_API_KEY", "lead-key");
+vi.stubEnv("CAMPAIGN_SERVICE_URL", "http://campaign-service");
+vi.stubEnv("CAMPAIGN_SERVICE_API_KEY", "campaign-key");
 
 vi.mock("../src/db/index.js", () => ({
   db: {
@@ -94,6 +96,13 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
           json: () => Promise.resolve(response),
         });
       }
+      // campaign-service needs its own shape
+      if (url.includes("campaign-service")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ stats: { byStatus: { active: 0 } } }),
+        });
+      }
       // Default: empty groups
       return Promise.resolve({
         ok: true,
@@ -111,6 +120,13 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
             json: () => Promise.resolve(response),
           });
         }
+      }
+      // campaign-service needs its own shape
+      if (url.includes("campaign-service")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ stats: { byStatus: { active: 0 } } }),
+        });
       }
       return Promise.resolve({
         ok: true,
@@ -298,9 +314,12 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
     vi.mocked(db.query.features.findMany).mockResolvedValue([SALES_FEATURE] as any);
 
-    fetchSpy.mockImplementation(() =>
-      Promise.resolve({ ok: true, json: () => Promise.resolve({ groups: [] }) }),
-    );
+    fetchSpy.mockImplementation((url: string) => {
+      if (url.includes("campaign-service")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ stats: { byStatus: { active: 0 } } }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ groups: [] }) });
+    });
   });
 
   afterEach(() => {
@@ -402,6 +421,9 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
           }),
         });
       }
+      if (url.includes("campaign-service")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ stats: { byStatus: { active: 0 } } }) });
+      }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ groups: [] }) });
     });
 
@@ -438,6 +460,9 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
             ],
           }),
         });
+      }
+      if (url.includes("campaign-service")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ stats: { byStatus: { active: 0 } } }) });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ groups: [] }) });
     });
@@ -506,6 +531,12 @@ describe("reply aggregate extraction", () => {
 
   it("extracts reply aggregates from email-gateway broadcast stats", async () => {
     fetchSpy.mockImplementation((url: string) => {
+      if (url.includes("campaign-service")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ stats: { byStatus: { active: 0 } } }),
+        });
+      }
       if (url.includes("/stats?")) {
         // email-gateway response with new aggregate fields
         return Promise.resolve({
