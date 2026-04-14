@@ -116,7 +116,6 @@ function extractBroadcastEmailFields(data: Record<string, unknown>): Record<stri
 
 // ── Journalist stats (journalists-service) ───────────────────────────────────
 
-// journalists-service only supports these groupBy values
 export async function fetchPublicJournalistsStats(
   featureSlugs: string,
   groupBy: string,
