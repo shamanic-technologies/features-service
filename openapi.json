@@ -8264,6 +8264,16 @@
             "description": "Max results (default 3, max 100)",
             "name": "limit",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Minimum number of completed runs to include a group in results (default 100). Groups with fewer runs are excluded to ensure statistical significance."
+            },
+            "required": false,
+            "description": "Minimum number of completed runs to include a group in results (default 100). Groups with fewer runs are excluded to ensure statistical significance.",
+            "name": "minRuns",
+            "in": "query"
           }
         ],
         "responses": {
@@ -8467,6 +8477,16 @@
             "required": false,
             "description": "Max results (default 3, max 100)",
             "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Minimum number of completed runs to include a group in results (default 100). Groups with fewer runs are excluded to ensure statistical significance."
+            },
+            "required": false,
+            "description": "Minimum number of completed runs to include a group in results (default 100). Groups with fewer runs are excluded to ensure statistical significance.",
+            "name": "minRuns",
             "in": "query"
           },
           {

@@ -39,8 +39,7 @@ export async function fetchPublicWorkflows(
   });
 
   if (!response.ok) {
-    console.error(`[features-service] workflow-service /public/workflows failed: ${response.status}`);
-    return [];
+    throw new Error(`[features-service] workflow-service /public/workflows failed: ${response.status}`);
   }
 
   const data = await response.json() as { workflows: WorkflowMetadata[] };
@@ -61,8 +60,7 @@ export async function fetchPublicCosts(
   });
 
   if (!response.ok) {
-    console.error(`[features-service] runs-service /v1/stats/public/costs failed: ${response.status}`);
-    return [];
+    throw new Error(`[features-service] runs-service /v1/stats/public/costs failed: ${response.status}`);
   }
 
   const data = await response.json() as { groups: CostGroup[] };
@@ -83,8 +81,7 @@ export async function fetchPublicEmailStats(
   });
 
   if (!response.ok) {
-    console.error(`[features-service] email-gateway /public/stats failed: ${response.status}`);
-    return new Map();
+    throw new Error(`[features-service] email-gateway /public/stats failed: ${response.status}`);
   }
 
   const data = await response.json() as Record<string, unknown>;
@@ -110,9 +107,9 @@ const EMAIL_FIELDS = [
 
 function extractBroadcastEmailFields(data: Record<string, unknown>): Record<string, number> {
   const result: Record<string, number> = {};
-  const broadcast = (data.broadcast ?? {}) as Record<string, number>;
+  const broadcast = data.broadcast as Record<string, number>;
   for (const field of EMAIL_FIELDS) {
-    result[field] = broadcast[field] ?? 0;
+    result[field] = broadcast[field];
   }
   return result;
 }
@@ -131,8 +128,7 @@ export async function fetchPublicJournalistsStats(
   });
 
   if (!response.ok) {
-    console.error(`[features-service] journalists-service /public/stats failed: ${response.status}`);
-    return new Map();
+    throw new Error(`[features-service] journalists-service /public/stats failed: ${response.status}`);
   }
 
   const data = await response.json() as Record<string, unknown>;
@@ -150,9 +146,10 @@ export async function fetchPublicJournalistsStats(
 }
 
 function extractJournalistFields(data: Record<string, unknown>): Record<string, number> {
+  const byOutreachStatus = data.byOutreachStatus as Record<string, number>;
   return {
-    journalistsFound: Number(data.totalJournalists ?? 0),
-    journalistsContacted: Number((data.byStatus as Record<string, number> | undefined)?.contacted ?? 0),
+    journalistsFound: Number(data.totalJournalists),
+    journalistsContacted: Number(byOutreachStatus.contacted),
   };
 }
 

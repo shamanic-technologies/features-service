@@ -130,6 +130,131 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     ],
   },
 
+  // ─── Hiring Cold Email Outreach ─────────────────────────────────────────
+  {
+    name: "Hiring Cold Email Outreach",
+    description: "Find candidates, generate personalized cold outreach emails, send & optimize for hiring.",
+    icon: "user-plus",
+    category: "recruiting",
+    channel: "email",
+    audienceType: "cold-outreach",
+    implemented: true,
+    displayOrder: 0,
+    status: "active",
+
+    inputs: [
+      {
+        key: "targetProfile",
+        label: "Target Candidate Profile",
+        type: "textarea",
+        placeholder: "e.g. Senior Backend Engineer, 5+ years Go/Rust, startup experience, EU-based",
+        description:
+          "ICP description of the ideal candidate — role, seniority, skills, industry, geography. The LLM uses this to find matching leads and personalize outreach.",
+        extractKey: "target_profile",
+      },
+      {
+        key: "targetOutcome",
+        label: "Target Outcome",
+        type: "text",
+        placeholder: "e.g. Book a 30-min intro call",
+        description:
+          "The desired action from the candidate — should be a single, clear call-to-action. Examples: 'Book a 30-min intro call', 'Apply to the role', 'Schedule a discovery conversation'.",
+        extractKey: "target_outcome",
+      },
+      {
+        key: "roleValueProp",
+        label: "Role Value Proposition",
+        type: "textarea",
+        placeholder: "e.g. Competitive comp, fully remote, Series B-backed, working on cutting-edge ML infrastructure",
+        description:
+          "What makes the role and company attractive to the candidate — compensation, mission, growth, tech stack, remote policy, team culture. The LLM uses this as the main selling point.",
+        extractKey: "role_value_prop",
+      },
+      {
+        key: "urgency",
+        label: "Urgency",
+        type: "text",
+        placeholder: "e.g. Role closes end of month, team starts Q3",
+        description:
+          "Time pressure to act — a start date, hiring deadline, or closing window. Examples: 'Team onboarding in 6 weeks', 'Role closes Friday'. Leave empty if no urgency applies.",
+        extractKey: "urgency",
+      },
+      {
+        key: "scarcity",
+        label: "Scarcity",
+        type: "text",
+        placeholder: "e.g. Only 1 seat open, small team of 4 engineers",
+        description:
+          "Limited availability that creates FOMO — single position, small team, exclusive role. Examples: 'Only 1 opening', 'Founding engineer role — not publicly listed'. Leave empty if not applicable.",
+        extractKey: "scarcity",
+      },
+      {
+        key: "riskReversal",
+        label: "Risk Reversal",
+        type: "text",
+        placeholder: "e.g. Just a conversation, no commitment required",
+        description:
+          "What reduces friction in responding — no commitment, confidential process, casual first chat. Examples: 'Just a conversation, no strings attached', 'Fully confidential process'. Helps overcome hesitation.",
+        extractKey: "risk_reversal",
+      },
+      {
+        key: "socialProof",
+        label: "Social Proof",
+        type: "textarea",
+        placeholder: "e.g. 4.8 Glassdoor rating, $40M Series B, backed by a16z, team ex-Google/Stripe",
+        description:
+          "Trust signals that build credibility — Glassdoor score, funding, press, notable team pedigree, culture awards. The LLM uses this to add credibility to the outreach.",
+        extractKey: "social_proof",
+      },
+    ],
+
+    outputs: [
+      { key: "leadsServed",              displayOrder: 1 },
+      { key: "emailsGenerated",          displayOrder: 2 },
+      { key: "emailsSent",              displayOrder: 3 },
+      { key: "emailsOpened",            displayOrder: 4 },
+      { key: "repliesPositive",          displayOrder: 5 },
+      { key: "repliesNegative",          displayOrder: 6 },
+      { key: "repliesNeutral",           displayOrder: 7 },
+      { key: "positiveReplyRate",        displayOrder: 8 },
+      { key: "costPerPositiveReplyCents", displayOrder: 9, defaultSort: true, sortDirection: "asc" },
+    ],
+
+    charts: [
+      {
+        key: "funnel",
+        type: "funnel-bar",
+        title: "Campaign Funnel",
+        displayOrder: 1,
+        steps: [
+          { key: "leadsServed" },
+          { key: "emailsGenerated" },
+          { key: "emailsSent" },
+          { key: "emailsOpened" },
+          { key: "repliesPositive" },
+        ],
+      },
+      {
+        key: "replyBreakdown",
+        type: "breakdown-bar",
+        title: "Reply Breakdown",
+        displayOrder: 2,
+        segments: [
+          { key: "repliesPositive",  color: "green",  sentiment: "positive" },
+          { key: "repliesNeutral",   color: "gray",   sentiment: "neutral" },
+          { key: "repliesNegative",  color: "red",    sentiment: "negative" },
+          { key: "repliesAutoReply", color: "orange", sentiment: "neutral" },
+        ],
+      },
+    ],
+
+    entities: [
+      { name: "leads", countKey: "leadsServed" },
+      { name: "companies" },
+      { name: "emails", countKey: "emailsGenerated" },
+    ],
+  },
+
   // ─── Outlet Database Discovery ──────────────────────────────────────────
   {
     name: "Outlet Database Discovery",
@@ -314,6 +439,116 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
       { name: "journalists", countKey: "journalistsFound" },
       { name: "emails", countKey: "emailsGenerated" },
       { name: "press-kits" },
+    ],
+  },
+
+  // ─── PR Cold Email Outreach Sophia (fork) ────────────────────────────────
+  {
+    name: "PR Cold Email Outreach Sophia",
+    description: "Pitch journalists and editors with personalized cold emails for press coverage.",
+    icon: "megaphone",
+    category: "pr",
+    channel: "email",
+    audienceType: "cold-outreach",
+    implemented: true,
+    displayOrder: 3,
+    status: "active",
+
+    inputs: [
+      {
+        key: "targetOutlets",
+        label: "Target Outlets",
+        type: "text",
+        placeholder: "TechCrunch, Forbes, industry trade publications...",
+        description:
+          "Types of media outlets or specific publications to target. Be specific about outlet tier, beat, and format (online, print, podcast). Examples: 'Top-tier tech blogs (TechCrunch, The Verge)', 'B2B SaaS trade publications', 'Fintech newsletters with 10k+ subscribers'. The LLM uses this to find and prioritize matching journalists.",
+        extractKey: "targetOutlets",
+      },
+      {
+        key: "prAngle",
+        label: "PR Angle",
+        type: "text",
+        placeholder: "Series B funding announcement, product launch...",
+        description:
+          "The editorial hook or story angle to pitch. Should be newsworthy and specific. Examples: 'Series B funding of $25M led by Sequoia', 'Launch of AI-powered compliance platform', 'Industry report on developer productivity trends'. The LLM uses this as the core pitch in the outreach email.",
+        extractKey: "suggestedAngles",
+      },
+      {
+        key: "companyContext",
+        label: "Company Context",
+        type: "text",
+        placeholder: "What does your company do and why is this relevant now?",
+        description:
+          "Brief background on the company and why this story matters now. Include founding date, traction metrics, notable customers, or market position. Examples: 'Founded 2022, 500+ enterprise customers, fastest-growing in category', 'Only platform certified for EU AI Act compliance'. Gives the LLM credibility context for the pitch.",
+        extractKey: "companyDescription",
+      },
+      {
+        key: "newsHook",
+        label: "News Hook",
+        type: "text",
+        placeholder: "Ties into upcoming regulation changes, industry event...",
+        description:
+          "A timely event, trend, or news cycle that makes the pitch relevant right now. Examples: 'Ahead of CES 2026 announcement', 'Following new SEC crypto regulations', 'During cybersecurity awareness month'. Helps the LLM frame the pitch as timely and urgent for editors.",
+        extractKey: "newsHook",
+      },
+      {
+        key: "spokesperson",
+        label: "Spokesperson",
+        type: "text",
+        placeholder: "Jane Doe, CEO — available for interviews",
+        description:
+          "Who is available for interviews or quotes. Include name, title, and any notable credentials. Examples: 'John Smith, CTO — ex-Google, published AI researcher', 'Sarah Chen, CEO — Forbes 30 Under 30'. The LLM includes this as a resource offer in the pitch.",
+        extractKey: "spokesperson",
+      },
+    ],
+
+    outputs: [
+      { key: "journalistsContacted",    displayOrder: 1 },
+      { key: "emailsGenerated",         displayOrder: 2 },
+      { key: "emailsSent",              displayOrder: 3 },
+      { key: "emailsOpened",            displayOrder: 4 },
+      { key: "openRate",                displayOrder: 5 },
+      { key: "costPerOpenCents",        displayOrder: 6 },
+      { key: "repliesPositive",          displayOrder: 7 },
+      { key: "repliesNegative",          displayOrder: 8 },
+      { key: "repliesNeutral",           displayOrder: 9 },
+      { key: "positiveReplyRate",        displayOrder: 10 },
+      { key: "costPerPositiveReplyCents", displayOrder: 11, defaultSort: true, sortDirection: "asc" },
+    ],
+
+    charts: [
+      {
+        key: "funnel",
+        type: "funnel-bar",
+        title: "Outreach Funnel",
+        displayOrder: 1,
+        steps: [
+          { key: "journalistsContacted" },
+          { key: "emailsGenerated" },
+          { key: "emailsSent" },
+          { key: "emailsOpened" },
+          { key: "repliesPositive" },
+        ],
+      },
+      {
+        key: "replyBreakdown",
+        type: "breakdown-bar",
+        title: "Reply Breakdown",
+        displayOrder: 2,
+        segments: [
+          { key: "repliesPositive",  color: "green",  sentiment: "positive" },
+          { key: "repliesNeutral",   color: "gray",   sentiment: "neutral" },
+          { key: "repliesNegative",  color: "red",    sentiment: "negative" },
+          { key: "repliesAutoReply", color: "orange", sentiment: "neutral" },
+        ],
+      },
+    ],
+
+    entities: [
+      { name: "outlets" },
+      { name: "journalists", countKey: "journalistsContacted" },
+      { name: "emails", countKey: "emailsGenerated" },
+      { name: "articles" },
     ],
   },
 

@@ -270,7 +270,7 @@ describe("GET /public/stats/ranked", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=workflow");
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=workflow&minRuns=0");
 
     expect(res.status).toBe(200);
     expect(res.body.objective).toBe("repliesPositive");
@@ -294,7 +294,7 @@ describe("GET /public/stats/ranked", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&groupBy=workflow");
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&groupBy=workflow&minRuns=0");
 
     expect(res.status).toBe(200);
     // Should default to repliesPositive (the output with defaultSort: true)
@@ -342,7 +342,7 @@ describe("GET /public/stats/ranked", () => {
     });
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=workflow");
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=workflow&minRuns=0");
 
     expect(res.status).toBe(200);
     // Alpha has 10, Beta has 0 → Alpha first
@@ -356,7 +356,7 @@ describe("GET /public/stats/ranked", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=workflow&limit=1");
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=workflow&limit=1&minRuns=0");
 
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(1);
@@ -369,7 +369,7 @@ describe("GET /public/stats/ranked", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=workflow&limit=200");
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=workflow&limit=200&minRuns=0");
 
     expect(res.status).toBe(200);
     // Only 2 workflows exist in mock data, but the key assertion is that the
@@ -396,7 +396,7 @@ describe("GET /public/stats/ranked", () => {
     });
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=brand");
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=brand&minRuns=0");
 
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(2);
@@ -410,6 +410,47 @@ describe("GET /public/stats/ranked", () => {
     expect(res.body.results[1].brand.name).toBe("Acme Corp");
     expect(res.body.results[1].brand.domain).toBe("acme.com");
     expect(res.body.results[1].stats.repliesPositive).toBe(5);
+  });
+
+  it("filters out groups below minRuns threshold (default 100)", async () => {
+    mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockFetchResponses({
+      "http://runs:3000/v1/stats/public/costs": {
+        groups: [
+          { dimensions: { workflowSlug: "sales-outreach-alpha" }, totalCostInUsdCents: "1000", runCount: 150, minStartedAt: null, maxStartedAt: null },
+          { dimensions: { workflowSlug: "sales-outreach-beta" }, totalCostInUsdCents: "2000", runCount: 3, minStartedAt: null, maxStartedAt: null },
+        ],
+      },
+    });
+
+    // Default minRuns=100: Beta (3 runs) is excluded
+    const res = await request(app)
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=workflow");
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].workflow.slug).toBe("sales-outreach-alpha");
+  });
+
+  it("allows overriding minRuns to include low-volume groups", async () => {
+    mockFindMany.mockResolvedValueOnce([{ slug: "sales-cold-email", version: 1 }]);
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockFetchResponses({
+      "http://runs:3000/v1/stats/public/costs": {
+        groups: [
+          { dimensions: { workflowSlug: "sales-outreach-alpha" }, totalCostInUsdCents: "1000", runCount: 150, minStartedAt: null, maxStartedAt: null },
+          { dimensions: { workflowSlug: "sales-outreach-beta" }, totalCostInUsdCents: "2000", runCount: 3, minStartedAt: null, maxStartedAt: null },
+        ],
+      },
+    });
+
+    // Explicit minRuns=0: both groups returned
+    const res = await request(app)
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=workflow&minRuns=0");
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(2);
   });
 
   it("returns null brand name/domain when brand-service fails", async () => {
@@ -429,7 +470,7 @@ describe("GET /public/stats/ranked", () => {
     });
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=brand");
+      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=brand&minRuns=0");
 
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(1);
@@ -544,7 +585,7 @@ describe("GET /stats/ranked (authenticated)", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=workflow")
+      .get("/stats/ranked?featureDynastySlug=sales-cold-email&objective=repliesPositive&groupBy=workflow&minRuns=0")
       .set("x-api-key", "test-key")
       .set("x-org-id", "org-1")
       .set("x-user-id", "user-1")

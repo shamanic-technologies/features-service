@@ -330,6 +330,7 @@ export async function handleRanked(
   requestedObjective: string | undefined,
   groupBy: string | undefined,
   limit: number,
+  minRuns: number,
   res: import("express").Response,
 ): Promise<void> {
   if (!featureDynastySlug) {
@@ -388,13 +389,15 @@ export async function handleRanked(
     aggregatedOutcomes = agg.aggregatedOutcomes;
   }
 
-  // Build full stats for each group, then sort by objective
-  const entries: { key: string; stats: Record<string, number | null> }[] = [];
+  // Build full stats for each group, filter by minimum volume, then sort by objective
+  const allEntries: { key: string; stats: Record<string, number | null>; completedRuns: number }[] = [];
   for (const [key, cost] of costMap) {
     const rawOutcomes = aggregatedOutcomes.get(key) ?? {};
     const stats = computeGroupStats(rawOutcomes, cost, feature);
-    entries.push({ key, stats });
+    allEntries.push({ key, stats, completedRuns: cost.completedRuns });
   }
+
+  const entries = allEntries.filter((e) => e.completedRuns >= minRuns);
 
   // Sort by objective value
   entries.sort((a, b) => {
@@ -555,12 +558,15 @@ router.get("/public/stats/ranked", async (req, res) => {
   try {
     const limitParam = parseInt(req.query.limit as string, 10);
     const limit = Number.isFinite(limitParam) && limitParam >= 1 ? limitParam : 3;
+    const minRunsParam = parseInt(req.query.minRuns as string, 10);
+    const minRuns = Number.isFinite(minRunsParam) && minRunsParam >= 0 ? minRunsParam : 100;
 
     await handleRanked(
       req.query.featureDynastySlug as string | undefined,
       req.query.objective as string | undefined,
       req.query.groupBy as string | undefined,
       limit,
+      minRuns,
       res,
     );
   } catch (error) {

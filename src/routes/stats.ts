@@ -224,35 +224,29 @@ async function fetchEmailStats(
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
   const url = `${EMAIL_GATEWAY_SERVICE_URL}/orgs/stats?${params}`;
-  try {
-    const response = await fetch(url, {
-      headers: buildDownstreamHeaders(EMAIL_GATEWAY_SERVICE_API_KEY, orgId, identity),
-    });
+  const response = await fetch(url, {
+    headers: buildDownstreamHeaders(EMAIL_GATEWAY_SERVICE_API_KEY, orgId, identity),
+  });
 
-    if (!response.ok) {
-      console.error(`[features-service] email-gateway /orgs/stats failed: ${response.status}`);
-      return new Map();
-    }
-
-    const data = await response.json() as Record<string, unknown>;
-    const result = new Map<string, Record<string, number>>();
-
-    // If grouped, response has { groups: [{ key, broadcast?, transactional? }] }
-    if (data.groups && Array.isArray(data.groups)) {
-      for (const group of data.groups as Array<Record<string, unknown>>) {
-        const groupKey = String(group.key ?? "__total__");
-        result.set(groupKey, mergeEmailChannels(group));
-      }
-    } else {
-      // Flat response: { broadcast?, transactional? }
-      result.set("__total__", mergeEmailChannels(data));
-    }
-
-    return result;
-  } catch (error) {
-    console.error(`[features-service] email-gateway /orgs/stats network error:`, (error as Error).message);
-    return new Map();
+  if (!response.ok) {
+    throw new Error(`[features-service] email-gateway /orgs/stats failed: ${response.status}`);
   }
+
+  const data = await response.json() as Record<string, unknown>;
+  const result = new Map<string, Record<string, number>>();
+
+  // If grouped, response has { groups: [{ key, broadcast?, transactional? }] }
+  if (data.groups && Array.isArray(data.groups)) {
+    for (const group of data.groups as Array<Record<string, unknown>>) {
+      const groupKey = String(group.key ?? "__total__");
+      result.set(groupKey, mergeEmailChannels(group));
+    }
+  } else {
+    // Flat response: { broadcast?, transactional? }
+    result.set("__total__", mergeEmailChannels(data));
+  }
+
+  return result;
 }
 
 /**
@@ -266,10 +260,10 @@ function mergeEmailChannels(data: Record<string, unknown>): Record<string, numbe
     "repliesPositive", "repliesNegative", "repliesNeutral", "repliesAutoReply",
   ];
 
-  const broadcast = (data.broadcast ?? {}) as Record<string, number>;
+  const broadcast = data.broadcast as Record<string, number>;
 
   for (const field of emailFields) {
-    result[field] = broadcast[field] ?? 0;
+    result[field] = broadcast[field];
   }
 
   return result;
@@ -339,64 +333,58 @@ async function fetchRunsStatsForSlug(
   if (featureSlug) params.set("featureSlug", featureSlug);
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
-  try {
-    const response = await fetch(url, {
-      headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
-    });
+  const response = await fetch(url, {
+    headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
+  });
 
-    if (!response.ok) {
-      console.error(`[features-service] runs-service /v1/stats/costs failed: ${response.status}`);
-      return new Map();
-    }
-
-    const data = await response.json() as {
-      groups: Array<{
-        dimensions: Record<string, string | null>;
-        totalCostInUsdCents: string;
-        runCount: number;
-        minStartedAt: string | null;
-        maxStartedAt: string | null;
-      }>;
-    };
-
-    const result = new Map<string, RunsStatsEntry>();
-
-    if (!groupBy) {
-      // No grouping requested — aggregate all groups into __total__
-      let totalCost = 0;
-      let totalRuns = 0;
-      let minStartedAt: string | null = null;
-      let maxStartedAt: string | null = null;
-      for (const group of data.groups) {
-        totalCost += Math.round(Number(group.totalCostInUsdCents));
-        totalRuns += group.runCount;
-        if (group.minStartedAt && (!minStartedAt || group.minStartedAt < minStartedAt)) {
-          minStartedAt = group.minStartedAt;
-        }
-        if (group.maxStartedAt && (!maxStartedAt || group.maxStartedAt > maxStartedAt)) {
-          maxStartedAt = group.maxStartedAt;
-        }
-      }
-      if (data.groups.length > 0) {
-        result.set("__total__", { totalCostInUsdCents: totalCost, completedRuns: totalRuns, minStartedAt, maxStartedAt });
-      }
-    } else {
-      for (const group of data.groups) {
-        const key = group.dimensions[runsGroupBy] ?? "__total__";
-        result.set(key, {
-          totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)),
-          completedRuns: group.runCount,
-          minStartedAt: group.minStartedAt ?? null,
-          maxStartedAt: group.maxStartedAt ?? null,
-        });
-      }
-    }
-
-    return result;
-  } catch (error) {
-    console.error(`[features-service] runs-service /v1/stats/costs network error:`, (error as Error).message);
-    return new Map();
+  if (!response.ok) {
+    throw new Error(`[features-service] runs-service /v1/stats/costs failed: ${response.status}`);
   }
+
+  const data = await response.json() as {
+    groups: Array<{
+      dimensions: Record<string, string | null>;
+      totalCostInUsdCents: string;
+      runCount: number;
+      minStartedAt: string | null;
+      maxStartedAt: string | null;
+    }>;
+  };
+
+  const result = new Map<string, RunsStatsEntry>();
+
+  if (!groupBy) {
+    // No grouping requested — aggregate all groups into __total__
+    let totalCost = 0;
+    let totalRuns = 0;
+    let minStartedAt: string | null = null;
+    let maxStartedAt: string | null = null;
+    for (const group of data.groups) {
+      totalCost += Math.round(Number(group.totalCostInUsdCents));
+      totalRuns += group.runCount;
+      if (group.minStartedAt && (!minStartedAt || group.minStartedAt < minStartedAt)) {
+        minStartedAt = group.minStartedAt;
+      }
+      if (group.maxStartedAt && (!maxStartedAt || group.maxStartedAt > maxStartedAt)) {
+        maxStartedAt = group.maxStartedAt;
+      }
+    }
+    if (data.groups.length > 0) {
+      result.set("__total__", { totalCostInUsdCents: totalCost, completedRuns: totalRuns, minStartedAt, maxStartedAt });
+    }
+  } else {
+    for (const group of data.groups) {
+      const key = group.dimensions[runsGroupBy] ?? "__total__";
+      result.set(key, {
+        totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)),
+        completedRuns: group.runCount,
+        minStartedAt: group.minStartedAt ?? null,
+        maxStartedAt: group.maxStartedAt ?? null,
+      });
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -499,45 +487,39 @@ async function fetchPipelineStatsForFilter(
   if (featureSlug) params.set("featureSlug", featureSlug);
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
-  try {
-    const response = await fetch(url, {
-      headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
-    });
+  const response = await fetch(url, {
+    headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
+  });
 
-    if (!response.ok) {
-      console.error(`[features-service] runs-service pipeline stats failed: ${response.status} (${runFilter.serviceName}/${runFilter.taskName})`);
-      return new Map();
-    }
-
-    const data = await response.json() as {
-      groups: Array<{
-        dimensions: Record<string, string | null>;
-        runCount: number;
-      }>;
-    };
-
-    const result = new Map<string, number>();
-    if (!groupBy) {
-      // No grouping requested — aggregate all groups into __total__
-      let total = 0;
-      for (const group of data.groups) {
-        total += group.runCount;
-      }
-      if (data.groups.length > 0) {
-        result.set("__total__", total);
-      }
-    } else {
-      for (const group of data.groups) {
-        const key = group.dimensions[runsGroupBy] ?? "__total__";
-        result.set(key, (result.get(key) ?? 0) + group.runCount);
-      }
-    }
-
-    return result;
-  } catch (error) {
-    console.error(`[features-service] runs-service pipeline stats network error (${runFilter.serviceName}/${runFilter.taskName}):`, (error as Error).message);
-    return new Map();
+  if (!response.ok) {
+    throw new Error(`[features-service] runs-service pipeline stats failed: ${response.status} (${runFilter.serviceName}/${runFilter.taskName})`);
   }
+
+  const data = await response.json() as {
+    groups: Array<{
+      dimensions: Record<string, string | null>;
+      runCount: number;
+    }>;
+  };
+
+  const result = new Map<string, number>();
+  if (!groupBy) {
+    // No grouping requested — aggregate all groups into __total__
+    let total = 0;
+    for (const group of data.groups) {
+      total += group.runCount;
+    }
+    if (data.groups.length > 0) {
+      result.set("__total__", total);
+    }
+  } else {
+    for (const group of data.groups) {
+      const key = group.dimensions[runsGroupBy] ?? "__total__";
+      result.set(key, (result.get(key) ?? 0) + group.runCount);
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -558,33 +540,27 @@ async function fetchOutletsStats(
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
   const url = `${OUTLETS_SERVICE_URL}/orgs/outlets/stats?${params}`;
-  try {
-    const response = await fetch(url, {
-      headers: buildDownstreamHeaders(OUTLETS_SERVICE_API_KEY, orgId, identity),
-    });
+  const response = await fetch(url, {
+    headers: buildDownstreamHeaders(OUTLETS_SERVICE_API_KEY, orgId, identity),
+  });
 
-    if (!response.ok) {
-      console.error(`[features-service] outlets-service /orgs/outlets/stats failed: ${response.status}`);
-      return new Map();
-    }
-
-    const data = await response.json() as Record<string, unknown>;
-    const result = new Map<string, Record<string, number>>();
-
-    if (data.groups && Array.isArray(data.groups)) {
-      for (const group of data.groups as Array<Record<string, unknown>>) {
-        const groupKey = String(group.key ?? "__total__");
-        result.set(groupKey, extractOutletFields(group));
-      }
-    } else {
-      result.set("__total__", extractOutletFields(data));
-    }
-
-    return result;
-  } catch (error) {
-    console.error(`[features-service] outlets-service /orgs/outlets/stats network error:`, (error as Error).message);
-    return new Map();
+  if (!response.ok) {
+    throw new Error(`[features-service] outlets-service /orgs/outlets/stats failed: ${response.status}`);
   }
+
+  const data = await response.json() as Record<string, unknown>;
+  const result = new Map<string, Record<string, number>>();
+
+  if (data.groups && Array.isArray(data.groups)) {
+    for (const group of data.groups as Array<Record<string, unknown>>) {
+      const groupKey = String(group.key ?? "__total__");
+      result.set(groupKey, extractOutletFields(group));
+    }
+  } else {
+    result.set("__total__", extractOutletFields(data));
+  }
+
+  return result;
 }
 
 /**
@@ -592,9 +568,9 @@ async function fetchOutletsStats(
  */
 function extractOutletFields(data: Record<string, unknown>): Record<string, number> {
   return {
-    outletsDiscovered: Number(data.outletsDiscovered ?? 0),
-    avgRelevanceScore: Number(data.avgRelevanceScore ?? 0),
-    searchQueriesUsed: Number(data.searchQueriesUsed ?? 0),
+    outletsDiscovered: Number(data.outletsDiscovered),
+    avgRelevanceScore: Number(data.avgRelevanceScore),
+    searchQueriesUsed: Number(data.searchQueriesUsed),
   };
 }
 
@@ -609,9 +585,7 @@ async function fetchJournalistsStats(
   identity: Identity,
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams();
-  // journalists-service supports groupBy: featureSlug, workflowSlug, featureDynastySlug, workflowDynastySlug
-  const supportedGroupBy = new Set(["featureSlug", "workflowSlug", "featureDynastySlug", "workflowDynastySlug"]);
-  if (groupBy && supportedGroupBy.has(groupBy)) params.set("groupBy", groupBy);
+  if (groupBy) params.set("groupBy", groupBy);
   if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
   if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
   if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
@@ -619,43 +593,37 @@ async function fetchJournalistsStats(
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
   const url = `${getJournalistsServiceUrl()}/orgs/stats?${params}`;
-  try {
-    const response = await fetch(url, {
-      headers: buildDownstreamHeaders(getJournalistsServiceApiKey(), orgId, identity),
-    });
+  const response = await fetch(url, {
+    headers: buildDownstreamHeaders(getJournalistsServiceApiKey(), orgId, identity),
+  });
 
-    if (!response.ok) {
-      console.error(`[features-service] journalists-service /orgs/stats failed: ${response.status}`);
-      return new Map();
-    }
-
-    const data = await response.json() as {
-      totalJournalists: number;
-      byOutreachStatus: Record<string, number>;
-      groupedBy?: Record<string, { totalJournalists: number; byOutreachStatus: Record<string, number> }>;
-    };
-
-    const result = new Map<string, Record<string, number>>();
-
-    if (data.groupedBy && groupBy && supportedGroupBy.has(groupBy)) {
-      for (const [key, group] of Object.entries(data.groupedBy)) {
-        result.set(key, extractJournalistFields(group));
-      }
-    } else {
-      result.set("__total__", extractJournalistFields(data));
-    }
-
-    return result;
-  } catch (error) {
-    console.error(`[features-service] journalists-service /orgs/stats network error:`, (error as Error).message);
-    return new Map();
+  if (!response.ok) {
+    throw new Error(`[features-service] journalists-service /orgs/stats failed: ${response.status}`);
   }
+
+  const data = await response.json() as {
+    totalJournalists: number;
+    byOutreachStatus: Record<string, number>;
+    groupedBy?: Record<string, { totalJournalists: number; byOutreachStatus: Record<string, number> }>;
+  };
+
+  const result = new Map<string, Record<string, number>>();
+
+  if (data.groupedBy && groupBy) {
+    for (const [key, group] of Object.entries(data.groupedBy)) {
+      result.set(key, extractJournalistFields(group));
+    }
+  } else {
+    result.set("__total__", extractJournalistFields(data));
+  }
+
+  return result;
 }
 
 function extractJournalistFields(data: { totalJournalists: number; byOutreachStatus: Record<string, number> }): Record<string, number> {
   return {
     journalistsFound: data.totalJournalists,
-    journalistsContacted: data.byOutreachStatus.contacted ?? 0,
+    journalistsContacted: data.byOutreachStatus.contacted,
   };
 }
 
@@ -679,35 +647,29 @@ async function fetchLeadsStats(
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
   const url = `${getLeadServiceUrl()}/orgs/stats?${params}`;
-  try {
-    const response = await fetch(url, {
-      headers: buildDownstreamHeaders(getLeadServiceApiKey(), orgId, identity),
-    });
+  const response = await fetch(url, {
+    headers: buildDownstreamHeaders(getLeadServiceApiKey(), orgId, identity),
+  });
 
-    if (!response.ok) {
-      console.error(`[features-service] lead-service /orgs/stats failed: ${response.status}`);
-      return new Map();
-    }
-
-    const data = await response.json() as
-      | { served: number; contacted: number; buffered: number; skipped: number; groups?: undefined }
-      | { groups: Array<{ key: string; served: number; contacted: number; buffered: number; skipped: number }> };
-
-    const result = new Map<string, Record<string, number>>();
-
-    if ("groups" in data && data.groups) {
-      for (const group of data.groups) {
-        result.set(group.key, { leadsServed: group.served });
-      }
-    } else if ("served" in data) {
-      result.set("__total__", { leadsServed: data.served });
-    }
-
-    return result;
-  } catch (error) {
-    console.error(`[features-service] lead-service /orgs/stats network error:`, (error as Error).message);
-    return new Map();
+  if (!response.ok) {
+    throw new Error(`[features-service] lead-service /orgs/stats failed: ${response.status}`);
   }
+
+  const data = await response.json() as
+    | { served: number; contacted: number; buffered: number; skipped: number; groups?: undefined }
+    | { groups: Array<{ key: string; served: number; contacted: number; buffered: number; skipped: number }> };
+
+  const result = new Map<string, Record<string, number>>();
+
+  if ("groups" in data && data.groups) {
+    for (const group of data.groups) {
+      result.set(group.key, { leadsServed: group.served });
+    }
+  } else if ("served" in data) {
+    result.set("__total__", { leadsServed: data.served });
+  }
+
+  return result;
 }
 
 /**
@@ -747,81 +709,74 @@ async function fetchPressKitsStats(
     costsParams.set("groupBy", groupBy);
   }
 
-  try {
-    const [viewsRes, costsRes] = await Promise.all([
-      fetch(`${getPressKitsServiceUrl()}/media-kits/stats/views?${viewsParams}`, { headers }),
-      fetch(`${getPressKitsServiceUrl()}/media-kits/stats/costs?${costsParams}`, { headers }),
-    ]);
+  const [viewsRes, costsRes] = await Promise.all([
+    fetch(`${getPressKitsServiceUrl()}/media-kits/stats/views?${viewsParams}`, { headers }),
+    fetch(`${getPressKitsServiceUrl()}/media-kits/stats/costs?${costsParams}`, { headers }),
+  ]);
 
-    // ── Parse views ────────────────────────────────────────────────────────
-    const viewsByGroup = new Map<string, { views: number; unique: number }>();
+  // ── Parse views ────────────────────────────────────────────────────────
+  const viewsByGroup = new Map<string, { views: number; unique: number }>();
 
-    if (viewsRes.ok) {
-      const viewsData = await viewsRes.json() as Record<string, unknown>;
-      if (viewsData.groups && Array.isArray(viewsData.groups)) {
-        for (const g of viewsData.groups as Array<Record<string, unknown>>) {
-          const key = String(g.key ?? "__total__");
-          viewsByGroup.set(key, {
-            views: Number(g.totalViews ?? 0),
-            unique: Number(g.uniqueVisitors ?? 0),
-          });
-        }
-      } else {
-        viewsByGroup.set("__total__", {
-          views: Number((viewsData as any).totalViews ?? 0),
-          unique: Number((viewsData as any).uniqueVisitors ?? 0),
-        });
-      }
-    } else {
-      console.error(`[features-service] press-kits-service /media-kits/stats/views failed: ${viewsRes.status}`);
-    }
-
-    // ── Parse costs ────────────────────────────────────────────────────────
-    const costsByGroup = new Map<string, number>();
-
-    if (costsRes.ok) {
-      const costsData = await costsRes.json() as {
-        groups: Array<{ dimensions: Record<string, string | null>; runCount: number }>;
-      };
-      if (!groupBy || !supportedGroupBy.has(groupBy)) {
-        let total = 0;
-        for (const g of costsData.groups) total += g.runCount;
-        if (costsData.groups.length > 0) costsByGroup.set("__total__", total);
-      } else {
-        for (const g of costsData.groups) {
-          const key = g.dimensions[groupBy] ?? "__total__";
-          costsByGroup.set(key, (costsByGroup.get(key) ?? 0) + g.runCount);
-        }
-      }
-    } else {
-      console.error(`[features-service] press-kits-service /media-kits/stats/costs failed: ${costsRes.status}`);
-    }
-
-    // ── Merge into result map ──────────────────────────────────────────────
-    const result = new Map<string, Record<string, number>>();
-    const allKeys = new Set([...viewsByGroup.keys(), ...costsByGroup.keys()]);
-
-    for (const key of allKeys) {
-      const stats: Record<string, number> = {};
-      const v = viewsByGroup.get(key);
-      if (v) {
-        stats.pressKitViews = v.views;
-        stats.pressKitUniqueVisitors = v.unique;
-      }
-      const c = costsByGroup.get(key);
-      if (c != null) {
-        stats.pressKitsGenerated = c;
-      }
-      if (Object.keys(stats).length > 0) {
-        result.set(key, stats);
-      }
-    }
-
-    return result;
-  } catch (error) {
-    console.error(`[features-service] press-kits-service stats network error:`, (error as Error).message);
-    return new Map();
+  if (!viewsRes.ok) {
+    throw new Error(`[features-service] press-kits-service /media-kits/stats/views failed: ${viewsRes.status}`);
   }
+  const viewsData = await viewsRes.json() as Record<string, unknown>;
+  if (viewsData.groups && Array.isArray(viewsData.groups)) {
+    for (const g of viewsData.groups as Array<Record<string, unknown>>) {
+      const key = String(g.key ?? "__total__");
+      viewsByGroup.set(key, {
+        views: Number(g.totalViews),
+        unique: Number(g.uniqueVisitors),
+      });
+    }
+  } else {
+    viewsByGroup.set("__total__", {
+      views: Number((viewsData as any).totalViews),
+      unique: Number((viewsData as any).uniqueVisitors),
+    });
+  }
+
+  // ── Parse costs ────────────────────────────────────────────────────────
+  const costsByGroup = new Map<string, number>();
+
+  if (!costsRes.ok) {
+    throw new Error(`[features-service] press-kits-service /media-kits/stats/costs failed: ${costsRes.status}`);
+  }
+  const costsData = await costsRes.json() as {
+    groups: Array<{ dimensions: Record<string, string | null>; runCount: number }>;
+  };
+  if (!groupBy || !supportedGroupBy.has(groupBy)) {
+    let total = 0;
+    for (const g of costsData.groups) total += g.runCount;
+    if (costsData.groups.length > 0) costsByGroup.set("__total__", total);
+  } else {
+    for (const g of costsData.groups) {
+      const key = g.dimensions[groupBy] ?? "__total__";
+      costsByGroup.set(key, (costsByGroup.get(key) ?? 0) + g.runCount);
+    }
+  }
+
+  // ── Merge into result map ──────────────────────────────────────────────
+  const result = new Map<string, Record<string, number>>();
+  const allKeys = new Set([...viewsByGroup.keys(), ...costsByGroup.keys()]);
+
+  for (const key of allKeys) {
+    const stats: Record<string, number> = {};
+    const v = viewsByGroup.get(key);
+    if (v) {
+      stats.pressKitViews = v.views;
+      stats.pressKitUniqueVisitors = v.unique;
+    }
+    const c = costsByGroup.get(key);
+    if (c != null) {
+      stats.pressKitsGenerated = c;
+    }
+    if (Object.keys(stats).length > 0) {
+      result.set(key, stats);
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -835,34 +790,30 @@ async function fetchActiveCampaigns(
 ): Promise<number> {
   const campaignUrl = process.env.CAMPAIGN_SERVICE_URL;
   const campaignKey = process.env.CAMPAIGN_SERVICE_API_KEY;
-  if (!campaignUrl || !campaignKey) return 0;
+  if (!campaignUrl || !campaignKey) {
+    throw new Error("[features-service] CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
+  }
 
   const params = new URLSearchParams({ orgId });
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
   const url = `${campaignUrl}/stats?${params}`;
-  try {
-    const response = await fetch(url, {
-      headers: buildDownstreamHeaders(campaignKey, orgId, identity),
-    });
+  const response = await fetch(url, {
+    headers: buildDownstreamHeaders(campaignKey, orgId, identity),
+  });
 
-    if (!response.ok) {
-      console.error(`[features-service] campaign-service /stats failed: ${response.status}`);
-      return 0;
-    }
-
-    const data = await response.json() as {
-      stats: {
-        byStatus: Record<string, number>;
-      };
-    };
-
-    return data.stats.byStatus?.active ?? data.stats.byStatus?.running ?? 0;
-  } catch (error) {
-    console.error(`[features-service] campaign-service /stats network error:`, (error as Error).message);
-    return 0;
+  if (!response.ok) {
+    throw new Error(`[features-service] campaign-service /stats failed: ${response.status}`);
   }
+
+  const data = await response.json() as {
+    stats: {
+      byStatus: Record<string, number>;
+    };
+  };
+
+  return data.stats.byStatus.active ?? data.stats.byStatus.running;
 }
 
 /**
@@ -1337,12 +1288,15 @@ router.get("/stats/ranked", apiKeyAuth, async (req, res) => {
   try {
     const limitParam = parseInt(req.query.limit as string, 10);
     const limit = Number.isFinite(limitParam) && limitParam >= 1 ? limitParam : 10;
+    const minRunsParam = parseInt(req.query.minRuns as string, 10);
+    const minRuns = Number.isFinite(minRunsParam) && minRunsParam >= 0 ? minRunsParam : 100;
 
     await handleRanked(
       req.query.featureDynastySlug as string | undefined,
       req.query.objective as string | undefined,
       req.query.groupBy as string | undefined,
       limit,
+      minRuns,
       res,
     );
   } catch (error) {

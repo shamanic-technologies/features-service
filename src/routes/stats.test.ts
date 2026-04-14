@@ -42,6 +42,8 @@ process.env.OUTLETS_SERVICE_URL = "http://outlets:3000";
 process.env.OUTLETS_SERVICE_API_KEY = "outlets-key";
 process.env.PRESS_KITS_SERVICE_URL = "http://press-kits:3000";
 process.env.PRESS_KITS_SERVICE_API_KEY = "press-kits-key";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
@@ -97,9 +99,22 @@ describe("stats route - network error resilience", () => {
   });
 
   it("returns 200 with zeroed stats when all downstream services throw ECONNRESET", async () => {
-    fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      new TypeError("fetch failed", { cause: new Error("read ECONNRESET") }),
-    );
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      // Runs-service returns empty groups (zeroed stats)
+      if (url.includes("runs:3000")) {
+        return new Response(JSON.stringify({ groups: [] }), { status: 200 });
+      }
+      // Email-gateway returns empty broadcast (feature has emailsSent output)
+      if (url.includes("email:3000")) {
+        return new Response(JSON.stringify({ broadcast: {} }), { status: 200 });
+      }
+      // Campaign-service is required infrastructure
+      if (url.includes("campaign:3000")) {
+        return new Response(JSON.stringify({ stats: { byStatus: { active: 0 } } }), { status: 200 });
+      }
+      throw new TypeError("fetch failed", { cause: new Error("read ECONNRESET") });
+    });
 
     const res = await request(app)
       .get("/features/cold-email-v1/stats")
@@ -112,9 +127,22 @@ describe("stats route - network error resilience", () => {
   });
 
   it("returns 200 on global /stats when downstream services throw network errors", async () => {
-    fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      new TypeError("fetch failed", { cause: new Error("read ECONNRESET") }),
-    );
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      // Runs-service returns empty groups (zeroed stats)
+      if (url.includes("runs:3000")) {
+        return new Response(JSON.stringify({ groups: [] }), { status: 200 });
+      }
+      // Email-gateway returns empty broadcast
+      if (url.includes("email:3000")) {
+        return new Response(JSON.stringify({ broadcast: {} }), { status: 200 });
+      }
+      // Campaign-service is required infrastructure
+      if (url.includes("campaign:3000")) {
+        return new Response(JSON.stringify({ stats: { byStatus: { active: 0 } } }), { status: 200 });
+      }
+      throw new TypeError("fetch failed", { cause: new Error("read ECONNRESET") });
+    });
 
     const res = await request(app)
       .get("/stats")
@@ -140,6 +168,16 @@ describe("stats route - network error resilience", () => {
             maxStartedAt: "2026-03-01T00:00:00Z",
           }],
         }), { status: 200 });
+      }
+
+      // email-gateway returns empty broadcast (feature has emailsSent output)
+      if (url.includes("email:3000")) {
+        return new Response(JSON.stringify({ broadcast: {} }), { status: 200 });
+      }
+
+      // campaign-service is required infrastructure
+      if (url.includes("campaign:3000")) {
+        return new Response(JSON.stringify({ stats: { byStatus: { active: 0 } } }), { status: 200 });
       }
 
       // all other services throw
@@ -191,6 +229,9 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
       if (url.includes("email:3000")) {
         return new Response(JSON.stringify({ broadcast: {}, transactional: {} }), { status: 200 });
       }
+      if (url.includes("campaign:3000")) {
+        return new Response(JSON.stringify({ stats: { byStatus: { active: 0 } } }), { status: 200 });
+      }
       return new Response(JSON.stringify({}), { status: 200 });
     });
 
@@ -198,8 +239,10 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
       .get("/features/cold-email-v1/stats?brandId=brand-1")
       .set(AUTH_HEADERS);
 
-    // Every downstream call should include featureDynastySlug=cold-email
-    for (const url of urls) {
+    // Every stats service call should include featureDynastySlug=cold-email.
+    // campaign-service is excluded — it does not accept featureDynastySlug.
+    const statsUrls = urls.filter((u) => !u.includes("campaign:3000"));
+    for (const url of statsUrls) {
       const parsed = new URL(url);
       expect(parsed.searchParams.get("featureDynastySlug")).toBe("cold-email");
     }
@@ -238,9 +281,22 @@ describe("GET /stats/dynasty", () => {
   it("returns 200 with zeroed stats when downstream services fail", async () => {
     vi.mocked(db.query.features.findMany).mockResolvedValue([MOCK_FEATURE as any]);
     vi.mocked(db.query.features.findFirst).mockResolvedValue(null as any);
-    fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      new TypeError("fetch failed"),
-    );
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      // runs-service returns empty groups (zeroed stats)
+      if (url.includes("runs:3000")) {
+        return new Response(JSON.stringify({ groups: [] }), { status: 200 });
+      }
+      // email-gateway returns empty broadcast (MOCK_FEATURE has emailsSent output)
+      if (url.includes("email:3000")) {
+        return new Response(JSON.stringify({ broadcast: {} }), { status: 200 });
+      }
+      // campaign-service is required infrastructure
+      if (url.includes("campaign:3000")) {
+        return new Response(JSON.stringify({ stats: { byStatus: { active: 0 } } }), { status: 200 });
+      }
+      throw new TypeError("fetch failed");
+    });
 
     const res = await request(app)
       .get("/stats/dynasty?dynastySlug=cold-email")
@@ -352,6 +408,10 @@ describe("GET /features/:featureSlug/stats — press-kits source", () => {
         }), { status: 200 });
       }
 
+      if (url.includes("campaign:3000")) {
+        return new Response(JSON.stringify({ stats: { byStatus: { active: 0 } } }), { status: 200 });
+      }
+
       return new Response(JSON.stringify({}), { status: 200 });
     });
 
@@ -383,6 +443,9 @@ describe("GET /features/:featureSlug/stats — press-kits source", () => {
       }
       if (url.includes("press-kits:3000") && url.includes("/stats/costs")) {
         return new Response(JSON.stringify({ groups: [] }), { status: 200 });
+      }
+      if (url.includes("campaign:3000")) {
+        return new Response(JSON.stringify({ stats: { byStatus: { active: 0 } } }), { status: 200 });
       }
       return new Response(JSON.stringify({}), { status: 200 });
     });
@@ -429,6 +492,10 @@ describe("GET /features/:featureSlug/stats — press-kits source", () => {
             { dimensions: { brandId: "brand-b" }, runCount: 4, totalCostInUsdCents: 800, actualCostInUsdCents: 800, provisionedCostInUsdCents: 0 },
           ],
         }), { status: 200 });
+      }
+
+      if (url.includes("campaign:3000")) {
+        return new Response(JSON.stringify({ stats: { byStatus: { active: 0 } } }), { status: 200 });
       }
 
       return new Response(JSON.stringify({}), { status: 200 });
@@ -478,10 +545,7 @@ describe("GET /features/:featureSlug/stats — press-kits source", () => {
       .get("/features/press-kit-page-generation/stats")
       .set(AUTH_HEADERS);
 
-    expect(res.status).toBe(200);
-    expect(res.body.stats.pressKitsGenerated).toBeNull();
-    expect(res.body.stats.pressKitViews).toBeNull();
-    expect(res.body.stats.pressKitUniqueVisitors).toBeNull();
+    expect(res.status).toBe(500);
   });
 });
 
