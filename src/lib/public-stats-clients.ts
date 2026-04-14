@@ -116,19 +116,11 @@ function extractBroadcastEmailFields(data: Record<string, unknown>): Record<stri
 
 // ── Journalist stats (journalists-service) ───────────────────────────────────
 
-// journalists-service only supports these groupBy values
-const JOURNALISTS_SUPPORTED_GROUP_BY = new Set([
-  "featureSlug", "workflowSlug", "featureDynastySlug", "workflowDynastySlug",
-]);
-
 export async function fetchPublicJournalistsStats(
   featureSlugs: string,
   groupBy: string,
 ): Promise<Map<string, Record<string, number>>> {
-  const params = new URLSearchParams({ featureSlugs });
-  if (JOURNALISTS_SUPPORTED_GROUP_BY.has(groupBy)) {
-    params.set("groupBy", groupBy);
-  }
+  const params = new URLSearchParams({ featureSlugs, groupBy });
 
   const url = `${process.env.JOURNALISTS_SERVICE_URL}/public/stats?${params}`;
   const response = await fetch(url, {

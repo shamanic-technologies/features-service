@@ -585,9 +585,7 @@ async function fetchJournalistsStats(
   identity: Identity,
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams();
-  // journalists-service supports groupBy: featureSlug, workflowSlug, featureDynastySlug, workflowDynastySlug
-  const supportedGroupBy = new Set(["featureSlug", "workflowSlug", "featureDynastySlug", "workflowDynastySlug"]);
-  if (groupBy && supportedGroupBy.has(groupBy)) params.set("groupBy", groupBy);
+  if (groupBy) params.set("groupBy", groupBy);
   if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
   if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
   if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
@@ -611,7 +609,7 @@ async function fetchJournalistsStats(
 
   const result = new Map<string, Record<string, number>>();
 
-  if (data.groupedBy && groupBy && supportedGroupBy.has(groupBy)) {
+  if (data.groupedBy && groupBy) {
     for (const [key, group] of Object.entries(data.groupedBy)) {
       result.set(key, extractJournalistFields(group));
     }
