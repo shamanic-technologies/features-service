@@ -12,6 +12,8 @@ vi.stubEnv("OUTLETS_SERVICE_URL", "http://outlets-service");
 vi.stubEnv("OUTLETS_SERVICE_API_KEY", "outlets-key");
 vi.stubEnv("JOURNALISTS_SERVICE_URL", "http://journalists-service");
 vi.stubEnv("JOURNALISTS_SERVICE_API_KEY", "journalists-key");
+vi.stubEnv("CAMPAIGN_SERVICE_URL", "http://campaign-service");
+vi.stubEnv("CAMPAIGN_SERVICE_API_KEY", "campaign-key");
 
 // Mock the database before importing the router
 vi.mock("../src/db/index.js", () => ({
@@ -68,6 +70,12 @@ describe("stats exclude transactional emails", () => {
 
   it("uses only broadcast counts, ignores transactional", async () => {
     fetchSpy = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("campaign-service")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ stats: { byStatus: { active: 0 } } }),
+        });
+      }
       if (!url.includes("/v1/stats/costs")) {
         return Promise.resolve({
           ok: true,
@@ -112,11 +120,19 @@ describe("stats exclude transactional emails", () => {
 
   it("returns zero when only transactional stats exist", async () => {
     fetchSpy = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("campaign-service")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ stats: { byStatus: { active: 0 } } }),
+        });
+      }
       if (!url.includes("/v1/stats/costs")) {
         return Promise.resolve({
           ok: true,
           json: () =>
             Promise.resolve({
+              // broadcast is empty — no broadcast emails sent
+              broadcast: {},
               transactional: { emailsSent: 500, emailsOpened: 200, repliesPositive: 50 },
             }),
         });
@@ -146,14 +162,20 @@ describe("stats exclude transactional emails", () => {
       .set("x-run-id", "run-1")
       .expect(200);
 
-    // No broadcast data → all zeros
-    expect(res.body.stats.emailsSent).toBe(0);
-    expect(res.body.stats.emailsOpened).toBe(0);
-    expect(res.body.stats.repliesPositive).toBe(0);
+    // No broadcast data → all null (transactional values not included)
+    expect(res.body.stats.emailsSent).toBeNull();
+    expect(res.body.stats.emailsOpened).toBeNull();
+    expect(res.body.stats.repliesPositive).toBeNull();
   });
 
   it("works with grouped response — only broadcast per group", async () => {
     fetchSpy = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("campaign-service")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ stats: { byStatus: { active: 0 } } }),
+        });
+      }
       if (!url.includes("/v1/stats/costs")) {
         return Promise.resolve({
           ok: true,
