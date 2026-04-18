@@ -32,11 +32,11 @@ describe("SEED_FEATURES", () => {
     expect(new Set(sigs).size).toBe(sigs.length);
   });
 
-  it("Sales Cold Email has 7 inputs and 12 outputs", () => {
+  it("Sales Cold Email has 7 inputs and 13 outputs", () => {
     const sales = SEED_FEATURES.find((f) => f.name === "Sales Cold Email Outreach");
     expect(sales).toBeDefined();
     expect(sales!.inputs).toHaveLength(7);
-    expect(sales!.outputs).toHaveLength(12);
+    expect(sales!.outputs).toHaveLength(13);
   });
 
   it("Sales Cold Email has funnel and breakdown charts", () => {
