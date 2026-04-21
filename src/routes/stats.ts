@@ -260,7 +260,11 @@ function mergeEmailChannels(data: Record<string, unknown>): Record<string, numbe
     "repliesPositive", "repliesNegative", "repliesNeutral", "repliesAutoReply",
   ];
 
-  const broadcast = data.broadcast as Record<string, number>;
+  const broadcast = data.broadcast as Record<string, number> | undefined;
+
+  if (!broadcast) {
+    return result;
+  }
 
   for (const field of emailFields) {
     result[field] = broadcast[field];
@@ -813,7 +817,7 @@ async function fetchActiveCampaigns(
     };
   };
 
-  return data.stats.byStatus.active ?? data.stats.byStatus.running;
+  return data.stats.byStatus.active ?? data.stats.byStatus.running ?? 0;
 }
 
 /**
