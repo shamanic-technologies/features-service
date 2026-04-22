@@ -124,6 +124,9 @@ describe("stats route - network error resilience", () => {
     expect(res.body.featureSlug).toBe("cold-email-v1");
     expect(res.body.systemStats.completedRuns).toBe(0);
     expect(res.body.systemStats.totalCostInUsdCents).toBe(0);
+    // Regression: stats must always be present (never undefined) — even when all downstreams fail
+    expect(res.body).toHaveProperty("stats");
+    expect(typeof res.body.stats).toBe("object");
   });
 
   it("returns 200 on global /stats when downstream services throw network errors", async () => {

@@ -77,14 +77,14 @@ const featureStatsResponseSchema = z.object({
   groupBy: z.string().optional(),
   systemStats: systemStatsSchema,
   groups: z.array(statsGroupSchema).optional(),
-  stats: z.record(z.string(), z.number().nullable()).optional(),
+  stats: z.record(z.string(), z.number().nullable()),
 });
 
 const globalStatsResponseSchema = z.object({
   groupBy: z.string().optional(),
   systemStats: systemStatsSchema,
   groups: z.array(statsGroupSchema).optional(),
-  stats: z.record(z.string(), z.number().nullable()).optional(),
+  stats: z.record(z.string(), z.number().nullable()),
 });
 
 const registryResponseSchema = z.object({
@@ -695,7 +695,7 @@ const dynastyStatsResponseSchema = z.object({
   groupBy: z.string().optional(),
   systemStats: systemStatsSchema,
   groups: z.array(statsGroupSchema).optional(),
-  stats: z.record(z.string(), z.number().nullable()).optional(),
+  stats: z.record(z.string(), z.number().nullable()),
 });
 
 registry.register("DynastyStatsResponse", dynastyStatsResponseSchema);
