@@ -1574,7 +1574,8 @@
         },
         "required": [
           "featureSlug",
-          "systemStats"
+          "systemStats",
+          "stats"
         ]
       },
       "GlobalStatsResponse": {
@@ -1693,7 +1694,8 @@
           }
         },
         "required": [
-          "systemStats"
+          "systemStats",
+          "stats"
         ]
       },
       "RegistryResponse": {
@@ -2183,7 +2185,8 @@
         },
         "required": [
           "dynastySlug",
-          "systemStats"
+          "systemStats",
+          "stats"
         ]
       },
       "PublicFeature": {
@@ -7468,7 +7471,8 @@
                   },
                   "required": [
                     "featureSlug",
-                    "systemStats"
+                    "systemStats",
+                    "stats"
                   ]
                 }
               }
@@ -7750,7 +7754,8 @@
                   },
                   "required": [
                     "dynastySlug",
-                    "systemStats"
+                    "systemStats",
+                    "stats"
                   ]
                 }
               }
@@ -8034,7 +8039,8 @@
                     }
                   },
                   "required": [
-                    "systemStats"
+                    "systemStats",
+                    "stats"
                   ]
                 }
               }
