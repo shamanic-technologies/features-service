@@ -331,10 +331,16 @@ async function fetchRunsStatsForSlug(
   const params = new URLSearchParams({ groupBy: runsGroupBy });
   if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
   if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
-  if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
+  // featureSlug and featureDynastySlug are mutually exclusive — dynasty takes
+  // precedence in runs-service, so sending both causes the slug filter to be
+  // ignored and results to be counted once per slug in the iteration.
+  if (featureSlug) {
+    params.set("featureSlug", featureSlug);
+  } else if (filters.featureDynastySlug) {
+    params.set("featureDynastySlug", filters.featureDynastySlug);
+  }
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
-  if (featureSlug) params.set("featureSlug", featureSlug);
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
   const response = await fetch(url, {
@@ -485,10 +491,13 @@ async function fetchPipelineStatsForFilter(
   });
   if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
   if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
-  if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
+  if (featureSlug) {
+    params.set("featureSlug", featureSlug);
+  } else if (filters.featureDynastySlug) {
+    params.set("featureDynastySlug", filters.featureDynastySlug);
+  }
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
-  if (featureSlug) params.set("featureSlug", featureSlug);
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
   const response = await fetch(url, {

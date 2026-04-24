@@ -242,12 +242,19 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
       .get("/features/cold-email-v1/stats?brandId=brand-1")
       .set(AUTH_HEADERS);
 
-    // Every stats service call should include featureDynastySlug=cold-email.
-    // campaign-service is excluded — it does not accept featureDynastySlug.
-    const statsUrls = urls.filter((u) => !u.includes("campaign:3000"));
-    for (const url of statsUrls) {
+    // Non-runs services get featureDynastySlug; runs-service gets featureSlug
+    // (featureSlug and featureDynastySlug are mutually exclusive — dynasty
+    // takes precedence in runs-service, so sending both causes overcounting).
+    const nonRunsUrls = urls.filter((u) => !u.includes("campaign:3000") && !u.includes("runs:3000"));
+    for (const url of nonRunsUrls) {
       const parsed = new URL(url);
       expect(parsed.searchParams.get("featureDynastySlug")).toBe("cold-email");
+    }
+    const runsUrls = urls.filter((u) => u.includes("runs:3000"));
+    for (const url of runsUrls) {
+      const parsed = new URL(url);
+      expect(parsed.searchParams.get("featureSlug")).toBe("cold-email-v1");
+      expect(parsed.searchParams.get("featureDynastySlug")).toBeNull();
     }
   });
 });
