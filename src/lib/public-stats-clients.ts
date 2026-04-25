@@ -39,7 +39,8 @@ export async function fetchPublicWorkflows(
   });
 
   if (!response.ok) {
-    throw new Error(`[features-service] workflow-service /public/workflows failed: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`[features-service] workflow-service /public/workflows failed: ${response.status} — ${body}`);
   }
 
   const data = await response.json() as { workflows: WorkflowMetadata[] };
@@ -60,7 +61,8 @@ export async function fetchPublicCosts(
   });
 
   if (!response.ok) {
-    throw new Error(`[features-service] runs-service /v1/stats/public/costs failed: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`[features-service] runs-service /v1/stats/public/costs failed: ${response.status} — ${body}`);
   }
 
   const data = await response.json() as { groups: CostGroup[] };
@@ -81,7 +83,8 @@ export async function fetchPublicEmailStats(
   });
 
   if (!response.ok) {
-    throw new Error(`[features-service] email-gateway /public/stats failed: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`[features-service] email-gateway /public/stats failed: ${response.status} — ${body}`);
   }
 
   const data = await response.json() as Record<string, unknown>;
@@ -128,7 +131,8 @@ export async function fetchPublicJournalistsStats(
   });
 
   if (!response.ok) {
-    throw new Error(`[features-service] journalists-service /public/stats failed: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`[features-service] journalists-service /public/stats failed: ${response.status} — ${body}`);
   }
 
   const data = await response.json() as Record<string, unknown>;

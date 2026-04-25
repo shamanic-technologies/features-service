@@ -229,7 +229,8 @@ async function fetchEmailStats(
   });
 
   if (!response.ok) {
-    throw new Error(`[features-service] email-gateway /orgs/stats failed: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`[features-service] email-gateway /orgs/stats failed: ${response.status} — ${body}`);
   }
 
   const data = await response.json() as Record<string, unknown>;
@@ -348,7 +349,8 @@ async function fetchRunsStatsForSlug(
   });
 
   if (!response.ok) {
-    throw new Error(`[features-service] runs-service /v1/stats/costs failed: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`[features-service] runs-service /v1/stats/costs failed: ${response.status} — ${body}`);
   }
 
   const data = await response.json() as {
@@ -505,7 +507,8 @@ async function fetchPipelineStatsForFilter(
   });
 
   if (!response.ok) {
-    throw new Error(`[features-service] runs-service pipeline stats failed: ${response.status} (${runFilter.serviceName}/${runFilter.taskName})`);
+    const body = await response.text();
+    throw new Error(`[features-service] runs-service pipeline stats failed: ${response.status} (${runFilter.serviceName}/${runFilter.taskName}) — ${body}`);
   }
 
   const data = await response.json() as {
@@ -558,7 +561,8 @@ async function fetchOutletsStats(
   });
 
   if (!response.ok) {
-    throw new Error(`[features-service] outlets-service /orgs/outlets/stats failed: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`[features-service] outlets-service /orgs/outlets/stats failed: ${response.status} — ${body}`);
   }
 
   const data = await response.json() as Record<string, unknown>;
@@ -611,7 +615,8 @@ async function fetchJournalistsStats(
   });
 
   if (!response.ok) {
-    throw new Error(`[features-service] journalists-service /orgs/stats failed: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`[features-service] journalists-service /orgs/stats failed: ${response.status} — ${body}`);
   }
 
   const data = await response.json() as {
@@ -665,7 +670,8 @@ async function fetchLeadsStats(
   });
 
   if (!response.ok) {
-    throw new Error(`[features-service] lead-service /orgs/stats failed: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`[features-service] lead-service /orgs/stats failed: ${response.status} — ${body}`);
   }
 
   const data = await response.json() as
@@ -817,7 +823,8 @@ async function fetchActiveCampaigns(
   });
 
   if (!response.ok) {
-    throw new Error(`[features-service] campaign-service /stats failed: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`[features-service] campaign-service /stats failed: ${response.status} — ${body}`);
   }
 
   const data = await response.json() as {
