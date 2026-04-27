@@ -150,20 +150,22 @@ async function fetchEmailStats(
 
 function mergeEmailChannels(data: Record<string, unknown>): Record<string, number> {
   const result: Record<string, number> = {};
-  const emailFields = [
-    "emailsContacted", "emailsSent", "emailsDelivered", "emailsOpened",
-    "emailsClicked", "emailsBounced", "recipients",
-    "repliesPositive", "repliesNegative", "repliesNeutral", "repliesAutoReply",
-  ];
-
-  const broadcast = data.broadcast as Record<string, number> | undefined;
+  const broadcast = data.broadcast as Record<string, unknown> | undefined;
   if (!broadcast) return result;
 
-  for (const field of emailFields) {
-    if (broadcast[field] != null) {
-      result[field] = broadcast[field];
-    }
-  }
+  const recipientStats = broadcast.recipientStats as Record<string, number> | undefined;
+  if (!recipientStats) return result;
+
+  result.recipientsContacted = recipientStats.contacted;
+  result.recipientsSent = recipientStats.sent;
+  result.recipientsDelivered = recipientStats.delivered;
+  result.recipientsOpened = recipientStats.opened;
+  result.recipientsClicked = recipientStats.clicked;
+  result.recipientsBounced = recipientStats.bounced;
+  result.recipientsRepliesPositive = recipientStats.repliesPositive;
+  result.recipientsRepliesNegative = recipientStats.repliesNegative;
+  result.recipientsRepliesNeutral = recipientStats.repliesNeutral;
+  result.recipientsRepliesAutoReply = recipientStats.repliesAutoReply;
 
   return result;
 }
