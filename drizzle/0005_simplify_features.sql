@@ -1,5 +1,5 @@
--- Migration: Simplify features table
--- Removes dynasty model, inputs, outputs, charts, entities, signature, and all versioning.
+-- Migration: Remove dynasty model and unused metadata columns.
+-- Keeps definition fields (inputs, outputs, charts, entities, icon, display_order, implemented).
 -- Consolidates 11 features into 5 canonical features.
 
 -- Step 1: Delete all non-canonical features (clears slug conflicts for renaming)
@@ -16,11 +16,12 @@ UPDATE features SET slug = 'sales-cold-email-outreach', name = 'Sales Cold Email
 UPDATE features SET slug = 'pr-cold-email-outreach', name = 'PR Cold Email Outreach', status = 'active', updated_at = NOW() WHERE id = '980199db-a698-4345-a988-47659067c82e';
 UPDATE features SET slug = 'press-kit-page-generation', name = 'Press Kit Page Generation', status = 'active', updated_at = NOW() WHERE id = 'f8e092bc-f2bf-4a0d-a2ff-7152681a0a19';
 
--- Step 3: Drop indexes that reference columns being removed
+-- Step 3: Drop dynasty indexes
 DROP INDEX IF EXISTS "idx_features_dynasty_version";
 DROP INDEX IF EXISTS "idx_features_signature";
+DROP INDEX IF EXISTS "idx_features_base_name";
 
--- Step 4: Drop columns
+-- Step 4: Drop dynasty columns
 ALTER TABLE features DROP COLUMN IF EXISTS base_name;
 ALTER TABLE features DROP COLUMN IF EXISTS fork_name;
 ALTER TABLE features DROP COLUMN IF EXISTS dynasty_name;
@@ -29,13 +30,8 @@ ALTER TABLE features DROP COLUMN IF EXISTS version;
 ALTER TABLE features DROP COLUMN IF EXISTS signature;
 ALTER TABLE features DROP COLUMN IF EXISTS forked_from;
 ALTER TABLE features DROP COLUMN IF EXISTS upgraded_to;
-ALTER TABLE features DROP COLUMN IF EXISTS inputs;
-ALTER TABLE features DROP COLUMN IF EXISTS outputs;
-ALTER TABLE features DROP COLUMN IF EXISTS charts;
-ALTER TABLE features DROP COLUMN IF EXISTS entities;
-ALTER TABLE features DROP COLUMN IF EXISTS icon;
+
+-- Step 5: Drop unused metadata columns
 ALTER TABLE features DROP COLUMN IF EXISTS category;
 ALTER TABLE features DROP COLUMN IF EXISTS channel;
 ALTER TABLE features DROP COLUMN IF EXISTS audience_type;
-ALTER TABLE features DROP COLUMN IF EXISTS display_order;
-ALTER TABLE features DROP COLUMN IF EXISTS implemented;

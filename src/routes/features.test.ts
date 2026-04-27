@@ -51,7 +51,7 @@ describe("GET /features", () => {
 
   it("returns active features by default", async () => {
     mockFindMany.mockResolvedValueOnce([
-      { id: "1", slug: "sales-cold-email-outreach", name: "Sales Cold Email Outreach", description: "test", status: "active" },
+      { id: "1", slug: "sales-cold-email-outreach", name: "Sales Cold Email Outreach", description: "test", icon: "mail", implemented: true, displayOrder: 0, status: "active", inputs: [], outputs: [], charts: [], entities: [] },
     ]);
 
     const res = await request(app).get("/features").set(AUTH_HEADERS);
@@ -76,7 +76,14 @@ describe("GET /features/:slug", () => {
       slug: "sales-cold-email-outreach",
       name: "Sales Cold Email Outreach",
       description: "test",
+      icon: "mail",
+      implemented: true,
+      displayOrder: 0,
       status: "active",
+      inputs: [],
+      outputs: [],
+      charts: [],
+      entities: [],
     });
 
     const res = await request(app).get("/features/sales-cold-email-outreach").set(AUTH_HEADERS);
