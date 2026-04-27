@@ -7,6 +7,7 @@ import {
   validateStatsKeys,
   validateEntityTypes,
 } from "../src/lib/stats-registry.js";
+import { SEED_FEATURES } from "../src/seed/features.js";
 
 describe("STATS_REGISTRY", () => {
   it("contains recipient-level email stats keys", () => {
@@ -128,6 +129,31 @@ describe("validateStatsKeys", () => {
 
   it("returns invalid keys", () => {
     expect(validateStatsKeys(["recipientsSent", "fakeKey"])).toEqual(["fakeKey"]);
+  });
+});
+
+describe("seed features use only valid registry keys", () => {
+  // Regression: seed features once used old key names (emailsSent, repliesPositive, etc.)
+  // that didn't exist in the stats registry, causing the frontend to show raw camelCase labels.
+  it("all output keys exist in STATS_REGISTRY", () => {
+    for (const feature of SEED_FEATURES) {
+      for (const output of feature.outputs as { key: string }[]) {
+        expect(VALID_STATS_KEYS.has(output.key), `${feature.slug}: output key "${output.key}" not in registry`).toBe(true);
+      }
+    }
+  });
+
+  it("all chart step/segment keys exist in STATS_REGISTRY", () => {
+    for (const feature of SEED_FEATURES) {
+      for (const chart of feature.charts as { key: string; steps?: { key: string }[]; segments?: { key: string }[] }[]) {
+        for (const step of chart.steps ?? []) {
+          expect(VALID_STATS_KEYS.has(step.key), `${feature.slug} chart "${chart.key}": step key "${step.key}" not in registry`).toBe(true);
+        }
+        for (const seg of chart.segments ?? []) {
+          expect(VALID_STATS_KEYS.has(seg.key), `${feature.slug} chart "${chart.key}": segment key "${seg.key}" not in registry`).toBe(true);
+        }
+      }
+    }
   });
 });
 
