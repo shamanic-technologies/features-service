@@ -60,19 +60,27 @@ describe("openApiDocument", () => {
     expect(openApiDocument.security).toContainEqual({ ApiKeyAuth: [] });
   });
 
-  it("Feature schema has simplified fields only", () => {
+  it("Feature schema has correct fields", () => {
     const schemas = (openApiDocument.components as Record<string, unknown>)?.schemas as Record<string, Record<string, unknown>> | undefined;
     const featureProps = (schemas?.Feature as Record<string, unknown>)?.properties as Record<string, unknown> | undefined;
     expect(featureProps?.slug).toBeDefined();
     expect(featureProps?.name).toBeDefined();
     expect(featureProps?.description).toBeDefined();
     expect(featureProps?.status).toBeDefined();
-    // Removed fields
+    expect(featureProps?.icon).toBeDefined();
+    expect(featureProps?.implemented).toBeDefined();
+    expect(featureProps?.displayOrder).toBeDefined();
+    expect(featureProps?.inputs).toBeDefined();
+    expect(featureProps?.outputs).toBeDefined();
+    expect(featureProps?.charts).toBeDefined();
+    expect(featureProps?.entities).toBeDefined();
+    // Removed dynasty fields
     expect(featureProps?.dynastyName).toBeUndefined();
     expect(featureProps?.dynastySlug).toBeUndefined();
     expect(featureProps?.version).toBeUndefined();
     expect(featureProps?.signature).toBeUndefined();
-    expect(featureProps?.inputs).toBeUndefined();
-    expect(featureProps?.outputs).toBeUndefined();
+    expect(featureProps?.category).toBeUndefined();
+    expect(featureProps?.channel).toBeUndefined();
+    expect(featureProps?.audienceType).toBeUndefined();
   });
 });

@@ -40,12 +40,45 @@
           "description": {
             "type": "string"
           },
+          "icon": {
+            "type": "string"
+          },
+          "implemented": {
+            "type": "boolean"
+          },
+          "displayOrder": {
+            "type": "integer"
+          },
           "status": {
             "type": "string",
             "enum": [
               "active",
               "deprecated"
             ]
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "nullable": true
+            }
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "nullable": true
+            }
+          },
+          "charts": {
+            "type": "array",
+            "items": {
+              "nullable": true
+            }
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "nullable": true
+            }
           },
           "createdAt": {
             "type": "string",
@@ -61,7 +94,14 @@
           "slug",
           "name",
           "description",
+          "icon",
+          "implemented",
+          "displayOrder",
           "status",
+          "inputs",
+          "outputs",
+          "charts",
+          "entities",
           "createdAt",
           "updatedAt"
         ]
@@ -579,12 +619,45 @@
                           "description": {
                             "type": "string"
                           },
+                          "icon": {
+                            "type": "string"
+                          },
+                          "implemented": {
+                            "type": "boolean"
+                          },
+                          "displayOrder": {
+                            "type": "integer"
+                          },
                           "status": {
                             "type": "string",
                             "enum": [
                               "active",
                               "deprecated"
                             ]
+                          },
+                          "inputs": {
+                            "type": "array",
+                            "items": {
+                              "nullable": true
+                            }
+                          },
+                          "outputs": {
+                            "type": "array",
+                            "items": {
+                              "nullable": true
+                            }
+                          },
+                          "charts": {
+                            "type": "array",
+                            "items": {
+                              "nullable": true
+                            }
+                          },
+                          "entities": {
+                            "type": "array",
+                            "items": {
+                              "nullable": true
+                            }
                           },
                           "createdAt": {
                             "type": "string",
@@ -600,7 +673,14 @@
                           "slug",
                           "name",
                           "description",
+                          "icon",
+                          "implemented",
+                          "displayOrder",
                           "status",
+                          "inputs",
+                          "outputs",
+                          "charts",
+                          "entities",
                           "createdAt",
                           "updatedAt"
                         ]
@@ -701,12 +781,45 @@
                         "description": {
                           "type": "string"
                         },
+                        "icon": {
+                          "type": "string"
+                        },
+                        "implemented": {
+                          "type": "boolean"
+                        },
+                        "displayOrder": {
+                          "type": "integer"
+                        },
                         "status": {
                           "type": "string",
                           "enum": [
                             "active",
                             "deprecated"
                           ]
+                        },
+                        "inputs": {
+                          "type": "array",
+                          "items": {
+                            "nullable": true
+                          }
+                        },
+                        "outputs": {
+                          "type": "array",
+                          "items": {
+                            "nullable": true
+                          }
+                        },
+                        "charts": {
+                          "type": "array",
+                          "items": {
+                            "nullable": true
+                          }
+                        },
+                        "entities": {
+                          "type": "array",
+                          "items": {
+                            "nullable": true
+                          }
                         },
                         "createdAt": {
                           "type": "string",
@@ -722,7 +835,14 @@
                         "slug",
                         "name",
                         "description",
+                        "icon",
+                        "implemented",
+                        "displayOrder",
                         "status",
+                        "inputs",
+                        "outputs",
+                        "charts",
+                        "entities",
                         "createdAt",
                         "updatedAt"
                       ]
@@ -1471,12 +1591,45 @@
                           "description": {
                             "type": "string"
                           },
+                          "icon": {
+                            "type": "string"
+                          },
+                          "implemented": {
+                            "type": "boolean"
+                          },
+                          "displayOrder": {
+                            "type": "integer"
+                          },
                           "status": {
                             "type": "string",
                             "enum": [
                               "active",
                               "deprecated"
                             ]
+                          },
+                          "inputs": {
+                            "type": "array",
+                            "items": {
+                              "nullable": true
+                            }
+                          },
+                          "outputs": {
+                            "type": "array",
+                            "items": {
+                              "nullable": true
+                            }
+                          },
+                          "charts": {
+                            "type": "array",
+                            "items": {
+                              "nullable": true
+                            }
+                          },
+                          "entities": {
+                            "type": "array",
+                            "items": {
+                              "nullable": true
+                            }
                           },
                           "createdAt": {
                             "type": "string",
@@ -1492,7 +1645,14 @@
                           "slug",
                           "name",
                           "description",
+                          "icon",
+                          "implemented",
+                          "displayOrder",
                           "status",
+                          "inputs",
+                          "outputs",
+                          "charts",
+                          "entities",
                           "createdAt",
                           "updatedAt"
                         ]
