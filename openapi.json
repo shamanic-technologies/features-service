@@ -144,6 +144,10 @@
             "type": "string",
             "nullable": true
           },
+          "workflowDynastySlug": {
+            "type": "string",
+            "nullable": true
+          },
           "brandId": {
             "type": "string",
             "nullable": true
@@ -246,6 +250,10 @@
               "type": "object",
               "properties": {
                 "workflowSlug": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "workflowDynastySlug": {
                   "type": "string",
                   "nullable": true
                 },
@@ -362,6 +370,10 @@
               "type": "object",
               "properties": {
                 "workflowSlug": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "workflowDynastySlug": {
                   "type": "string",
                   "nullable": true
                 },
@@ -1071,6 +1083,7 @@
               "type": "string",
               "enum": [
                 "workflowSlug",
+                "workflowDynastySlug",
                 "brandId",
                 "campaignId"
               ]
@@ -1101,6 +1114,14 @@
             },
             "required": false,
             "name": "workflowSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "workflowDynastySlug",
             "in": "query"
           },
           {
@@ -1201,6 +1222,10 @@
                             "type": "string",
                             "nullable": true
                           },
+                          "workflowDynastySlug": {
+                            "type": "string",
+                            "nullable": true
+                          },
                           "brandId": {
                             "type": "string",
                             "nullable": true
@@ -1298,7 +1323,7 @@
     "/stats": {
       "get": {
         "summary": "Global stats across all features",
-        "description": "Cross-feature stats endpoint. Supports groupBy: featureSlug, workflowSlug, brandId, campaignId.",
+        "description": "Cross-feature stats endpoint. Supports groupBy: featureSlug, workflowSlug, workflowDynastySlug, brandId, campaignId.",
         "tags": [
           "Stats"
         ],
@@ -1333,6 +1358,14 @@
             },
             "required": false,
             "name": "workflowSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "workflowDynastySlug",
             "in": "query"
           },
           {
@@ -1435,6 +1468,10 @@
                         "type": "object",
                         "properties": {
                           "workflowSlug": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "workflowDynastySlug": {
                             "type": "string",
                             "nullable": true
                           },
@@ -1711,6 +1748,12 @@
                                 "type": "string"
                               },
                               "name": {
+                                "type": "string"
+                              },
+                              "dynastyName": {
+                                "type": "string"
+                              },
+                              "dynastySlug": {
                                 "type": "string"
                               },
                               "version": {
@@ -2057,6 +2100,12 @@
                                 "type": "string"
                               },
                               "name": {
+                                "type": "string"
+                              },
+                              "dynastyName": {
+                                "type": "string"
+                              },
+                              "dynastySlug": {
                                 "type": "string"
                               },
                               "version": {
