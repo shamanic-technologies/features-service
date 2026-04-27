@@ -1,5 +1,5 @@
 /**
- * Canonical feature definitions — 5 features, no dynasty/versioning.
+ * Canonical feature definitions — 5 features.
  * On cold start, these are upserted by slug into the DB.
  */
 

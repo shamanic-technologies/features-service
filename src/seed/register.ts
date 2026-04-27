@@ -6,7 +6,7 @@ import { SEED_FEATURES } from "./features.js";
 /**
  * Register seed features via upsert-by-slug.
  * Called on every cold start. Idempotent — updates metadata if the slug exists,
- * inserts if it doesn't. No dynasty logic, no signature matching.
+ * inserts if it doesn't.
  */
 export async function registerSeedFeatures(): Promise<void> {
   for (const seed of SEED_FEATURES) {

@@ -144,10 +144,6 @@
             "type": "string",
             "nullable": true
           },
-          "workflowDynastySlug": {
-            "type": "string",
-            "nullable": true
-          },
           "brandId": {
             "type": "string",
             "nullable": true
@@ -156,7 +152,7 @@
             "type": "string",
             "nullable": true
           },
-          "featureDynastySlug": {
+          "featureSlug": {
             "type": "string",
             "nullable": true
           },
@@ -253,10 +249,6 @@
                   "type": "string",
                   "nullable": true
                 },
-                "workflowDynastySlug": {
-                  "type": "string",
-                  "nullable": true
-                },
                 "brandId": {
                   "type": "string",
                   "nullable": true
@@ -265,7 +257,7 @@
                   "type": "string",
                   "nullable": true
                 },
-                "featureDynastySlug": {
+                "featureSlug": {
                   "type": "string",
                   "nullable": true
                 },
@@ -373,10 +365,6 @@
                   "type": "string",
                   "nullable": true
                 },
-                "workflowDynastySlug": {
-                  "type": "string",
-                  "nullable": true
-                },
                 "brandId": {
                   "type": "string",
                   "nullable": true
@@ -385,7 +373,7 @@
                   "type": "string",
                   "nullable": true
                 },
-                "featureDynastySlug": {
+                "featureSlug": {
                   "type": "string",
                   "nullable": true
                 },
@@ -1083,7 +1071,6 @@
               "type": "string",
               "enum": [
                 "workflowSlug",
-                "workflowDynastySlug",
                 "brandId",
                 "campaignId"
               ]
@@ -1114,14 +1101,6 @@
             },
             "required": false,
             "name": "workflowSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": false,
-            "name": "workflowDynastySlug",
             "in": "query"
           },
           {
@@ -1222,10 +1201,6 @@
                             "type": "string",
                             "nullable": true
                           },
-                          "workflowDynastySlug": {
-                            "type": "string",
-                            "nullable": true
-                          },
                           "brandId": {
                             "type": "string",
                             "nullable": true
@@ -1234,7 +1209,7 @@
                             "type": "string",
                             "nullable": true
                           },
-                          "featureDynastySlug": {
+                          "featureSlug": {
                             "type": "string",
                             "nullable": true
                           },
@@ -1323,7 +1298,7 @@
     "/stats": {
       "get": {
         "summary": "Global stats across all features",
-        "description": "Cross-feature stats endpoint. Supports groupBy: featureSlug, featureDynastySlug, workflowSlug, workflowDynastySlug, brandId, campaignId.",
+        "description": "Cross-feature stats endpoint. Supports groupBy: featureSlug, workflowSlug, brandId, campaignId.",
         "tags": [
           "Stats"
         ],
@@ -1357,23 +1332,7 @@
               "type": "string"
             },
             "required": false,
-            "name": "featureDynastySlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": false,
             "name": "workflowSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": false,
-            "name": "workflowDynastySlug",
             "in": "query"
           },
           {
@@ -1479,10 +1438,6 @@
                             "type": "string",
                             "nullable": true
                           },
-                          "workflowDynastySlug": {
-                            "type": "string",
-                            "nullable": true
-                          },
                           "brandId": {
                             "type": "string",
                             "nullable": true
@@ -1491,7 +1446,7 @@
                             "type": "string",
                             "nullable": true
                           },
-                          "featureDynastySlug": {
+                          "featureSlug": {
                             "type": "string",
                             "nullable": true
                           },
@@ -1684,7 +1639,7 @@
             },
             "required": true,
             "description": "Feature slug (required)",
-            "name": "featureDynastySlug",
+            "name": "featureSlug",
             "in": "query"
           },
           {
@@ -1756,12 +1711,6 @@
                                 "type": "string"
                               },
                               "name": {
-                                "type": "string"
-                              },
-                              "dynastyName": {
-                                "type": "string"
-                              },
-                              "dynastySlug": {
                                 "type": "string"
                               },
                               "version": {
@@ -1877,7 +1826,7 @@
             },
             "required": true,
             "description": "Feature slug (required)",
-            "name": "featureDynastySlug",
+            "name": "featureSlug",
             "in": "query"
           },
           {
@@ -1993,7 +1942,7 @@
             },
             "required": true,
             "description": "Feature slug (required)",
-            "name": "featureDynastySlug",
+            "name": "featureSlug",
             "in": "query"
           },
           {
@@ -2110,12 +2059,6 @@
                               "name": {
                                 "type": "string"
                               },
-                              "dynastyName": {
-                                "type": "string"
-                              },
-                              "dynastySlug": {
-                                "type": "string"
-                              },
                               "version": {
                                 "type": "integer"
                               },
@@ -2229,7 +2172,7 @@
             },
             "required": true,
             "description": "Feature slug (required)",
-            "name": "featureDynastySlug",
+            "name": "featureSlug",
             "in": "query"
           },
           {

@@ -20,10 +20,9 @@ const systemStatsSchema = z.object({
 
 const statsGroupSchema = z.object({
   workflowSlug: z.string().nullable().optional(),
-  workflowDynastySlug: z.string().nullable().optional(),
   brandId: z.string().nullable().optional(),
   campaignId: z.string().nullable().optional(),
-  featureDynastySlug: z.string().nullable().optional(),
+  featureSlug: z.string().nullable().optional(),
   systemStats: systemStatsSchema,
   stats: z.record(z.string(), z.number().nullable()),
 });
@@ -156,11 +155,10 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
-      groupBy: z.enum(["workflowSlug", "workflowDynastySlug", "brandId", "campaignId"]).optional(),
+      groupBy: z.enum(["workflowSlug", "brandId", "campaignId"]).optional(),
       brandId: z.string().optional(),
       campaignId: z.string().optional(),
       workflowSlug: z.string().optional(),
-      workflowDynastySlug: z.string().optional(),
     }),
   },
   responses: {
@@ -175,7 +173,7 @@ registry.registerPath({
   method: "get",
   path: "/stats",
   summary: "Global stats across all features",
-  description: "Cross-feature stats endpoint. Supports groupBy: featureSlug, featureDynastySlug, workflowSlug, workflowDynastySlug, brandId, campaignId.",
+  description: "Cross-feature stats endpoint. Supports groupBy: featureSlug, workflowSlug, brandId, campaignId.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
@@ -183,9 +181,7 @@ registry.registerPath({
       groupBy: z.string().optional(),
       brandId: z.string().optional(),
       featureSlug: z.string().optional(),
-      featureDynastySlug: z.string().optional(),
       workflowSlug: z.string().optional(),
-      workflowDynastySlug: z.string().optional(),
       campaignId: z.string().optional(),
     }),
   },
@@ -217,8 +213,6 @@ const rankedWorkflowSchema = z.object({
   id: z.string().uuid().optional(),
   slug: z.string(),
   name: z.string().optional(),
-  dynastyName: z.string().optional(),
-  dynastySlug: z.string().optional(),
   version: z.number().int().optional(),
   featureSlug: z.string().optional(),
   createdForBrandId: z.string().nullable().optional(),
@@ -245,14 +239,14 @@ const rankedResponseSchema = z.object({
 });
 
 const rankedQueryParams = z.object({
-  featureDynastySlug: z.string().describe("Feature slug (required)"),
+  featureSlug: z.string().describe("Feature slug (required)"),
   objective: z.string().optional().describe("Stats key to sort by (defaults to costPerRecipientPositiveReplyCents)"),
   groupBy: z.enum(["workflow", "brand"]).describe("Group results by workflow or by brand"),
   limit: z.string().optional().describe("Max results (default 3)"),
 });
 
 const bestQueryParams = z.object({
-  featureDynastySlug: z.string().describe("Feature slug (required)"),
+  featureSlug: z.string().describe("Feature slug (required)"),
   groupBy: z.enum(["workflow", "brand"]).describe("Group results by workflow or by brand"),
 });
 

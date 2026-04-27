@@ -57,10 +57,9 @@ interface SystemStats {
 
 interface StatsGroup {
   workflowSlug?: string | null;
-  workflowDynastySlug?: string | null;
   brandId?: string | null;
   campaignId?: string | null;
-  featureDynastySlug?: string | null;
+  featureSlug?: string | null;
   systemStats: SystemStats;
   stats: Record<string, number | null>;
 }
@@ -72,10 +71,10 @@ interface RunsStatsEntry {
   maxStartedAt: string | null;
 }
 
-type GroupByDimension = "workflowSlug" | "workflowDynastySlug" | "brandId" | "campaignId" | "featureSlug" | "featureDynastySlug";
+type GroupByDimension = "workflowSlug" | "brandId" | "campaignId" | "featureSlug";
 
 const VALID_GROUP_BY: Set<string> = new Set([
-  "workflowSlug", "workflowDynastySlug", "brandId", "campaignId", "featureSlug", "featureDynastySlug",
+  "workflowSlug", "brandId", "campaignId", "featureSlug",
 ]);
 
 // ── All stats keys ──────────────────────────────────────────────────────────
@@ -113,8 +112,7 @@ async function fetchEmailStats(
   const params = new URLSearchParams();
   if (groupBy) params.set("groupBy", groupBy);
   if (filters.workflowSlug) params.set("workflowSlugs", filters.workflowSlug);
-  if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
-  if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
+  if (filters.featureSlug) params.set("featureSlug", filters.featureSlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
@@ -219,8 +217,7 @@ async function fetchRunsStatsForSlug(
   const runsGroupBy = groupBy ?? "workflowSlug";
   const params = new URLSearchParams({ groupBy: runsGroupBy });
   if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
-  if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
-  if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
+  if (filters.featureSlug) params.set("featureSlug", filters.featureSlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
   if (featureSlug) params.set("featureSlug", featureSlug);
@@ -294,8 +291,7 @@ async function fetchOutletsStats(
   const params = new URLSearchParams();
   if (groupBy) params.set("groupBy", groupBy);
   if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
-  if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
-  if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
+  if (filters.featureSlug) params.set("featureSlug", filters.featureSlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
@@ -344,11 +340,10 @@ async function fetchJournalistsStats(
   identity: Identity,
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams();
-  const supportedGroupBy = new Set(["featureSlug", "workflowSlug", "featureDynastySlug", "workflowDynastySlug"]);
+  const supportedGroupBy = new Set(["featureSlug", "workflowSlug"]);
   if (groupBy && supportedGroupBy.has(groupBy)) params.set("groupBy", groupBy);
   if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
-  if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
-  if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
+  if (filters.featureSlug) params.set("featureSlug", filters.featureSlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
@@ -399,11 +394,10 @@ async function fetchLeadsStats(
   identity: Identity,
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams();
-  const supportedGroupBy = new Set(["featureSlug", "workflowSlug", "featureDynastySlug", "workflowDynastySlug", "campaignId", "brandId"]);
+  const supportedGroupBy = new Set(["featureSlug", "workflowSlug", "campaignId", "brandId"]);
   if (groupBy && supportedGroupBy.has(groupBy)) params.set("groupBy", groupBy);
   if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
-  if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
-  if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
+  if (filters.featureSlug) params.set("featureSlug", filters.featureSlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
@@ -446,13 +440,12 @@ async function fetchPressKitsStats(
   identity: Identity,
 ): Promise<Map<string, Record<string, number>>> {
   const headers = buildDownstreamHeaders(getPressKitsServiceApiKey(), orgId, identity);
-  const supportedGroupBy = new Set(["brandId", "campaignId", "featureDynastySlug", "workflowDynastySlug"]);
+  const supportedGroupBy = new Set(["brandId", "campaignId", "featureSlug", "workflowSlug"]);
 
   function applyFilters(params: URLSearchParams): void {
     if (filters.brandId) params.set("brandId", filters.brandId);
     if (filters.campaignId) params.set("campaignId", filters.campaignId);
-    if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
-    if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
+      if (filters.featureSlug) params.set("featureSlug", filters.featureSlug);
   }
 
   const viewsParams = new URLSearchParams();
@@ -583,8 +576,7 @@ async function fetchPipelineStatsForFilter(
   const runsGroupBy = groupBy ?? "workflowSlug";
   const params = new URLSearchParams({ groupBy: runsGroupBy, serviceName: runFilter.serviceName, taskName: runFilter.taskName });
   if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
-  if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
-  if (filters.featureDynastySlug) params.set("featureDynastySlug", filters.featureDynastySlug);
+  if (filters.featureSlug) params.set("featureSlug", filters.featureSlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
   if (featureSlug) params.set("featureSlug", featureSlug);
@@ -689,10 +681,9 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     if (req.query.brandId) filters.brandId = req.query.brandId as string;
     if (req.query.campaignId) filters.campaignId = req.query.campaignId as string;
     if (req.query.workflowSlug) filters.workflowSlug = req.query.workflowSlug as string;
-    if (req.query.workflowDynastySlug) filters.workflowDynastySlug = req.query.workflowDynastySlug as string;
 
     // Scope downstream calls to this feature
-    filters.featureDynastySlug = featureSlug;
+    filters.featureSlug = featureSlug;
 
     const identity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };
     const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, pressKitsStatsMap, activeCampaigns] = await Promise.all([
@@ -751,7 +742,6 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       };
 
       if (groupBy === "workflowSlug") group.workflowSlug = groupKey;
-      if (groupBy === "workflowDynastySlug") group.workflowDynastySlug = groupKey;
       if (groupBy === "brandId") group.brandId = groupKey;
       if (groupBy === "campaignId") group.campaignId = groupKey;
 
@@ -775,9 +765,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
     const filters: Record<string, string> = {};
     if (req.query.brandId) filters.brandId = req.query.brandId as string;
     if (req.query.workflowSlug) filters.workflowSlug = req.query.workflowSlug as string;
-    if (req.query.workflowDynastySlug) filters.workflowDynastySlug = req.query.workflowDynastySlug as string;
     if (req.query.featureSlug) filters.featureSlug = req.query.featureSlug as string;
-    if (req.query.featureDynastySlug) filters.featureDynastySlug = req.query.featureDynastySlug as string;
     if (req.query.campaignId) filters.campaignId = req.query.campaignId as string;
 
     const groupBy = (groupByParam?.split(",")[0] ?? null) as GroupByDimension | null;
@@ -835,8 +823,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       };
 
       if (groupBy === "workflowSlug") group.workflowSlug = groupKey;
-      if (groupBy === "workflowDynastySlug") group.workflowDynastySlug = groupKey;
-      if (groupBy === "featureDynastySlug") group.featureDynastySlug = groupKey;
+      if (groupBy === "featureSlug") group.featureSlug = groupKey;
       if (groupBy === "brandId") group.brandId = groupKey;
       if (groupBy === "campaignId") group.campaignId = groupKey;
 
@@ -858,7 +845,7 @@ router.get("/stats/ranked", apiKeyAuth, async (req, res) => {
   try {
     const limitParam = parseInt(req.query.limit as string, 10);
     const limit = Number.isFinite(limitParam) && limitParam >= 1 ? limitParam : 10;
-    await handleRanked(req.query.featureDynastySlug as string | undefined, req.query.objective as string | undefined, req.query.groupBy as string | undefined, limit, res);
+    await handleRanked(req.query.featureSlug as string | undefined, req.query.objective as string | undefined, req.query.groupBy as string | undefined, limit, res);
   } catch (error) {
     console.error("[features-service] Stats ranked error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -867,7 +854,7 @@ router.get("/stats/ranked", apiKeyAuth, async (req, res) => {
 
 router.get("/stats/best", apiKeyAuth, async (req, res) => {
   try {
-    await handleBest(req.query.featureDynastySlug as string | undefined, req.query.groupBy as string | undefined, res);
+    await handleBest(req.query.featureSlug as string | undefined, req.query.groupBy as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Stats best error:", error);
     res.status(500).json({ error: "Internal server error" });
