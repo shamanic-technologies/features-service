@@ -405,28 +405,30 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     ],
 
     outputs: [
-      { key: "journalistsFound",        displayOrder: 1 },
-      { key: "emailsGenerated",         displayOrder: 2 },
-      { key: "journalistsContacted",    displayOrder: 3 },
-      { key: "emailsSent",              displayOrder: 4 },
-      { key: "emailsOpened",            displayOrder: 5 },
-      { key: "repliesPositive",          displayOrder: 6 },
-      { key: "repliesNegative",          displayOrder: 7 },
-      { key: "repliesNeutral",           displayOrder: 8 },
-      { key: "positiveReplyRate",        displayOrder: 9 },
-      { key: "costPerPositiveReplyCents", displayOrder: 10, defaultSort: true, sortDirection: "asc" },
+      { key: "outletsDiscovered",        displayOrder: 1 },
+      { key: "journalistsContacted",     displayOrder: 2 },
+      { key: "emailsGenerated",          displayOrder: 3 },
+      { key: "emailsSent",               displayOrder: 4 },
+      { key: "emailsOpened",             displayOrder: 5 },
+      { key: "openRate",                 displayOrder: 6 },
+      { key: "costPerOpenCents",         displayOrder: 7 },
+      { key: "repliesPositive",          displayOrder: 8 },
+      { key: "repliesNegative",          displayOrder: 9 },
+      { key: "repliesNeutral",           displayOrder: 10 },
+      { key: "positiveReplyRate",        displayOrder: 11 },
+      { key: "costPerPositiveReplyCents", displayOrder: 12, defaultSort: true, sortDirection: "asc" },
     ],
 
     charts: [
       {
         key: "funnel",
         type: "funnel-bar",
-        title: "Campaign Funnel",
+        title: "Outreach Funnel",
         displayOrder: 1,
         steps: [
-          { key: "journalistsFound" },
-          { key: "emailsGenerated" },
+          { key: "outletsDiscovered" },
           { key: "journalistsContacted" },
+          { key: "emailsGenerated" },
           { key: "emailsSent" },
           { key: "emailsOpened" },
           { key: "repliesPositive" },
@@ -447,10 +449,10 @@ export const SEED_FEATURES: UpsertFeatureBody[] = [
     ],
 
     entities: [
-      { name: "leads", countKey: "leadsServed" },
-      { name: "journalists", countKey: "journalistsFound" },
+      { name: "outlets", countKey: "outletsDiscovered" },
+      { name: "journalists", countKey: "journalistsContacted" },
       { name: "emails", countKey: "emailsGenerated" },
-      { name: "press-kits" },
+      { name: "articles" },
     ],
   },
 

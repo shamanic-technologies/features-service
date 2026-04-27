@@ -71,11 +71,11 @@ describe("SEED_FEATURES", () => {
     expect(outlets!.charts[1].type).toBe("breakdown-bar");
   });
 
-  it("PR Cold Email Outreach has 5 inputs and 10 outputs", () => {
+  it("PR Cold Email Outreach has 5 inputs and 12 outputs", () => {
     const pr = SEED_FEATURES.find((f) => f.name === "PR Cold Email Outreach");
     expect(pr).toBeDefined();
     expect(pr!.inputs).toHaveLength(5);
-    expect(pr!.outputs).toHaveLength(10);
+    expect(pr!.outputs).toHaveLength(12);
     expect(pr!.category).toBe("pr");
     expect(pr!.channel).toBe("email");
   });
@@ -90,10 +90,10 @@ describe("SEED_FEATURES", () => {
   it("PR Cold Email Outreach has correct entities", () => {
     const pr = SEED_FEATURES.find((f) => f.name === "PR Cold Email Outreach");
     expect(pr!.entities).toEqual([
-      { name: "leads", countKey: "leadsServed" },
-      { name: "journalists", countKey: "journalistsFound" },
+      { name: "outlets", countKey: "outletsDiscovered" },
+      { name: "journalists", countKey: "journalistsContacted" },
       { name: "emails", countKey: "emailsGenerated" },
-      { name: "press-kits" },
+      { name: "articles" },
     ]);
   });
 
