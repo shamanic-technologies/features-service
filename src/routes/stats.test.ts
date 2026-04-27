@@ -140,7 +140,7 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
     vi.restoreAllMocks();
   });
 
-  it("passes featureDynastySlug to all downstream services", async () => {
+  it("passes featureSlug to all downstream services", async () => {
     const urls: string[] = [];
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
@@ -171,7 +171,7 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
     expect(httpUrls.length).toBeGreaterThan(0);
     for (const url of httpUrls) {
       const parsed = new URL(url);
-      expect(parsed.searchParams.get("featureDynastySlug")).toBe("sales-cold-email-outreach");
+      expect(parsed.searchParams.get("featureSlug")).toBe("sales-cold-email-outreach");
     }
   });
 });
