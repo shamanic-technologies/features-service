@@ -1,8 +1,7 @@
 import { Router } from "express";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features, type Feature } from "../db/schema.js";
-import { resolveFeatureDynastySlugs } from "../lib/dynasty-client.js";
 import { STATS_REGISTRY } from "../lib/stats-registry.js";
 import {
   fetchPublicWorkflows,
@@ -16,25 +15,12 @@ import {
 const router = Router();
 
 // ── GET /public/features — List active features (landing page) ──────────────
-// Returns only display-safe fields. No internal IDs, no inputs/outputs definitions.
 
 router.get("/public/features", async (_req, res) => {
   try {
     const results = await db.query.features.findMany({
       where: eq(features.status, "active"),
-      columns: {
-        dynastyName: true,
-        dynastySlug: true,
-        description: true,
-        icon: true,
-        category: true,
-        channel: true,
-        audienceType: true,
-        displayOrder: true,
-      },
     });
-
-    results.sort((a, b) => a.displayOrder - b.displayOrder);
 
     res.json({ features: results });
   } catch (error) {
@@ -43,100 +29,30 @@ router.get("/public/features", async (_req, res) => {
   }
 });
 
-// ── GET /public/features/dynasty/slugs — All versioned slugs in a dynasty ───
-// Same as the authenticated version. No sensitive data — just slug strings.
-
-router.get("/public/features/dynasty/slugs", async (req, res) => {
-  try {
-    const dynastySlug = req.query.dynastySlug as string | undefined;
-    if (!dynastySlug) {
-      return res.status(400).json({ error: "Query parameter 'dynastySlug' is required" });
-    }
-
-    const results = await db.query.features.findMany({
-      where: eq(features.dynastySlug, dynastySlug),
-      columns: { slug: true, version: true },
-    });
-
-    if (results.length === 0) {
-      return res.status(404).json({ error: "No features found for this dynasty slug" });
-    }
-
-    results.sort((a, b) => a.version - b.version);
-
-    res.json({ slugs: results.map((f) => f.slug) });
-  } catch (error) {
-    console.error("[features-service] Public dynasty slugs error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
 /**
- * Resolve a dynasty slug to its active feature and all versioned slugs.
+ * Get all count-type stats keys from the registry.
  */
-async function resolveFeatureAndSlugs(dynastySlug: string): Promise<{ feature: Feature; featureSlugs: string[] } | null> {
-  const featureSlugs = await resolveFeatureDynastySlugs(dynastySlug);
-  if (featureSlugs.length === 0) return null;
-
-  const feature = await db.query.features.findFirst({
-    where: and(eq(features.dynastySlug, dynastySlug), eq(features.status, "active")),
-  });
-  if (!feature) return null;
-
-  return { feature, featureSlugs };
+function getAllCountKeys(): string[] {
+  return Object.entries(STATS_REGISTRY)
+    .filter(([, def]) => def.kind === "raw" && def.type === "count")
+    .map(([key]) => key);
 }
 
 /**
- * Get all count-type output keys from a feature's outputs.
+ * Get all output keys (raw + derived dependencies) from the registry.
  */
-function getCountOutputKeys(feature: Feature): string[] {
-  return feature.outputs
-    .map((o) => o.key)
-    .filter((key) => {
-      const def = STATS_REGISTRY[key];
-      return def && def.kind === "raw" && def.type === "count";
-    });
-}
-
-/**
- * Get all output keys from a feature, plus the raw dependencies of any derived keys.
- */
-function collectAllOutputKeys(feature: Feature): string[] {
+function getAllOutputKeys(): string[] {
   const keys = new Set<string>();
-  for (const output of feature.outputs) {
-    keys.add(output.key);
-    const def = STATS_REGISTRY[output.key];
-    if (def?.kind === "derived") {
+  for (const [key, def] of Object.entries(STATS_REGISTRY)) {
+    keys.add(key);
+    if (def.kind === "derived") {
       keys.add(def.numerator);
       keys.add(def.denominator);
     }
   }
   return [...keys];
-}
-
-/**
- * Resolve the effective objective key and sort direction from the feature's outputs.
- * Falls back to the first output if no defaultSort is set.
- */
-function resolveObjective(feature: Feature, requestedObjective: string | undefined): { key: string; direction: "asc" | "desc" } | null {
-  if (requestedObjective) {
-    const output = feature.outputs.find((o) => o.key === requestedObjective);
-    return { key: requestedObjective, direction: output?.sortDirection ?? "desc" };
-  }
-
-  const defaultOutput = feature.outputs.find((o) => o.defaultSort);
-  if (defaultOutput) {
-    return { key: defaultOutput.key, direction: defaultOutput.sortDirection ?? "desc" };
-  }
-
-  const firstOutput = feature.outputs[0];
-  if (firstOutput) {
-    return { key: firstOutput.key, direction: firstOutput.sortDirection ?? "desc" };
-  }
-
-  return null;
 }
 
 /**
@@ -158,11 +74,10 @@ function requiredSources(keys: string[]): Set<string> {
 }
 
 /**
- * Fetch all outcome stats from relevant sources and merge into a single map:
- * groupKey → { statsKey → value }
+ * Fetch all outcome stats from relevant sources.
  */
 async function fetchOutcomeStats(
-  featureSlugsStr: string,
+  featureSlug: string,
   groupBy: string,
   keys: string[],
 ): Promise<Map<string, Record<string, number>>> {
@@ -170,12 +85,8 @@ async function fetchOutcomeStats(
   const merged = new Map<string, Record<string, number>>();
 
   const promises: Promise<Map<string, Record<string, number>>>[] = [];
-  if (sources.has("email-gateway")) {
-    promises.push(fetchPublicEmailStats(featureSlugsStr, groupBy));
-  }
-  if (sources.has("journalists")) {
-    promises.push(fetchPublicJournalistsStats(featureSlugsStr, groupBy));
-  }
+  if (sources.has("email-gateway")) promises.push(fetchPublicEmailStats(featureSlug, groupBy));
+  if (sources.has("journalists")) promises.push(fetchPublicJournalistsStats(featureSlug, groupBy));
 
   const results = await Promise.all(promises);
   for (const map of results) {
@@ -190,13 +101,11 @@ async function fetchOutcomeStats(
 }
 
 /**
- * Compute all stats (raw + derived) for a single group from its raw values.
- * Only includes keys that are in the feature's output list.
+ * Compute all stats (raw + derived) for a single group.
  */
 function computeGroupStats(
   rawOutcomes: Record<string, number>,
   cost: { totalCostInUsdCents: number; completedRuns: number },
-  feature: Feature,
 ): Record<string, number | null> {
   const allRaw: Record<string, number> = {
     ...rawOutcomes,
@@ -206,20 +115,16 @@ function computeGroupStats(
 
   const result: Record<string, number | null> = {};
 
-  for (const output of feature.outputs) {
-    const def = STATS_REGISTRY[output.key];
-    if (!def) continue;
-
+  for (const [key, def] of Object.entries(STATS_REGISTRY)) {
     if (def.kind === "raw") {
-      result[output.key] = allRaw[output.key] ?? 0;
+      result[key] = allRaw[key] ?? 0;
     } else if (def.kind === "derived") {
       const num = allRaw[def.numerator];
       const den = allRaw[def.denominator];
-      result[output.key] = (num != null && den != null && den > 0) ? num / den : null;
+      result[key] = (num != null && den != null && den > 0) ? num / den : null;
     }
   }
 
-  // Always include system stats
   result.totalCostInUsdCents = cost.totalCostInUsdCents;
   result.completedRuns = cost.completedRuns;
 
@@ -227,8 +132,7 @@ function computeGroupStats(
 }
 
 /**
- * Build workflow upgrade chains: for each active workflow, collect all workflow slugs
- * in its upgrade chain (deprecated predecessors that upgraded to it).
+ * Build workflow upgrade chains for aggregation.
  */
 function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]> {
   const predecessorMap = new Map<string, string[]>();
@@ -237,9 +141,7 @@ function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]
 
   for (const wf of workflows) {
     idToSlug.set(wf.id, wf.slug);
-    if (wf.status === "active") {
-      activeWorkflows.push(wf);
-    }
+    if (wf.status === "active") activeWorkflows.push(wf);
     if (wf.upgradedTo) {
       const list = predecessorMap.get(wf.upgradedTo) ?? [];
       list.push(wf.slug);
@@ -259,10 +161,7 @@ function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]
       for (const predSlug of preds) {
         slugs.add(predSlug);
         for (const [id, slug] of idToSlug) {
-          if (slug === predSlug && !visited.has(id)) {
-            visited.add(id);
-            queue.push(id);
-          }
+          if (slug === predSlug && !visited.has(id)) { visited.add(id); queue.push(id); }
         }
       }
     }
@@ -273,9 +172,6 @@ function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]
   return chains;
 }
 
-/**
- * Aggregate costs and outcomes across workflow upgrade chains.
- */
 function aggregateAcrossChains(
   chains: Map<string, string[]>,
   costGroups: { dimensions: Record<string, string | null>; totalCostInUsdCents: string; runCount: number }[],
@@ -286,32 +182,21 @@ function aggregateAcrossChains(
   for (const group of costGroups) {
     const slug = group.dimensions[dimensionKey];
     if (!slug) continue;
-    perSlugCost.set(slug, {
-      totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)),
-      completedRuns: group.runCount,
-    });
+    perSlugCost.set(slug, { totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)), completedRuns: group.runCount });
   }
 
   const costMap = new Map<string, { totalCostInUsdCents: number; completedRuns: number }>();
   const aggregatedOutcomes = new Map<string, Record<string, number>>();
 
   for (const [activeSlug, chainSlugs] of chains) {
-    let totalCost = 0;
-    let totalRuns = 0;
+    let totalCost = 0, totalRuns = 0;
     const mergedOutcomes: Record<string, number> = {};
 
     for (const slug of chainSlugs) {
       const cost = perSlugCost.get(slug);
-      if (cost) {
-        totalCost += cost.totalCostInUsdCents;
-        totalRuns += cost.completedRuns;
-      }
+      if (cost) { totalCost += cost.totalCostInUsdCents; totalRuns += cost.completedRuns; }
       const outcomes = outcomeMap.get(slug);
-      if (outcomes) {
-        for (const [k, v] of Object.entries(outcomes)) {
-          mergedOutcomes[k] = (mergedOutcomes[k] ?? 0) + v;
-        }
-      }
+      if (outcomes) { for (const [k, v] of Object.entries(outcomes)) { mergedOutcomes[k] = (mergedOutcomes[k] ?? 0) + v; } }
     }
 
     if (totalRuns > 0) {
@@ -330,7 +215,6 @@ export async function handleRanked(
   requestedObjective: string | undefined,
   groupBy: string | undefined,
   limit: number,
-  minRuns: number,
   res: import("express").Response,
 ): Promise<void> {
   if (!featureDynastySlug) {
@@ -342,30 +226,28 @@ export async function handleRanked(
     return;
   }
 
-  const resolved = await resolveFeatureAndSlugs(featureDynastySlug);
-  if (!resolved) {
+  const feature = await db.query.features.findFirst({
+    where: eq(features.slug, featureDynastySlug),
+  });
+  if (!feature) {
     res.status(404).json({ error: "No features found for this dynasty slug" });
     return;
   }
 
-  const { feature, featureSlugs } = resolved;
-  const objective = resolveObjective(feature, requestedObjective);
-  if (!objective) {
-    res.status(400).json({ error: "Feature has no outputs defined" });
-    return;
-  }
+  const objective = requestedObjective ?? "costPerRecipientPositiveReplyCents";
+  const objectiveDef = STATS_REGISTRY[objective];
+  const sortDirection = (objectiveDef?.kind === "derived" && objectiveDef.type === "currency") ? "asc" : "desc";
 
-  const featureSlugsStr = featureSlugs.join(",");
+  const featureSlug = feature.slug;
   const isBrandGrouping = groupBy === "brand";
   const statsGroupBy = isBrandGrouping ? "brandId" : "workflowSlug";
 
-  // Fetch ALL output stats (not just the objective) so we return full stats per group
-  const allKeys = collectAllOutputKeys(feature);
+  const allKeys = getAllOutputKeys();
 
   const [workflows, costGroups, outcomeMap] = await Promise.all([
-    isBrandGrouping ? Promise.resolve([]) : fetchPublicWorkflows(featureSlugsStr, "all"),
-    fetchPublicCosts(featureSlugsStr, statsGroupBy),
-    fetchOutcomeStats(featureSlugsStr, statsGroupBy, allKeys),
+    isBrandGrouping ? Promise.resolve([]) : fetchPublicWorkflows(featureSlug, "all"),
+    fetchPublicCosts(featureSlug, statsGroupBy),
+    fetchOutcomeStats(featureSlug, statsGroupBy, allKeys),
   ]);
 
   let costMap: Map<string, { totalCostInUsdCents: number; completedRuns: number }>;
@@ -377,10 +259,7 @@ export async function handleRanked(
     for (const group of costGroups) {
       const key = group.dimensions.brandId;
       if (!key) continue;
-      costMap.set(key, {
-        totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)),
-        completedRuns: group.runCount,
-      });
+      costMap.set(key, { totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)), completedRuns: group.runCount });
     }
   } else {
     const chains = buildUpgradeChains(workflows);
@@ -389,29 +268,24 @@ export async function handleRanked(
     aggregatedOutcomes = agg.aggregatedOutcomes;
   }
 
-  // Build full stats for each group, filter by minimum volume, then sort by objective
-  const allEntries: { key: string; stats: Record<string, number | null>; completedRuns: number }[] = [];
+  const entries: { key: string; stats: Record<string, number | null> }[] = [];
   for (const [key, cost] of costMap) {
     const rawOutcomes = aggregatedOutcomes.get(key) ?? {};
-    const stats = computeGroupStats(rawOutcomes, cost, feature);
-    allEntries.push({ key, stats, completedRuns: cost.completedRuns });
+    const stats = computeGroupStats(rawOutcomes, cost);
+    entries.push({ key, stats });
   }
 
-  const entries = allEntries.filter((e) => e.completedRuns >= minRuns);
-
-  // Sort by objective value
   entries.sort((a, b) => {
-    const aVal = a.stats[objective.key];
-    const bVal = b.stats[objective.key];
+    const aVal = a.stats[objective];
+    const bVal = b.stats[objective];
     if (aVal == null && bVal == null) return 0;
     if (aVal == null) return 1;
     if (bVal == null) return -1;
-    return objective.direction === "asc" ? aVal - bVal : bVal - aVal;
+    return sortDirection === "asc" ? aVal - bVal : bVal - aVal;
   });
 
   const top = entries.slice(0, limit);
 
-  // Enrich brands with name/domain from brand-service
   let brandInfoMap = new Map<string, { id: string; name: string | null; domain: string | null }>();
   if (isBrandGrouping && top.length > 0) {
     brandInfoMap = await fetchBrandInfoBatch(top.map((e) => e.key));
@@ -422,36 +296,19 @@ export async function handleRanked(
   const results = top.map(({ key, stats }) => {
     if (isBrandGrouping) {
       const brand = brandInfoMap.get(key);
-      return {
-        brand: {
-          id: key,
-          name: brand?.name ?? null,
-          domain: brand?.domain ?? null,
-        },
-        stats,
-      };
+      return { brand: { id: key, name: brand?.name ?? null, domain: brand?.domain ?? null }, stats };
     }
     const wf = workflowBySlug.get(key);
     return {
       workflow: wf ? {
-        id: wf.id,
-        slug: wf.slug,
-        name: wf.name,
-        dynastyName: wf.dynastyName,
-        dynastySlug: wf.dynastySlug,
-        version: wf.version,
-        featureSlug: wf.featureSlug,
-        createdForBrandId: wf.createdForBrandId,
+        id: wf.id, slug: wf.slug, name: wf.name, dynastyName: wf.dynastyName, dynastySlug: wf.dynastySlug,
+        version: wf.version, featureSlug: wf.featureSlug, createdForBrandId: wf.createdForBrandId,
       } : { slug: key },
       stats,
     };
   });
 
-  res.json({
-    objective: objective.key,
-    sortDirection: objective.direction,
-    results,
-  });
+  res.json({ objective, sortDirection, results });
 }
 
 // ── Best handler ────────────────────────────────────────────────────────────
@@ -470,23 +327,23 @@ export async function handleBest(
     return;
   }
 
-  const resolved = await resolveFeatureAndSlugs(featureDynastySlug);
-  if (!resolved) {
+  const feature = await db.query.features.findFirst({
+    where: eq(features.slug, featureDynastySlug),
+  });
+  if (!feature) {
     res.status(404).json({ error: "No features found for this dynasty slug" });
     return;
   }
 
-  const { feature, featureSlugs } = resolved;
-  const countKeys = getCountOutputKeys(feature);
-  const featureSlugsStr = featureSlugs.join(",");
-
+  const countKeys = getAllCountKeys();
+  const featureSlug = feature.slug;
   const isBrandMode = groupBy === "brand";
   const statsGroupBy = isBrandMode ? "brandId" : "workflowSlug";
 
   const [workflows, costGroups, outcomeMap] = await Promise.all([
-    isBrandMode ? Promise.resolve([]) : fetchPublicWorkflows(featureSlugsStr, "all"),
-    fetchPublicCosts(featureSlugsStr, statsGroupBy),
-    fetchOutcomeStats(featureSlugsStr, statsGroupBy, countKeys),
+    isBrandMode ? Promise.resolve([]) : fetchPublicWorkflows(featureSlug, "all"),
+    fetchPublicCosts(featureSlug, statsGroupBy),
+    fetchOutcomeStats(featureSlug, statsGroupBy, countKeys),
   ]);
 
   let costMap: Map<string, { totalCostInUsdCents: number; completedRuns: number }>;
@@ -498,10 +355,7 @@ export async function handleBest(
     for (const group of costGroups) {
       const key = group.dimensions.brandId;
       if (!key) continue;
-      costMap.set(key, {
-        totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)),
-        completedRuns: group.runCount,
-      });
+      costMap.set(key, { totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)), completedRuns: group.runCount });
     }
   } else {
     const chains = buildUpgradeChains(workflows);
@@ -512,13 +366,7 @@ export async function handleBest(
 
   const workflowBySlug = new Map(workflows.map((w) => [w.slug, w]));
 
-  const best: Record<string, {
-    workflowSlug?: string;
-    workflowName?: string;
-    brandId?: string;
-    createdForBrandId?: string | null;
-    value: number;
-  } | null> = {};
+  const best: Record<string, { workflowSlug?: string; workflowName?: string; brandId?: string; createdForBrandId?: string | null; value: number } | null> = {};
 
   for (const metricKey of countKeys) {
     let bestKey: string | null = null;
@@ -528,10 +376,7 @@ export async function handleBest(
       const outcomes = aggregatedOutcomes.get(key)?.[metricKey] ?? 0;
       if (outcomes <= 0) continue;
       const cpo = cost.totalCostInUsdCents / outcomes;
-      if (cpo < bestCostPerOutcome) {
-        bestCostPerOutcome = cpo;
-        bestKey = key;
-      }
+      if (cpo < bestCostPerOutcome) { bestCostPerOutcome = cpo; bestKey = key; }
     }
 
     if (bestKey === null) {
@@ -540,12 +385,7 @@ export async function handleBest(
       best[metricKey] = { brandId: bestKey, value: bestCostPerOutcome };
     } else {
       const wf = workflowBySlug.get(bestKey);
-      best[metricKey] = {
-        workflowSlug: wf?.slug ?? bestKey,
-        workflowName: wf?.name ?? bestKey,
-        createdForBrandId: wf?.createdForBrandId ?? null,
-        value: bestCostPerOutcome,
-      };
+      best[metricKey] = { workflowSlug: wf?.slug ?? bestKey, workflowName: wf?.name ?? bestKey, createdForBrandId: wf?.createdForBrandId ?? null, value: bestCostPerOutcome };
     }
   }
 
@@ -558,17 +398,7 @@ router.get("/public/stats/ranked", async (req, res) => {
   try {
     const limitParam = parseInt(req.query.limit as string, 10);
     const limit = Number.isFinite(limitParam) && limitParam >= 1 ? limitParam : 3;
-    const minRunsParam = parseInt(req.query.minRuns as string, 10);
-    const minRuns = Number.isFinite(minRunsParam) && minRunsParam >= 0 ? minRunsParam : 100;
-
-    await handleRanked(
-      req.query.featureDynastySlug as string | undefined,
-      req.query.objective as string | undefined,
-      req.query.groupBy as string | undefined,
-      limit,
-      minRuns,
-      res,
-    );
+    await handleRanked(req.query.featureDynastySlug as string | undefined, req.query.objective as string | undefined, req.query.groupBy as string | undefined, limit, res);
   } catch (error) {
     console.error("[features-service] Public stats ranked error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -579,11 +409,7 @@ router.get("/public/stats/ranked", async (req, res) => {
 
 router.get("/public/stats/best", async (req, res) => {
   try {
-    await handleBest(
-      req.query.featureDynastySlug as string | undefined,
-      req.query.groupBy as string | undefined,
-      res,
-    );
+    await handleBest(req.query.featureDynastySlug as string | undefined, req.query.groupBy as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public stats best error:", error);
     res.status(500).json({ error: "Internal server error" });
