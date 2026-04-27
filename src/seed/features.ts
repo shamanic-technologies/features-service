@@ -78,8 +78,8 @@ export const SEED_FEATURES: SeedFeature[] = [
     ],
     outputs: [
       { key: "outletsDiscovered", displayOrder: 1 },
-      { key: "journalistsContacted", displayOrder: 2 },
-      { key: "emailsGenerated", displayOrder: 3 },
+      { key: "emailsGenerated", displayOrder: 2 },
+      { key: "journalistsContacted", displayOrder: 3 },
       { key: "recipientsSent", displayOrder: 4 },
       { key: "recipientsOpened", displayOrder: 5 },
       { key: "recipientOpenRate", displayOrder: 6 },
@@ -91,7 +91,7 @@ export const SEED_FEATURES: SeedFeature[] = [
       { key: "costPerRecipientPositiveReplyCents", defaultSort: true, displayOrder: 12, sortDirection: "asc" },
     ],
     charts: [
-      { key: "funnel", type: "funnel-bar", title: "Outreach Funnel", displayOrder: 1, steps: [{ key: "outletsDiscovered" }, { key: "journalistsContacted" }, { key: "emailsGenerated" }, { key: "recipientsSent" }, { key: "recipientsOpened" }, { key: "recipientsRepliesPositive" }] },
+      { key: "funnel", type: "funnel-bar", title: "Outreach Funnel", displayOrder: 1, steps: [{ key: "outletsDiscovered" }, { key: "emailsGenerated" }, { key: "journalistsContacted" }, { key: "recipientsSent" }, { key: "recipientsOpened" }, { key: "recipientsRepliesPositive" }] },
       { key: "replyBreakdown", type: "breakdown-bar", title: "Reply Breakdown", displayOrder: 2, segments: [{ key: "recipientsRepliesPositive", color: "green", sentiment: "positive" }, { key: "recipientsRepliesNeutral", color: "gray", sentiment: "neutral" }, { key: "recipientsRepliesNegative", color: "red", sentiment: "negative" }, { key: "recipientsRepliesAutoReply", color: "orange", sentiment: "neutral" }] },
     ],
     entities: [
