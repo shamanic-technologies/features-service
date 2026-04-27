@@ -39,9 +39,9 @@ const MOCK_FEATURE = {
   upgradedTo: null,
   inputs: [],
   outputs: [
-    { key: "emailsSent", displayOrder: 1 },
-    { key: "emailsOpened", displayOrder: 2 },
-    { key: "repliesPositive", displayOrder: 3 },
+    { key: "recipientsSent", displayOrder: 1 },
+    { key: "recipientsOpened", displayOrder: 2 },
+    { key: "recipientsRepliesPositive", displayOrder: 3 },
   ],
   charts: [],
   entityTypes: [],
@@ -81,8 +81,8 @@ describe("stats exclude transactional emails", () => {
           ok: true,
           json: () =>
             Promise.resolve({
-              broadcast: { emailsSent: 100, emailsOpened: 40, repliesPositive: 10 },
-              transactional: { emailsSent: 500, emailsOpened: 200, repliesPositive: 50 },
+              broadcast: { recipientStats: { sent: 100, opened: 40, repliesPositive: 10 } },
+              transactional: { recipientStats: { sent: 500, opened: 200, repliesPositive: 50 } },
             }),
         });
       }
@@ -113,9 +113,9 @@ describe("stats exclude transactional emails", () => {
       .expect(200);
 
     // Should only include broadcast numbers, not broadcast + transactional
-    expect(res.body.stats.emailsSent).toBe(100);
-    expect(res.body.stats.emailsOpened).toBe(40);
-    expect(res.body.stats.repliesPositive).toBe(10);
+    expect(res.body.stats.recipientsSent).toBe(100);
+    expect(res.body.stats.recipientsOpened).toBe(40);
+    expect(res.body.stats.recipientsRepliesPositive).toBe(10);
   });
 
   it("returns zero when only transactional stats exist", async () => {
@@ -163,9 +163,9 @@ describe("stats exclude transactional emails", () => {
       .expect(200);
 
     // No broadcast data → all null (transactional values not included)
-    expect(res.body.stats.emailsSent).toBeNull();
-    expect(res.body.stats.emailsOpened).toBeNull();
-    expect(res.body.stats.repliesPositive).toBeNull();
+    expect(res.body.stats.recipientsSent).toBeNull();
+    expect(res.body.stats.recipientsOpened).toBeNull();
+    expect(res.body.stats.recipientsRepliesPositive).toBeNull();
   });
 
   it("works with grouped response — only broadcast per group", async () => {
@@ -184,8 +184,8 @@ describe("stats exclude transactional emails", () => {
               groups: [
                 {
                   key: "brand-1",
-                  broadcast: { emailsSent: 50, emailsOpened: 20, repliesPositive: 5 },
-                  transactional: { emailsSent: 300, emailsOpened: 150, repliesPositive: 30 },
+                  broadcast: { recipientStats: { sent: 50, opened: 20, repliesPositive: 5 } },
+                  transactional: { recipientStats: { sent: 300, opened: 150, repliesPositive: 30 } },
                 },
               ],
             }),
@@ -217,9 +217,9 @@ describe("stats exclude transactional emails", () => {
       .expect(200);
 
     const group = res.body.groups[0];
-    expect(group.stats.emailsSent).toBe(50);
-    expect(group.stats.emailsOpened).toBe(20);
-    expect(group.stats.repliesPositive).toBe(5);
+    expect(group.stats.recipientsSent).toBe(50);
+    expect(group.stats.recipientsOpened).toBe(20);
+    expect(group.stats.recipientsRepliesPositive).toBe(5);
   });
 
   it("does not crash when broadcast field is absent from response", async () => {
@@ -265,10 +265,10 @@ describe("stats exclude transactional emails", () => {
       .set("x-run-id", "run-1")
       .expect(200);
 
-    // broadcast absent → all email stats should be null (0 raw → null derived)
-    expect(res.body.stats.emailsSent).toBeNull();
-    expect(res.body.stats.emailsOpened).toBeNull();
-    expect(res.body.stats.repliesPositive).toBeNull();
+    // broadcast absent → all recipient stats should be null
+    expect(res.body.stats.recipientsSent).toBeNull();
+    expect(res.body.stats.recipientsOpened).toBeNull();
+    expect(res.body.stats.recipientsRepliesPositive).toBeNull();
   });
 
   it("does not crash when broadcast field is absent in grouped response", async () => {
@@ -320,8 +320,8 @@ describe("stats exclude transactional emails", () => {
       .expect(200);
 
     const group = res.body.groups[0];
-    // No broadcast data → email stats are null
-    expect(group.stats.emailsSent).toBeNull();
-    expect(group.stats.emailsOpened).toBeNull();
+    // No broadcast data → recipient stats are null
+    expect(group.stats.recipientsSent).toBeNull();
+    expect(group.stats.recipientsOpened).toBeNull();
   });
 });

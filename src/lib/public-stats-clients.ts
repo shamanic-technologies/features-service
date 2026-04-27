@@ -102,18 +102,25 @@ export async function fetchPublicEmailStats(
   return result;
 }
 
-const EMAIL_FIELDS = [
-  "emailsContacted", "emailsSent", "emailsDelivered", "emailsOpened",
-  "emailsClicked", "emailsBounced", "recipients",
-  "repliesPositive", "repliesNegative", "repliesNeutral", "repliesAutoReply",
-];
-
 function extractBroadcastEmailFields(data: Record<string, unknown>): Record<string, number> {
   const result: Record<string, number> = {};
-  const broadcast = data.broadcast as Record<string, number>;
-  for (const field of EMAIL_FIELDS) {
-    result[field] = broadcast[field];
-  }
+  const broadcast = data.broadcast as Record<string, unknown> | undefined;
+  if (!broadcast) return result;
+
+  const recipientStats = broadcast.recipientStats as Record<string, number> | undefined;
+  if (!recipientStats) return result;
+
+  result.recipientsContacted = recipientStats.contacted;
+  result.recipientsSent = recipientStats.sent;
+  result.recipientsDelivered = recipientStats.delivered;
+  result.recipientsOpened = recipientStats.opened;
+  result.recipientsClicked = recipientStats.clicked;
+  result.recipientsBounced = recipientStats.bounced;
+  result.recipientsRepliesPositive = recipientStats.repliesPositive;
+  result.recipientsRepliesNegative = recipientStats.repliesNegative;
+  result.recipientsRepliesNeutral = recipientStats.repliesNeutral;
+  result.recipientsRepliesAutoReply = recipientStats.repliesAutoReply;
+
   return result;
 }
 
