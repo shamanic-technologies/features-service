@@ -42,8 +42,8 @@ describe("fork signature logic", () => {
 
   it("metadata changes with same inputs/outputs → same signature (no fork)", () => {
     // This verifies that metadata-only changes don't trigger a fork
-    const sig1 = computeSignature(["targetAudience"], ["emailsSent"]);
-    const sig2 = computeSignature(["targetAudience"], ["emailsSent"]);
+    const sig1 = computeSignature(["targetAudience"], ["recipientsSent"]);
+    const sig2 = computeSignature(["targetAudience"], ["recipientsSent"]);
     expect(sig1).toBe(sig2);
   });
 });
@@ -52,8 +52,8 @@ describe("lineage stats aggregation", () => {
   it("same feature queried across chain produces consistent signatures", () => {
     // When a feature is forked, the old version has different inputs/outputs (different signature).
     // Stats aggregation should query all slugs in the chain, not just the active one.
-    const originalSig = computeSignature(["targetAudience", "tone"], ["emailsSent", "positiveReplyRate"]);
-    const forkedSig = computeSignature(["targetAudience", "tone", "newField"], ["emailsSent", "positiveReplyRate"]);
+    const originalSig = computeSignature(["targetAudience", "tone"], ["recipientsSent", "recipientPositiveReplyRate"]);
+    const forkedSig = computeSignature(["targetAudience", "tone", "newField"], ["recipientsSent", "recipientPositiveReplyRate"]);
 
     // Different signatures confirm they're different features in the chain
     expect(originalSig).not.toBe(forkedSig);
@@ -65,7 +65,7 @@ describe("lineage stats aggregation", () => {
 
 describe("fork-on-write decision matrix", () => {
   const existingInputKeys = ["targetAudience", "tone"];
-  const existingOutputKeys = ["emailsSent", "positiveReplyRate"];
+  const existingOutputKeys = ["recipientsSent", "recipientPositiveReplyRate"];
   const existingSignature = computeSignature(existingInputKeys, existingOutputKeys);
 
   it("no inputs/outputs change → metadata-only → 200", () => {
@@ -81,7 +81,7 @@ describe("fork-on-write decision matrix", () => {
   });
 
   it("outputs change → new signature → fork → 201", () => {
-    const newOutputKeys = ["emailsSent", "positiveReplyRate", "openRate"];
+    const newOutputKeys = ["recipientsSent", "recipientPositiveReplyRate", "recipientOpenRate"];
     const newSignature = computeSignature(existingInputKeys, newOutputKeys);
     expect(newSignature).not.toBe(existingSignature);
   });

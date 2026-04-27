@@ -13,12 +13,12 @@ const validInput = {
 };
 
 const validOutput = {
-  key: "emailsSent",
+  key: "recipientsSent",
   displayOrder: 1,
 };
 
 const validOutputWithSort = {
-  key: "costPerPositiveReplyCents",
+  key: "costPerRecipientPositiveReplyCents",
   displayOrder: 2,
   defaultSort: true,
   sortDirection: "asc" as const,
@@ -31,7 +31,7 @@ const validFunnelChart = {
   displayOrder: 1,
   steps: [
     { key: "leadsServed" },
-    { key: "emailsSent" },
+    { key: "recipientsSent" },
   ],
 };
 
@@ -41,8 +41,8 @@ const validBreakdownChart = {
   title: "Reply Breakdown",
   displayOrder: 2,
   segments: [
-    { key: "repliesPositive", color: "green" as const, sentiment: "positive" as const },
-    { key: "repliesNegative", color: "red" as const, sentiment: "negative" as const },
+    { key: "recipientsRepliesPositive", color: "green" as const, sentiment: "positive" as const },
+    { key: "recipientsRepliesNegative", color: "red" as const, sentiment: "negative" as const },
   ],
 };
 
@@ -207,7 +207,7 @@ describe("upsertFeatureSchema", () => {
     const result = upsertFeatureSchema.safeParse({
       ...validFeature,
       charts: [
-        { ...validFunnelChart, steps: [{ key: "emailsSent" }] },
+        { ...validFunnelChart, steps: [{ key: "recipientsSent" }] },
         validBreakdownChart,
       ],
     });
@@ -237,7 +237,7 @@ describe("upsertFeatureSchema", () => {
     const result = upsertFeatureSchema.safeParse({
       ...validFeature,
       charts: [
-        { ...validFunnelChart, steps: [{ key: "emailsSent" }, { key: "unknownKey" }] },
+        { ...validFunnelChart, steps: [{ key: "recipientsSent" }, { key: "unknownKey" }] },
         validBreakdownChart,
       ],
     });

@@ -251,25 +251,27 @@ async function fetchEmailStats(
 }
 
 /**
- * Extract broadcast-only email stats (transactional emails are excluded).
+ * Extract broadcast recipient-level stats (transactional emails are excluded).
+ * Maps email-gateway's recipientStats fields to our registry key names.
  */
 function mergeEmailChannels(data: Record<string, unknown>): Record<string, number> {
   const result: Record<string, number> = {};
-  const emailFields = [
-    "emailsContacted", "emailsSent", "emailsDelivered", "emailsOpened",
-    "emailsClicked", "emailsBounced", "recipients",
-    "repliesPositive", "repliesNegative", "repliesNeutral", "repliesAutoReply",
-  ];
+  const broadcast = data.broadcast as Record<string, unknown> | undefined;
+  if (!broadcast) return result;
 
-  const broadcast = data.broadcast as Record<string, number> | undefined;
+  const recipientStats = broadcast.recipientStats as Record<string, number> | undefined;
+  if (!recipientStats) return result;
 
-  if (!broadcast) {
-    return result;
-  }
-
-  for (const field of emailFields) {
-    result[field] = broadcast[field];
-  }
+  result.recipientsContacted = recipientStats.contacted;
+  result.recipientsSent = recipientStats.sent;
+  result.recipientsDelivered = recipientStats.delivered;
+  result.recipientsOpened = recipientStats.opened;
+  result.recipientsClicked = recipientStats.clicked;
+  result.recipientsBounced = recipientStats.bounced;
+  result.recipientsRepliesPositive = recipientStats.repliesPositive;
+  result.recipientsRepliesNegative = recipientStats.repliesNegative;
+  result.recipientsRepliesNeutral = recipientStats.repliesNeutral;
+  result.recipientsRepliesAutoReply = recipientStats.repliesAutoReply;
 
   return result;
 }

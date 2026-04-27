@@ -400,7 +400,7 @@ const MOCK_FEATURE_V2 = {
   version: 2,
   status: "active",
   inputs: [{ key: "target", label: "Target", type: "text", placeholder: "...", description: "desc", extractKey: "target" }],
-  outputs: [{ key: "emailsSent", displayOrder: 1 }],
+  outputs: [{ key: "recipientsSent", displayOrder: 1 }],
   charts: [],
   entities: [],
 };
@@ -558,12 +558,12 @@ describe("PUT /features — dynasty matching", () => {
             { key: "targetOutlets", label: "Target Outlets", type: "text", placeholder: "TechCrunch", description: "Outlets", extractKey: "targetOutlets" },
           ],
           outputs: [
-            { key: "repliesPositive", displayOrder: 1 },
-            { key: "repliesNegative", displayOrder: 2 },
+            { key: "recipientsRepliesPositive", displayOrder: 1 },
+            { key: "recipientsRepliesNegative", displayOrder: 2 },
           ],
           charts: [
-            { key: "funnel", type: "funnel-bar", title: "Funnel", displayOrder: 1, steps: [{ key: "emailsSent" }, { key: "repliesPositive" }] },
-            { key: "breakdown", type: "breakdown-bar", title: "Breakdown", displayOrder: 2, segments: [{ key: "repliesPositive", color: "green", sentiment: "positive" }, { key: "repliesNegative", color: "red", sentiment: "negative" }] },
+            { key: "funnel", type: "funnel-bar", title: "Funnel", displayOrder: 1, steps: [{ key: "recipientsSent" }, { key: "recipientsRepliesPositive" }] },
+            { key: "breakdown", type: "breakdown-bar", title: "Breakdown", displayOrder: 2, segments: [{ key: "recipientsRepliesPositive", color: "green", sentiment: "positive" }, { key: "recipientsRepliesNegative", color: "red", sentiment: "negative" }] },
           ],
           entities: [{ name: "journalists" }],
         }],
@@ -623,11 +623,11 @@ describe("PUT /features — dynasty matching", () => {
             { key: "targetAudience", label: "Target", type: "text", placeholder: "CTOs", description: "Who", extractKey: "targetAudience" },
           ],
           outputs: [
-            { key: "repliesPositive", displayOrder: 1 },
+            { key: "recipientsRepliesPositive", displayOrder: 1 },
           ],
           charts: [
-            { key: "funnel", type: "funnel-bar", title: "Funnel", displayOrder: 1, steps: [{ key: "emailsSent" }, { key: "repliesPositive" }] },
-            { key: "breakdown", type: "breakdown-bar", title: "Breakdown", displayOrder: 2, segments: [{ key: "repliesPositive", color: "green", sentiment: "positive" }, { key: "repliesNegative", color: "red", sentiment: "negative" }] },
+            { key: "funnel", type: "funnel-bar", title: "Funnel", displayOrder: 1, steps: [{ key: "recipientsSent" }, { key: "recipientsRepliesPositive" }] },
+            { key: "breakdown", type: "breakdown-bar", title: "Breakdown", displayOrder: 2, segments: [{ key: "recipientsRepliesPositive", color: "green", sentiment: "positive" }, { key: "recipientsRepliesNegative", color: "red", sentiment: "negative" }] },
           ],
           entities: [{ name: "leads" }],
         }],

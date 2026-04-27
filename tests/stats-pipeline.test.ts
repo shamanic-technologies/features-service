@@ -41,7 +41,7 @@ const SALES_FEATURE = {
   outputs: [
     { key: "leadsServed", displayOrder: 1 },
     { key: "emailsGenerated", displayOrder: 2 },
-    { key: "emailsSent", displayOrder: 3 },
+    { key: "recipientsSent", displayOrder: 3 },
   ],
   charts: [],
   entityTypes: [],
@@ -497,7 +497,7 @@ describe("reply aggregate extraction", () => {
     upgradedTo: null,
     inputs: [],
     outputs: [
-      { key: "emailsSent", displayOrder: 1 },
+      { key: "recipientsSent", displayOrder: 1 },
     ],
     charts: [
       {
@@ -506,10 +506,10 @@ describe("reply aggregate extraction", () => {
         title: "Reply Breakdown",
         displayOrder: 1,
         segments: [
-          { key: "repliesPositive", color: "green", sentiment: "positive" },
-          { key: "repliesNegative", color: "red", sentiment: "negative" },
-          { key: "repliesNeutral", color: "gray", sentiment: "neutral" },
-          { key: "repliesAutoReply", color: "orange", sentiment: "neutral" },
+          { key: "recipientsRepliesPositive", color: "green", sentiment: "positive" },
+          { key: "recipientsRepliesNegative", color: "red", sentiment: "negative" },
+          { key: "recipientsRepliesNeutral", color: "gray", sentiment: "neutral" },
+          { key: "recipientsRepliesAutoReply", color: "orange", sentiment: "neutral" },
         ],
       },
     ],
@@ -543,11 +543,18 @@ describe("reply aggregate extraction", () => {
           ok: true,
           json: () => Promise.resolve({
             broadcast: {
-              emailsSent: 100,
-              repliesPositive: 12,
-              repliesNegative: 5,
-              repliesNeutral: 3,
-              repliesAutoReply: 2,
+              recipientStats: {
+                contacted: 100,
+                sent: 100,
+                delivered: 95,
+                opened: 40,
+                clicked: 20,
+                bounced: 5,
+                repliesPositive: 12,
+                repliesNegative: 5,
+                repliesNeutral: 3,
+                repliesAutoReply: 2,
+              },
             },
           }),
         });
@@ -570,10 +577,10 @@ describe("reply aggregate extraction", () => {
       .set("x-run-id", "run-1")
       .expect(200);
 
-    expect(res.body.stats.repliesPositive).toBe(12);
-    expect(res.body.stats.repliesNegative).toBe(5);
-    expect(res.body.stats.repliesNeutral).toBe(3);
-    expect(res.body.stats.repliesAutoReply).toBe(2);
+    expect(res.body.stats.recipientsRepliesPositive).toBe(12);
+    expect(res.body.stats.recipientsRepliesNegative).toBe(5);
+    expect(res.body.stats.recipientsRepliesNeutral).toBe(3);
+    expect(res.body.stats.recipientsRepliesAutoReply).toBe(2);
   });
 });
 
@@ -594,7 +601,7 @@ describe("activeCampaigns in systemStats", () => {
       forkedFrom: null,
       upgradedTo: null,
       inputs: [],
-      outputs: [{ key: "emailsSent", displayOrder: 1 }],
+      outputs: [{ key: "recipientsSent", displayOrder: 1 }],
       charts: [],
       entityTypes: [],
       workflows: [],
@@ -660,7 +667,7 @@ describe("firstRunAt / lastRunAt in systemStats", () => {
       forkedFrom: null,
       upgradedTo: null,
       inputs: [],
-      outputs: [{ key: "emailsSent", displayOrder: 1 }],
+      outputs: [{ key: "recipientsSent", displayOrder: 1 }],
       charts: [],
       entityTypes: [],
       workflows: [],

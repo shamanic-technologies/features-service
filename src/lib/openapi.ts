@@ -545,9 +545,9 @@ registry.registerPath({
     "```json\n" +
     "{\n" +
     "  \"registry\": {\n" +
-    "    \"emailsSent\": { \"type\": \"count\", \"label\": \"Emails Sent\" },\n" +
-    "    \"repliesPositive\": { \"type\": \"count\", \"label\": \"Positive\" },\n" +
-    "    \"positiveReplyRate\": { \"type\": \"rate\", \"label\": \"% Positive\" },\n" +
+    "    \"recipientsSent\": { \"type\": \"count\", \"label\": \"Sent\" },\n" +
+    "    \"recipientsRepliesPositive\": { \"type\": \"count\", \"label\": \"Positive\" },\n" +
+    "    \"recipientPositiveReplyRate\": { \"type\": \"rate\", \"label\": \"% Positive\" },\n" +
     "    \"totalCostInUsdCents\": { \"type\": \"currency\", \"label\": \"Total Cost\" }\n" +
     "  }\n" +
     "}\n" +
@@ -647,14 +647,14 @@ registry.registerPath({
     "**This endpoint requires an exact versioned slug** (e.g. `sales-cold-email-v2`). NOT a dynasty slug. " +
     "For dynasty-wide aggregated stats, use `GET /stats/dynasty?dynastySlug=...`.\n\n" +
     "Stats keys are either **raw** (fetched from email-gateway, runs-service, or outlets-service) " +
-    "or **derived** (computed as a ratio, e.g. `positiveReplyRate = repliesPositive / emailsDelivered`). " +
+    "or **derived** (computed as a ratio, e.g. `recipientPositiveReplyRate = recipientsRepliesPositive / recipientsDelivered`). " +
     "Use `GET /stats/registry` to discover available keys, their labels, and types.\n\n" +
     "**Example:** `GET /features/sales-cold-email-v2/stats?brandId=b123`\n" +
     "```json\n" +
     "{\n" +
     "  \"featureSlug\": \"sales-cold-email-v2\",\n" +
     "  \"systemStats\": { \"totalCostInUsdCents\": 4200, \"completedRuns\": 15, \"activeCampaigns\": 3, \"firstRunAt\": \"2026-01-10T...\", \"lastRunAt\": \"2026-03-28T...\" },\n" +
-    "  \"stats\": { \"emailsSent\": 1200, \"repliesPositive\": 48, \"positiveReplyRate\": 0.04 }\n" +
+    "  \"stats\": { \"recipientsSent\": 1200, \"recipientsRepliesPositive\": 48, \"recipientPositiveReplyRate\": 0.04 }\n" +
     "}\n" +
     "```\n\n" +
     "**Example with groupBy:** `GET /features/sales-cold-email-v2/stats?groupBy=campaignId`\n" +
@@ -664,8 +664,8 @@ registry.registerPath({
     "  \"groupBy\": \"campaignId\",\n" +
     "  \"systemStats\": { ... },\n" +
     "  \"groups\": [\n" +
-    "    { \"campaignId\": \"camp-1\", \"systemStats\": { ... }, \"stats\": { \"emailsSent\": 600, \"positiveReplyRate\": 0.05 } },\n" +
-    "    { \"campaignId\": \"camp-2\", \"systemStats\": { ... }, \"stats\": { \"emailsSent\": 600, \"positiveReplyRate\": 0.03 } }\n" +
+    "    { \"campaignId\": \"camp-1\", \"systemStats\": { ... }, \"stats\": { \"recipientsSent\": 600, \"recipientPositiveReplyRate\": 0.05 } },\n" +
+    "    { \"campaignId\": \"camp-2\", \"systemStats\": { ... }, \"stats\": { \"recipientsSent\": 600, \"recipientPositiveReplyRate\": 0.03 } }\n" +
     "  ]\n" +
     "}\n" +
     "```",
@@ -714,7 +714,7 @@ registry.registerPath({
     "{\n" +
     "  \"dynastySlug\": \"sales-cold-email\",\n" +
     "  \"systemStats\": { \"totalCostInUsdCents\": 12000, \"completedRuns\": 45, \"activeCampaigns\": 5, \"firstRunAt\": \"2025-11-01T...\", \"lastRunAt\": \"2026-03-28T...\" },\n" +
-    "  \"stats\": { \"emailsSent\": 5400, \"repliesPositive\": 216, \"positiveReplyRate\": 0.04 }\n" +
+    "  \"stats\": { \"recipientsSent\": 5400, \"recipientsRepliesPositive\": 216, \"recipientPositiveReplyRate\": 0.04 }\n" +
     "}\n" +
     "```\n\n" +
     "This aggregates data from all versions (v1, v2, ...) and any converged dynasties.",
@@ -754,7 +754,7 @@ registry.registerPath({
     "  \"groupBy\": \"featureDynastySlug\",\n" +
     "  \"systemStats\": { \"totalCostInUsdCents\": 25000, \"completedRuns\": 120, \"activeCampaigns\": 8, ... },\n" +
     "  \"groups\": [\n" +
-    "    { \"featureDynastySlug\": \"sales-cold-email\", \"systemStats\": { ... }, \"stats\": { \"emailsSent\": 5400, ... } },\n" +
+    "    { \"featureDynastySlug\": \"sales-cold-email\", \"systemStats\": { ... }, \"stats\": { \"recipientsSent\": 5400, ... } },\n" +
     "    { \"featureDynastySlug\": \"pr-journalist-outreach\", \"systemStats\": { ... }, \"stats\": { \"journalistsContacted\": 320, ... } }\n" +
     "  ]\n" +
     "}\n" +
@@ -1076,7 +1076,7 @@ export const openApiDocument = generator.generateDocument({
       "## Stats Computation\n\n" +
       "Stats endpoints compute values by calling downstream services " +
       "(email-gateway, runs-service, outlets-service) and returning aggregated results. " +
-      "Keys are either **raw** (fetched from a source) or **derived** (computed as a ratio of two raw keys, e.g. `positiveReplyRate = repliesPositive / emailsDelivered`).\n\n" +
+      "Keys are either **raw** (fetched from a source) or **derived** (computed as a ratio of two raw keys, e.g. `recipientPositiveReplyRate = recipientsRepliesPositive / recipientsDelivered`).\n\n" +
 
       "## Registration (Cold Start)\n\n" +
       "`PUT /features` — idempotent batch upsert, safe to call on every boot. " +

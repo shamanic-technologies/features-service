@@ -76,7 +76,7 @@ const MOCK_FEATURE = {
   status: "active",
   signature: "sig-1",
   inputs: [],
-  outputs: [{ key: "emailsSent", displayOrder: 1 }],
+  outputs: [{ key: "recipientsSent", displayOrder: 1 }],
   charts: [],
   entities: [],
   forkedFrom: null,
@@ -105,7 +105,7 @@ describe("stats route - network error resilience", () => {
       if (url.includes("runs:3000")) {
         return new Response(JSON.stringify({ groups: [] }), { status: 200 });
       }
-      // Email-gateway returns empty broadcast (feature has emailsSent output)
+      // Email-gateway returns empty broadcast (feature has recipientsSent output)
       if (url.includes("email:3000")) {
         return new Response(JSON.stringify({ broadcast: {} }), { status: 200 });
       }
@@ -173,7 +173,7 @@ describe("stats route - network error resilience", () => {
         }), { status: 200 });
       }
 
-      // email-gateway returns empty broadcast (feature has emailsSent output)
+      // email-gateway returns empty broadcast (feature has recipientsSent output)
       if (url.includes("email:3000")) {
         return new Response(JSON.stringify({ broadcast: {} }), { status: 200 });
       }
@@ -297,7 +297,7 @@ describe("GET /stats/dynasty", () => {
       if (url.includes("runs:3000")) {
         return new Response(JSON.stringify({ groups: [] }), { status: 200 });
       }
-      // email-gateway returns empty broadcast (MOCK_FEATURE has emailsSent output)
+      // email-gateway returns empty broadcast (MOCK_FEATURE has recipientsSent output)
       if (url.includes("email:3000")) {
         return new Response(JSON.stringify({ broadcast: {} }), { status: 200 });
       }
