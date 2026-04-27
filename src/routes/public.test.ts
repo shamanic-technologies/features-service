@@ -170,7 +170,7 @@ describe("GET /public/stats/ranked", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow");
+      .get("/public/stats/ranked?featureSlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow");
 
     expect(res.status).toBe(200);
     expect(res.body.objective).toBe("recipientsRepliesPositive");
@@ -186,23 +186,23 @@ describe("GET /public/stats/ranked", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email-outreach&groupBy=workflow");
+      .get("/public/stats/ranked?featureSlug=sales-cold-email-outreach&groupBy=workflow");
 
     expect(res.status).toBe(200);
     expect(res.body.objective).toBe("costPerRecipientPositiveReplyCents");
   });
 
-  it("returns 400 when featureDynastySlug is missing", async () => {
+  it("returns 400 when featureSlug is missing", async () => {
     const res = await request(app)
       .get("/public/stats/ranked?objective=recipientsRepliesPositive&groupBy=workflow");
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/featureDynastySlug/i);
+    expect(res.body.error).toMatch(/featureSlug/i);
   });
 
   it("returns 400 when groupBy is missing", async () => {
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email-outreach&objective=recipientsRepliesPositive");
+      .get("/public/stats/ranked?featureSlug=sales-cold-email-outreach&objective=recipientsRepliesPositive");
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/groupBy/i);
@@ -212,7 +212,7 @@ describe("GET /public/stats/ranked", () => {
     mockFindFirst.mockResolvedValueOnce(null);
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=nonexistent&objective=recipientsRepliesPositive&groupBy=workflow");
+      .get("/public/stats/ranked?featureSlug=nonexistent&objective=recipientsRepliesPositive&groupBy=workflow");
 
     expect(res.status).toBe(404);
   });
@@ -222,7 +222,7 @@ describe("GET /public/stats/ranked", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow&limit=1");
+      .get("/public/stats/ranked?featureSlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow&limit=1");
 
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(1);
@@ -233,7 +233,7 @@ describe("GET /public/stats/ranked", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow&limit=200");
+      .get("/public/stats/ranked?featureSlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow&limit=200");
 
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(2);
@@ -257,7 +257,7 @@ describe("GET /public/stats/ranked", () => {
     });
 
     const res = await request(app)
-      .get("/public/stats/ranked?featureDynastySlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=brand");
+      .get("/public/stats/ranked?featureSlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=brand");
 
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(2);
@@ -280,20 +280,20 @@ describe("GET /public/stats/best", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/public/stats/best?featureDynastySlug=sales-cold-email-outreach&groupBy=workflow");
+      .get("/public/stats/best?featureSlug=sales-cold-email-outreach&groupBy=workflow");
 
     expect(res.status).toBe(200);
     expect(res.body.best.recipientsRepliesPositive).not.toBeNull();
     expect(res.body.best.recipientsRepliesPositive.value).toBe(100);
   });
 
-  it("returns 400 when featureDynastySlug is missing", async () => {
+  it("returns 400 when featureSlug is missing", async () => {
     const res = await request(app).get("/public/stats/best?groupBy=workflow");
     expect(res.status).toBe(400);
   });
 
   it("returns 400 when groupBy is missing", async () => {
-    const res = await request(app).get("/public/stats/best?featureDynastySlug=sales-cold-email-outreach");
+    const res = await request(app).get("/public/stats/best?featureSlug=sales-cold-email-outreach");
     expect(res.status).toBe(400);
   });
 
@@ -309,7 +309,7 @@ describe("GET /public/stats/best", () => {
     });
 
     const res = await request(app)
-      .get("/public/stats/best?featureDynastySlug=sales-cold-email-outreach&groupBy=workflow");
+      .get("/public/stats/best?featureSlug=sales-cold-email-outreach&groupBy=workflow");
 
     expect(res.status).toBe(200);
     expect(res.body.best.recipientsRepliesPositive).toBeNull();
@@ -326,7 +326,7 @@ describe("GET /stats/ranked (authenticated)", () => {
 
   it("requires auth headers", async () => {
     const res = await request(app)
-      .get("/stats/ranked?featureDynastySlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow");
+      .get("/stats/ranked?featureSlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow");
     expect(res.status).toBe(401);
   });
 
@@ -335,7 +335,7 @@ describe("GET /stats/ranked (authenticated)", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/stats/ranked?featureDynastySlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow")
+      .get("/stats/ranked?featureSlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow")
       .set(AUTH_HEADERS);
 
     expect(res.status).toBe(200);
@@ -351,7 +351,7 @@ describe("GET /stats/best (authenticated)", () => {
 
   it("requires auth headers", async () => {
     const res = await request(app)
-      .get("/stats/best?featureDynastySlug=sales-cold-email-outreach&groupBy=workflow");
+      .get("/stats/best?featureSlug=sales-cold-email-outreach&groupBy=workflow");
     expect(res.status).toBe(401);
   });
 
@@ -360,7 +360,7 @@ describe("GET /stats/best (authenticated)", () => {
     mockFetchResponses();
 
     const res = await request(app)
-      .get("/stats/best?featureDynastySlug=sales-cold-email-outreach&groupBy=workflow")
+      .get("/stats/best?featureSlug=sales-cold-email-outreach&groupBy=workflow")
       .set(AUTH_HEADERS);
 
     expect(res.status).toBe(200);

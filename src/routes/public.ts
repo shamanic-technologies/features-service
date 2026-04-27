@@ -211,14 +211,14 @@ function aggregateAcrossChains(
 // ── Ranked handler ──────────────────────────────────────────────────────────
 
 export async function handleRanked(
-  featureDynastySlug: string | undefined,
+  featureSlug: string | undefined,
   requestedObjective: string | undefined,
   groupBy: string | undefined,
   limit: number,
   res: import("express").Response,
 ): Promise<void> {
-  if (!featureDynastySlug) {
-    res.status(400).json({ error: "Query parameter 'featureDynastySlug' is required" });
+  if (!featureSlug) {
+    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
     return;
   }
   if (groupBy !== "workflow" && groupBy !== "brand") {
@@ -227,10 +227,10 @@ export async function handleRanked(
   }
 
   const feature = await db.query.features.findFirst({
-    where: eq(features.slug, featureDynastySlug),
+    where: eq(features.slug, featureSlug),
   });
   if (!feature) {
-    res.status(404).json({ error: "No features found for this dynasty slug" });
+    res.status(404).json({ error: "Feature not found" });
     return;
   }
 
@@ -238,7 +238,6 @@ export async function handleRanked(
   const objectiveDef = STATS_REGISTRY[objective];
   const sortDirection = (objectiveDef?.kind === "derived" && objectiveDef.type === "currency") ? "asc" : "desc";
 
-  const featureSlug = feature.slug;
   const isBrandGrouping = groupBy === "brand";
   const statsGroupBy = isBrandGrouping ? "brandId" : "workflowSlug";
 
@@ -314,12 +313,12 @@ export async function handleRanked(
 // ── Best handler ────────────────────────────────────────────────────────────
 
 export async function handleBest(
-  featureDynastySlug: string | undefined,
+  featureSlug: string | undefined,
   groupBy: string | undefined,
   res: import("express").Response,
 ): Promise<void> {
-  if (!featureDynastySlug) {
-    res.status(400).json({ error: "Query parameter 'featureDynastySlug' is required" });
+  if (!featureSlug) {
+    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
     return;
   }
   if (groupBy !== "workflow" && groupBy !== "brand") {
@@ -328,15 +327,14 @@ export async function handleBest(
   }
 
   const feature = await db.query.features.findFirst({
-    where: eq(features.slug, featureDynastySlug),
+    where: eq(features.slug, featureSlug),
   });
   if (!feature) {
-    res.status(404).json({ error: "No features found for this dynasty slug" });
+    res.status(404).json({ error: "Feature not found" });
     return;
   }
 
   const countKeys = getAllCountKeys();
-  const featureSlug = feature.slug;
   const isBrandMode = groupBy === "brand";
   const statsGroupBy = isBrandMode ? "brandId" : "workflowSlug";
 
@@ -398,7 +396,7 @@ router.get("/public/stats/ranked", async (req, res) => {
   try {
     const limitParam = parseInt(req.query.limit as string, 10);
     const limit = Number.isFinite(limitParam) && limitParam >= 1 ? limitParam : 3;
-    await handleRanked(req.query.featureDynastySlug as string | undefined, req.query.objective as string | undefined, req.query.groupBy as string | undefined, limit, res);
+    await handleRanked(req.query.featureSlug as string | undefined, req.query.objective as string | undefined, req.query.groupBy as string | undefined, limit, res);
   } catch (error) {
     console.error("[features-service] Public stats ranked error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -409,7 +407,7 @@ router.get("/public/stats/ranked", async (req, res) => {
 
 router.get("/public/stats/best", async (req, res) => {
   try {
-    await handleBest(req.query.featureDynastySlug as string | undefined, req.query.groupBy as string | undefined, res);
+    await handleBest(req.query.featureSlug as string | undefined, req.query.groupBy as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public stats best error:", error);
     res.status(500).json({ error: "Internal server error" });

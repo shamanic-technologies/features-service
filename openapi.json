@@ -156,7 +156,7 @@
             "type": "string",
             "nullable": true
           },
-          "featureDynastySlug": {
+          "featureSlug": {
             "type": "string",
             "nullable": true
           },
@@ -265,7 +265,7 @@
                   "type": "string",
                   "nullable": true
                 },
-                "featureDynastySlug": {
+                "featureSlug": {
                   "type": "string",
                   "nullable": true
                 },
@@ -385,7 +385,7 @@
                   "type": "string",
                   "nullable": true
                 },
-                "featureDynastySlug": {
+                "featureSlug": {
                   "type": "string",
                   "nullable": true
                 },
@@ -1234,7 +1234,7 @@
                             "type": "string",
                             "nullable": true
                           },
-                          "featureDynastySlug": {
+                          "featureSlug": {
                             "type": "string",
                             "nullable": true
                           },
@@ -1323,7 +1323,7 @@
     "/stats": {
       "get": {
         "summary": "Global stats across all features",
-        "description": "Cross-feature stats endpoint. Supports groupBy: featureSlug, featureDynastySlug, workflowSlug, workflowDynastySlug, brandId, campaignId.",
+        "description": "Cross-feature stats endpoint. Supports groupBy: featureSlug, workflowSlug, workflowDynastySlug, brandId, campaignId.",
         "tags": [
           "Stats"
         ],
@@ -1350,14 +1350,6 @@
             },
             "required": false,
             "name": "featureSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": false,
-            "name": "featureDynastySlug",
             "in": "query"
           },
           {
@@ -1491,7 +1483,7 @@
                             "type": "string",
                             "nullable": true
                           },
-                          "featureDynastySlug": {
+                          "featureSlug": {
                             "type": "string",
                             "nullable": true
                           },
@@ -1684,7 +1676,7 @@
             },
             "required": true,
             "description": "Feature slug (required)",
-            "name": "featureDynastySlug",
+            "name": "featureSlug",
             "in": "query"
           },
           {
@@ -1877,7 +1869,7 @@
             },
             "required": true,
             "description": "Feature slug (required)",
-            "name": "featureDynastySlug",
+            "name": "featureSlug",
             "in": "query"
           },
           {
@@ -1993,7 +1985,7 @@
             },
             "required": true,
             "description": "Feature slug (required)",
-            "name": "featureDynastySlug",
+            "name": "featureSlug",
             "in": "query"
           },
           {
@@ -2229,7 +2221,7 @@
             },
             "required": true,
             "description": "Feature slug (required)",
-            "name": "featureDynastySlug",
+            "name": "featureSlug",
             "in": "query"
           },
           {
