@@ -9,10 +9,9 @@ import healthRoutes from "./routes/health.js";
 import featuresRoutes from "./routes/features.js";
 import statsRoutes from "./routes/stats.js";
 import publicRoutes from "./routes/public.js";
-import { registerSeedFeatures } from "./seed/register.js";
 
 // ── Required env vars — crash at startup if missing ─────────────────────────
-import { validateRequiredEnv, REQUIRED_ENV } from "./lib/env.js";
+import { validateRequiredEnv } from "./lib/env.js";
 validateRequiredEnv();
 
 const app = express();
@@ -56,7 +55,6 @@ if (process.env.NODE_ENV !== "test") {
   migrate(db, { migrationsFolder: "./drizzle" })
     .then(async () => {
       console.log("Migrations complete");
-      await registerSeedFeatures();
       app.listen(Number(PORT), "::", () => {
         console.log(`Features service running on port ${PORT}`);
       });
