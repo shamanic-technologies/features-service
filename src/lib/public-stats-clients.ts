@@ -10,6 +10,8 @@ export interface WorkflowMetadata {
   id: string;
   slug: string;
   name: string;
+  dynastyName: string;
+  dynastySlug: string;
   version: number;
   status: string;
   featureSlug: string;

@@ -300,7 +300,7 @@ export async function handleRanked(
     const wf = workflowBySlug.get(key);
     return {
       workflow: wf ? {
-        id: wf.id, slug: wf.slug, name: wf.name,
+        id: wf.id, slug: wf.slug, name: wf.name, dynastyName: wf.dynastyName, dynastySlug: wf.dynastySlug,
         version: wf.version, featureSlug: wf.featureSlug, createdForBrandId: wf.createdForBrandId,
       } : { slug: key },
       stats,
