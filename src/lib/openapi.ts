@@ -246,7 +246,7 @@ const rankedResponseSchema = z.object({
 
 const rankedQueryParams = z.object({
   featureDynastySlug: z.string().describe("Feature slug (required)"),
-  objective: z.string().optional().describe("Stats key to sort by (defaults to costPerPositiveReplyCents)"),
+  objective: z.string().optional().describe("Stats key to sort by (defaults to costPerRecipientPositiveReplyCents)"),
   groupBy: z.enum(["workflow", "brand"]).describe("Group results by workflow or by brand"),
   limit: z.string().optional().describe("Max results (default 3)"),
 });

@@ -9,18 +9,27 @@ import {
 } from "../src/lib/stats-registry.js";
 
 describe("STATS_REGISTRY", () => {
-  it("contains email stats keys", () => {
-    expect(VALID_STATS_KEYS.has("emailsSent")).toBe(true);
-    expect(VALID_STATS_KEYS.has("emailsDelivered")).toBe(true);
-    expect(VALID_STATS_KEYS.has("emailsOpened")).toBe(true);
-    expect(VALID_STATS_KEYS.has("emailsClicked")).toBe(true);
+  it("contains recipient-level email stats keys", () => {
+    expect(VALID_STATS_KEYS.has("recipientsSent")).toBe(true);
+    expect(VALID_STATS_KEYS.has("recipientsDelivered")).toBe(true);
+    expect(VALID_STATS_KEYS.has("recipientsOpened")).toBe(true);
+    expect(VALID_STATS_KEYS.has("recipientsClicked")).toBe(true);
   });
 
-  it("contains reply aggregate keys", () => {
-    expect(VALID_STATS_KEYS.has("repliesPositive")).toBe(true);
-    expect(VALID_STATS_KEYS.has("repliesNegative")).toBe(true);
-    expect(VALID_STATS_KEYS.has("repliesNeutral")).toBe(true);
-    expect(VALID_STATS_KEYS.has("repliesAutoReply")).toBe(true);
+  it("contains recipient-level reply aggregate keys", () => {
+    expect(VALID_STATS_KEYS.has("recipientsRepliesPositive")).toBe(true);
+    expect(VALID_STATS_KEYS.has("recipientsRepliesNegative")).toBe(true);
+    expect(VALID_STATS_KEYS.has("recipientsRepliesNeutral")).toBe(true);
+    expect(VALID_STATS_KEYS.has("recipientsRepliesAutoReply")).toBe(true);
+  });
+
+  it("does not contain old email-level key names", () => {
+    expect(VALID_STATS_KEYS.has("emailsSent")).toBe(false);
+    expect(VALID_STATS_KEYS.has("emailsOpened")).toBe(false);
+    expect(VALID_STATS_KEYS.has("emailsClicked")).toBe(false);
+    expect(VALID_STATS_KEYS.has("recipients")).toBe(false);
+    expect(VALID_STATS_KEYS.has("repliesPositive")).toBe(false);
+    expect(VALID_STATS_KEYS.has("openRate")).toBe(false);
   });
 
   it("contains cost/runs keys", () => {
@@ -40,12 +49,12 @@ describe("STATS_REGISTRY", () => {
     expect(STATS_REGISTRY.searchQueriesUsed).toMatchObject({ kind: "raw", source: "outlets" });
   });
 
-  it("contains derived rate keys", () => {
-    expect(VALID_STATS_KEYS.has("openRate")).toBe(true);
-    expect(VALID_STATS_KEYS.has("clickRate")).toBe(true);
-    expect(VALID_STATS_KEYS.has("positiveReplyRate")).toBe(true);
-    expect(VALID_STATS_KEYS.has("negativeReplyRate")).toBe(true);
-    expect(VALID_STATS_KEYS.has("neutralReplyRate")).toBe(true);
+  it("contains recipient-level derived rate keys", () => {
+    expect(VALID_STATS_KEYS.has("recipientOpenRate")).toBe(true);
+    expect(VALID_STATS_KEYS.has("recipientClickRate")).toBe(true);
+    expect(VALID_STATS_KEYS.has("recipientPositiveReplyRate")).toBe(true);
+    expect(VALID_STATS_KEYS.has("recipientNegativeReplyRate")).toBe(true);
+    expect(VALID_STATS_KEYS.has("recipientNeutralReplyRate")).toBe(true);
   });
 
   it("contains press-kits stats keys", () => {
@@ -60,10 +69,10 @@ describe("STATS_REGISTRY", () => {
     expect(STATS_REGISTRY.pressKitUniqueVisitors).toMatchObject({ kind: "raw", source: "press-kits" });
   });
 
-  it("contains derived cost-per keys", () => {
-    expect(VALID_STATS_KEYS.has("costPerOpenCents")).toBe(true);
-    expect(VALID_STATS_KEYS.has("costPerClickCents")).toBe(true);
-    expect(VALID_STATS_KEYS.has("costPerPositiveReplyCents")).toBe(true);
+  it("contains recipient-level derived cost-per keys", () => {
+    expect(VALID_STATS_KEYS.has("costPerRecipientOpenCents")).toBe(true);
+    expect(VALID_STATS_KEYS.has("costPerRecipientClickCents")).toBe(true);
+    expect(VALID_STATS_KEYS.has("costPerRecipientPositiveReplyCents")).toBe(true);
     expect(VALID_STATS_KEYS.has("costPerOutletCents")).toBe(true);
     expect(VALID_STATS_KEYS.has("costPerPressKitCents")).toBe(true);
     expect(VALID_STATS_KEYS.has("costPerPressKitViewCents")).toBe(true);
@@ -101,9 +110,9 @@ describe("VALID_ENTITY_TYPES", () => {
 describe("getPublicRegistry", () => {
   it("returns label and type for each key", () => {
     const pub = getPublicRegistry();
-    expect(pub.emailsSent).toEqual({ type: "count", label: "Sent" });
-    expect(pub.positiveReplyRate).toEqual({ type: "rate", label: "% Positive" });
-    expect(pub.costPerPositiveReplyCents).toEqual({ type: "currency", label: "$/Positive Reply" });
+    expect(pub.recipientsSent).toEqual({ type: "count", label: "Sent" });
+    expect(pub.recipientPositiveReplyRate).toEqual({ type: "rate", label: "% Positive" });
+    expect(pub.costPerRecipientPositiveReplyCents).toEqual({ type: "currency", label: "$/Positive Reply" });
   });
 
   it("has same number of entries as STATS_REGISTRY", () => {
@@ -114,11 +123,11 @@ describe("getPublicRegistry", () => {
 
 describe("validateStatsKeys", () => {
   it("returns empty array for valid keys", () => {
-    expect(validateStatsKeys(["emailsSent", "positiveReplyRate"])).toEqual([]);
+    expect(validateStatsKeys(["recipientsSent", "recipientPositiveReplyRate"])).toEqual([]);
   });
 
   it("returns invalid keys", () => {
-    expect(validateStatsKeys(["emailsSent", "fakeKey"])).toEqual(["fakeKey"]);
+    expect(validateStatsKeys(["recipientsSent", "fakeKey"])).toEqual(["fakeKey"]);
   });
 });
 

@@ -1530,10 +1530,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Stats key to sort by (defaults to costPerPositiveReplyCents)"
+              "description": "Stats key to sort by (defaults to costPerRecipientPositiveReplyCents)"
             },
             "required": false,
-            "description": "Stats key to sort by (defaults to costPerPositiveReplyCents)",
+            "description": "Stats key to sort by (defaults to costPerRecipientPositiveReplyCents)",
             "name": "objective",
             "in": "query"
           },
@@ -1839,10 +1839,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Stats key to sort by (defaults to costPerPositiveReplyCents)"
+              "description": "Stats key to sort by (defaults to costPerRecipientPositiveReplyCents)"
             },
             "required": false,
-            "description": "Stats key to sort by (defaults to costPerPositiveReplyCents)",
+            "description": "Stats key to sort by (defaults to costPerRecipientPositiveReplyCents)",
             "name": "objective",
             "in": "query"
           },

@@ -234,7 +234,7 @@ export async function handleRanked(
     return;
   }
 
-  const objective = requestedObjective ?? "costPerPositiveReplyCents";
+  const objective = requestedObjective ?? "costPerRecipientPositiveReplyCents";
   const objectiveDef = STATS_REGISTRY[objective];
   const sortDirection = (objectiveDef?.kind === "derived" && objectiveDef.type === "currency") ? "asc" : "desc";
 
