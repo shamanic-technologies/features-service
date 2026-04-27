@@ -139,6 +139,10 @@ function mockFetchResponses(overrides: Record<string, unknown> = {}) {
     "http://brand:3000/internal/brands/brand-2": {
       brand: { id: "brand-2", name: "Beta Inc", domain: "beta.io" },
     },
+    "http://journalists:3000/public/stats": {
+      totalJournalists: 0,
+      byOutreachStatus: {},
+    },
     ...overrides,
   };
 

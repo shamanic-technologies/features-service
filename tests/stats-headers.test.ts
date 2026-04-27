@@ -12,6 +12,8 @@ vi.stubEnv("OUTLETS_SERVICE_URL", "http://outlets-service");
 vi.stubEnv("OUTLETS_SERVICE_API_KEY", "outlets-key");
 vi.stubEnv("JOURNALISTS_SERVICE_URL", "http://journalists-service");
 vi.stubEnv("JOURNALISTS_SERVICE_API_KEY", "journalists-key");
+vi.stubEnv("CAMPAIGN_SERVICE_URL", "http://campaign-service");
+vi.stubEnv("CAMPAIGN_SERVICE_API_KEY", "campaign-key");
 
 // Mock the database before importing the router
 vi.mock("../src/db/index.js", () => ({
@@ -53,9 +55,17 @@ describe("stats routes forward identity headers to downstream services", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    fetchSpy = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ groups: [] }),
+    fetchSpy = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("campaign-service")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ stats: { byStatus: { active: 0 } } }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ groups: [] }),
+      });
     });
     vi.stubGlobal("fetch", fetchSpy);
 
