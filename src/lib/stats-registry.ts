@@ -63,7 +63,7 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   completedRuns:       { kind: "raw", type: "count",    label: "Runs",             source: "runs" },
 
   // ── Outlets: outlets-service ──────────────────────────────────────────────
-  outletsDiscovered:   { kind: "raw", type: "count",    label: "Outlets",          source: "outlets" },
+  outletsDiscovered:   { kind: "raw", type: "count",    label: "Outlets Found",    source: "outlets" },
   avgRelevanceScore:   { kind: "raw", type: "count",    label: "Avg Relevance",    source: "outlets" },
   searchQueriesUsed:   { kind: "raw", type: "count",    label: "Searches",         source: "outlets" },
 
