@@ -38,7 +38,7 @@ const MOCK_FEATURE = {
   forkedFrom: null,
   upgradedTo: null,
   inputs: [],
-  outputs: [{ key: "emailsSent", displayOrder: 1 }],
+  outputs: [{ key: "recipientsSent", displayOrder: 1 }],
   charts: [],
   entityTypes: [],
   workflows: [],
