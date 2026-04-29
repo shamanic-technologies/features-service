@@ -26,6 +26,11 @@ describe("openApiDocument", () => {
     expect(paths).not.toContain("/public/features/dynasty/slugs");
   });
 
+  it("exposes prefill endpoint", () => {
+    const paths = Object.keys(openApiDocument.paths ?? {});
+    expect(paths).toContain("/features/{featureSlug}/prefill");
+  });
+
   it("exposes stats endpoints", () => {
     const paths = Object.keys(openApiDocument.paths ?? {});
     expect(paths).toContain("/stats/registry");
