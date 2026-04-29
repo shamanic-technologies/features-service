@@ -1744,16 +1744,16 @@
                                 "type": "string",
                                 "format": "uuid"
                               },
-                              "slug": {
+                              "workflowSlug": {
                                 "type": "string"
                               },
-                              "name": {
+                              "workflowName": {
                                 "type": "string"
                               },
-                              "dynastyName": {
+                              "workflowDynastyName": {
                                 "type": "string"
                               },
-                              "dynastySlug": {
+                              "workflowDynastySlug": {
                                 "type": "string"
                               },
                               "version": {
@@ -1768,7 +1768,7 @@
                               }
                             },
                             "required": [
-                              "slug"
+                              "workflowSlug"
                             ]
                           },
                           "brand": {
@@ -2096,16 +2096,16 @@
                                 "type": "string",
                                 "format": "uuid"
                               },
-                              "slug": {
+                              "workflowSlug": {
                                 "type": "string"
                               },
-                              "name": {
+                              "workflowName": {
                                 "type": "string"
                               },
-                              "dynastyName": {
+                              "workflowDynastyName": {
                                 "type": "string"
                               },
-                              "dynastySlug": {
+                              "workflowDynastySlug": {
                                 "type": "string"
                               },
                               "version": {
@@ -2120,7 +2120,7 @@
                               }
                             },
                             "required": [
-                              "slug"
+                              "workflowSlug"
                             ]
                           },
                           "brand": {

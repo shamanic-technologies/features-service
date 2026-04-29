@@ -97,27 +97,27 @@ function mockFetchResponses(overrides: Record<string, unknown> = {}) {
       workflows: [
         {
           id: "wf-1",
-          slug: "sales-outreach-alpha",
-          name: "Sales Outreach Alpha",
-          dynastyName: "Sales Outreach Alpha",
-          dynastySlug: "sales-outreach-alpha",
+          workflowSlug: "sales-outreach-alpha",
+          workflowName: "Sales Outreach Alpha",
+          workflowDynastyName: "Sales Outreach Alpha",
+          workflowDynastySlug: "sales-outreach-alpha",
           version: 1,
           status: "active",
           featureSlug: "sales-cold-email-outreach",
           createdForBrandId: null,
-          upgradedTo: null,
+          upgradedToWorkflowSlug: null,
         },
         {
           id: "wf-2",
-          slug: "sales-outreach-beta",
-          name: "Sales Outreach Beta",
-          dynastyName: "Sales Outreach Beta",
-          dynastySlug: "sales-outreach-beta",
+          workflowSlug: "sales-outreach-beta",
+          workflowName: "Sales Outreach Beta",
+          workflowDynastyName: "Sales Outreach Beta",
+          workflowDynastySlug: "sales-outreach-beta",
           version: 1,
           status: "active",
           featureSlug: "sales-cold-email-outreach",
           createdForBrandId: "brand-1",
-          upgradedTo: null,
+          upgradedToWorkflowSlug: null,
         },
       ],
     },
@@ -176,9 +176,9 @@ describe("GET /public/stats/ranked", () => {
     expect(res.body.objective).toBe("recipientsRepliesPositive");
     expect(res.body.sortDirection).toBe("desc");
     expect(res.body.results).toHaveLength(2);
-    expect(res.body.results[0].workflow.slug).toBe("sales-outreach-beta");
+    expect(res.body.results[0].workflow.workflowSlug).toBe("sales-outreach-beta");
     expect(res.body.results[0].stats.recipientsRepliesPositive).toBe(20);
-    expect(res.body.results[1].workflow.slug).toBe("sales-outreach-alpha");
+    expect(res.body.results[1].workflow.workflowSlug).toBe("sales-outreach-alpha");
   });
 
   it("defaults objective to costPerRecipientPositiveReplyCents when not provided", async () => {
