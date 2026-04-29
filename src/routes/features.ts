@@ -2,7 +2,9 @@ import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
-import { apiKeyAuth } from "../middleware/auth.js";
+import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
+import { extractBrandFields } from "../lib/brand-client.js";
+import { flattenValue } from "../lib/flatten.js";
 
 const router = Router();
 
@@ -40,6 +42,86 @@ router.get("/features/:slug", apiKeyAuth, async (req, res) => {
     res.json({ feature });
   } catch (error) {
     console.error("[features-service] Get feature error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── POST /features/:featureSlug/prefill — Pre-fill input values from brand data ──
+
+interface FeatureInput {
+  key: string;
+  extractKey: string;
+  description: string;
+}
+
+router.post("/features/:featureSlug/prefill", apiKeyAuth, async (req, res) => {
+  try {
+    const { featureSlug } = req.params;
+    const format = (req.query.format as string) || "full";
+
+    if (format !== "text" && format !== "full") {
+      return res.status(400).json({ error: "format must be 'text' or 'full'" });
+    }
+
+    const auth = req as AuthenticatedRequest;
+
+    if (!auth.brandId) {
+      return res.status(400).json({ error: "x-brand-id header is required" });
+    }
+
+    const feature = await db.query.features.findFirst({
+      where: eq(features.slug, featureSlug),
+    });
+
+    if (!feature) {
+      return res.status(404).json({ error: `Feature not found: "${featureSlug}"` });
+    }
+
+    const featureInputs = feature.inputs as FeatureInput[];
+
+    const fields = featureInputs.map((input) => ({
+      key: input.extractKey,
+      description: input.description,
+    }));
+
+    const extractedResults = await extractBrandFields(fields, {
+      orgId: auth.orgId,
+      userId: auth.userId,
+      runId: auth.runId,
+      brandId: auth.brandId,
+      campaignId: auth.campaignId,
+      featureSlug: auth.featureSlug,
+    });
+
+    if (format === "text") {
+      const prefilled: Record<string, string | null> = {};
+      for (const input of featureInputs) {
+        const result = extractedResults[input.extractKey];
+        prefilled[input.key] = flattenValue(result?.value ?? null);
+      }
+      return res.json({ slug: feature.slug, brandId: auth.brandId, format: "text", prefilled });
+    }
+
+    const prefilled: Record<string, { value: unknown; byBrand: Record<string, unknown> }> = {};
+    for (const input of featureInputs) {
+      const result = extractedResults[input.extractKey];
+      prefilled[input.key] = {
+        value: result?.value ?? null,
+        byBrand: result?.byBrand ?? {},
+      };
+    }
+
+    res.json({
+      slug: feature.slug,
+      brandId: auth.brandId,
+      format: "full",
+      prefilled,
+    });
+  } catch (error) {
+    console.error("[features-service] Prefill feature error:", error);
+    if (error instanceof Error && error.message.includes("brand-service")) {
+      return res.status(502).json({ error: error.message });
+    }
     res.status(500).json({ error: "Internal server error" });
   }
 });

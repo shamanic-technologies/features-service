@@ -116,6 +116,38 @@ registry.registerPath({
   },
 });
 
+// ── POST /features/:featureSlug/prefill ──────────────────────────────────
+
+const prefillResponseSchema = z.object({
+  slug: z.string(),
+  brandId: z.string(),
+  format: z.enum(["text", "full"]),
+  prefilled: z.record(z.string(), z.any()),
+});
+
+registry.register("PrefillResponse", prefillResponseSchema);
+
+registry.registerPath({
+  method: "post",
+  path: "/features/{featureSlug}/prefill",
+  summary: "Pre-fill feature inputs from brand data",
+  description: "Calls brand-service to extract field values for the feature's inputs. Returns pre-filled values keyed by input key. Requires x-brand-id header. Use ?format=text for flattened strings, ?format=full for structured values with per-brand breakdown.",
+  tags: ["Features"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ featureSlug: z.string() }),
+    query: z.object({
+      format: z.enum(["text", "full"]).optional().describe("Response format: 'text' returns flattened strings, 'full' returns structured values with per-brand breakdown. Defaults to 'full'."),
+    }),
+  },
+  responses: {
+    200: { description: "Pre-filled input values", content: { "application/json": { schema: prefillResponseSchema } } },
+    400: { description: "Missing x-brand-id or invalid format", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Brand service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /stats/registry ──────────────────────────────────────────────────
 
 registry.registerPath({
