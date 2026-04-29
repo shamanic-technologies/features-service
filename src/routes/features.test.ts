@@ -3,6 +3,7 @@ import request from "supertest";
 
 const mockFindFirst = vi.fn();
 const mockFindMany = vi.fn();
+const mockExtractBrandFields = vi.fn();
 
 vi.mock("../db/index.js", () => ({
   db: {
@@ -14,6 +15,10 @@ vi.mock("../db/index.js", () => ({
     },
   },
   sql: {},
+}));
+
+vi.mock("../lib/brand-client.js", () => ({
+  extractBrandFields: (...args: unknown[]) => mockExtractBrandFields(...args),
 }));
 
 vi.mock("../lib/env.js", () => ({
@@ -34,6 +39,8 @@ process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
 process.env.OUTLETS_SERVICE_URL = "http://outlets:3000";
 process.env.OUTLETS_SERVICE_API_KEY = "outlets-key";
+process.env.BRAND_SERVICE_URL = "http://brand:3000";
+process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
@@ -102,6 +109,114 @@ describe("GET /features/:slug", () => {
 
   it("requires authentication", async () => {
     const res = await request(app).get("/features/sales-cold-email-outreach");
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("POST /features/:featureSlug/prefill", () => {
+  const PREFILL_HEADERS = {
+    ...AUTH_HEADERS,
+    "x-brand-id": "brand-1",
+  };
+
+  const FEATURE_WITH_INPUTS = {
+    id: "1",
+    slug: "pr-cold-email-outreach",
+    name: "PR Cold Email Outreach",
+    description: "test",
+    icon: "mail",
+    implemented: true,
+    displayOrder: 0,
+    status: "active",
+    inputs: [
+      { key: "prAngle", extractKey: "suggestedAngles", description: "The editorial hook" },
+      { key: "spokesperson", extractKey: "spokesperson", description: "Who is available for interviews" },
+    ],
+    outputs: [],
+    charts: [],
+    entities: [],
+  };
+
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it("returns prefilled values in text format", async () => {
+    mockFindFirst.mockResolvedValueOnce(FEATURE_WITH_INPUTS);
+    mockExtractBrandFields.mockResolvedValueOnce({
+      suggestedAngles: { value: "Series B funding announcement", byBrand: {} },
+      spokesperson: { value: "Jane Doe, CEO", byBrand: {} },
+    });
+
+    const res = await request(app)
+      .post("/features/pr-cold-email-outreach/prefill?format=text")
+      .set(PREFILL_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.slug).toBe("pr-cold-email-outreach");
+    expect(res.body.format).toBe("text");
+    expect(res.body.prefilled.prAngle).toBe("Series B funding announcement");
+    expect(res.body.prefilled.spokesperson).toBe("Jane Doe, CEO");
+  });
+
+  it("returns prefilled values in full format by default", async () => {
+    mockFindFirst.mockResolvedValueOnce(FEATURE_WITH_INPUTS);
+    mockExtractBrandFields.mockResolvedValueOnce({
+      suggestedAngles: { value: "Series B", byBrand: { "brand-1": { value: "Series B", cached: true, extractedAt: "2026-01-01", expiresAt: null, sourceUrls: null } } },
+      spokesperson: { value: null, byBrand: {} },
+    });
+
+    const res = await request(app)
+      .post("/features/pr-cold-email-outreach/prefill")
+      .set(PREFILL_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.format).toBe("full");
+    expect(res.body.prefilled.prAngle.value).toBe("Series B");
+    expect(res.body.prefilled.prAngle.byBrand).toBeDefined();
+    expect(res.body.prefilled.spokesperson.value).toBeNull();
+  });
+
+  it("returns 400 when x-brand-id is missing", async () => {
+    const res = await request(app)
+      .post("/features/pr-cold-email-outreach/prefill")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/brand/i);
+  });
+
+  it("returns 404 when feature not found", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .post("/features/nonexistent/prefill")
+      .set(PREFILL_HEADERS);
+
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 for invalid format", async () => {
+    const res = await request(app)
+      .post("/features/pr-cold-email-outreach/prefill?format=xml")
+      .set(PREFILL_HEADERS);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/format/);
+  });
+
+  it("returns 502 when brand-service fails", async () => {
+    mockFindFirst.mockResolvedValueOnce(FEATURE_WITH_INPUTS);
+    mockExtractBrandFields.mockRejectedValueOnce(new Error("brand-service extract-fields failed (500): Internal error"));
+
+    const res = await request(app)
+      .post("/features/pr-cold-email-outreach/prefill?format=text")
+      .set(PREFILL_HEADERS);
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toMatch(/brand-service/);
+  });
+
+  it("requires authentication", async () => {
+    const res = await request(app).post("/features/pr-cold-email-outreach/prefill");
     expect(res.status).toBe(401);
   });
 });
