@@ -46,6 +46,31 @@ router.get("/features/:slug", apiKeyAuth, async (req, res) => {
   }
 });
 
+// ── GET /features/:featureSlug/inputs — Get inputs for a feature ─────────────
+
+router.get("/features/:featureSlug/inputs", apiKeyAuth, async (req, res) => {
+  try {
+    const { featureSlug } = req.params;
+
+    const feature = await db.query.features.findFirst({
+      where: eq(features.slug, featureSlug),
+    });
+
+    if (!feature) {
+      return res.status(404).json({ error: `Feature not found: "${featureSlug}"` });
+    }
+
+    res.json({
+      slug: feature.slug,
+      name: feature.name,
+      inputs: feature.inputs,
+    });
+  } catch (error) {
+    console.error("[features-service] Get feature inputs error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // ── POST /features/:featureSlug/prefill — Pre-fill input values from brand data ──
 
 interface FeatureInput {

@@ -116,6 +116,32 @@ registry.registerPath({
   },
 });
 
+// ── GET /features/:featureSlug/inputs ─────────────────────────────────────
+
+const featureInputsResponseSchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  inputs: z.array(z.any()),
+});
+
+registry.register("FeatureInputsResponse", featureInputsResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/features/{featureSlug}/inputs",
+  summary: "Get inputs for a feature",
+  description: "Returns the input field definitions for a feature by its slug.",
+  tags: ["Features"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ featureSlug: z.string() }),
+  },
+  responses: {
+    200: { description: "Feature inputs", content: { "application/json": { schema: featureInputsResponseSchema } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── POST /features/:featureSlug/prefill ──────────────────────────────────
 
 const prefillResponseSchema = z.object({
