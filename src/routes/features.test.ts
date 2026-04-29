@@ -113,6 +113,42 @@ describe("GET /features/:slug", () => {
   });
 });
 
+describe("GET /features/:featureSlug/inputs", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it("returns inputs for a feature", async () => {
+    mockFindFirst.mockResolvedValueOnce({
+      id: "1",
+      slug: "pr-cold-email-outreach",
+      name: "PR Cold Email Outreach",
+      inputs: [
+        { key: "prAngle", extractKey: "suggestedAngles", description: "The editorial hook" },
+      ],
+    });
+
+    const res = await request(app).get("/features/pr-cold-email-outreach/inputs").set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.slug).toBe("pr-cold-email-outreach");
+    expect(res.body.name).toBe("PR Cold Email Outreach");
+    expect(res.body.inputs).toHaveLength(1);
+    expect(res.body.inputs[0].key).toBe("prAngle");
+  });
+
+  it("returns 404 when feature not found", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+
+    const res = await request(app).get("/features/nonexistent/inputs").set(AUTH_HEADERS);
+
+    expect(res.status).toBe(404);
+  });
+
+  it("requires authentication", async () => {
+    const res = await request(app).get("/features/pr-cold-email-outreach/inputs");
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("POST /features/:featureSlug/prefill", () => {
   const PREFILL_HEADERS = {
     ...AUTH_HEADERS,
