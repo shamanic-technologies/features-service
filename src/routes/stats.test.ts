@@ -171,7 +171,13 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
     expect(httpUrls.length).toBeGreaterThan(0);
     for (const url of httpUrls) {
       const parsed = new URL(url);
-      expect(parsed.searchParams.get("featureSlug")).toBe("sales-cold-email-outreach");
+      if (url.includes("email:3000")) {
+        // email-gateway expects featureSlugs (plural)
+        expect(parsed.searchParams.get("featureSlugs")).toBe("sales-cold-email-outreach");
+        expect(parsed.searchParams.get("featureSlug")).toBeNull();
+      } else {
+        expect(parsed.searchParams.get("featureSlug")).toBe("sales-cold-email-outreach");
+      }
     }
   });
 });

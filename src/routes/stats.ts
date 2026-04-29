@@ -114,7 +114,7 @@ async function fetchEmailStats(
   if (groupBy) params.set("groupBy", groupBy);
   if (filters.workflowSlug) params.set("workflowSlugs", filters.workflowSlug);
   if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
-  if (filters.featureSlug) params.set("featureSlug", filters.featureSlug);
+  if (filters.featureSlug) params.set("featureSlugs", filters.featureSlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
