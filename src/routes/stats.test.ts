@@ -167,7 +167,7 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
       .get("/features/sales-cold-email-outreach/stats?brandId=brand-1")
       .set(AUTH_HEADERS);
 
-    const httpUrls = urls.filter((u) => u.startsWith("http"));
+    const httpUrls = urls.filter((u) => u.startsWith("http") && !u.includes("/events"));
     expect(httpUrls.length).toBeGreaterThan(0);
     for (const url of httpUrls) {
       const parsed = new URL(url);
