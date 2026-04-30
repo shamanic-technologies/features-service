@@ -5,6 +5,7 @@ import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { extractBrandFields } from "../lib/brand-client.js";
 import { flattenValue } from "../lib/flatten.js";
+import { traceEvent } from "../lib/trace-event.js";
 
 const router = Router();
 
@@ -102,12 +103,16 @@ router.post("/features/:featureSlug/prefill", apiKeyAuth, async (req, res) => {
       return res.status(404).json({ error: `Feature not found: "${featureSlug}"` });
     }
 
+    traceEvent(auth.runId, { service: "features-service", event: "prefill-start", detail: `featureSlug=${featureSlug}, brandId=${auth.brandId}, format=${format}, inputCount=${(feature.inputs as FeatureInput[]).length}` }, req.headers).catch(() => {});
+
     const featureInputs = feature.inputs as FeatureInput[];
 
     const fields = featureInputs.map((input) => ({
       key: input.extractKey,
       description: input.description,
     }));
+
+    traceEvent(auth.runId, { service: "features-service", event: "brand-extract", detail: `Extracting ${fields.length} fields from brand-service for brandId=${auth.brandId}`, data: { fields: fields.map(f => f.key) } }, req.headers).catch(() => {});
 
     const extractedResults = await extractBrandFields(fields, {
       orgId: auth.orgId,
@@ -117,6 +122,8 @@ router.post("/features/:featureSlug/prefill", apiKeyAuth, async (req, res) => {
       campaignId: auth.campaignId,
       featureSlug: auth.featureSlug,
     });
+
+    traceEvent(auth.runId, { service: "features-service", event: "brand-extract-done", detail: `Extracted ${Object.keys(extractedResults).length} fields for brandId=${auth.brandId}` }, req.headers).catch(() => {});
 
     if (format === "text") {
       const prefilled: Record<string, string | null> = {};
@@ -136,6 +143,8 @@ router.post("/features/:featureSlug/prefill", apiKeyAuth, async (req, res) => {
       };
     }
 
+    traceEvent(auth.runId, { service: "features-service", event: "prefill-done", detail: `featureSlug=${featureSlug}, format=${format}, prefilledKeys=${Object.keys(prefilled).length}` }, req.headers).catch(() => {});
+
     res.json({
       slug: feature.slug,
       brandId: auth.brandId,
@@ -144,6 +153,10 @@ router.post("/features/:featureSlug/prefill", apiKeyAuth, async (req, res) => {
     });
   } catch (error) {
     console.error("[features-service] Prefill feature error:", error);
+    const auth = req as AuthenticatedRequest;
+    if (auth.runId) {
+      traceEvent(auth.runId, { service: "features-service", event: "prefill-error", detail: error instanceof Error ? error.message : "Unknown error", level: "error" }, req.headers).catch(() => {});
+    }
     if (error instanceof Error && error.message.includes("brand-service")) {
       return res.status(502).json({ error: error.message });
     }

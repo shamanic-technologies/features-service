@@ -4,6 +4,7 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { STATS_REGISTRY, getPublicRegistry, getEntityRegistry, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
+import { traceEvent } from "../lib/trace-event.js";
 
 const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL!;
 const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY!;
@@ -694,6 +695,8 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     // Scope downstream calls to this feature
     filters.featureSlug = featureSlug;
 
+    traceEvent(runId, { service: "features-service", event: "feature-stats-start", detail: `featureSlug=${featureSlug}, groupBy=${groupByParam ?? "none"}, filters=${JSON.stringify(filters)}` }, req.headers).catch(() => {});
+
     const identity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };
     const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, pressKitsStatsMap, activeCampaigns] = await Promise.all([
       fetchEmailStats(orgId, groupBy, filters, identity),
@@ -758,9 +761,15 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       groups.push(group);
     }
 
+    traceEvent(runId, { service: "features-service", event: "feature-stats-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}` }, req.headers).catch(() => {});
+
     res.json({ featureSlug, groupBy, systemStats: buildSystemStats(totals, activeCampaigns), groups });
   } catch (error) {
     console.error("[features-service] Feature stats error:", error);
+    const auth = req as AuthenticatedRequest;
+    if (auth.runId) {
+      traceEvent(auth.runId, { service: "features-service", event: "feature-stats-error", detail: error instanceof Error ? error.message : "Unknown error", level: "error" }, req.headers).catch(() => {});
+    }
     res.status(500).json({ error: "Internal server error" });
   }
 });

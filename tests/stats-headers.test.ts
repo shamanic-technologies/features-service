@@ -89,8 +89,9 @@ describe("stats routes forward identity headers to downstream services", () => {
       .set("x-run-id", "run-789")
       .expect(200);
 
-    // Verify all downstream fetch calls include identity headers
+    // Verify all downstream fetch calls (excluding traceEvent) include identity headers
     for (const [url, opts] of fetchSpy.mock.calls) {
+      if (typeof url === "string" && url.includes("/events")) continue;
       const headers = opts?.headers ?? {};
       expect(headers["x-org-id"]).toBe("org-123");
       expect(headers["x-user-id"]).toBe("user-456");
@@ -110,6 +111,7 @@ describe("stats routes forward identity headers to downstream services", () => {
       .expect(200);
 
     for (const [url, opts] of fetchSpy.mock.calls) {
+      if (typeof url === "string" && url.includes("/events")) continue;
       const headers = opts?.headers ?? {};
       expect(headers["x-org-id"]).toBe("org-123");
       expect(headers["x-user-id"]).toBe("user-456");
@@ -131,6 +133,7 @@ describe("stats routes forward identity headers to downstream services", () => {
       .expect(200);
 
     for (const [_url, opts] of fetchSpy.mock.calls) {
+      if (typeof _url === "string" && _url.includes("/events")) continue;
       const headers = opts?.headers ?? {};
       expect(headers["x-campaign-id"]).toBe("camp-42");
       expect(headers["x-feature-slug"]).toBe("sales-cold-email-outreach");
@@ -149,6 +152,7 @@ describe("stats routes forward identity headers to downstream services", () => {
       .expect(200);
 
     for (const [_url, opts] of fetchSpy.mock.calls) {
+      if (typeof _url === "string" && _url.includes("/events")) continue;
       const headers = opts?.headers ?? {};
       expect(headers["x-campaign-id"]).toBeUndefined();
       expect(headers["x-feature-slug"]).toBeUndefined();
