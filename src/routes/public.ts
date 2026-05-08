@@ -140,18 +140,18 @@ function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]
   const activeWorkflows: WorkflowMetadata[] = [];
 
   for (const wf of workflows) {
-    idToSlug.set(wf.id, wf.slug);
+    idToSlug.set(wf.id, wf.workflowSlug);
     if (wf.status === "active") activeWorkflows.push(wf);
     if (wf.upgradedTo) {
       const list = predecessorMap.get(wf.upgradedTo) ?? [];
-      list.push(wf.slug);
+      list.push(wf.workflowSlug);
       predecessorMap.set(wf.upgradedTo, list);
     }
   }
 
   const chains = new Map<string, string[]>();
   for (const wf of activeWorkflows) {
-    const slugs = new Set<string>([wf.slug]);
+    const slugs = new Set<string>([wf.workflowSlug]);
     const queue = [wf.id];
     const visited = new Set<string>([wf.id]);
 
@@ -166,7 +166,7 @@ function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]
       }
     }
 
-    chains.set(wf.slug, [...slugs]);
+    chains.set(wf.workflowSlug, [...slugs]);
   }
 
   return chains;
@@ -290,7 +290,7 @@ export async function handleRanked(
     brandInfoMap = await fetchBrandInfoBatch(top.map((e) => e.key));
   }
 
-  const workflowBySlug = new Map(workflows.map((w) => [w.slug, w]));
+  const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
 
   const results = top.map(({ key, stats }) => {
     if (isBrandGrouping) {
@@ -300,9 +300,15 @@ export async function handleRanked(
     const wf = workflowBySlug.get(key);
     return {
       workflow: wf ? {
-        id: wf.id, slug: wf.slug, name: wf.name, dynastyName: wf.dynastyName, dynastySlug: wf.dynastySlug,
-        version: wf.version, featureSlug: wf.featureSlug, createdForBrandId: wf.createdForBrandId,
-      } : { slug: key },
+        id: wf.id,
+        workflowSlug: wf.workflowSlug,
+        workflowName: wf.workflowName,
+        workflowDynastyName: wf.workflowDynastyName,
+        workflowDynastySlug: wf.workflowDynastySlug,
+        version: wf.version,
+        featureSlug: wf.featureSlug,
+        createdForBrandId: wf.createdForBrandId,
+      } : { workflowSlug: key },
       stats,
     };
   });
@@ -362,7 +368,7 @@ export async function handleBest(
     aggregatedOutcomes = agg.aggregatedOutcomes;
   }
 
-  const workflowBySlug = new Map(workflows.map((w) => [w.slug, w]));
+  const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
 
   const best: Record<string, { workflowSlug?: string; workflowName?: string; brandId?: string; createdForBrandId?: string | null; value: number } | null> = {};
 
@@ -383,7 +389,7 @@ export async function handleBest(
       best[metricKey] = { brandId: bestKey, value: bestCostPerOutcome };
     } else {
       const wf = workflowBySlug.get(bestKey);
-      best[metricKey] = { workflowSlug: wf?.slug ?? bestKey, workflowName: wf?.name ?? bestKey, createdForBrandId: wf?.createdForBrandId ?? null, value: bestCostPerOutcome };
+      best[metricKey] = { workflowSlug: wf?.workflowSlug ?? bestKey, workflowName: wf?.workflowName ?? bestKey, createdForBrandId: wf?.createdForBrandId ?? null, value: bestCostPerOutcome };
     }
   }
 
