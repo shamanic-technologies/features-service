@@ -272,10 +272,10 @@ registry.registerPath({
 
 const rankedWorkflowSchema = z.object({
   id: z.string().uuid().optional(),
-  slug: z.string(),
-  name: z.string().optional(),
-  dynastyName: z.string().optional(),
-  dynastySlug: z.string().optional(),
+  workflowSlug: z.string(),
+  workflowName: z.string().optional(),
+  workflowDynastyName: z.string().optional(),
+  workflowDynastySlug: z.string().optional(),
   version: z.number().int().optional(),
   featureSlug: z.string().optional(),
   createdForBrandId: z.string().nullable().optional(),

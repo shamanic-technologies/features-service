@@ -97,10 +97,10 @@ function mockFetchResponses(overrides: Record<string, unknown> = {}) {
       workflows: [
         {
           id: "wf-1",
-          slug: "sales-outreach-alpha",
-          name: "Sales Outreach Alpha",
-          dynastyName: "Sales Outreach Alpha",
-          dynastySlug: "sales-outreach-alpha",
+          workflowSlug: "sales-outreach-alpha",
+          workflowName: "Sales Outreach Alpha",
+          workflowDynastyName: "Sales Outreach Alpha",
+          workflowDynastySlug: "sales-outreach-alpha",
           version: 1,
           status: "active",
           featureSlug: "sales-cold-email-outreach",
@@ -109,10 +109,10 @@ function mockFetchResponses(overrides: Record<string, unknown> = {}) {
         },
         {
           id: "wf-2",
-          slug: "sales-outreach-beta",
-          name: "Sales Outreach Beta",
-          dynastyName: "Sales Outreach Beta",
-          dynastySlug: "sales-outreach-beta",
+          workflowSlug: "sales-outreach-beta",
+          workflowName: "Sales Outreach Beta",
+          workflowDynastyName: "Sales Outreach Beta",
+          workflowDynastySlug: "sales-outreach-beta",
           version: 1,
           status: "active",
           featureSlug: "sales-cold-email-outreach",
@@ -176,9 +176,15 @@ describe("GET /public/stats/ranked", () => {
     expect(res.body.objective).toBe("recipientsRepliesPositive");
     expect(res.body.sortDirection).toBe("desc");
     expect(res.body.results).toHaveLength(2);
-    expect(res.body.results[0].workflow.slug).toBe("sales-outreach-beta");
+    expect(res.body.results[0].workflow.workflowSlug).toBe("sales-outreach-beta");
+    expect(res.body.results[0].workflow.workflowName).toBe("Sales Outreach Beta");
+    expect(res.body.results[0].workflow.workflowDynastySlug).toBe("sales-outreach-beta");
+    expect(res.body.results[0].workflow.workflowDynastyName).toBe("Sales Outreach Beta");
+    expect(res.body.results[0].workflow.version).toBe(1);
+    expect(res.body.results[0].workflow.featureSlug).toBe("sales-cold-email-outreach");
+    expect(res.body.results[0].workflow.createdForBrandId).toBe("brand-1");
     expect(res.body.results[0].stats.recipientsRepliesPositive).toBe(20);
-    expect(res.body.results[1].workflow.slug).toBe("sales-outreach-alpha");
+    expect(res.body.results[1].workflow.workflowSlug).toBe("sales-outreach-alpha");
   });
 
   it("defaults objective to costPerRecipientPositiveReplyCents when not provided", async () => {
@@ -237,6 +243,63 @@ describe("GET /public/stats/ranked", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(2);
+  });
+
+  it("aggregates stats across upgrade chains using workflowSlug", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockFetchResponses({
+      "http://workflow:3000/public/workflows": {
+        workflows: [
+          {
+            id: "wf-old",
+            workflowSlug: "sales-outreach-alpha",
+            workflowName: "Sales Outreach Alpha",
+            workflowDynastyName: "Sales Outreach Alpha",
+            workflowDynastySlug: "sales-outreach-alpha",
+            version: 1,
+            status: "deprecated",
+            featureSlug: "sales-cold-email-outreach",
+            createdForBrandId: null,
+            upgradedTo: "wf-new",
+          },
+          {
+            id: "wf-new",
+            workflowSlug: "sales-outreach-alpha-v2",
+            workflowName: "Sales Outreach Alpha v2",
+            workflowDynastyName: "Sales Outreach Alpha",
+            workflowDynastySlug: "sales-outreach-alpha",
+            version: 2,
+            status: "active",
+            featureSlug: "sales-cold-email-outreach",
+            createdForBrandId: null,
+            upgradedTo: null,
+          },
+        ],
+      },
+      "http://runs:3000/v1/stats/public/costs": {
+        groups: [
+          { dimensions: { workflowSlug: "sales-outreach-alpha" }, totalCostInUsdCents: "1000", runCount: 5, minStartedAt: null, maxStartedAt: null },
+          { dimensions: { workflowSlug: "sales-outreach-alpha-v2" }, totalCostInUsdCents: "2000", runCount: 8, minStartedAt: null, maxStartedAt: null },
+        ],
+      },
+      "http://email:3000/public/stats": {
+        groups: [
+          { key: "sales-outreach-alpha", broadcast: { recipientStats: { repliesPositive: 10, sent: 100 } } },
+          { key: "sales-outreach-alpha-v2", broadcast: { recipientStats: { repliesPositive: 20, sent: 200 } } },
+        ],
+      },
+    });
+
+    const res = await request(app)
+      .get("/public/stats/ranked?featureSlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow");
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].workflow.workflowSlug).toBe("sales-outreach-alpha-v2");
+    expect(res.body.results[0].stats.recipientsRepliesPositive).toBe(30);
+    expect(res.body.results[0].stats.recipientsSent).toBe(300);
+    expect(res.body.results[0].stats.completedRuns).toBe(13);
+    expect(res.body.results[0].stats.totalCostInUsdCents).toBe(3000);
   });
 
   it("supports groupBy=brand with enriched brand info", async () => {
