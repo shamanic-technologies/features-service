@@ -18,6 +18,14 @@ describe("SEED_FEATURES — pr-expert-quote-outreach (Featured.com)", () => {
     expect(seed?.name).not.toBe(plural?.name);
   });
 
+  it("plural sibling has visibly distinct name (cold outbound vs Featured.com inbound)", () => {
+    const plural = SEED_FEATURES.find((f) => f.slug === "pr-expert-quotes-outreach");
+    expect(plural).toBeDefined();
+    expect(plural?.name).toMatch(/cold/i);
+    expect(plural?.name).not.toMatch(/featured\.com/i);
+    expect(plural?.description).toMatch(/cold|outbound|pitch/i);
+  });
+
   it("has Featured.com-specific name and description", () => {
     expect(seed?.name).toBe("Expert Quote Outreach (Featured.com)");
     expect(seed?.description).toMatch(/Featured\.com/i);
@@ -85,8 +93,8 @@ describe("SEED_FEATURES — ai-visibility-scoring", () => {
     expect(seed).toBeDefined();
   });
 
-  it("has implemented=false (producer service not yet shipped)", () => {
-    expect(seed?.implemented).toBe(false);
+  it("has implemented=true (producer service ai-visibility-score-service is deployed)", () => {
+    expect(seed?.implemented).toBe(true);
   });
 
   it("has status=active and a positive displayOrder", () => {
