@@ -146,12 +146,53 @@ export const SEED_FEATURES: SeedFeature[] = [
   },
 
   {
+    slug: "pr-expert-quotes-outreach",
+    name: "PR Expert Quotes Outreach",
+    description: "Find relevant journalists, pitch your spokesperson as an expert source for quotes and commentary, and track engagement through the full outreach funnel.",
+    icon: "quote",
+    implemented: true,
+    displayOrder: 4,
+    status: "active",
+    inputs: [
+      { key: "targetOutlets", type: "text", label: "Target Outlets", extractKey: "targetOutlets", description: "Types of media outlets or specific publications to target. Be specific about outlet tier, beat, and format (online, print, podcast). Examples: 'Top-tier tech blogs (TechCrunch, The Verge)', 'B2B SaaS trade publications', 'Fintech newsletters with 10k+ subscribers'. The LLM uses this to find and prioritize matching journalists.", placeholder: "TechCrunch, Forbes, industry trade publications..." },
+      { key: "expertiseTopics", type: "text", label: "Expertise Topics", extractKey: "expertiseTopics", description: "Topics the spokesperson can authoritatively comment on. Should be specific and tied to their experience. Examples: 'AI safety and alignment', 'B2B SaaS go-to-market', 'European fintech regulation'. The LLM uses this to match the spokesperson against journalist beats and ongoing stories.", placeholder: "AI safety, fintech regulation, developer productivity..." },
+      { key: "spokesperson", type: "text", label: "Spokesperson", extractKey: "spokesperson", description: "Who is available for quotes and commentary. Include name, title, and notable credentials that establish authority. Examples: 'John Smith, CTO — ex-Google, published AI researcher, 15 years in ML', 'Sarah Chen, CEO — Forbes 30 Under 30, former McKinsey'. The LLM pitches them as a credible expert source.", placeholder: "Jane Doe, CEO — 15 years in fintech, ex-Stripe" },
+      { key: "newsHook", type: "text", label: "News Hook", extractKey: "newsHook", description: "A timely event, trend, or news cycle that makes the expert's perspective relevant right now. Examples: 'Following new SEC crypto regulations', 'Ahead of OpenAI DevDay', 'During the recent banking crisis'. Helps the LLM frame the spokesperson as the right voice for current coverage.", placeholder: "Recent regulation change, industry event, breaking news..." },
+      { key: "companyContext", type: "text", label: "Company Context", extractKey: "companyDescription", description: "Brief background on the company that gives the spokesperson their platform. Include founding date, traction metrics, notable customers, or market position. Examples: 'Founded 2022, 500+ enterprise customers, fastest-growing in category', 'Only platform certified for EU AI Act compliance'. Gives the LLM credibility context for the pitch.", placeholder: "What does your company do and why does the spokesperson have authority on this topic?" },
+    ],
+    outputs: [
+      { key: "outletsDiscovered", displayOrder: 1 },
+      { key: "emailsGenerated", displayOrder: 2 },
+      { key: "journalistsContacted", displayOrder: 3 },
+      { key: "recipientsSent", displayOrder: 4 },
+      { key: "recipientsOpened", displayOrder: 5 },
+      { key: "recipientOpenRate", displayOrder: 6 },
+      { key: "costPerRecipientOpenCents", displayOrder: 7 },
+      { key: "recipientsRepliesPositive", displayOrder: 8 },
+      { key: "recipientsRepliesNegative", displayOrder: 9 },
+      { key: "recipientsRepliesNeutral", displayOrder: 10 },
+      { key: "recipientPositiveReplyRate", displayOrder: 11 },
+      { key: "costPerRecipientPositiveReplyCents", defaultSort: true, displayOrder: 12, sortDirection: "asc" },
+    ],
+    charts: [
+      { key: "funnel", type: "funnel-bar", title: "Outreach Funnel", displayOrder: 1, steps: [{ key: "outletsDiscovered" }, { key: "emailsGenerated" }, { key: "journalistsContacted" }, { key: "recipientsSent" }, { key: "recipientsOpened" }, { key: "recipientsRepliesPositive" }] },
+      { key: "replyBreakdown", type: "breakdown-bar", title: "Reply Breakdown", displayOrder: 2, segments: [{ key: "recipientsRepliesPositive", color: "green", sentiment: "positive" }, { key: "recipientsRepliesNeutral", color: "gray", sentiment: "neutral" }, { key: "recipientsRepliesNegative", color: "red", sentiment: "negative" }, { key: "recipientsRepliesAutoReply", color: "orange", sentiment: "neutral" }] },
+    ],
+    entities: [
+      { name: "outlets", countKey: "outletsDiscovered" },
+      { name: "journalists", countKey: "journalistsContacted" },
+      { name: "emails", countKey: "emailsGenerated" },
+      { name: "articles" },
+    ],
+  },
+
+  {
     slug: "outlet-database-discovery",
     name: "Outlet Database Discovery",
     description: "Discover relevant media outlets for your industry, geography, and PR angles using AI-powered search.",
     icon: "globe",
     implemented: true,
-    displayOrder: 4,
+    displayOrder: 5,
     status: "active",
     inputs: [
       { key: "industry", type: "text", label: "Industry", extractKey: "industry", description: "The industry vertical to target for discovery. Be specific — this drives which media outlets are searched. Examples: 'Enterprise cybersecurity', 'Consumer fintech', 'Climate tech / clean energy'. The discovery engine uses this to generate targeted search queries.", placeholder: "SaaS, AI, Fintech, Healthcare..." },
@@ -179,7 +220,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     description: "Generate professional press kit pages with company info, media assets, and PR materials for journalist access.",
     icon: "file-text",
     implemented: true,
-    displayOrder: 5,
+    displayOrder: 6,
     status: "active",
     inputs: [
       { key: "prAngle", type: "text", label: "PR Angle", extractKey: "suggestedAngles", description: "The editorial hook or story angle for the press kit. Should be newsworthy and specific. Examples: 'Series B funding of $25M led by Sequoia', 'Launch of AI-powered compliance platform'. The LLM uses this as the core narrative for the press kit.", placeholder: "Series B funding announcement, product launch..." },
