@@ -147,8 +147,8 @@ export const SEED_FEATURES: SeedFeature[] = [
 
   {
     slug: "pr-expert-quotes-outreach",
-    name: "PR Expert Quotes Outreach",
-    description: "Find relevant journalists, pitch your spokesperson as an expert source for quotes and commentary, and track engagement through the full outreach funnel.",
+    name: "PR Cold Expert Pitch",
+    description: "Cold outbound to journalists at target outlets pitching your spokesperson as an expert source for quotes and commentary. Tracks engagement through the full outreach funnel. (Distinct from Featured.com inbound — this one initiates the conversation.)",
     icon: "quote",
     implemented: true,
     displayOrder: 4,
@@ -288,7 +288,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     name: "AI Visibility Scoring",
     description: "Audit how your brand appears in answers from ChatGPT, Claude, Perplexity, and Gemini. Track mention rate, ranking, and share-of-voice against competitors across a curated prompt set.",
     icon: "sparkles",
-    implemented: false,
+    implemented: true,
     displayOrder: 8,
     status: "active",
     inputs: [
