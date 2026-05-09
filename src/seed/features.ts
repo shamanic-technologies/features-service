@@ -282,4 +282,24 @@ export const SEED_FEATURES: SeedFeature[] = [
       { name: "articles" },
     ],
   },
+
+  {
+    slug: "ai-visibility-scoring",
+    name: "AI Visibility Scoring",
+    description: "Audit how your brand appears in answers from ChatGPT, Claude, Perplexity, and Gemini. Track mention rate, ranking, and share-of-voice against competitors across a curated prompt set.",
+    icon: "sparkles",
+    implemented: false,
+    displayOrder: 8,
+    status: "active",
+    inputs: [
+      { key: "brandName", type: "text", label: "Brand Name", extractKey: "brandName", description: "The brand or company name to audit. Used as the primary entity to detect in LLM answers. Examples: 'Stripe', 'Linear', 'Vercel'. Detection is exact-match plus close variants (case-insensitive, common suffix stripping).", placeholder: "Stripe" },
+      { key: "competitors", type: "textarea", label: "Competitors", extractKey: "competitors", description: "Competitor brands to score against. Comma- or newline-separated. Used to compute share-of-voice and ranking comparisons. Examples: 'Adyen, Checkout.com, Braintree'. Aim for 3-7 direct competitors for meaningful share-of-voice metrics.", placeholder: "Adyen, Checkout.com, Braintree" },
+      { key: "topics", type: "textarea", label: "Topics", extractKey: "topics", description: "Topic areas where the brand wants to be visible. Comma- or newline-separated. Drives the prompt set used for the audit. Examples: 'developer-friendly payment APIs, subscription billing, fraud prevention'. The more specific, the more targeted the audit.", placeholder: "developer-friendly payment APIs, subscription billing, fraud prevention" },
+      { key: "targetGeo", type: "text", label: "Geographic Focus", extractKey: "suggestedGeo", description: "Geographic scope for the audit — countries, regions, or cities. Some prompts are geo-specific. Examples: 'US', 'EU', 'UK and Ireland', 'Global'. Leave empty for global.", placeholder: "US, Europe, Global..." },
+      { key: "audienceProfile", type: "textarea", label: "Audience Profile", extractKey: "targetAudience", description: "Who is asking these LLM questions — the buyer persona. Used to frame prompts from a realistic user perspective. Examples: 'CTOs at Series A SaaS startups', 'Marketing leads at e-commerce brands doing $5M-$50M GMV'. Helps surface prompts your real buyers ask.", placeholder: "CTOs at Series A SaaS startups" },
+    ],
+    outputs: [],
+    charts: [],
+    entities: [],
+  },
 ];

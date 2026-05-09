@@ -76,6 +76,48 @@ describe("SEED_FEATURES — pr-expert-quote-outreach (Featured.com)", () => {
   });
 });
 
+describe("SEED_FEATURES — ai-visibility-scoring", () => {
+  const SLUG = "ai-visibility-scoring";
+
+  const seed = SEED_FEATURES.find((f) => f.slug === SLUG);
+
+  it("is registered in SEED_FEATURES", () => {
+    expect(seed).toBeDefined();
+  });
+
+  it("has implemented=false (producer service not yet shipped)", () => {
+    expect(seed?.implemented).toBe(false);
+  });
+
+  it("has status=active and a positive displayOrder", () => {
+    expect(seed?.status).toBe("active");
+    expect(seed?.displayOrder).toBeGreaterThan(0);
+  });
+
+  it("has at least one input with required keys", () => {
+    expect(seed?.inputs.length).toBeGreaterThan(0);
+    for (const input of seed?.inputs as Array<{ key: string; label: string; extractKey: string; description: string }>) {
+      expect(input.key).toBeTruthy();
+      expect(input.label).toBeTruthy();
+      expect(input.extractKey).toBeTruthy();
+      expect(input.description).toBeTruthy();
+    }
+  });
+
+  it("declares brand-related inputs", () => {
+    const keys = (seed?.inputs as Array<{ key: string }>).map((i) => i.key);
+    expect(keys).toContain("brandName");
+    expect(keys).toContain("competitors");
+    expect(keys).toContain("topics");
+  });
+
+  it("has empty outputs/charts/entities until producer ships", () => {
+    expect(seed?.outputs).toEqual([]);
+    expect(seed?.charts).toEqual([]);
+    expect(seed?.entities).toEqual([]);
+  });
+});
+
 describe("SEED_FEATURES — global invariants", () => {
   it("all slugs are unique", () => {
     const slugs = SEED_FEATURES.map((f) => f.slug);
