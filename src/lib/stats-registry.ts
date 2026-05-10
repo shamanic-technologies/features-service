@@ -49,6 +49,35 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   leadsServed:         { kind: "raw", type: "count",    label: "Leads Served",     source: "leads" },
   emailsGenerated:     { kind: "raw", type: "count",    label: "Emails Generated", source: "runs", runFilter: { serviceName: "content-generation-service", taskName: "single-generation" } },
 
+  // ── Lead-scoped outreach funnel: lead-service /orgs/stats byOutreachStatus ──
+  leadsContacted:           { kind: "raw", type: "count", label: "Leads Contacted",      source: "leads" },
+  leadsSent:                { kind: "raw", type: "count", label: "Leads Sent",           source: "leads" },
+  leadsDelivered:           { kind: "raw", type: "count", label: "Leads Delivered",      source: "leads" },
+  leadsOpened:              { kind: "raw", type: "count", label: "Leads Opened",         source: "leads" },
+  leadsClicked:             { kind: "raw", type: "count", label: "Leads Clicked",        source: "leads" },
+  leadsBounced:             { kind: "raw", type: "count", label: "Leads Bounced",        source: "leads" },
+  leadsUnsubscribed:        { kind: "raw", type: "count", label: "Leads Unsubscribed",   source: "leads" },
+  leadsRepliesPositive:     { kind: "raw", type: "count", label: "Leads Positive",       source: "leads" },
+  leadsRepliesNegative:     { kind: "raw", type: "count", label: "Leads Negative",       source: "leads" },
+  leadsRepliesNeutral:      { kind: "raw", type: "count", label: "Leads Neutral",        source: "leads" },
+  leadsRepliesAutoReply:    { kind: "raw", type: "count", label: "Leads Auto-Reply",     source: "leads" },
+
+  // ── Lead reply detail: lead-service /orgs/stats repliesDetail ─────────────
+  leadsRepliesInterested:        { kind: "raw", type: "count", label: "Interested",       source: "leads" },
+  leadsRepliesMeetingBooked:     { kind: "raw", type: "count", label: "Meeting Booked",   source: "leads" },
+  leadsRepliesClosed:            { kind: "raw", type: "count", label: "Closed",           source: "leads" },
+  leadsRepliesNotInterested:     { kind: "raw", type: "count", label: "Not Interested",   source: "leads" },
+  leadsRepliesWrongPerson:       { kind: "raw", type: "count", label: "Wrong Person",     source: "leads" },
+  leadsRepliesUnsubscribeDetail: { kind: "raw", type: "count", label: "Unsubscribe",      source: "leads" },
+  leadsRepliesNeutralDetail:     { kind: "raw", type: "count", label: "Neutral Reply",    source: "leads" },
+  leadsRepliesAutoReplyDetail:   { kind: "raw", type: "count", label: "Auto-Reply Detail",source: "leads" },
+  leadsRepliesOutOfOffice:       { kind: "raw", type: "count", label: "Out of Office",    source: "leads" },
+
+  // ── Lead pipeline state: lead-service /orgs/stats top-level ───────────────
+  leadsBuffered:       { kind: "raw", type: "count", label: "Leads Buffered", source: "leads" },
+  leadsSkipped:        { kind: "raw", type: "count", label: "Leads Skipped",  source: "leads" },
+  leadsClaimed:        { kind: "raw", type: "count", label: "Leads Claimed",  source: "leads" },
+
   // ── Journalists: journalists-service ────────────────────────────────────────
   journalistsFound:     { kind: "raw", type: "count",   label: "Journalists Found",     source: "journalists" },
   journalistsContacted: { kind: "raw", type: "count",   label: "Journalists Contacted", source: "journalists" },
@@ -81,6 +110,18 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   costPerRecipientOpenCents:          { kind: "derived", type: "currency", label: "$/Open",           numerator: "totalCostInUsdCents",  denominator: "recipientsOpened" },
   costPerRecipientClickCents:         { kind: "derived", type: "currency", label: "$/Click",          numerator: "totalCostInUsdCents",  denominator: "recipientsClicked" },
   costPerRecipientPositiveReplyCents: { kind: "derived", type: "currency", label: "$/Positive Reply", numerator: "totalCostInUsdCents",  denominator: "recipientsRepliesPositive" },
+  // ── Derived rates (lead-scoped) ──────────────────────────────────────────
+  leadOpenRate:                 { kind: "derived", type: "rate",     label: "% Lead Opens",     numerator: "leadsOpened",          denominator: "leadsDelivered" },
+  leadClickRate:                { kind: "derived", type: "rate",     label: "% Lead Clicks",    numerator: "leadsClicked",         denominator: "leadsDelivered" },
+  leadPositiveReplyRate:        { kind: "derived", type: "rate",     label: "% Lead Positive",  numerator: "leadsRepliesPositive", denominator: "leadsDelivered" },
+  leadNegativeReplyRate:        { kind: "derived", type: "rate",     label: "% Lead Negative",  numerator: "leadsRepliesNegative", denominator: "leadsDelivered" },
+  leadNeutralReplyRate:         { kind: "derived", type: "rate",     label: "% Lead Neutral",   numerator: "leadsRepliesNeutral",  denominator: "leadsDelivered" },
+
+  // ── Derived cost-per (lead-scoped) ───────────────────────────────────────
+  costPerLeadOpenCents:           { kind: "derived", type: "currency", label: "$/Lead Open",           numerator: "totalCostInUsdCents", denominator: "leadsOpened" },
+  costPerLeadClickCents:          { kind: "derived", type: "currency", label: "$/Lead Click",          numerator: "totalCostInUsdCents", denominator: "leadsClicked" },
+  costPerLeadPositiveReplyCents:  { kind: "derived", type: "currency", label: "$/Lead Positive Reply", numerator: "totalCostInUsdCents", denominator: "leadsRepliesPositive" },
+
   costPerOutletCents:     { kind: "derived", type: "currency", label: "$/Outlet",      numerator: "totalCostInUsdCents",  denominator: "outletsDiscovered" },
   costPerPressKitCents:   { kind: "derived", type: "currency", label: "$/Kit",         numerator: "totalCostInUsdCents",  denominator: "pressKitsGenerated" },
   costPerPressKitViewCents: { kind: "derived", type: "currency", label: "$/View",      numerator: "totalCostInUsdCents",  denominator: "pressKitViews" },

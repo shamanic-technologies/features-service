@@ -393,6 +393,72 @@ async function fetchJournalistsStats(
   }
 }
 
+interface LeadByOutreachStatus {
+  contacted: number;
+  sent: number;
+  delivered: number;
+  opened: number;
+  bounced: number;
+  clicked: number;
+  unsubscribed: number;
+  repliesPositive: number;
+  repliesNegative: number;
+  repliesNeutral: number;
+  repliesAutoReply: number;
+}
+
+interface LeadRepliesDetail {
+  interested: number;
+  meetingBooked: number;
+  closed: number;
+  notInterested: number;
+  wrongPerson: number;
+  unsubscribe: number;
+  neutral: number;
+  autoReply: number;
+  outOfOffice: number;
+}
+
+interface LeadStatsBlock {
+  totalLeads: number;
+  byOutreachStatus: LeadByOutreachStatus;
+  repliesDetail: LeadRepliesDetail;
+  buffered: number;
+  skipped: number;
+  claimed: number;
+}
+
+function mapLeadStatsBlock(block: LeadStatsBlock): Record<string, number> {
+  const o = block.byOutreachStatus;
+  const r = block.repliesDetail;
+  return {
+    leadsServed: block.totalLeads,
+    leadsContacted: o.contacted,
+    leadsSent: o.sent,
+    leadsDelivered: o.delivered,
+    leadsOpened: o.opened,
+    leadsClicked: o.clicked,
+    leadsBounced: o.bounced,
+    leadsUnsubscribed: o.unsubscribed,
+    leadsRepliesPositive: o.repliesPositive,
+    leadsRepliesNegative: o.repliesNegative,
+    leadsRepliesNeutral: o.repliesNeutral,
+    leadsRepliesAutoReply: o.repliesAutoReply,
+    leadsRepliesInterested: r.interested,
+    leadsRepliesMeetingBooked: r.meetingBooked,
+    leadsRepliesClosed: r.closed,
+    leadsRepliesNotInterested: r.notInterested,
+    leadsRepliesWrongPerson: r.wrongPerson,
+    leadsRepliesUnsubscribeDetail: r.unsubscribe,
+    leadsRepliesNeutralDetail: r.neutral,
+    leadsRepliesAutoReplyDetail: r.autoReply,
+    leadsRepliesOutOfOffice: r.outOfOffice,
+    leadsBuffered: block.buffered,
+    leadsSkipped: block.skipped,
+    leadsClaimed: block.claimed,
+  };
+}
+
 async function fetchLeadsStats(
   orgId: string,
   groupBy: GroupByDimension | null,
@@ -420,17 +486,17 @@ async function fetchLeadsStats(
     }
 
     const data = await response.json() as
-      | { totalLeads: number; groups?: undefined }
-      | { groups: Array<{ key: string; totalLeads: number }> };
+      | (LeadStatsBlock & { groups?: undefined })
+      | { groups: Array<LeadStatsBlock & { key: string }> };
 
     const result = new Map<string, Record<string, number>>();
 
     if ("groups" in data && data.groups) {
       for (const group of data.groups) {
-        result.set(group.key, { leadsServed: group.totalLeads });
+        result.set(group.key, mapLeadStatsBlock(group));
       }
     } else if ("totalLeads" in data) {
-      result.set("__total__", { leadsServed: data.totalLeads });
+      result.set("__total__", mapLeadStatsBlock(data));
     }
 
     return result;

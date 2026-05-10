@@ -70,6 +70,76 @@ describe("STATS_REGISTRY", () => {
     expect(STATS_REGISTRY.pressKitUniqueVisitors).toMatchObject({ kind: "raw", source: "press-kits" });
   });
 
+  it("contains lead-scoped raw outreach status keys", () => {
+    expect(VALID_STATS_KEYS.has("leadsContacted")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsSent")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsDelivered")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsOpened")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsClicked")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsBounced")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsUnsubscribed")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsRepliesPositive")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsRepliesNegative")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsRepliesNeutral")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsRepliesAutoReply")).toBe(true);
+  });
+
+  it("contains lead reply detail keys", () => {
+    expect(VALID_STATS_KEYS.has("leadsRepliesInterested")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsRepliesMeetingBooked")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsRepliesClosed")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsRepliesNotInterested")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsRepliesWrongPerson")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsRepliesUnsubscribeDetail")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsRepliesNeutralDetail")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsRepliesAutoReplyDetail")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsRepliesOutOfOffice")).toBe(true);
+  });
+
+  it("contains lead pipeline state keys", () => {
+    expect(VALID_STATS_KEYS.has("leadsBuffered")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsSkipped")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadsClaimed")).toBe(true);
+  });
+
+  it("all leads* raw keys have source 'leads'", () => {
+    const leadKeys = Object.entries(STATS_REGISTRY).filter(
+      ([k, def]) => def.kind === "raw" && k.startsWith("leads"),
+    );
+    expect(leadKeys.length).toBeGreaterThanOrEqual(24);
+    for (const [, def] of leadKeys) {
+      expect(def).toMatchObject({ kind: "raw", source: "leads" });
+    }
+  });
+
+  it("contains lead-scoped derived rate keys", () => {
+    expect(VALID_STATS_KEYS.has("leadOpenRate")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadClickRate")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadPositiveReplyRate")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadNegativeReplyRate")).toBe(true);
+    expect(VALID_STATS_KEYS.has("leadNeutralReplyRate")).toBe(true);
+  });
+
+  it("contains lead-scoped derived cost-per keys", () => {
+    expect(VALID_STATS_KEYS.has("costPerLeadOpenCents")).toBe(true);
+    expect(VALID_STATS_KEYS.has("costPerLeadClickCents")).toBe(true);
+    expect(VALID_STATS_KEYS.has("costPerLeadPositiveReplyCents")).toBe(true);
+  });
+
+  it("lead derived rates use leadsDelivered as denominator", () => {
+    expect(STATS_REGISTRY.leadOpenRate).toMatchObject({ kind: "derived", denominator: "leadsDelivered", numerator: "leadsOpened" });
+    expect(STATS_REGISTRY.leadClickRate).toMatchObject({ kind: "derived", denominator: "leadsDelivered", numerator: "leadsClicked" });
+    expect(STATS_REGISTRY.leadPositiveReplyRate).toMatchObject({ kind: "derived", denominator: "leadsDelivered", numerator: "leadsRepliesPositive" });
+    expect(STATS_REGISTRY.leadNegativeReplyRate).toMatchObject({ kind: "derived", denominator: "leadsDelivered", numerator: "leadsRepliesNegative" });
+    expect(STATS_REGISTRY.leadNeutralReplyRate).toMatchObject({ kind: "derived", denominator: "leadsDelivered", numerator: "leadsRepliesNeutral" });
+  });
+
+  it("lead cost-per keys use totalCostInUsdCents as numerator", () => {
+    expect(STATS_REGISTRY.costPerLeadOpenCents).toMatchObject({ kind: "derived", numerator: "totalCostInUsdCents", denominator: "leadsOpened" });
+    expect(STATS_REGISTRY.costPerLeadClickCents).toMatchObject({ kind: "derived", numerator: "totalCostInUsdCents", denominator: "leadsClicked" });
+    expect(STATS_REGISTRY.costPerLeadPositiveReplyCents).toMatchObject({ kind: "derived", numerator: "totalCostInUsdCents", denominator: "leadsRepliesPositive" });
+  });
+
   it("contains recipient-level derived cost-per keys", () => {
     expect(VALID_STATS_KEYS.has("costPerRecipientOpenCents")).toBe(true);
     expect(VALID_STATS_KEYS.has("costPerRecipientClickCents")).toBe(true);
@@ -155,6 +225,34 @@ describe("seed features use only valid registry keys", () => {
       }
     }
   });
+});
+
+describe("sales/hiring seed funnels are lead-scoped", () => {
+  const LEAD_DRIVEN = ["sales-cold-email-outreach", "hiring-cold-email-outreach"];
+
+  for (const slug of LEAD_DRIVEN) {
+    it(`${slug}: funnel chart contains no recipients* keys`, () => {
+      const feature = SEED_FEATURES.find((f) => f.slug === slug);
+      expect(feature, `seed feature ${slug} missing`).toBeDefined();
+      const charts = feature!.charts as { key: string; steps?: { key: string }[]; segments?: { key: string }[] }[];
+      const funnel = charts.find((c) => c.key === "funnel");
+      expect(funnel, `${slug}: funnel chart missing`).toBeDefined();
+      for (const step of funnel!.steps ?? []) {
+        expect(step.key.startsWith("recipients"), `${slug} funnel step "${step.key}" still recipient-scoped`).toBe(false);
+      }
+    });
+
+    it(`${slug}: outputs contain no recipients*/costPerRecipient* keys`, () => {
+      const feature = SEED_FEATURES.find((f) => f.slug === slug);
+      const outputs = feature!.outputs as { key: string }[];
+      for (const out of outputs) {
+        expect(
+          out.key.startsWith("recipients") || out.key.startsWith("recipient") || out.key.startsWith("costPerRecipient"),
+          `${slug} output "${out.key}" still recipient-scoped`,
+        ).toBe(false);
+      }
+    });
+  }
 });
 
 describe("validateEntityTypes", () => {
