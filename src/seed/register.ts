@@ -1,12 +1,12 @@
-import { eq } from "drizzle-orm";
+import { eq, notInArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { SEED_FEATURES } from "./features.js";
 
 /**
- * Register seed features via upsert-by-slug.
- * Called on every cold start. Idempotent — updates metadata if the slug exists,
- * inserts if it doesn't.
+ * Register seed features via upsert-by-slug, then sweep-delete any DB rows
+ * whose slug is no longer in SEED_FEATURES. Seed file is the source of truth.
+ * Called on every cold start. Idempotent.
  */
 export async function registerSeedFeatures(): Promise<void> {
   for (const seed of SEED_FEATURES) {
@@ -52,5 +52,15 @@ export async function registerSeedFeatures(): Promise<void> {
     }
   }
 
-  console.log(`[features-service] Seed registration complete (${SEED_FEATURES.length} features)`);
+  const seedSlugs = SEED_FEATURES.map((f) => f.slug);
+  const deleted = await db
+    .delete(features)
+    .where(notInArray(features.slug, seedSlugs))
+    .returning({ slug: features.slug });
+
+  for (const row of deleted) {
+    console.log(`[features-service] Deleted stale feature: ${row.slug}`);
+  }
+
+  console.log(`[features-service] Seed registration complete (${SEED_FEATURES.length} features, ${deleted.length} pruned)`);
 }
