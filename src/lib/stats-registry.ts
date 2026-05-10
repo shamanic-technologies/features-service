@@ -195,11 +195,11 @@ export interface EntityTypeDef {
  */
 export const ENTITY_REGISTRY: Record<string, EntityTypeDef> = {
   leads:        { label: "Leads",       icon: "users",        pathSuffix: "leads",       description: "Sales leads discovered or imported for outreach" },
-  companies:    { label: "Companies",   icon: "building-2",   pathSuffix: "companies",   description: "Target companies identified for the campaign" },
-  emails:       { label: "Emails",      icon: "mail",         pathSuffix: "emails",      description: "Email messages generated and sent by the campaign" },
+  companies:    { label: "Companies",   icon: "building",     pathSuffix: "companies",   description: "Target companies identified for the campaign" },
+  emails:       { label: "Emails",      icon: "envelope",     pathSuffix: "emails",      description: "Email messages generated and sent by the campaign" },
   outlets:      { label: "Outlets",     icon: "newspaper",    pathSuffix: "outlets",      description: "Media outlets discovered for PR outreach" },
   journalists:  { label: "Journalists", icon: "pen-tool",     pathSuffix: "journalists", description: "Journalists found at discovered outlets" },
-  "press-kits": { label: "Press Kits",  icon: "file-text",    pathSuffix: "press-kits",  description: "Press kits generated for media pitching" },
+  "press-kits": { label: "Press Kits",  icon: "document",     pathSuffix: "press-kits",  description: "Press kits generated for media pitching" },
   articles:     { label: "Articles",    icon: "scroll-text",  pathSuffix: "articles",    description: "Published articles resulting from PR campaigns" },
   "quote-requests":  { label: "Quote Requests",  icon: "help-circle",     pathSuffix: "quote-requests",  description: "Featured.com journalist quote requests synced for the campaign" },
   "quote-pitches":   { label: "Pitches",         icon: "quote",           pathSuffix: "quote-pitches",   description: "Quote pitches drafted and submitted to journalists" },
