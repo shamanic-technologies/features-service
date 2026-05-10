@@ -47,6 +47,7 @@ const registryResponseSchema = z.object({
   registry: z.record(z.string(), z.object({
     type: z.string(),
     label: z.string(),
+    sortDirection: z.enum(["asc", "desc"]).optional(),
   })),
 });
 

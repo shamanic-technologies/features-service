@@ -18,6 +18,10 @@ function getLeadServiceUrl(): string { return process.env.LEAD_SERVICE_URL!; }
 function getLeadServiceApiKey(): string { return process.env.LEAD_SERVICE_API_KEY!; }
 function getPressKitsServiceUrl(): string { return process.env.PRESS_KITS_SERVICE_URL!; }
 function getPressKitsServiceApiKey(): string { return process.env.PRESS_KITS_SERVICE_API_KEY!; }
+function getJournalistsQuotesServiceUrl(): string | undefined { return process.env.JOURNALISTS_QUOTES_SERVICE_URL; }
+function getJournalistsQuotesServiceApiKey(): string | undefined { return process.env.JOURNALISTS_QUOTES_SERVICE_API_KEY; }
+function getAiVisibilityServiceUrl(): string | undefined { return process.env.AI_VISIBILITY_SERVICE_URL; }
+function getAiVisibilityServiceApiKey(): string | undefined { return process.env.AI_VISIBILITY_SERVICE_API_KEY; }
 
 const router = Router();
 
@@ -589,6 +593,158 @@ async function fetchPressKitsStats(
   }
 }
 
+async function fetchJournalistsQuotesStats(
+  orgId: string,
+  filters: Record<string, string>,
+  identity: Identity,
+): Promise<Map<string, Record<string, number>>> {
+  const baseUrl = getJournalistsQuotesServiceUrl();
+  const apiKey = getJournalistsQuotesServiceApiKey();
+  if (!baseUrl || !apiKey) return new Map();
+
+  // journalists-quotes /orgs/quote-requests/stats only supports campaign_id scoping.
+  // Without a campaignId there's nothing meaningful to aggregate at this layer.
+  const campaignId = filters.campaignId;
+  if (!campaignId) return new Map();
+
+  const params = new URLSearchParams({ campaign_id: campaignId });
+  const url = `${baseUrl}/orgs/quote-requests/stats?${params}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: buildDownstreamHeaders(apiKey, orgId, identity),
+    });
+
+    if (!response.ok) {
+      console.error(`[features-service] journalists-quotes-service /orgs/quote-requests/stats failed: ${response.status}`);
+      return new Map();
+    }
+
+    const data = await response.json() as {
+      totalRequests: number;
+      totalPitched: number;
+      totalSelected: number;
+      totalPublished: number;
+      totalNotSelected: number;
+    };
+
+    const stats: Record<string, number> = {
+      quoteRequestsFound: data.totalRequests,
+      quotePitchesSubmitted: data.totalPitched,
+      quotesSelected: data.totalSelected,
+      quotesPublished: data.totalPublished,
+      quotesNotSelected: data.totalNotSelected,
+    };
+
+    const result = new Map<string, Record<string, number>>();
+    result.set("__total__", stats);
+    return result;
+  } catch (error) {
+    console.error(`[features-service] journalists-quotes-service /orgs/quote-requests/stats network error:`, (error as Error).message);
+    return new Map();
+  }
+}
+
+async function resolveBrandIdFromCampaign(
+  orgId: string,
+  campaignId: string,
+  identity: Identity,
+): Promise<string | null> {
+  const campaignUrl = process.env.CAMPAIGN_SERVICE_URL;
+  const campaignKey = process.env.CAMPAIGN_SERVICE_API_KEY;
+  if (!campaignUrl || !campaignKey) return null;
+
+  try {
+    const response = await fetch(`${campaignUrl}/campaigns/${encodeURIComponent(campaignId)}`, {
+      headers: buildDownstreamHeaders(campaignKey, orgId, identity),
+    });
+    if (!response.ok) {
+      console.error(`[features-service] campaign-service /campaigns/${campaignId} failed: ${response.status}`);
+      return null;
+    }
+    const data = await response.json() as { campaign?: { brandIds?: string[] | null } };
+    const brandIds = data.campaign?.brandIds;
+    if (!brandIds || brandIds.length === 0) return null;
+    return brandIds[0];
+  } catch (error) {
+    console.error(`[features-service] campaign-service /campaigns/:id network error:`, (error as Error).message);
+    return null;
+  }
+}
+
+async function fetchAiVisibilityStats(
+  orgId: string,
+  filters: Record<string, string>,
+  identity: Identity,
+): Promise<Map<string, Record<string, number>>> {
+  const baseUrl = getAiVisibilityServiceUrl();
+  const apiKey = getAiVisibilityServiceApiKey();
+  if (!baseUrl || !apiKey) return new Map();
+
+  // ai-visibility-score-service is brand-scoped. Use header brandId if present,
+  // else resolve from campaignId via campaign-service.
+  let brandId: string | null = filters.brandId ?? null;
+  if (!brandId && filters.campaignId) {
+    brandId = await resolveBrandIdFromCampaign(orgId, filters.campaignId, identity);
+  }
+  if (!brandId) return new Map();
+
+  const params = new URLSearchParams({ brandId, limit: "1" });
+  const url = `${baseUrl}/orgs/visibility-score-runs?${params}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: buildDownstreamHeaders(apiKey, orgId, identity),
+    });
+
+    if (!response.ok) {
+      console.error(`[features-service] ai-visibility-score-service /orgs/visibility-score-runs failed: ${response.status}`);
+      return new Map();
+    }
+
+    const data = await response.json() as {
+      runs: Array<{
+        visibilityScore: string | null;
+        brandMentionRate: string | null;
+        shareOfVoice: string | null;
+        netSentiment: string | null;
+        citationRate: string | null;
+        avgPosition: string | null;
+      }>;
+    };
+
+    const latest = data.runs?.[0];
+    if (!latest) return new Map();
+
+    const parse = (v: string | null): number | undefined => {
+      if (v == null) return undefined;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+
+    const stats: Record<string, number> = {};
+    const visibilityScore = parse(latest.visibilityScore);
+    const brandMentionRate = parse(latest.brandMentionRate);
+    const shareOfVoice = parse(latest.shareOfVoice);
+    const citationRate = parse(latest.citationRate);
+    const netSentiment = parse(latest.netSentiment);
+    const avgPosition = parse(latest.avgPosition);
+    if (visibilityScore !== undefined) stats.visibilityScore = visibilityScore;
+    if (brandMentionRate !== undefined) stats.brandMentionRate = brandMentionRate;
+    if (shareOfVoice !== undefined) stats.shareOfVoice = shareOfVoice;
+    if (citationRate !== undefined) stats.citationRate = citationRate;
+    if (netSentiment !== undefined) stats.netSentiment = netSentiment;
+    if (avgPosition !== undefined) stats.avgPosition = avgPosition;
+
+    const result = new Map<string, Record<string, number>>();
+    if (Object.keys(stats).length > 0) result.set("__total__", stats);
+    return result;
+  } catch (error) {
+    console.error(`[features-service] ai-visibility-score-service /orgs/visibility-score-runs network error:`, (error as Error).message);
+    return new Map();
+  }
+}
+
 async function fetchPipelineStats(
   orgId: string,
   groupBy: GroupByDimension | null,
@@ -764,7 +920,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     traceEvent(runId, { service: "features-service", event: "feature-stats-start", detail: `featureSlug=${featureSlug}, groupBy=${groupByParam ?? "none"}, filters=${JSON.stringify(filters)}` }, req.headers).catch(() => {});
 
     const identity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };
-    const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, pressKitsStatsMap, activeCampaigns] = await Promise.all([
+    const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, pressKitsStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns] = await Promise.all([
       fetchEmailStats(orgId, groupBy, filters, identity),
       fetchRunsStats(orgId, groupBy, filters, [featureSlug], identity),
       fetchOutletsStats(orgId, groupBy, filters, identity),
@@ -772,6 +928,8 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       fetchLeadsStats(orgId, groupBy, filters, identity),
       fetchPipelineStats(orgId, groupBy, filters, [featureSlug], identity),
       fetchPressKitsStats(orgId, groupBy, filters, identity),
+      fetchJournalistsQuotesStats(orgId, filters, identity),
+      fetchAiVisibilityStats(orgId, filters, identity),
       fetchActiveCampaigns(orgId, filters, identity),
     ]);
 
@@ -783,6 +941,8 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         ...(leadsStatsMap.get("__total__") ?? {}),
         ...(pipelineStatsMap.get("__total__") ?? {}),
         ...(pressKitsStatsMap.get("__total__") ?? {}),
+        ...(journalistsQuotesStatsMap.get("__total__") ?? {}),
+        ...(aiVisibilityStatsMap.get("__total__") ?? {}),
         totalCostInUsdCents: runsStatsMap.get("__total__")?.totalCostInUsdCents ?? 0,
         completedRuns: runsStatsMap.get("__total__")?.completedRuns ?? 0,
       };
@@ -857,13 +1017,15 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
     const groupBy = (groupByParam?.split(",")[0] ?? null) as GroupByDimension | null;
     const identity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };
 
-    const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, activeCampaigns] = await Promise.all([
+    const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns] = await Promise.all([
       fetchEmailStats(orgId, groupBy, filters, identity),
       fetchRunsStats(orgId, groupBy, filters, undefined, identity),
       fetchOutletsStats(orgId, groupBy, filters, identity),
       fetchJournalistsStats(orgId, groupBy, filters, identity),
       fetchLeadsStats(orgId, groupBy, filters, identity),
       fetchPipelineStats(orgId, groupBy, filters, undefined, identity),
+      fetchJournalistsQuotesStats(orgId, filters, identity),
+      fetchAiVisibilityStats(orgId, filters, identity),
       fetchActiveCampaigns(orgId, filters, identity),
     ]);
 
@@ -874,6 +1036,8 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
         ...(journalistsStatsMap.get("__total__") ?? {}),
         ...(leadsStatsMap.get("__total__") ?? {}),
         ...(pipelineStatsMap.get("__total__") ?? {}),
+        ...(journalistsQuotesStatsMap.get("__total__") ?? {}),
+        ...(aiVisibilityStatsMap.get("__total__") ?? {}),
         totalCostInUsdCents: runsStatsMap.get("__total__")?.totalCostInUsdCents ?? 0,
         completedRuns: runsStatsMap.get("__total__")?.completedRuns ?? 0,
       };

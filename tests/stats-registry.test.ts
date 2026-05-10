@@ -165,6 +165,30 @@ describe("STATS_REGISTRY", () => {
       }
     }
   });
+
+  it("contains quote-outreach raw count keys (source 'journalists-quotes')", () => {
+    for (const k of ["quoteRequestsFound", "quotePitchesSubmitted", "quotesSelected", "quotesPublished", "quotesNotSelected"]) {
+      expect(VALID_STATS_KEYS.has(k)).toBe(true);
+      expect(STATS_REGISTRY[k]).toMatchObject({ kind: "raw", type: "count", source: "journalists-quotes" });
+    }
+  });
+
+  it("contains quote-outreach derived rates + cost-per-published", () => {
+    expect(STATS_REGISTRY.pitchSelectionRate).toMatchObject({ kind: "derived", type: "rate", numerator: "quotesSelected", denominator: "quotePitchesSubmitted" });
+    expect(STATS_REGISTRY.pitchPublishRate).toMatchObject({ kind: "derived", type: "rate", numerator: "quotesPublished", denominator: "quotePitchesSubmitted" });
+    expect(STATS_REGISTRY.costPerQuotePublishedCents).toMatchObject({ kind: "derived", type: "currency", numerator: "totalCostInUsdCents", denominator: "quotesPublished", sortDirection: "asc" });
+  });
+
+  it("contains AI visibility score keys (type 'score', source 'ai-visibility')", () => {
+    for (const k of ["visibilityScore", "brandMentionRate", "shareOfVoice", "citationRate", "netSentiment"]) {
+      expect(VALID_STATS_KEYS.has(k)).toBe(true);
+      expect(STATS_REGISTRY[k]).toMatchObject({ kind: "raw", type: "score", source: "ai-visibility" });
+    }
+  });
+
+  it("contains avgPosition raw count with sortDirection 'asc'", () => {
+    expect(STATS_REGISTRY.avgPosition).toMatchObject({ kind: "raw", type: "count", source: "ai-visibility", sortDirection: "asc" });
+  });
 });
 
 describe("VALID_ENTITY_TYPES", () => {
@@ -175,6 +199,12 @@ describe("VALID_ENTITY_TYPES", () => {
     expect(VALID_ENTITY_TYPES.has("outlets")).toBe(true);
     expect(VALID_ENTITY_TYPES.has("journalists")).toBe(true);
     expect(VALID_ENTITY_TYPES.has("press-kits")).toBe(true);
+  });
+
+  it("contains quote-outreach + ai-visibility entity types", () => {
+    for (const t of ["quote-requests", "quote-pitches", "visibility-runs", "prompts", "competitors"]) {
+      expect(VALID_ENTITY_TYPES.has(t)).toBe(true);
+    }
   });
 });
 
