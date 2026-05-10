@@ -177,7 +177,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     mockFetchMulti([
       {
         match: "lead-service/orgs/stats",
-        response: { served: 42, contacted: 10, buffered: 0, skipped: 0, apollo: { enrichedLeadsCount: 0, searchCount: 0, fetchedPeopleCount: 0, totalMatchingPeople: 0 } },
+        response: { totalLeads: 42, byOutreachStatus: { contacted: 10 }, buffered: 0, skipped: 0, claimed: 0 },
       },
       {
         match: "serviceName=content-generation-service",
@@ -270,8 +270,8 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
         match: "lead-service/orgs/stats",
         response: {
           groups: [
-            { key: "camp-a", served: 15, contacted: 0, buffered: 0, skipped: 0 },
-            { key: "camp-b", served: 27, contacted: 0, buffered: 0, skipped: 0 },
+            { key: "camp-a", totalLeads: 15, byOutreachStatus: { contacted: 0 }, buffered: 0, skipped: 0, claimed: 0 },
+            { key: "camp-b", totalLeads: 27, byOutreachStatus: { contacted: 0 }, buffered: 0, skipped: 0, claimed: 0 },
           ],
         },
       },
@@ -398,7 +398,7 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
       if (url.includes("lead-service/orgs/stats")) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ served: 3, contacted: 0, buffered: 0, skipped: 0, apollo: { enrichedLeadsCount: 0, searchCount: 0, fetchedPeopleCount: 0, totalMatchingPeople: 0 } }),
+          json: () => Promise.resolve({ totalLeads: 3, byOutreachStatus: { contacted: 0 }, buffered: 0, skipped: 0, claimed: 0 }),
         });
       }
       if (url.includes("serviceName=content-generation-service")) {
@@ -447,7 +447,7 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
       if (url.includes("lead-service/orgs/stats")) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ served: 12, contacted: 0, buffered: 0, skipped: 0, apollo: { enrichedLeadsCount: 0, searchCount: 0, fetchedPeopleCount: 0, totalMatchingPeople: 0 } }),
+          json: () => Promise.resolve({ totalLeads: 12, byOutreachStatus: { contacted: 0 }, buffered: 0, skipped: 0, claimed: 0 }),
         });
       }
       if (url.includes("/v1/stats/costs") && !url.includes("serviceName=")) {
