@@ -319,7 +319,55 @@ describe("GET /features/:featureSlug/stats — fetchLeadsStats mapping", () => {
 });
 
 describe("GET /entities/registry", () => {
-  it("returns the entity type registry", async () => {
+  // Every entity name referenced by seed features and dashboard campaign route folders.
+  const REQUIRED_ENTITY_KEYS = [
+    "leads",
+    "companies",
+    "emails",
+    "outlets",
+    "journalists",
+    "articles",
+    "press-kits",
+    "prompts",
+    "competitors",
+    "visibility-runs",
+    "quote-requests",
+    "quote-pitches",
+  ];
+
+  // Icon names must match keys in dashboard ICON_MAP (apps/dashboard/src/components/campaign-sidebar.tsx).
+  const EXPECTED_ICONS: Record<string, string> = {
+    leads: "users",
+    companies: "building",
+    emails: "envelope",
+    outlets: "newspaper",
+    journalists: "pen-tool",
+    articles: "scroll-text",
+    "press-kits": "document",
+    prompts: "message-square",
+    competitors: "swords",
+    "visibility-runs": "sparkles",
+    "quote-requests": "help-circle",
+    "quote-pitches": "quote",
+  };
+
+  // pathSuffix must match dashboard campaign route folder names.
+  const EXPECTED_PATH_SUFFIXES: Record<string, string> = {
+    leads: "leads",
+    companies: "companies",
+    emails: "emails",
+    outlets: "outlets",
+    journalists: "journalists",
+    articles: "articles",
+    "press-kits": "press-kits",
+    prompts: "prompts",
+    competitors: "competitors",
+    "visibility-runs": "visibility-runs",
+    "quote-requests": "quote-requests",
+    "quote-pitches": "quote-pitches",
+  };
+
+  it("returns 200 with registry containing every required entity key", async () => {
     const res = await request(app)
       .get("/entities/registry")
       .set(AUTH_HEADERS);
@@ -328,24 +376,44 @@ describe("GET /entities/registry", () => {
     expect(res.body.registry).toBeDefined();
 
     const reg = res.body.registry;
-    expect(reg.leads).toEqual({
-      label: "Leads",
-      icon: "users",
-      pathSuffix: "leads",
-      description: expect.any(String),
-    });
-    expect(reg.outlets).toEqual({
-      label: "Outlets",
-      icon: "newspaper",
-      pathSuffix: "outlets",
-      description: expect.any(String),
-    });
+    for (const key of REQUIRED_ENTITY_KEYS) {
+      expect(reg[key], `missing entity registry entry: ${key}`).toBeDefined();
+    }
+  });
 
+  it("each entry has non-empty label/icon/pathSuffix/description", async () => {
+    const res = await request(app)
+      .get("/entities/registry")
+      .set(AUTH_HEADERS);
+
+    const reg = res.body.registry;
     for (const [, def] of Object.entries(reg) as [string, Record<string, string>][]) {
       expect(def.label).toBeTruthy();
       expect(def.icon).toBeTruthy();
       expect(def.pathSuffix).toBeTruthy();
       expect(def.description).toBeTruthy();
+    }
+  });
+
+  it("icons match dashboard ICON_MAP keys", async () => {
+    const res = await request(app)
+      .get("/entities/registry")
+      .set(AUTH_HEADERS);
+
+    const reg = res.body.registry;
+    for (const [key, expectedIcon] of Object.entries(EXPECTED_ICONS)) {
+      expect(reg[key]?.icon, `entity ${key} icon`).toBe(expectedIcon);
+    }
+  });
+
+  it("pathSuffix matches dashboard campaign route folder names", async () => {
+    const res = await request(app)
+      .get("/entities/registry")
+      .set(AUTH_HEADERS);
+
+    const reg = res.body.registry;
+    for (const [key, expectedSuffix] of Object.entries(EXPECTED_PATH_SUFFIXES)) {
+      expect(reg[key]?.pathSuffix, `entity ${key} pathSuffix`).toBe(expectedSuffix);
     }
   });
 
