@@ -420,17 +420,17 @@ async function fetchLeadsStats(
     }
 
     const data = await response.json() as
-      | { served: number; contacted: number; buffered: number; skipped: number; groups?: undefined }
-      | { groups: Array<{ key: string; served: number; contacted: number; buffered: number; skipped: number }> };
+      | { totalLeads: number; groups?: undefined }
+      | { groups: Array<{ key: string; totalLeads: number }> };
 
     const result = new Map<string, Record<string, number>>();
 
     if ("groups" in data && data.groups) {
       for (const group of data.groups) {
-        result.set(group.key, { leadsServed: group.served });
+        result.set(group.key, { leadsServed: group.totalLeads });
       }
-    } else if ("served" in data) {
-      result.set("__total__", { leadsServed: data.served });
+    } else if ("totalLeads" in data) {
+      result.set("__total__", { leadsServed: data.totalLeads });
     }
 
     return result;
