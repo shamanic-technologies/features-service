@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { SEED_FEATURES } from "./features.js";
 import { VALID_STATS_KEYS, VALID_ENTITY_TYPES } from "../lib/stats-registry.js";
 
-describe("SEED_FEATURES — pr-expert-quote-outreach (Featured.com)", () => {
+describe("SEED_FEATURES — pr-expert-quote-outreach", () => {
   const FEATURED_SLUG = "pr-expert-quote-outreach";
 
   const seed = SEED_FEATURES.find((f) => f.slug === FEATURED_SLUG);
@@ -11,23 +11,13 @@ describe("SEED_FEATURES — pr-expert-quote-outreach (Featured.com)", () => {
     expect(seed).toBeDefined();
   });
 
-  it("is distinct from pr-expert-quotes-outreach (plural)", () => {
+  it("plural-slug duplicate (pr-expert-quotes-outreach) is gone", () => {
     const plural = SEED_FEATURES.find((f) => f.slug === "pr-expert-quotes-outreach");
-    expect(plural).toBeDefined();
-    expect(seed?.slug).not.toBe(plural?.slug);
-    expect(seed?.name).not.toBe(plural?.name);
+    expect(plural).toBeUndefined();
   });
 
-  it("plural sibling has visibly distinct name (cold outbound vs Featured.com inbound)", () => {
-    const plural = SEED_FEATURES.find((f) => f.slug === "pr-expert-quotes-outreach");
-    expect(plural).toBeDefined();
-    expect(plural?.name).toMatch(/cold/i);
-    expect(plural?.name).not.toMatch(/featured\.com/i);
-    expect(plural?.description).toMatch(/cold|outbound|pitch/i);
-  });
-
-  it("has Featured.com-specific name and description", () => {
-    expect(seed?.name).toBe("Expert Quote Outreach (Featured.com)");
+  it("has the renamed name and Featured.com description", () => {
+    expect(seed?.name).toBe("PR Expert Quote Outreach");
     expect(seed?.description).toMatch(/Featured\.com/i);
     expect(seed?.description).toMatch(/journalist quote requests/i);
   });
