@@ -177,7 +177,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     mockFetchMulti([
       {
         match: "lead-service/orgs/stats",
-        response: { totalLeads: 42, byOutreachStatus: { contacted: 10 }, buffered: 0, skipped: 0, claimed: 0 },
+        response: { totalLeads: 42, byOutreachStatus: { contacted: 10, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 },
       },
       {
         match: "serviceName=content-generation-service",
@@ -270,8 +270,8 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
         match: "lead-service/orgs/stats",
         response: {
           groups: [
-            { key: "camp-a", totalLeads: 15, byOutreachStatus: { contacted: 0 }, buffered: 0, skipped: 0, claimed: 0 },
-            { key: "camp-b", totalLeads: 27, byOutreachStatus: { contacted: 0 }, buffered: 0, skipped: 0, claimed: 0 },
+            { key: "camp-a", totalLeads: 15, byOutreachStatus: { contacted: 0, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 },
+            { key: "camp-b", totalLeads: 27, byOutreachStatus: { contacted: 0, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 },
           ],
         },
       },
@@ -398,7 +398,7 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
       if (url.includes("lead-service/orgs/stats")) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ totalLeads: 3, byOutreachStatus: { contacted: 0 }, buffered: 0, skipped: 0, claimed: 0 }),
+          json: () => Promise.resolve({ totalLeads: 3, byOutreachStatus: { contacted: 0, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 }),
         });
       }
       if (url.includes("serviceName=content-generation-service")) {
@@ -447,7 +447,7 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
       if (url.includes("lead-service/orgs/stats")) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ totalLeads: 12, byOutreachStatus: { contacted: 0 }, buffered: 0, skipped: 0, claimed: 0 }),
+          json: () => Promise.resolve({ totalLeads: 12, byOutreachStatus: { contacted: 0, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 }),
         });
       }
       if (url.includes("/v1/stats/costs") && !url.includes("serviceName=")) {

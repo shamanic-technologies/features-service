@@ -33,6 +33,10 @@ process.env.OUTLETS_SERVICE_URL = "http://outlets:3000";
 process.env.OUTLETS_SERVICE_API_KEY = "outlets-key";
 process.env.PRESS_KITS_SERVICE_URL = "http://press-kits:3000";
 process.env.PRESS_KITS_SERVICE_API_KEY = "press-kits-key";
+process.env.LEAD_SERVICE_URL = "http://leads:3000";
+process.env.LEAD_SERVICE_API_KEY = "leads-key";
+process.env.JOURNALISTS_SERVICE_URL = "http://journalists:3000";
+process.env.JOURNALISTS_SERVICE_API_KEY = "journalists-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
@@ -179,6 +183,138 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
         expect(parsed.searchParams.get("featureSlug")).toBe("sales-cold-email-outreach");
       }
     }
+  });
+});
+
+describe("GET /features/:featureSlug/stats — fetchLeadsStats mapping", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  const LEAD_STATS_BLOCK = {
+    totalLeads: 100,
+    byOutreachStatus: {
+      contacted: 80,
+      sent: 75,
+      delivered: 70,
+      opened: 50,
+      bounced: 5,
+      clicked: 30,
+      unsubscribed: 2,
+      repliesPositive: 10,
+      repliesNegative: 4,
+      repliesNeutral: 6,
+      repliesAutoReply: 3,
+      repliesDetail: { interested: 6, meetingBooked: 2, closed: 1, notInterested: 3, wrongPerson: 1, unsubscribe: 0, neutral: 4, autoReply: 3, outOfOffice: 2 },
+    },
+    repliesDetail: { interested: 6, meetingBooked: 2, closed: 1, notInterested: 3, wrongPerson: 1, unsubscribe: 0, neutral: 4, autoReply: 3, outOfOffice: 2 },
+    buffered: 15,
+    skipped: 8,
+    claimed: 90,
+  };
+
+  const FAKE_RUNS_RESPONSE = {
+    groups: [{
+      dimensions: { workflowSlug: "__total__" },
+      totalCostInUsdCents: "1000",
+      runCount: 5,
+      minStartedAt: "2026-01-01T00:00:00Z",
+      maxStartedAt: "2026-03-01T00:00:00Z",
+    }],
+  };
+
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(MOCK_FEATURE as any);
+    vi.mocked(db.query.features.findMany).mockResolvedValue([MOCK_FEATURE as any]);
+  });
+
+  afterEach(() => {
+    fetchSpy?.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it("flat: maps every lead-service /orgs/stats field to leads* registry keys", async () => {
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      if (url.includes("leads:3000")) return new Response(JSON.stringify(LEAD_STATS_BLOCK), { status: 200 });
+      if (url.includes("runs:3000")) return new Response(JSON.stringify(FAKE_RUNS_RESPONSE), { status: 200 });
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/stats")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    const s = res.body.stats;
+    expect(s.leadsServed).toBe(100);
+    expect(s.leadsContacted).toBe(80);
+    expect(s.leadsSent).toBe(75);
+    expect(s.leadsDelivered).toBe(70);
+    expect(s.leadsOpened).toBe(50);
+    expect(s.leadsClicked).toBe(30);
+    expect(s.leadsBounced).toBe(5);
+    expect(s.leadsUnsubscribed).toBe(2);
+    expect(s.leadsRepliesPositive).toBe(10);
+    expect(s.leadsRepliesNegative).toBe(4);
+    expect(s.leadsRepliesNeutral).toBe(6);
+    expect(s.leadsRepliesAutoReply).toBe(3);
+    expect(s.leadsRepliesInterested).toBe(6);
+    expect(s.leadsRepliesMeetingBooked).toBe(2);
+    expect(s.leadsRepliesClosed).toBe(1);
+    expect(s.leadsRepliesNotInterested).toBe(3);
+    expect(s.leadsRepliesWrongPerson).toBe(1);
+    expect(s.leadsRepliesUnsubscribeDetail).toBe(0);
+    expect(s.leadsRepliesNeutralDetail).toBe(4);
+    expect(s.leadsRepliesAutoReplyDetail).toBe(3);
+    expect(s.leadsRepliesOutOfOffice).toBe(2);
+    expect(s.leadsBuffered).toBe(15);
+    expect(s.leadsSkipped).toBe(8);
+    expect(s.leadsClaimed).toBe(90);
+
+    // Derived rates: leadsOpened / leadsDelivered = 50/70
+    expect(s.leadOpenRate).toBeCloseTo(50 / 70);
+    expect(s.leadClickRate).toBeCloseTo(30 / 70);
+    expect(s.leadPositiveReplyRate).toBeCloseTo(10 / 70);
+    // Cost-per: 1000 / 50, 1000 / 30, 1000 / 10
+    expect(s.costPerLeadOpenCents).toBeCloseTo(1000 / 50);
+    expect(s.costPerLeadClickCents).toBeCloseTo(1000 / 30);
+    expect(s.costPerLeadPositiveReplyCents).toBeCloseTo(1000 / 10);
+  });
+
+  it("grouped: maps every leads* field per group", async () => {
+    const groupedResponse = {
+      groups: [
+        { key: "campaign-a", ...LEAD_STATS_BLOCK },
+        { key: "campaign-b", ...LEAD_STATS_BLOCK, totalLeads: 50, buffered: 7 },
+      ],
+    };
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      if (url.includes("leads:3000")) return new Response(JSON.stringify(groupedResponse), { status: 200 });
+      if (url.includes("runs:3000")) {
+        return new Response(JSON.stringify({
+          groups: [
+            { dimensions: { campaignId: "campaign-a" }, totalCostInUsdCents: "500", runCount: 2, minStartedAt: null, maxStartedAt: null },
+            { dimensions: { campaignId: "campaign-b" }, totalCostInUsdCents: "300", runCount: 1, minStartedAt: null, maxStartedAt: null },
+          ],
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/stats?groupBy=campaignId")
+      .set(AUTH_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.groups).toHaveLength(2);
+    const a = res.body.groups.find((g: any) => g.campaignId === "campaign-a");
+    const b = res.body.groups.find((g: any) => g.campaignId === "campaign-b");
+    expect(a.stats.leadsServed).toBe(100);
+    expect(a.stats.leadsContacted).toBe(80);
+    expect(a.stats.leadsRepliesInterested).toBe(6);
+    expect(a.stats.leadsBuffered).toBe(15);
+    expect(b.stats.leadsServed).toBe(50);
+    expect(b.stats.leadsBuffered).toBe(7);
   });
 });
 
