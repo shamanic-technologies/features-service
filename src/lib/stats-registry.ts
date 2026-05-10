@@ -13,11 +13,23 @@ export interface RunFilter {
 
 export interface RawStatsKeyDef {
   kind: "raw";
-  type: "count" | "currency";
+  /** "score" = 0-1 normalized scalar (rendered as %). "count" = integer. "currency" = USD cents. */
+  type: "count" | "currency" | "score";
   label: string;
-  source: "email-gateway" | "runs" | "campaign" | "outlets" | "journalists" | "leads" | "press-kits";
+  source:
+    | "email-gateway"
+    | "runs"
+    | "campaign"
+    | "outlets"
+    | "journalists"
+    | "journalists-quotes"
+    | "leads"
+    | "press-kits"
+    | "ai-visibility";
   /** For pipeline count keys: count runs matching this service+task filter */
   runFilter?: RunFilter;
+  /** Sort direction hint for ranking. "asc" = lower is better (e.g. avgPosition, $/published). "desc" = higher is better. */
+  sortDirection?: "asc" | "desc";
 }
 
 export interface DerivedStatsKeyDef {
@@ -26,6 +38,8 @@ export interface DerivedStatsKeyDef {
   label: string;
   numerator: string;
   denominator: string;
+  /** Sort direction hint for ranking. */
+  sortDirection?: "asc" | "desc";
 }
 
 export type StatsKeyDef = RawStatsKeyDef | DerivedStatsKeyDef;
@@ -52,6 +66,21 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   // ── Journalists: journalists-service ────────────────────────────────────────
   journalistsFound:     { kind: "raw", type: "count",   label: "Journalists Found",     source: "journalists" },
   journalistsContacted: { kind: "raw", type: "count",   label: "Journalists Contacted", source: "journalists" },
+
+  // ── Quote outreach: journalists-quotes-service (Featured.com) ──────────────
+  quoteRequestsFound:     { kind: "raw", type: "count", label: "Quote Requests",   source: "journalists-quotes" },
+  quotePitchesSubmitted:  { kind: "raw", type: "count", label: "Pitches Submitted", source: "journalists-quotes" },
+  quotesSelected:         { kind: "raw", type: "count", label: "Selected",         source: "journalists-quotes" },
+  quotesPublished:        { kind: "raw", type: "count", label: "Published",        source: "journalists-quotes" },
+  quotesNotSelected:      { kind: "raw", type: "count", label: "Not Selected",     source: "journalists-quotes" },
+
+  // ── AI visibility: ai-visibility-score-service ─────────────────────────────
+  visibilityScore:    { kind: "raw", type: "score", label: "Visibility Score",  source: "ai-visibility", sortDirection: "desc" },
+  brandMentionRate:   { kind: "raw", type: "score", label: "Mention Rate",      source: "ai-visibility", sortDirection: "desc" },
+  shareOfVoice:       { kind: "raw", type: "score", label: "Share of Voice",    source: "ai-visibility", sortDirection: "desc" },
+  citationRate:       { kind: "raw", type: "score", label: "Citation Rate",     source: "ai-visibility", sortDirection: "desc" },
+  netSentiment:       { kind: "raw", type: "score", label: "Net Sentiment",     source: "ai-visibility", sortDirection: "desc" },
+  avgPosition:        { kind: "raw", type: "count", label: "Avg Position",      source: "ai-visibility", sortDirection: "asc" },
 
   // ── Press kits: press-kits-service ──────────────────────────────────────────
   pressKitsGenerated:      { kind: "raw", type: "count", label: "Kits Generated",     source: "press-kits" },
@@ -84,6 +113,11 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   costPerOutletCents:     { kind: "derived", type: "currency", label: "$/Outlet",      numerator: "totalCostInUsdCents",  denominator: "outletsDiscovered" },
   costPerPressKitCents:   { kind: "derived", type: "currency", label: "$/Kit",         numerator: "totalCostInUsdCents",  denominator: "pressKitsGenerated" },
   costPerPressKitViewCents: { kind: "derived", type: "currency", label: "$/View",      numerator: "totalCostInUsdCents",  denominator: "pressKitViews" },
+
+  // ── Derived (quote outreach) ────────────────────────────────────────────
+  pitchSelectionRate:        { kind: "derived", type: "rate",     label: "% Selected",   numerator: "quotesSelected",      denominator: "quotePitchesSubmitted" },
+  pitchPublishRate:          { kind: "derived", type: "rate",     label: "% Published",  numerator: "quotesPublished",     denominator: "quotePitchesSubmitted" },
+  costPerQuotePublishedCents:{ kind: "derived", type: "currency", label: "$/Published",  numerator: "totalCostInUsdCents", denominator: "quotesPublished", sortDirection: "asc" },
 };
 
 /** All valid stats key names */
@@ -126,6 +160,11 @@ export const ENTITY_REGISTRY: Record<string, EntityTypeDef> = {
   journalists:  { label: "Journalists", icon: "pen-tool",     pathSuffix: "journalists", description: "Journalists found at discovered outlets" },
   "press-kits": { label: "Press Kits",  icon: "file-text",    pathSuffix: "press-kits",  description: "Press kits generated for media pitching" },
   articles:     { label: "Articles",    icon: "scroll-text",  pathSuffix: "articles",    description: "Published articles resulting from PR campaigns" },
+  "quote-requests":  { label: "Quote Requests",  icon: "help-circle",     pathSuffix: "quote-requests",  description: "Featured.com journalist quote requests synced for the campaign" },
+  "quote-pitches":   { label: "Pitches",         icon: "quote",           pathSuffix: "quote-pitches",   description: "Quote pitches drafted and submitted to journalists" },
+  "visibility-runs": { label: "Visibility Runs", icon: "sparkles",        pathSuffix: "visibility-runs", description: "AI visibility audit runs over time" },
+  prompts:           { label: "Prompts",         icon: "message-square",  pathSuffix: "prompts",         description: "LLM prompts tested in visibility audits" },
+  competitors:       { label: "Competitors",     icon: "swords",          pathSuffix: "competitors",     description: "Competitor brands tracked in visibility audits" },
 };
 
 /** Known entity types for feature.entities */
@@ -141,13 +180,15 @@ export const SYSTEM_STATS_KEYS = [
 ] as const;
 
 /**
- * Get the public registry (label + type for each key).
+ * Get the public registry (label + type + optional sortDirection for each key).
  * Exposed via GET /stats/registry for the front-end.
  */
-export function getPublicRegistry(): Record<string, { type: string; label: string }> {
-  const result: Record<string, { type: string; label: string }> = {};
+export function getPublicRegistry(): Record<string, { type: string; label: string; sortDirection?: "asc" | "desc" }> {
+  const result: Record<string, { type: string; label: string; sortDirection?: "asc" | "desc" }> = {};
   for (const [key, def] of Object.entries(STATS_REGISTRY)) {
-    result[key] = { type: def.type, label: def.label };
+    const entry: { type: string; label: string; sortDirection?: "asc" | "desc" } = { type: def.type, label: def.label };
+    if (def.sortDirection) entry.sortDirection = def.sortDirection;
+    result[key] = entry;
   }
   return result;
 }

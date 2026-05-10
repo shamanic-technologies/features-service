@@ -459,6 +459,13 @@
                 },
                 "label": {
                   "type": "string"
+                },
+                "sortDirection": {
+                  "type": "string",
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
                 }
               },
               "required": [
@@ -1278,6 +1285,13 @@
                           },
                           "label": {
                             "type": "string"
+                          },
+                          "sortDirection": {
+                            "type": "string",
+                            "enum": [
+                              "asc",
+                              "desc"
+                            ]
                           }
                         },
                         "required": [

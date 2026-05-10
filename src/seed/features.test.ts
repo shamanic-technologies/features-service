@@ -72,6 +72,44 @@ describe("SEED_FEATURES — pr-expert-quote-outreach", () => {
   it("has at least one chart", () => {
     expect((seed?.charts as unknown[]).length).toBeGreaterThan(0);
   });
+
+  it("declares the quote-outreach outputs from journalists-quotes-service", () => {
+    const keys = (seed?.outputs as Array<{ key: string }>).map((o) => o.key);
+    expect(keys).toEqual([
+      "quoteRequestsFound",
+      "quotePitchesSubmitted",
+      "quotesSelected",
+      "quotesPublished",
+      "pitchSelectionRate",
+      "pitchPublishRate",
+      "costPerQuotePublishedCents",
+    ]);
+  });
+
+  it("uses costPerQuotePublishedCents as the default sort (asc)", () => {
+    const outputs = seed?.outputs as Array<{ key: string; defaultSort?: boolean; sortDirection?: string }>;
+    const def = outputs.find((o) => o.defaultSort);
+    expect(def?.key).toBe("costPerQuotePublishedCents");
+    expect(def?.sortDirection).toBe("asc");
+  });
+
+  it("declares funnel-bar + breakdown-bar charts over quote keys", () => {
+    const charts = seed?.charts as Array<{ type: string; steps?: Array<{ key: string }>; segments?: Array<{ key: string }> }>;
+    const funnel = charts.find((c) => c.type === "funnel-bar");
+    expect(funnel?.steps?.map((s) => s.key)).toEqual([
+      "quoteRequestsFound",
+      "quotePitchesSubmitted",
+      "quotesSelected",
+      "quotesPublished",
+    ]);
+    const bd = charts.find((c) => c.type === "breakdown-bar");
+    expect(bd?.segments?.map((s) => s.key)).toEqual(["quotesPublished", "quotesSelected", "quotesNotSelected"]);
+  });
+
+  it("declares quote-requests + quote-pitches entities", () => {
+    const names = (seed?.entities as Array<{ name: string }>).map((e) => e.name);
+    expect(names).toEqual(["quote-requests", "quote-pitches"]);
+  });
 });
 
 describe("SEED_FEATURES — ai-visibility-scoring", () => {
@@ -109,10 +147,46 @@ describe("SEED_FEATURES — ai-visibility-scoring", () => {
     expect(keys).toContain("topics");
   });
 
-  it("has empty outputs/charts/entities until producer ships", () => {
-    expect(seed?.outputs).toEqual([]);
-    expect(seed?.charts).toEqual([]);
-    expect(seed?.entities).toEqual([]);
+  it("declares the AI visibility score outputs from ai-visibility-score-service", () => {
+    const keys = (seed?.outputs as Array<{ key: string }>).map((o) => o.key);
+    expect(keys).toEqual([
+      "visibilityScore",
+      "shareOfVoice",
+      "brandMentionRate",
+      "citationRate",
+      "netSentiment",
+      "avgPosition",
+    ]);
+  });
+
+  it("uses visibilityScore as the default sort (desc)", () => {
+    const outputs = seed?.outputs as Array<{ key: string; defaultSort?: boolean; sortDirection?: string }>;
+    const def = outputs.find((o) => o.defaultSort);
+    expect(def?.key).toBe("visibilityScore");
+    expect(def?.sortDirection).toBe("desc");
+  });
+
+  it("declares avgPosition with sortDirection asc (lower is better)", () => {
+    const outputs = seed?.outputs as Array<{ key: string; sortDirection?: string }>;
+    const ap = outputs.find((o) => o.key === "avgPosition");
+    expect(ap?.sortDirection).toBe("asc");
+  });
+
+  it("declares a line-chart chart for time-series visibility", () => {
+    const charts = seed?.charts as Array<{ type: string; series?: Array<{ key: string }> }>;
+    const line = charts.find((c) => c.type === "line-chart");
+    expect(line).toBeDefined();
+    expect(line?.series?.map((s) => s.key)).toEqual([
+      "visibilityScore",
+      "shareOfVoice",
+      "brandMentionRate",
+      "citationRate",
+    ]);
+  });
+
+  it("declares visibility-runs / prompts / competitors entities", () => {
+    const names = (seed?.entities as Array<{ name: string }>).map((e) => e.name);
+    expect(names).toEqual(["visibility-runs", "prompts", "competitors"]);
   });
 });
 
