@@ -1,5 +1,5 @@
 /**
- * Canonical feature definitions — 5 features.
+ * Canonical feature definitions.
  * On cold start, these are upserted by slug into the DB.
  */
 
@@ -297,6 +297,50 @@ export const SEED_FEATURES: SeedFeature[] = [
       { key: "urgency", type: "text", label: "Urgency", extractKey: "urgency", description: "Time pressure on the round — lead commitment, closing date, demo day. Examples: 'Lead committed, closing in 3 weeks', 'Round closes end of Q2', 'Demo Day in 2 weeks'. Leave empty if no urgency applies.", placeholder: "Lead committed, closing in 3 weeks" },
       { key: "scarcity", type: "text", label: "Scarcity", extractKey: "scarcity", description: "Limited round allocation that creates FOMO — remaining ticket space, oversubscription signal, capped allocation. Examples: '$500k allocation remaining', 'Round 70% subscribed', 'Only 2 institutional slots left'. Leave empty if not applicable.", placeholder: "$500k allocation remaining, round 70% subscribed" },
       { key: "socialProof", type: "text", label: "Social Proof", extractKey: "socialProof", description: "Existing investors, advisors, and notable customers that build credibility. Examples: 'Backed by Sequoia Scout, advised by ex-Stripe CFO, customers include Notion and Vercel', 'YC W24, $500k from angels including Naval and Calvin'. The LLM uses this for credibility in the pitch.", placeholder: "Backed by YC + Sequoia Scout, advisors ex-Stripe" },
+      { key: "founderContext", type: "text", label: "Founder Context", extractKey: "founderContext", description: "Founder background, prior exits, domain expertise, why this team. Should establish founder-market fit. Examples: 'CEO ex-Stripe payments lead, CTO published Anthropic researcher, 2nd-time founders with prior $80M exit', 'Domain expert with 12 years in healthcare ops, repeat founder'. The LLM uses this to humanize the pitch.", placeholder: "Repeat founder, ex-Stripe payments lead, prior $80M exit" },
+    ],
+    outputs: [
+      { key: "leadsServed", displayOrder: 1 },
+      { key: "emailsGenerated", displayOrder: 2 },
+      { key: "leadsContacted", displayOrder: 3 },
+      { key: "leadsDelivered", displayOrder: 4 },
+      { key: "leadsOpened", displayOrder: 5 },
+      { key: "leadsClicked", displayOrder: 6 },
+      { key: "leadsRepliesPositive", displayOrder: 7 },
+      { key: "leadsRepliesNegative", displayOrder: 8 },
+      { key: "leadsRepliesNeutral", displayOrder: 9 },
+      { key: "leadPositiveReplyRate", displayOrder: 10 },
+      { key: "leadClickRate", displayOrder: 11 },
+      { key: "costPerLeadClickCents", displayOrder: 12 },
+      { key: "costPerLeadPositiveReplyCents", defaultSort: true, displayOrder: 13, sortDirection: "asc" },
+    ],
+    charts: [
+      { key: "funnel", type: "funnel-bar", title: "Campaign Funnel", displayOrder: 1, steps: [{ key: "leadsServed" }, { key: "emailsGenerated" }, { key: "leadsContacted" }, { key: "leadsDelivered" }, { key: "leadsOpened" }, { key: "leadsClicked" }, { key: "leadsRepliesPositive" }] },
+      { key: "replyBreakdown", type: "breakdown-bar", title: "Reply Breakdown", displayOrder: 2, segments: [{ key: "leadsRepliesPositive", color: "green", sentiment: "positive" }, { key: "leadsRepliesNeutral", color: "gray", sentiment: "neutral" }, { key: "leadsRepliesNegative", color: "red", sentiment: "negative" }, { key: "leadsRepliesAutoReply", color: "orange", sentiment: "neutral" }] },
+    ],
+    entities: [
+      { name: "leads", countKey: "leadsServed" },
+      { name: "companies" },
+      { name: "emails", countKey: "emailsGenerated" },
+    ],
+  },
+
+  {
+    slug: "accelerators-cold-email-outreach",
+    name: "Accelerators Cold Email Outreach",
+    description: "Find startup accelerators matching your stage and sector, generate personalized outreach emails to assess program fit, and track engagement to decide which programs are worth applying to.",
+    icon: "rocket",
+    implemented: true,
+    displayOrder: 9,
+    status: "active",
+    inputs: [
+      { key: "targetAcceleratorProfile", type: "text", label: "Target Accelerator Profile", extractKey: "targetAcceleratorProfile", description: "ICP description of the ideal accelerator — stage focus, sector thesis, geography, cohort cadence, equity/ticket terms. Be precise about program stage (pre-seed/seed), focus verticals, batch model (cohort vs rolling), and typical deal terms. Example: 'Top-tier US accelerators for pre-seed B2B SaaS, $125k-$500k for 5-7% equity, batch model, AI/dev-tools focus'. The LLM uses this to find matching programs and personalize outreach.", placeholder: "Top US accelerators, pre-seed B2B SaaS, $125k-$500k for 5-7%" },
+      { key: "programAsk", type: "text", label: "Program Ask", extractKey: "programAsk", description: "What you want from the accelerator and which batch/cohort you're targeting. Should be specific. Examples: 'Applying to W26 batch, seeking $500k + mentorship + network', 'Rolling admission, looking for sector-specific mentors and US market entry support'. The LLM uses this as the core ask in the email body.", placeholder: "Applying to W26 batch, seeking $500k + mentor network" },
+      { key: "traction", type: "text", label: "Traction", extractKey: "traction", description: "Key metrics that prove momentum — revenue, growth rate, customers, retention, key logos. Be quantified and recent. Examples: '$1.2M ARR, 18% MoM growth, 120 paying customers, 95% logo retention', '50k WAU, 30% MoM growth'. The LLM leads with this to demonstrate readiness for the program.", placeholder: "$1.2M ARR, 18% MoM growth, 120 paying customers" },
+      { key: "valueForAccelerator", type: "text", label: "Value for Accelerator", extractKey: "valueProposition", description: "Why this startup is a strong fit for THEIR cohort/portfolio — sector match, returns potential, alumni network synergy, demo day appeal. Examples: '$50B TAM, fits your AI infra thesis, will headline demo day', 'Strong fit with your fintech vertical and 2024 cohort theme'. The LLM uses this to frame why the accelerator should care.", placeholder: "$50B TAM, fits your AI infra thesis, demo-day-ready" },
+      { key: "urgency", type: "text", label: "Urgency", extractKey: "urgency", description: "Time pressure on the application — batch deadline, decision timeline, alternative offers. Examples: 'W26 application closes in 2 weeks', 'Have competing offer from another program, deciding by Friday'. Leave empty if no urgency applies.", placeholder: "W26 application closes in 2 weeks" },
+      { key: "scarcity", type: "text", label: "Scarcity", extractKey: "scarcity", description: "Differentiation signals that create FOMO — limited applicant slots from your sector, unusual founder profile, exclusive deal access. Examples: 'Only B2B AI infra applicant from EU this batch', 'Already have term sheet from top-tier VC'. Leave empty if not applicable.", placeholder: "Already have lead investor lined up" },
+      { key: "socialProof", type: "text", label: "Social Proof", extractKey: "socialProof", description: "Existing investors, advisors, alumni connections, and notable customers that build credibility. Examples: 'Backed by Sequoia Scout, advised by ex-Stripe CFO, customers include Notion and Vercel', '2 YC alum advisors, $500k from angels including Naval'. The LLM uses this for credibility.", placeholder: "Backed by Sequoia Scout, advisors include YC alums" },
       { key: "founderContext", type: "text", label: "Founder Context", extractKey: "founderContext", description: "Founder background, prior exits, domain expertise, why this team. Should establish founder-market fit. Examples: 'CEO ex-Stripe payments lead, CTO published Anthropic researcher, 2nd-time founders with prior $80M exit', 'Domain expert with 12 years in healthcare ops, repeat founder'. The LLM uses this to humanize the pitch.", placeholder: "Repeat founder, ex-Stripe payments lead, prior $80M exit" },
     ],
     outputs: [
