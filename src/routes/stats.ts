@@ -411,6 +411,19 @@ interface LeadByOutreachStatus {
   repliesAutoReply: number;
 }
 
+interface LeadByOutreachStatusCompanies {
+  served: number;
+  contacted: number;
+  sent: number;
+  delivered: number;
+  opened: number;
+  clicked: number;
+  bounced: number;
+  repliesPositive: number;
+  repliesNegative: number;
+  repliesNeutral: number;
+}
+
 interface LeadRepliesDetail {
   interested: number;
   meetingBooked: number;
@@ -426,6 +439,10 @@ interface LeadRepliesDetail {
 interface LeadStatsBlock {
   totalLeads: number;
   byOutreachStatus: LeadByOutreachStatus;
+  // Optional during the lead-service rollout window. Once lead-service ships
+  // distinct-organization counts (see features-service issue #176), every
+  // /orgs/stats response carries this block.
+  byOutreachStatusCompanies?: LeadByOutreachStatusCompanies;
   repliesDetail: LeadRepliesDetail;
   buffered: number;
   skipped: number;
@@ -435,6 +452,7 @@ interface LeadStatsBlock {
 function mapLeadStatsBlock(block: LeadStatsBlock): Record<string, number> {
   const o = block.byOutreachStatus;
   const r = block.repliesDetail;
+  const c = block.byOutreachStatusCompanies;
   return {
     leadsServed: block.totalLeads,
     leadsContacted: o.contacted,
@@ -460,6 +478,18 @@ function mapLeadStatsBlock(block: LeadStatsBlock): Record<string, number> {
     leadsBuffered: block.buffered,
     leadsSkipped: block.skipped,
     leadsClaimed: block.claimed,
+    // Company-scoped distinct counts. 0 fallback covers the lead-service
+    // rollout window; remove once that PR is deployed everywhere.
+    companiesServed:          c?.served          ?? 0,
+    companiesContacted:       c?.contacted       ?? 0,
+    companiesSent:            c?.sent            ?? 0,
+    companiesDelivered:       c?.delivered       ?? 0,
+    companiesOpened:          c?.opened          ?? 0,
+    companiesClicked:         c?.clicked         ?? 0,
+    companiesBounced:         c?.bounced         ?? 0,
+    companiesRepliesPositive: c?.repliesPositive ?? 0,
+    companiesRepliesNegative: c?.repliesNegative ?? 0,
+    companiesRepliesNeutral:  c?.repliesNeutral  ?? 0,
   };
 }
 
