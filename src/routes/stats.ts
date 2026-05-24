@@ -182,53 +182,20 @@ async function fetchRunsStats(
   featureSlugs: string[] | undefined,
   identity: Identity,
 ): Promise<Map<string, RunsStatsEntry>> {
-  const slugsToQuery = featureSlugs ?? (filters.featureSlug ? [filters.featureSlug] : []);
-
-  if (slugsToQuery.length === 0) {
-    return fetchRunsStatsForSlug(orgId, groupBy, filters, undefined, identity);
-  }
-
-  const maps = await Promise.all(
-    slugsToQuery.map((slug) => fetchRunsStatsForSlug(orgId, groupBy, filters, slug, identity)),
-  );
-
-  const merged = new Map<string, RunsStatsEntry>();
-  for (const map of maps) {
-    for (const [key, data] of map) {
-      const existing = merged.get(key);
-      if (existing) {
-        existing.totalCostInUsdCents += data.totalCostInUsdCents;
-        existing.completedRuns += data.completedRuns;
-        if (data.minStartedAt && (!existing.minStartedAt || data.minStartedAt < existing.minStartedAt)) {
-          existing.minStartedAt = data.minStartedAt;
-        }
-        if (data.maxStartedAt && (!existing.maxStartedAt || data.maxStartedAt > existing.maxStartedAt)) {
-          existing.maxStartedAt = data.maxStartedAt;
-        }
-      } else {
-        merged.set(key, { ...data });
-      }
-    }
-  }
-
-  return merged;
-}
-
-async function fetchRunsStatsForSlug(
-  orgId: string,
-  groupBy: GroupByDimension | null,
-  filters: Record<string, string>,
-  featureSlug: string | undefined,
-  identity: Identity,
-): Promise<Map<string, RunsStatsEntry>> {
   const runsGroupBy = groupBy ?? "workflowSlug";
   const params = new URLSearchParams({ groupBy: runsGroupBy });
   if (filters.workflowSlug) params.set("workflowSlug", filters.workflowSlug);
   if (filters.workflowDynastySlug) params.set("workflowDynastySlug", filters.workflowDynastySlug);
-  if (filters.featureSlug) params.set("featureSlug", filters.featureSlug);
   if (filters.brandId) params.set("brandId", filters.brandId);
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
-  if (featureSlug) params.set("featureSlug", featureSlug);
+
+  // Caller-resolved feature lineage in one call. CSV `featureSlugs` is the batch
+  // form; single `featureSlug` is the legacy single-slug form for /stats callers
+  // that don't pre-resolve lineage.
+  const slugs = featureSlugs ?? (filters.featureSlug ? [filters.featureSlug] : []);
+  if (slugs.length > 0) {
+    params.set("featureSlugs", slugs.join(","));
+  }
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
   try {
@@ -782,7 +749,6 @@ async function fetchPipelineStats(
   featureSlugs: string[] | undefined,
   identity: Identity,
 ): Promise<Map<string, Record<string, number>>> {
-  // Collect pipeline keys from registry
   const pipelineKeys = new Map<string, RunFilter>();
   for (const [key, def] of Object.entries(STATS_REGISTRY)) {
     if (def.kind === "raw" && def.runFilter) {
@@ -795,10 +761,98 @@ async function fetchPipelineStats(
   for (const [key, filter] of pipelineKeys) {
     const filterKey = `${filter.serviceName}:${filter.taskName}`;
     const entry = filterToKeys.get(filterKey);
-    if (entry) { entry.keys.push(key); } else { filterToKeys.set(filterKey, { filter, keys: [key] }); }
+    if (entry) entry.keys.push(key);
+    else filterToKeys.set(filterKey, { filter, keys: [key] });
+  }
+  const entries = [...filterToKeys.values()];
+
+  // POST batch endpoint does NOT accept workflowDynastySlug (neither as filter
+  // nor as groupBy). When the caller's scope involves dynasty resolution, fall
+  // back to per-tuple GETs so callers keep dynasty filtering for free.
+  if (filters.workflowDynastySlug || groupBy === "workflowDynastySlug") {
+    return fetchPipelineStatsLegacy(orgId, groupBy, filters, featureSlugs, identity, entries);
   }
 
-  const entries = [...filterToKeys.values()];
+  const runsGroupBy = groupBy ?? "workflowSlug";
+  const body: Record<string, unknown> = {
+    groupBy: runsGroupBy,
+    serviceTasks: entries.map(({ filter }) => ({
+      serviceName: filter.serviceName,
+      taskName: filter.taskName,
+    })),
+  };
+  if (filters.workflowSlug) body.workflowSlug = filters.workflowSlug;
+  if (filters.brandId) body.brandId = filters.brandId;
+  if (filters.campaignId) body.campaignId = filters.campaignId;
+
+  const slugs = featureSlugs ?? (filters.featureSlug ? [filters.featureSlug] : []);
+  if (slugs.length > 0) body.featureSlugs = slugs;
+
+  const url = `${RUNS_SERVICE_URL}/v1/stats/costs`;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      console.error(`[features-service] runs-service POST /v1/stats/costs failed: ${response.status}`);
+      return new Map();
+    }
+
+    const data = await response.json() as {
+      buckets: Array<{
+        serviceName: string;
+        taskName: string;
+        groups: Array<{ dimensions: Record<string, string | null>; runCount: number }>;
+      }>;
+    };
+
+    const output = new Map<string, Record<string, number>>();
+    // Buckets returned in input order per spec — index lookup is safe.
+    for (let i = 0; i < data.buckets.length; i++) {
+      const bucket = data.buckets[i];
+      const keys = entries[i].keys;
+      const counts = new Map<string, number>();
+
+      if (!groupBy) {
+        let total = 0;
+        for (const group of bucket.groups) total += group.runCount;
+        if (bucket.groups.length > 0) counts.set("__total__", total);
+      } else {
+        for (const group of bucket.groups) {
+          const key = group.dimensions[runsGroupBy] ?? "__total__";
+          counts.set(key, (counts.get(key) ?? 0) + group.runCount);
+        }
+      }
+
+      for (const [groupKey, count] of counts) {
+        const existing = output.get(groupKey) ?? {};
+        for (const k of keys) existing[k] = count;
+        output.set(groupKey, existing);
+      }
+    }
+    return output;
+  } catch (error) {
+    console.error(`[features-service] runs-service POST /v1/stats/costs network error:`, (error as Error).message);
+    return new Map();
+  }
+}
+
+// Per-tuple GET fallback for the dynasty path (POST endpoint can't filter or
+// group by workflowDynastySlug). Hits N×K calls — only used when callers
+// explicitly scope by dynasty.
+async function fetchPipelineStatsLegacy(
+  orgId: string,
+  groupBy: GroupByDimension | null,
+  filters: Record<string, string>,
+  featureSlugs: string[] | undefined,
+  identity: Identity,
+  entries: Array<{ filter: RunFilter; keys: string[] }>,
+): Promise<Map<string, Record<string, number>>> {
   const results = await Promise.all(
     entries.map(async ({ filter, keys }) => {
       const slugsToQuery = featureSlugs ?? (filters.featureSlug ? [filters.featureSlug] : []);
@@ -808,7 +862,7 @@ async function fetchPipelineStats(
         ),
       );
       const merged = new Map<string, number>();
-      for (const map of maps) { for (const [groupKey, count] of map) { merged.set(groupKey, (merged.get(groupKey) ?? 0) + count); } }
+      for (const map of maps) for (const [k, c] of map) merged.set(k, (merged.get(k) ?? 0) + c);
       return { keys, counts: merged };
     }),
   );
@@ -821,7 +875,6 @@ async function fetchPipelineStats(
       output.set(groupKey, existing);
     }
   }
-
   return output;
 }
 
