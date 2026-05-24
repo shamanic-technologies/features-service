@@ -88,8 +88,27 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     vi.unstubAllGlobals();
   });
 
+  function isCostsPost(url: string, init: RequestInit | undefined): boolean {
+    return url.endsWith("/v1/stats/costs") &&
+      !!init && (init.method ?? "GET").toString().toUpperCase() === "POST";
+  }
+
+  function buildEmptyBuckets(init: RequestInit): { buckets: unknown[] } {
+    const body = JSON.parse(init.body as string) as { serviceTasks: Array<{ serviceName: string; taskName: string }> };
+    return {
+      buckets: body.serviceTasks.map((t) => ({
+        serviceName: t.serviceName,
+        taskName: t.taskName,
+        groups: [],
+      })),
+    };
+  }
+
   function mockFetch(urlPattern: string, response: unknown) {
-    fetchSpy.mockImplementation((url: string) => {
+    fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
+      if (isCostsPost(url, init)) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(buildEmptyBuckets(init!)) });
+      }
       if (url.includes(urlPattern)) {
         return Promise.resolve({
           ok: true,
@@ -111,8 +130,23 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     });
   }
 
-  function mockFetchMulti(handlers: Array<{ match: string; response: unknown }>) {
-    fetchSpy.mockImplementation((url: string) => {
+  // `pipelineByTuple`: map of "serviceName:taskName" → groups array. Used to
+  // populate the POST /v1/stats/costs response's `buckets[].groups` for the
+  // matching (serviceName, taskName) tuple.
+  function mockFetchMulti(
+    handlers: Array<{ match: string; response: unknown }>,
+    pipelineByTuple?: Record<string, Array<{ dimensions: Record<string, string | null>; runCount: number; totalCostInUsdCents?: string }>>,
+  ) {
+    fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
+      if (isCostsPost(url, init)) {
+        const body = JSON.parse(init!.body as string) as { serviceTasks: Array<{ serviceName: string; taskName: string }> };
+        const buckets = body.serviceTasks.map((t) => ({
+          serviceName: t.serviceName,
+          taskName: t.taskName,
+          groups: pipelineByTuple?.[`${t.serviceName}:${t.taskName}`] ?? [],
+        }));
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ buckets }) });
+      }
       for (const { match, response } of handlers) {
         if (url.includes(match)) {
           return Promise.resolve({
@@ -153,7 +187,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     expect(leadCalls.length).toBeGreaterThan(0);
   });
 
-  it("fetches emailsGenerated from runs-service with serviceName=content-generation-service", async () => {
+  it("fetches emailsGenerated via POST /v1/stats/costs with content-generation-service:single-generation tuple", async () => {
     mockFetch("_never_match_", { groups: [] });
     const app = createApp();
 
@@ -166,26 +200,30 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
       .expect(200);
 
     const pipelineCalls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) =>
-        url.includes("serviceName=content-generation-service") &&
-        url.includes("taskName=single-generation"),
+      ([url, init]: [string, RequestInit | undefined]) => isCostsPost(url, init),
     );
-    expect(pipelineCalls.length).toBeGreaterThan(0);
+    expect(pipelineCalls.length).toBe(1);
+    const body = JSON.parse(pipelineCalls[0][1].body as string);
+    expect(body.serviceTasks).toContainEqual({
+      serviceName: "content-generation-service",
+      taskName: "single-generation",
+    });
   });
 
   it("returns pipeline counts in stats response", async () => {
-    mockFetchMulti([
-      {
-        match: "lead-service/orgs/stats",
-        response: { totalLeads: 42, byOutreachStatus: { contacted: 10, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 },
-      },
-      {
-        match: "serviceName=content-generation-service",
-        response: {
-          groups: [{ dimensions: { workflowName: null }, runCount: 37, totalCostInUsdCents: "0", actualCostInUsdCents: "0", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0" }],
+    mockFetchMulti(
+      [
+        {
+          match: "lead-service/orgs/stats",
+          response: { totalLeads: 42, byOutreachStatus: { contacted: 10, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 },
         },
+      ],
+      {
+        "content-generation-service:single-generation": [
+          { dimensions: { workflowSlug: null }, runCount: 37 },
+        ],
       },
-    ]);
+    );
     const app = createApp();
 
     const res = await request(app)
@@ -204,21 +242,22 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
   it("fetches journalistsFound and journalistsContacted from journalists-service /stats", async () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(PR_FEATURE as any);
 
-    mockFetchMulti([
-      {
-        match: "journalists-service/orgs/stats",
-        response: {
-          totalJournalists: 25,
-          byOutreachStatus: { contacted: 20, served: 3, buffered: 2 },
+    mockFetchMulti(
+      [
+        {
+          match: "journalists-service/orgs/stats",
+          response: {
+            totalJournalists: 25,
+            byOutreachStatus: { contacted: 20, served: 3, buffered: 2 },
+          },
         },
-      },
+      ],
       {
-        match: "serviceName=content-generation-service",
-        response: {
-          groups: [{ dimensions: { workflowName: null }, runCount: 20, totalCostInUsdCents: "0", actualCostInUsdCents: "0", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0" }],
-        },
+        "content-generation-service:single-generation": [
+          { dimensions: { workflowSlug: null }, runCount: 20 },
+        ],
       },
-    ]);
+    );
 
     const app = createApp();
 
@@ -265,25 +304,24 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
   });
 
   it("pipeline stats work with groupBy=campaignId", async () => {
-    mockFetchMulti([
-      {
-        match: "lead-service/orgs/stats",
-        response: {
-          groups: [
-            { key: "camp-a", totalLeads: 15, byOutreachStatus: { contacted: 0, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 },
-            { key: "camp-b", totalLeads: 27, byOutreachStatus: { contacted: 0, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 },
-          ],
+    mockFetchMulti(
+      [
+        {
+          match: "lead-service/orgs/stats",
+          response: {
+            groups: [
+              { key: "camp-a", totalLeads: 15, byOutreachStatus: { contacted: 0, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 },
+              { key: "camp-b", totalLeads: 27, byOutreachStatus: { contacted: 0, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 },
+            ],
+          },
         },
-      },
+      ],
       {
-        match: "serviceName=content-generation-service",
-        response: {
-          groups: [
-            { dimensions: { campaignId: "camp-a" }, runCount: 12, totalCostInUsdCents: "0", actualCostInUsdCents: "0", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0" },
-          ],
-        },
+        "content-generation-service:single-generation": [
+          { dimensions: { campaignId: "camp-a" }, runCount: 12 },
+        ],
       },
-    ]);
+    );
 
     const app = createApp();
 
@@ -314,9 +352,18 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
     vi.mocked(db.query.features.findMany).mockResolvedValue([SALES_FEATURE] as any);
 
-    fetchSpy.mockImplementation((url: string) => {
+    fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
       if (url.includes("campaign-service")) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ stats: { byStatus: { active: 0 } } }) });
+      }
+      if (url.endsWith("/v1/stats/costs") && (init?.method ?? "GET").toString().toUpperCase() === "POST") {
+        const body = JSON.parse(init!.body as string) as { serviceTasks: Array<{ serviceName: string; taskName: string }> };
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            buckets: body.serviceTasks.map((t) => ({ ...t, groups: [] })),
+          }),
+        });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ groups: [] }) });
     });
@@ -327,7 +374,7 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
     vi.unstubAllGlobals();
   });
 
-  it("forwards campaignId to runs-service /v1/stats/costs", async () => {
+  it("forwards campaignId to runs-service /v1/stats/costs (GET cost stats + POST pipeline)", async () => {
     const app = createApp();
 
     await request(app)
@@ -342,12 +389,17 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
       ([url]: [string]) => url.includes("/v1/stats/costs"),
     );
     expect(costsCalls.length).toBeGreaterThan(0);
-    for (const [url] of costsCalls) {
-      expect(url).toContain("campaignId=camp-123");
+    for (const [url, init] of costsCalls as Array<[string, RequestInit | undefined]>) {
+      if (init && (init.method ?? "GET").toUpperCase() === "POST") {
+        const body = JSON.parse(init.body as string);
+        expect(body.campaignId).toBe("camp-123");
+      } else {
+        expect(url).toContain("campaignId=camp-123");
+      }
     }
   });
 
-  it("forwards campaignId to lead-service /stats and runs-service pipeline stats calls", async () => {
+  it("forwards campaignId to lead-service /stats and runs-service pipeline POST", async () => {
     const app = createApp();
 
     await request(app)
@@ -367,14 +419,16 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
       expect(url).toContain("campaignId=camp-456");
     }
 
-    // pipeline calls (emailsGenerated) should also receive campaignId
-    const pipelineCalls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("serviceName="),
+    // Pipeline POST should also carry campaignId in its body
+    const pipelinePosts = fetchSpy.mock.calls.filter(
+      ([url, init]: [string, RequestInit | undefined]) =>
+        url.endsWith("/v1/stats/costs") &&
+        !!init && (init.method ?? "GET").toString().toUpperCase() === "POST",
     );
-    expect(pipelineCalls.length).toBeGreaterThan(0);
-    for (const [url] of pipelineCalls) {
-      expect(url).toContain("campaignId=camp-456");
-    }
+    expect(pipelinePosts.length).toBe(1);
+    const body = JSON.parse(pipelinePosts[0][1].body as string);
+    expect(body.campaignId).toBe("camp-456");
+    expect(body.serviceTasks.length).toBeGreaterThan(0);
   });
 });
 
@@ -394,20 +448,24 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
   });
 
   it("returns non-zero pipeline stats when no groupBy is specified", async () => {
-    fetchSpy.mockImplementation((url: string) => {
+    fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
       if (url.includes("lead-service/orgs/stats")) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({ totalLeads: 3, byOutreachStatus: { contacted: 0, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 }),
         });
       }
-      if (url.includes("serviceName=content-generation-service")) {
+      if (url.endsWith("/v1/stats/costs") && (init?.method ?? "GET").toString().toUpperCase() === "POST") {
+        const body = JSON.parse(init!.body as string) as { serviceTasks: Array<{ serviceName: string; taskName: string }> };
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({
-            groups: [
-              { dimensions: { workflowName: "sales-email-cold-outreach-herald" }, runCount: 3, totalCostInUsdCents: "0" },
-            ],
+            buckets: body.serviceTasks.map((t) => ({
+              ...t,
+              groups: t.serviceName === "content-generation-service"
+                ? [{ dimensions: { workflowSlug: "sales-email-cold-outreach-herald" }, runCount: 3 }]
+                : [],
+            })),
           }),
         });
       }
@@ -416,7 +474,7 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
           ok: true,
           json: () => Promise.resolve({
             groups: [
-              { dimensions: { workflowName: "sales-email-cold-outreach-herald" }, runCount: 3, totalCostInUsdCents: "100", minStartedAt: null, maxStartedAt: null },
+              { dimensions: { workflowSlug: "sales-email-cold-outreach-herald" }, runCount: 3, totalCostInUsdCents: "100", minStartedAt: null, maxStartedAt: null },
             ],
           }),
         });
@@ -443,20 +501,29 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
   });
 
   it("aggregates lead-service stats into __total__ when no groupBy", async () => {
-    fetchSpy.mockImplementation((url: string) => {
+    fetchSpy.mockImplementation((url: string, init?: RequestInit) => {
       if (url.includes("lead-service/orgs/stats")) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({ totalLeads: 12, byOutreachStatus: { contacted: 0, sent: 0, delivered: 0, opened: 0, bounced: 0, clicked: 0, unsubscribed: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 }, repliesDetail: { interested: 0, meetingBooked: 0, closed: 0, notInterested: 0, wrongPerson: 0, unsubscribe: 0, neutral: 0, autoReply: 0, outOfOffice: 0 }, buffered: 0, skipped: 0, claimed: 0 }),
         });
       }
-      if (url.includes("/v1/stats/costs") && !url.includes("serviceName=")) {
+      if (url.endsWith("/v1/stats/costs") && (init?.method ?? "GET").toString().toUpperCase() === "POST") {
+        const body = JSON.parse(init!.body as string) as { serviceTasks: Array<{ serviceName: string; taskName: string }> };
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            buckets: body.serviceTasks.map((t) => ({ ...t, groups: [] })),
+          }),
+        });
+      }
+      if (url.includes("/v1/stats/costs")) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({
             groups: [
-              { dimensions: { workflowName: "wf-a" }, runCount: 10, totalCostInUsdCents: "200", minStartedAt: "2026-01-01T00:00:00Z", maxStartedAt: "2026-02-01T00:00:00Z" },
-              { dimensions: { workflowName: "wf-b" }, runCount: 20, totalCostInUsdCents: "300", minStartedAt: "2026-01-15T00:00:00Z", maxStartedAt: "2026-03-01T00:00:00Z" },
+              { dimensions: { workflowSlug: "wf-a" }, runCount: 10, totalCostInUsdCents: "200", minStartedAt: "2026-01-01T00:00:00Z", maxStartedAt: "2026-02-01T00:00:00Z" },
+              { dimensions: { workflowSlug: "wf-b" }, runCount: 20, totalCostInUsdCents: "300", minStartedAt: "2026-01-15T00:00:00Z", maxStartedAt: "2026-03-01T00:00:00Z" },
             ],
           }),
         });

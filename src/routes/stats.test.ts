@@ -179,6 +179,13 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
         // email-gateway expects featureSlugs (plural)
         expect(parsed.searchParams.get("featureSlugs")).toBe("sales-cold-email-outreach");
         expect(parsed.searchParams.get("featureSlug")).toBeNull();
+      } else if (url.includes("runs:3000/v1/stats/costs")) {
+        // runs-service: GET takes the lineage CSV via featureSlugs; POST carries
+        // it in the body (no query string), so any URL with no query is fine.
+        if (parsed.search) {
+          expect(parsed.searchParams.get("featureSlugs")).toBe("sales-cold-email-outreach");
+          expect(parsed.searchParams.get("featureSlug")).toBeNull();
+        }
       } else {
         expect(parsed.searchParams.get("featureSlug")).toBe("sales-cold-email-outreach");
       }
