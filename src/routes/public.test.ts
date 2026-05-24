@@ -133,11 +133,11 @@ function mockFetchResponses(overrides: Record<string, unknown> = {}) {
         { key: "sales-outreach-beta", broadcast: { recipientStats: { repliesPositive: 20, sent: 80, delivered: 70, opened: 40 } } },
       ],
     },
-    "http://brand:3000/internal/brands/brand-1": {
-      brand: { id: "brand-1", name: "Acme Corp", domain: "acme.com" },
-    },
-    "http://brand:3000/internal/brands/brand-2": {
-      brand: { id: "brand-2", name: "Beta Inc", domain: "beta.io" },
+    "http://brand:3000/internal/brands?ids=": {
+      brands: [
+        { id: "brand-1", name: "Acme Corp", domain: "acme.com" },
+        { id: "brand-2", name: "Beta Inc", domain: "beta.io" },
+      ],
     },
     "http://journalists:3000/public/stats": {
       totalJournalists: 0,
@@ -327,6 +327,12 @@ describe("GET /public/stats/ranked", () => {
     expect(res.body.results[0].brand.id).toBe("brand-2");
     expect(res.body.results[0].brand.name).toBe("Beta Inc");
     expect(res.body.results[0].stats.recipientsRepliesPositive).toBe(15);
+
+    const brandCalls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => typeof call[0] === "string" && (call[0] as string).startsWith("http://brand:3000/"),
+    );
+    expect(brandCalls).toHaveLength(1);
+    expect(brandCalls[0][0]).toBe("http://brand:3000/internal/brands?ids=brand-2,brand-1");
   });
 });
 

@@ -172,10 +172,13 @@ export interface BrandInfo {
   domain: string | null;
 }
 
+// brand-service GET /internal/brands caps at 100 ids per request.
+const BRAND_BATCH_CHUNK_SIZE = 100;
+
 /**
  * Fetch brand display info (name, domain) for a list of brand IDs.
- * Calls GET /brands/{id} for each brand in parallel.
- * Returns what it can — individual failures are logged, not thrown.
+ * Uses brand-service's batch endpoint GET /internal/brands?ids=csv,
+ * chunked at the upstream cap. Failures are logged, not thrown.
  */
 export async function fetchBrandInfoBatch(brandIds: string[]): Promise<Map<string, BrandInfo>> {
   const brandServiceUrl = process.env.BRAND_SERVICE_URL;
@@ -186,30 +189,37 @@ export async function fetchBrandInfoBatch(brandIds: string[]): Promise<Map<strin
     return new Map();
   }
 
-  const results = await Promise.all(
-    brandIds.map(async (brandId): Promise<[string, BrandInfo] | null> => {
+  if (brandIds.length === 0) return new Map();
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < brandIds.length; i += BRAND_BATCH_CHUNK_SIZE) {
+    chunks.push(brandIds.slice(i, i + BRAND_BATCH_CHUNK_SIZE));
+  }
+
+  const map = new Map<string, BrandInfo>();
+
+  await Promise.all(
+    chunks.map(async (chunk) => {
+      const url = `${brandServiceUrl}/internal/brands?ids=${chunk.join(",")}`;
       try {
-        const response = await fetch(`${brandServiceUrl}/internal/brands/${brandId}`, {
+        const response = await fetch(url, {
           headers: { "x-api-key": brandServiceApiKey },
         });
 
         if (!response.ok) {
-          console.error(`[features-service] brand-service GET /internal/brands/${brandId} failed: ${response.status}`);
-          return null;
+          console.error(`[features-service] brand-service GET /internal/brands batch failed: ${response.status}`);
+          return;
         }
 
-        const data = await response.json() as { brand: { id: string; name: string | null; domain: string | null } };
-        return [brandId, { id: data.brand.id, name: data.brand.name, domain: data.brand.domain }];
+        const data = await response.json() as { brands: Array<{ id: string; name: string | null; domain: string | null }> };
+        for (const b of data.brands) {
+          map.set(b.id, { id: b.id, name: b.name, domain: b.domain });
+        }
       } catch (error) {
-        console.error(`[features-service] brand-service GET /internal/brands/${brandId} error:`, (error as Error).message);
-        return null;
+        console.error(`[features-service] brand-service GET /internal/brands batch error:`, (error as Error).message);
       }
     }),
   );
 
-  const map = new Map<string, BrandInfo>();
-  for (const result of results) {
-    if (result) map.set(result[0], result[1]);
-  }
   return map;
 }
