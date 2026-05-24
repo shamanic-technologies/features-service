@@ -92,6 +92,18 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   leadsSkipped:        { kind: "raw", type: "count", label: "Leads Skipped",  source: "leads" },
   leadsClaimed:        { kind: "raw", type: "count", label: "Leads Claimed",  source: "leads" },
 
+  // ── Company-scoped outreach funnel (distinct organizations): lead-service byOutreachStatusCompanies ──
+  companiesServed:           { kind: "raw", type: "count", label: "Companies",           source: "leads" },
+  companiesContacted:        { kind: "raw", type: "count", label: "Companies Contacted", source: "leads" },
+  companiesSent:             { kind: "raw", type: "count", label: "Companies Sent",      source: "leads" },
+  companiesDelivered:        { kind: "raw", type: "count", label: "Companies Delivered", source: "leads" },
+  companiesOpened:           { kind: "raw", type: "count", label: "Companies Opened",    source: "leads" },
+  companiesClicked:          { kind: "raw", type: "count", label: "Companies Clicked",   source: "leads" },
+  companiesBounced:          { kind: "raw", type: "count", label: "Companies Bounced",   source: "leads" },
+  companiesRepliesPositive:  { kind: "raw", type: "count", label: "Companies Positive",  source: "leads" },
+  companiesRepliesNegative:  { kind: "raw", type: "count", label: "Companies Negative",  source: "leads" },
+  companiesRepliesNeutral:   { kind: "raw", type: "count", label: "Companies Neutral",   source: "leads" },
+
   // ── Journalists: journalists-service ────────────────────────────────────────
   journalistsFound:     { kind: "raw", type: "count",   label: "Journalists Found",     source: "journalists" },
   journalistsContacted: { kind: "raw", type: "count",   label: "Journalists Contacted", source: "journalists" },
