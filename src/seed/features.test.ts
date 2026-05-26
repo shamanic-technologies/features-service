@@ -190,6 +190,101 @@ describe("SEED_FEATURES — ai-visibility-scoring", () => {
   });
 });
 
+describe("SEED_FEATURES — pr-expert-quote-opportunities", () => {
+  const SLUG = "pr-expert-quote-opportunities";
+
+  const seed = SEED_FEATURES.find((f) => f.slug === SLUG);
+
+  it("is registered in SEED_FEATURES", () => {
+    expect(seed).toBeDefined();
+  });
+
+  it("has the canonical name and description mentioning Featured.com + manual review", () => {
+    expect(seed?.name).toBe("PR Expert Quote Opportunities");
+    expect(seed?.description).toMatch(/Featured\.com/i);
+    expect(seed?.description).toMatch(/(manual|review|curat)/i);
+  });
+
+  it("has implemented=true and status=active", () => {
+    expect(seed?.implemented).toBe(true);
+    expect(seed?.status).toBe("active");
+  });
+
+  it("has displayOrder = 10", () => {
+    expect(seed?.displayOrder).toBe(10);
+  });
+
+  it("uses the inbox icon (HITL queue metaphor)", () => {
+    expect(seed?.icon).toBe("inbox");
+  });
+
+  it("has 5 inputs with required keys", () => {
+    expect(seed?.inputs.length).toBe(5);
+    for (const input of seed?.inputs as Array<{ key: string; label: string; extractKey: string; description: string }>) {
+      expect(input.key).toBeTruthy();
+      expect(input.label).toBeTruthy();
+      expect(input.extractKey).toBeTruthy();
+      expect(input.description).toBeTruthy();
+    }
+  });
+
+  it("declares spokesperson + expertiseTopics inputs", () => {
+    const keys = (seed?.inputs as Array<{ key: string }>).map((i) => i.key);
+    expect(keys).toContain("spokesperson");
+    expect(keys).toContain("expertiseTopics");
+  });
+
+  it("declares the quote-outreach outputs (lean reuse)", () => {
+    const keys = (seed?.outputs as Array<{ key: string }>).map((o) => o.key);
+    expect(keys).toEqual([
+      "quoteRequestsFound",
+      "quotePitchesSubmitted",
+      "quotesSelected",
+      "quotesPublished",
+      "pitchSelectionRate",
+      "pitchPublishRate",
+      "costPerQuotePublishedCents",
+    ]);
+  });
+
+  it("uses costPerQuotePublishedCents as the default sort (asc)", () => {
+    const outputs = seed?.outputs as Array<{ key: string; defaultSort?: boolean; sortDirection?: string }>;
+    const def = outputs.find((o) => o.defaultSort);
+    expect(def?.key).toBe("costPerQuotePublishedCents");
+    expect(def?.sortDirection).toBe("asc");
+  });
+
+  it("declares funnel-bar chart over the 4 quote raw keys", () => {
+    const charts = seed?.charts as Array<{ type: string; steps?: Array<{ key: string }> }>;
+    const funnel = charts.find((c) => c.type === "funnel-bar");
+    expect(funnel?.steps?.map((s) => s.key)).toEqual([
+      "quoteRequestsFound",
+      "quotePitchesSubmitted",
+      "quotesSelected",
+      "quotesPublished",
+    ]);
+  });
+
+  it("declares quote-requests + quote-pitches entities", () => {
+    const names = (seed?.entities as Array<{ name: string }>).map((e) => e.name);
+    expect(names).toEqual(["quote-requests", "quote-pitches"]);
+  });
+
+  it("all output keys are registered in STATS_REGISTRY", () => {
+    const outputs = seed?.outputs as Array<{ key: string }>;
+    for (const out of outputs) {
+      expect(VALID_STATS_KEYS.has(out.key)).toBe(true);
+    }
+  });
+
+  it("all entity names are registered in ENTITY_REGISTRY", () => {
+    const entities = seed?.entities as Array<{ name: string }>;
+    for (const ent of entities) {
+      expect(VALID_ENTITY_TYPES.has(ent.name)).toBe(true);
+    }
+  });
+});
+
 describe("SEED_FEATURES — global invariants", () => {
   it("all slugs are unique", () => {
     const slugs = SEED_FEATURES.map((f) => f.slug);

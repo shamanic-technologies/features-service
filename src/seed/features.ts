@@ -408,4 +408,38 @@ export const SEED_FEATURES: SeedFeature[] = [
       { name: "emails", countKey: "emailsGenerated" },
     ],
   },
+
+  {
+    slug: "pr-expert-quote-opportunities",
+    name: "PR Expert Quote Opportunities",
+    description: "Review a ranked queue of Featured.com journalist quote requests relevant to your brand, then generate, edit, and send expert quotes manually with AI assistance.",
+    icon: "inbox",
+    implemented: true,
+    displayOrder: 10,
+    status: "active",
+    inputs: [
+      { key: "spokesperson", type: "text", label: "Spokesperson", extractKey: "spokesperson", description: "Who is available to provide expert quotes on Featured.com. Include name, title, and notable credentials that establish authority. Examples: 'John Smith, CTO — ex-Google, published AI researcher, 15 years in ML', 'Sarah Chen, CEO — Forbes 30 Under 30, former McKinsey'. Featured.com journalists evaluate the spokesperson's credibility before selecting a quote.", placeholder: "Jane Doe, CEO — 15 years in fintech, ex-Stripe" },
+      { key: "expertiseTopics", type: "text", label: "Expertise Topics", extractKey: "expertiseTopics", description: "Topics the spokesperson can authoritatively comment on. Used to rank Featured.com quote requests by relevance to the brand. Be specific. Examples: 'AI safety and alignment', 'B2B SaaS go-to-market', 'European fintech regulation'. Higher topic overlap = higher rank in the opportunity queue.", placeholder: "AI safety, fintech regulation, developer productivity..." },
+      { key: "responseStyle", type: "textarea", label: "Response Style", extractKey: "responseStyle", description: "How the spokesperson speaks — voice, tone, length preferences, signature phrases. The LLM uses this to draft quote responses that sound authentic. The drafts are surfaced in the editor for manual review and editing before sending. Examples: 'Direct and data-driven, prefers short punchy quotes with a number or stat', 'Conversational, uses analogies, 2-3 sentences max'.", placeholder: "Direct, data-driven, 1-2 sentences with a stat" },
+      { key: "companyContext", type: "text", label: "Company Context", extractKey: "companyDescription", description: "Brief background on the company that gives the spokesperson their platform. Include founding date, traction metrics, notable customers, or market position. Examples: 'Founded 2022, 500+ enterprise customers, fastest-growing in category', 'Only platform certified for EU AI Act compliance'. Provides credibility context to journalists.", placeholder: "What does your company do and why does the spokesperson have authority on this topic?" },
+      { key: "valueProposition", type: "text", label: "Value Proposition", extractKey: "valueProposition", description: "What makes this expert source uniquely valuable for editorial coverage — proprietary data, contrarian view, first-hand experience. Examples: 'We see 200M+ B2B emails per month — unique sender-side data', 'Deployed AI agents at scale before most of the industry'. Helps the LLM differentiate the quote from generic responses.", placeholder: "Proprietary data, contrarian view, first-hand experience..." },
+    ],
+    outputs: [
+      { key: "quoteRequestsFound", displayOrder: 1 },
+      { key: "quotePitchesSubmitted", displayOrder: 2 },
+      { key: "quotesSelected", displayOrder: 3 },
+      { key: "quotesPublished", displayOrder: 4 },
+      { key: "pitchSelectionRate", displayOrder: 5 },
+      { key: "pitchPublishRate", displayOrder: 6 },
+      { key: "costPerQuotePublishedCents", defaultSort: true, displayOrder: 7, sortDirection: "asc" },
+    ],
+    charts: [
+      { key: "quoteFunnel", type: "funnel-bar", title: "Quote Opportunity Funnel", displayOrder: 1, steps: [{ key: "quoteRequestsFound" }, { key: "quotePitchesSubmitted" }, { key: "quotesSelected" }, { key: "quotesPublished" }] },
+      { key: "pitchOutcomes", type: "breakdown-bar", title: "Pitch Outcomes", displayOrder: 2, segments: [{ key: "quotesPublished", color: "green", sentiment: "positive" }, { key: "quotesSelected", color: "blue", sentiment: "neutral" }, { key: "quotesNotSelected", color: "red", sentiment: "negative" }] },
+    ],
+    entities: [
+      { name: "quote-requests", countKey: "quoteRequestsFound" },
+      { name: "quote-pitches", countKey: "quotePitchesSubmitted" },
+    ],
+  },
 ];
