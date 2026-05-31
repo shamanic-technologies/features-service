@@ -245,21 +245,31 @@ describe("companies* stat keys: endpoint mapping", () => {
   });
 });
 
-describe("companies* stat keys: seed coverage", () => {
-  const LEAD_BASED_SLUGS = [
+// DIS-114: cold-email features no longer DISPLAY the companies*/leads* family on
+// the ranked leaderboard — that family is unpopulated per-workflow until lead-service
+// ships byOutreachStatusCompanies (DIS-10). The keys remain in STATS_REGISTRY and the
+// stats route still maps them (see "endpoint mapping" tests above), so the B2B-funnel
+// follow-up stays a pure seed change. Cold-email outputs now use recipients* (email-gateway).
+describe("companies* stat keys: cold-email features do not display them (DIS-114)", () => {
+  const COLD_EMAIL_SLUGS = [
     "sales-cold-email-outreach",
     "vc-cold-email-outreach",
     "accelerators-cold-email-outreach",
     "hiring-cold-email-outreach",
   ];
 
-  for (const slug of LEAD_BASED_SLUGS) {
-    it(`${slug}: outputs include all 10 companies* keys`, () => {
+  for (const slug of COLD_EMAIL_SLUGS) {
+    it(`${slug}: outputs contain no leads*/companies*/costPerLead* keys`, () => {
       const feature = SEED_FEATURES.find((f) => f.slug === slug);
       expect(feature, `seed feature ${slug} missing`).toBeDefined();
       const outputKeys = (feature!.outputs as { key: string }[]).map((o) => o.key);
-      for (const k of COMPANIES_KEYS) {
-        expect(outputKeys, `${slug} missing output key "${k}"`).toContain(k);
+      for (const k of outputKeys) {
+        const isLeadOrCompany =
+          k.startsWith("leads") ||
+          k.startsWith("lead") ||
+          k.startsWith("companies") ||
+          k.startsWith("costPerLead");
+        expect(isLeadOrCompany, `${slug} output "${k}" still lead/company-scoped`).toBe(false);
       }
     });
   }
