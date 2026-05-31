@@ -257,32 +257,65 @@ describe("seed features use only valid registry keys", () => {
   });
 });
 
-describe("sales/hiring seed funnels are lead-scoped", () => {
-  const LEAD_DRIVEN = ["sales-cold-email-outreach", "hiring-cold-email-outreach"];
+describe("cold-email seed funnels are recipient-scoped (DIS-114)", () => {
+  // sales/hiring/vc/accelerators cold-email features render the GLOBAL ranked
+  // leaderboard (GET /public/stats/ranked, groupBy=workflow) via feature.outputs.
+  // The leads*/companies* family is unpopulated per-workflow because lead-service
+  // does not yet emit byOutreachStatus/byOutreachStatusCompanies in the ranked
+  // aggregation (DIS-10, DIS-48). These features therefore surface the populated
+  // recipients* family (email-gateway), mirroring pr-cold-email-outreach.
+  const COLD_EMAIL = [
+    "sales-cold-email-outreach",
+    "hiring-cold-email-outreach",
+    "vc-cold-email-outreach",
+    "accelerators-cold-email-outreach",
+  ];
 
-  for (const slug of LEAD_DRIVEN) {
-    it(`${slug}: funnel chart contains no recipients* keys`, () => {
+  const isRecipientScoped = (key: string) =>
+    key.startsWith("recipients") ||
+    key.startsWith("recipient") ||
+    key.startsWith("costPerRecipient") ||
+    key === "emailsGenerated";
+
+  for (const slug of COLD_EMAIL) {
+    it(`${slug}: funnel chart steps are recipient-scoped (no leads*/companies*)`, () => {
       const feature = SEED_FEATURES.find((f) => f.slug === slug);
       expect(feature, `seed feature ${slug} missing`).toBeDefined();
       const charts = feature!.charts as { key: string; steps?: { key: string }[]; segments?: { key: string }[] }[];
       const funnel = charts.find((c) => c.key === "funnel");
       expect(funnel, `${slug}: funnel chart missing`).toBeDefined();
       for (const step of funnel!.steps ?? []) {
-        expect(step.key.startsWith("recipients"), `${slug} funnel step "${step.key}" still recipient-scoped`).toBe(false);
+        expect(isRecipientScoped(step.key), `${slug} funnel step "${step.key}" not recipient-scoped`).toBe(true);
       }
     });
 
-    it(`${slug}: outputs contain no recipients*/costPerRecipient* keys`, () => {
+    it(`${slug}: outputs are recipient-scoped (no leads*/companies*/costPerLead*)`, () => {
       const feature = SEED_FEATURES.find((f) => f.slug === slug);
       const outputs = feature!.outputs as { key: string }[];
       for (const out of outputs) {
-        expect(
-          out.key.startsWith("recipients") || out.key.startsWith("recipient") || out.key.startsWith("costPerRecipient"),
-          `${slug} output "${out.key}" still recipient-scoped`,
-        ).toBe(false);
+        expect(isRecipientScoped(out.key), `${slug} output "${out.key}" not recipient-scoped`).toBe(true);
       }
     });
+
+    it(`${slug}: defaultSort metric is costPerRecipientPositiveReplyCents (asc)`, () => {
+      const feature = SEED_FEATURES.find((f) => f.slug === slug);
+      const outputs = feature!.outputs as { key: string; defaultSort?: boolean; sortDirection?: string }[];
+      const sortKey = outputs.find((o) => o.defaultSort);
+      expect(sortKey, `${slug}: no defaultSort output`).toBeDefined();
+      expect(sortKey!.key).toBe("costPerRecipientPositiveReplyCents");
+      expect(sortKey!.sortDirection).toBe("asc");
+    });
   }
+
+  // The leads*/companies* keys are NOT deleted from the registry — they remain
+  // valid and the stats route still computes them. Only the cold-email features'
+  // DISPLAYED outputs move to recipients*. This keeps the DIS-10 B2B-funnel
+  // follow-up (populate leads*/companies* per-workflow) a pure seed change.
+  it("leads*/companies* keys remain in the registry (preserved for DIS-10 follow-up)", () => {
+    for (const k of ["leadsServed", "leadsRepliesPositive", "companiesServed", "costPerLeadPositiveReplyCents"]) {
+      expect(VALID_STATS_KEYS.has(k), `registry key "${k}" must remain`).toBe(true);
+    }
+  });
 });
 
 describe("validateEntityTypes", () => {
