@@ -44,9 +44,14 @@ describe("SEED_FEATURES — pr-expert-quote-outreach", () => {
     }
   });
 
-  it("declares a spokesperson input (Featured.com requires expert)", () => {
+  it("declares the 4 person attribution inputs journalists need", () => {
     const keys = (seed?.inputs as Array<{ key: string }>).map((i) => i.key);
-    expect(keys).toContain("spokesperson");
+    expect(keys).toEqual([
+      "expertName",
+      "expertTitle",
+      "expertPhotoUrl",
+      "expertLinkedIn",
+    ]);
   });
 
   it("all output keys are registered in STATS_REGISTRY", () => {
