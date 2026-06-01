@@ -39,3 +39,24 @@ Every new or changed endpoint requires THREE changes in the same PR:
 1. Zod schema in `src/lib/schemas.ts`
 2. Path entry in `src/lib/openapi.ts`
 3. Re-generated `openapi.json` (run `npm run generate:openapi`)
+
+**Scope:** this rule covers ENDPOINT shape changes. Editing seed feature `inputs`/`outputs`
+content in `src/seed/features.ts` does NOT touch OpenAPI — the schema is `inputs: z.array(z.any())`,
+so seed content never appears in `openapi.json`. No regen needed for seed-data edits.
+
+## Seed feature inputs — `description` is an extraction prompt
+
+In `src/seed/features.ts`, each input's `extractKey` + `description` are double-duty. The
+`POST /features/:slug/prefill` route maps every input to `{ key: extractKey, description }` and
+sends it to brand-service `extract-fields`, which AI-extracts the value from the brand site
+(cached 30d per brandId+fieldKey+campaignId). So **`description` must be written as an
+extraction-quality prompt**, not just UI help text — it's what brand-service's LLM reads to find
+the value. Pick a clear `extractKey`; org name/url/logo are already known by construction (don't
+ask), prefer extraction over user-entry for anything scrapeable.
+
+## Two expert-quote features — don't conflate
+
+- `pr-expert-quote-outreach` — autonomous PR quote outreach.
+- `pr-expert-quote-opportunities` — HITL ranked queue (review → generate → send manually). `inbox` icon, displayOrder 10.
+
+Near-identical inputs/outputs/charts. Confirm the exact slug before editing — they diverge by intent.
