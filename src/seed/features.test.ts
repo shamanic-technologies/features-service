@@ -218,8 +218,8 @@ describe("SEED_FEATURES — pr-expert-quote-opportunities", () => {
     expect(seed?.icon).toBe("inbox");
   });
 
-  it("has 5 inputs with required keys", () => {
-    expect(seed?.inputs.length).toBe(5);
+  it("has 4 inputs with required keys", () => {
+    expect(seed?.inputs.length).toBe(4);
     for (const input of seed?.inputs as Array<{ key: string; label: string; extractKey: string; description: string }>) {
       expect(input.key).toBeTruthy();
       expect(input.label).toBeTruthy();
@@ -228,10 +228,14 @@ describe("SEED_FEATURES — pr-expert-quote-opportunities", () => {
     }
   });
 
-  it("declares spokesperson + expertiseTopics inputs", () => {
+  it("declares the 4 person attribution inputs journalists need", () => {
     const keys = (seed?.inputs as Array<{ key: string }>).map((i) => i.key);
-    expect(keys).toContain("spokesperson");
-    expect(keys).toContain("expertiseTopics");
+    expect(keys).toEqual([
+      "expertName",
+      "expertTitle",
+      "expertPhotoUrl",
+      "expertLinkedIn",
+    ]);
   });
 
   it("declares the quote-outreach outputs (lean reuse)", () => {
