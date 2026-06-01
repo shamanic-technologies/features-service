@@ -285,6 +285,57 @@ describe("SEED_FEATURES — pr-expert-quote-opportunities", () => {
   });
 });
 
+describe("SEED_FEATURES — cold-email % Clicks stat", () => {
+  const COLD_EMAIL_SLUGS = [
+    "sales-cold-email-outreach",
+    "pr-cold-email-outreach",
+    "hiring-cold-email-outreach",
+    "vc-cold-email-outreach",
+    "accelerators-cold-email-outreach",
+  ];
+
+  it("recipientClickRate is a registered stats key", () => {
+    expect(VALID_STATS_KEYS.has("recipientClickRate")).toBe(true);
+  });
+
+  for (const slug of COLD_EMAIL_SLUGS) {
+    describe(slug, () => {
+      const seed = SEED_FEATURES.find((f) => f.slug === slug);
+      const keys = () => (seed?.outputs as Array<{ key: string }>).map((o) => o.key);
+
+      it("is registered", () => {
+        expect(seed).toBeDefined();
+      });
+
+      it("declares recipientClickRate in outputs", () => {
+        expect(keys()).toContain("recipientClickRate");
+      });
+
+      it("places recipientClickRate immediately after recipientOpenRate (between open and positive)", () => {
+        const k = keys();
+        const openIdx = k.indexOf("recipientOpenRate");
+        const clickIdx = k.indexOf("recipientClickRate");
+        const positiveIdx = k.indexOf("recipientPositiveReplyRate");
+        expect(openIdx).toBeGreaterThanOrEqual(0);
+        expect(clickIdx).toBe(openIdx + 1);
+        expect(clickIdx).toBeLessThan(positiveIdx);
+      });
+
+      it("has contiguous displayOrder values 1..N", () => {
+        const orders = (seed?.outputs as Array<{ displayOrder: number }>)
+          .map((o) => o.displayOrder)
+          .sort((a, b) => a - b);
+        expect(orders).toEqual(orders.map((_, i) => i + 1));
+      });
+
+      it("keeps exactly one defaultSort output", () => {
+        const def = (seed?.outputs as Array<{ defaultSort?: boolean }>).filter((o) => o.defaultSort);
+        expect(def.length).toBe(1);
+      });
+    });
+  }
+});
+
 describe("SEED_FEATURES — global invariants", () => {
   it("all slugs are unique", () => {
     const slugs = SEED_FEATURES.map((f) => f.slug);
