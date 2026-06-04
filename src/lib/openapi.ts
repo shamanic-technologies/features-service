@@ -228,6 +228,90 @@ registry.registerPath({
   },
 });
 
+// ── GET /features/:featureSlug/revenue ────────────────────────────────────
+
+const topPersonSchema = z.object({
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  photoUrl: z.string().nullable(),
+});
+
+const revenueOrganizationSchema = z.object({
+  orgId: z.string().nullable(),
+  orgName: z.string().nullable(),
+  orgLogoUrl: z.string().nullable(),
+  topPerson: topPersonSchema,
+  tags: z.array(z.string()),
+  expectedRevenueUsd: z.number(),
+  mostAdvancedDate: z.string().nullable().describe("Most-advanced event date. Null until per-event timestamps exist (email-gateway)."),
+});
+
+const revenueLeadSchema = z.object({
+  leadId: z.string(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  photoUrl: z.string().nullable(),
+  orgName: z.string().nullable(),
+  orgLogoUrl: z.string().nullable(),
+  tags: z.array(z.string()),
+  expectedRevenueUsd: z.number(),
+  date: z.string().nullable().describe("Most-advanced event date. Null until per-event timestamps exist (email-gateway)."),
+});
+
+const revenueTimeSeriesPointSchema = z.object({
+  date: z.string(),
+  cumulativePipelineUsd: z.number(),
+});
+
+const revenueEventSchema = z.object({
+  leadId: z.string(),
+  person: z.string().nullable(),
+  org: z.string().nullable(),
+  eventType: z.string(),
+  eventDate: z.string(),
+  contributionUsd: z.number(),
+});
+
+const featureRevenueResponseSchema = z.object({
+  featureSlug: z.string(),
+  headline: z.object({
+    totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline. Null when no funnel is wired or the brand has no saved economics."),
+  }),
+  timeSeries: z.array(revenueTimeSeriesPointSchema).describe("Cumulative pipeline ordered by event date. Empty until per-event timestamps exist (email-gateway)."),
+  organizations: z.array(revenueOrganizationSchema),
+  leads: z.array(revenueLeadSchema),
+  events: z.array(revenueEventSchema).describe("One row per event. Empty until per-event timestamps exist (email-gateway)."),
+});
+
+registry.register("FeatureRevenueResponse", featureRevenueResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/features/{featureSlug}/revenue",
+  summary: "Expected pipeline revenue for a feature",
+  description:
+    "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). " +
+    "Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. " +
+    "Rates + terminal LTR come from the brand's sales economics. " +
+    "timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. " +
+    "totalPipelineUsd is null when no funnel is wired for the feature or the brand has no saved economics.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ featureSlug: z.string() }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required) — revenue is brand-scoped."),
+      campaignId: z.string().optional().describe("Optional campaign drill-down."),
+    }),
+  },
+  responses: {
+    200: { description: "Feature revenue", content: { "application/json": { schema: featureRevenueResponseSchema } } },
+    400: { description: "Missing brandId", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /stats ──────────────────────────────────────────────────────────
 
 registry.registerPath({
