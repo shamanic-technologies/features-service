@@ -587,6 +587,212 @@
           "format",
           "prefilled"
         ]
+      },
+      "FeatureRevenueResponse": {
+        "type": "object",
+        "properties": {
+          "featureSlug": {
+            "type": "string"
+          },
+          "headline": {
+            "type": "object",
+            "properties": {
+              "totalPipelineUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "Org-deduped expected pipeline. Null when no funnel is wired or the brand has no saved economics."
+              }
+            },
+            "required": [
+              "totalPipelineUsd"
+            ]
+          },
+          "timeSeries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "cumulativePipelineUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "date",
+                "cumulativePipelineUsd"
+              ]
+            },
+            "description": "Cumulative pipeline ordered by event date. Empty until per-event timestamps exist (email-gateway)."
+          },
+          "organizations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "orgId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "orgName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "orgLogoUrl": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "topPerson": {
+                  "type": "object",
+                  "properties": {
+                    "firstName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "photoUrl": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "firstName",
+                    "lastName",
+                    "photoUrl"
+                  ]
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expectedRevenueUsd": {
+                  "type": "number"
+                },
+                "mostAdvancedDate": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway)."
+                }
+              },
+              "required": [
+                "orgId",
+                "orgName",
+                "orgLogoUrl",
+                "topPerson",
+                "tags",
+                "expectedRevenueUsd",
+                "mostAdvancedDate"
+              ]
+            }
+          },
+          "leads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "leadId": {
+                  "type": "string"
+                },
+                "firstName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "lastName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "photoUrl": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "orgName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "orgLogoUrl": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expectedRevenueUsd": {
+                  "type": "number"
+                },
+                "date": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway)."
+                }
+              },
+              "required": [
+                "leadId",
+                "firstName",
+                "lastName",
+                "photoUrl",
+                "orgName",
+                "orgLogoUrl",
+                "tags",
+                "expectedRevenueUsd",
+                "date"
+              ]
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "leadId": {
+                  "type": "string"
+                },
+                "person": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "org": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "eventType": {
+                  "type": "string"
+                },
+                "eventDate": {
+                  "type": "string"
+                },
+                "contributionUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "leadId",
+                "person",
+                "org",
+                "eventType",
+                "eventDate",
+                "contributionUsd"
+              ]
+            },
+            "description": "One row per event. Empty until per-event timestamps exist (email-gateway)."
+          }
+        },
+        "required": [
+          "featureSlug",
+          "headline",
+          "timeSeries",
+          "organizations",
+          "leads",
+          "events"
+        ]
       }
     },
     "parameters": {}
@@ -1647,6 +1853,357 @@
           },
           "404": {
             "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/{featureSlug}/revenue": {
+      "get": {
+        "summary": "Expected pipeline revenue for a feature",
+        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. totalPipelineUsd is null when no funnel is wired for the feature or the brand has no saved economics.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "featureSlug",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID (required) — revenue is brand-scoped."
+            },
+            "required": true,
+            "description": "Brand UUID (required) — revenue is brand-scoped.",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Optional campaign drill-down."
+            },
+            "required": false,
+            "description": "Optional campaign drill-down.",
+            "name": "campaignId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Feature revenue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "headline": {
+                      "type": "object",
+                      "properties": {
+                        "totalPipelineUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Org-deduped expected pipeline. Null when no funnel is wired or the brand has no saved economics."
+                        }
+                      },
+                      "required": [
+                        "totalPipelineUsd"
+                      ]
+                    },
+                    "timeSeries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "date": {
+                            "type": "string"
+                          },
+                          "cumulativePipelineUsd": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "date",
+                          "cumulativePipelineUsd"
+                        ]
+                      },
+                      "description": "Cumulative pipeline ordered by event date. Empty until per-event timestamps exist (email-gateway)."
+                    },
+                    "organizations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "orgId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "orgName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "orgLogoUrl": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "topPerson": {
+                            "type": "object",
+                            "properties": {
+                              "firstName": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "lastName": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "photoUrl": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "firstName",
+                              "lastName",
+                              "photoUrl"
+                            ]
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "expectedRevenueUsd": {
+                            "type": "number"
+                          },
+                          "mostAdvancedDate": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway)."
+                          }
+                        },
+                        "required": [
+                          "orgId",
+                          "orgName",
+                          "orgLogoUrl",
+                          "topPerson",
+                          "tags",
+                          "expectedRevenueUsd",
+                          "mostAdvancedDate"
+                        ]
+                      }
+                    },
+                    "leads": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "leadId": {
+                            "type": "string"
+                          },
+                          "firstName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "lastName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "photoUrl": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "orgName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "orgLogoUrl": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "expectedRevenueUsd": {
+                            "type": "number"
+                          },
+                          "date": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway)."
+                          }
+                        },
+                        "required": [
+                          "leadId",
+                          "firstName",
+                          "lastName",
+                          "photoUrl",
+                          "orgName",
+                          "orgLogoUrl",
+                          "tags",
+                          "expectedRevenueUsd",
+                          "date"
+                        ]
+                      }
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "leadId": {
+                            "type": "string"
+                          },
+                          "person": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "org": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "eventType": {
+                            "type": "string"
+                          },
+                          "eventDate": {
+                            "type": "string"
+                          },
+                          "contributionUsd": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "leadId",
+                          "person",
+                          "org",
+                          "eventType",
+                          "eventDate",
+                          "contributionUsd"
+                        ]
+                      },
+                      "description": "One row per event. Empty until per-event timestamps exist (email-gateway)."
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "headline",
+                    "timeSeries",
+                    "organizations",
+                    "leads",
+                    "events"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing brandId",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
             "content": {
               "application/json": {
                 "schema": {
