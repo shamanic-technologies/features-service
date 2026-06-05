@@ -6,6 +6,7 @@ import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { getFunnel } from "../lib/funnel-registry.js";
 import { fetchSalesEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
+import { fetchRunsCostCents } from "../lib/runs-cost-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { fetchPlatformEmailRates } from "../lib/platform-rates-client.js";
 import {
@@ -19,20 +20,43 @@ import { traceEvent } from "../lib/trace-event.js";
 
 const router = Router();
 
+/**
+ * Derived cost economics for the brand(+campaign), feature-scoped. Always present.
+ *   - totalCostUsd:          total run cost in dollars (same source as /stats systemStats), >= 0.
+ *   - costOfAcquisitionPct:  (totalCostUsd / totalPipelineUsd) * 100; null when pipeline is null OR 0.
+ *   - roiMultiple:           totalPipelineUsd / totalCostUsd; null when cost is 0 OR pipeline is null.
+ */
+interface CostEconomics {
+  totalCostUsd: number;
+  costOfAcquisitionPct: number | null;
+  roiMultiple: number | null;
+}
+
+function buildCostEconomics(totalCostInUsdCents: number, totalPipelineUsd: number | null): CostEconomics {
+  const totalCostUsd = totalCostInUsdCents / 100;
+  const costOfAcquisitionPct =
+    totalPipelineUsd === null || totalPipelineUsd === 0 ? null : (totalCostUsd / totalPipelineUsd) * 100;
+  const roiMultiple =
+    totalCostUsd === 0 || totalPipelineUsd === null ? null : totalPipelineUsd / totalCostUsd;
+  return { totalCostUsd, costOfAcquisitionPct, roiMultiple };
+}
+
 interface RevenueResponse {
   featureSlug: string;
   /** totalPipelineUsd is null when no funnel is wired or the brand has no economics saved. */
   headline: { totalPipelineUsd: number | null };
+  costEconomics: CostEconomics;
   timeSeries: TimeSeriesPoint[];
   organizations: OrganizationRow[];
   leads: LeadRow[];
   events: EventRow[];
 }
 
-function emptyResult(featureSlug: string, totalPipelineUsd: number | null): RevenueResponse {
+function emptyResult(featureSlug: string, totalPipelineUsd: number | null, totalCostInUsdCents: number): RevenueResponse {
   return {
     featureSlug,
     headline: { totalPipelineUsd },
+    costEconomics: buildCostEconomics(totalCostInUsdCents, totalPipelineUsd),
     timeSeries: [],
     organizations: [],
     leads: [],
@@ -67,10 +91,15 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       return res.status(404).json({ error: "Feature not found" });
     }
 
+    // Total run cost for this brand(+campaign), feature-scoped — same runs-service source as
+    // /stats systemStats.totalCostInUsdCents. Required on every 200 (incl. null-pipeline paths),
+    // so fetch it up front. Fail-loud: a swallowed error must not fake $0 cost / infinite ROI.
+    const totalCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, { orgId, userId, runId, featureSlug: headerFeatureSlug });
+
     // No funnel wired for this feature yet → null pipeline (not an error).
     const funnel = getFunnel(featureSlug);
     if (!funnel) {
-      return res.json(emptyResult(featureSlug, null));
+      return res.json(emptyResult(featureSlug, null, totalCostInUsdCents));
     }
 
     traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
@@ -78,7 +107,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     // Economics (rates + terminal LTR). Unset → revenue incomputable → null pipeline.
     const economics = await fetchSalesEconomics(brandId, { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug });
     if (!economics) {
-      return res.json(emptyResult(featureSlug, null));
+      return res.json(emptyResult(featureSlug, null, totalCostInUsdCents));
     }
 
     // Platform-global email funnel rates (cached) — let a lead earn expected revenue from
@@ -117,6 +146,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     const response: RevenueResponse = {
       featureSlug,
       headline: result.headline,
+      costEconomics: buildCostEconomics(totalCostInUsdCents, result.headline.totalPipelineUsd),
       timeSeries: result.timeSeries,
       organizations: result.organizations,
       leads: result.leads,

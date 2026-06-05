@@ -607,6 +607,31 @@
               "totalPipelineUsd"
             ]
           },
+          "costEconomics": {
+            "type": "object",
+            "properties": {
+              "totalCostUsd": {
+                "type": "number",
+                "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
+              },
+              "costOfAcquisitionPct": {
+                "type": "number",
+                "nullable": true,
+                "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+              },
+              "roiMultiple": {
+                "type": "number",
+                "nullable": true,
+                "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
+              }
+            },
+            "required": [
+              "totalCostUsd",
+              "costOfAcquisitionPct",
+              "roiMultiple"
+            ],
+            "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
+          },
           "timeSeries": {
             "type": "array",
             "items": {
@@ -788,6 +813,7 @@
         "required": [
           "featureSlug",
           "headline",
+          "costEconomics",
           "timeSeries",
           "organizations",
           "leads",
@@ -1875,7 +1901,7 @@
     "/features/{featureSlug}/revenue": {
       "get": {
         "summary": "Expected pipeline revenue for a feature",
-        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. totalPipelineUsd is null when no funnel is wired for the feature or the brand has no saved economics.",
+        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. totalPipelineUsd is null when no funnel is wired for the feature or the brand has no saved economics. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple.",
         "tags": [
           "Stats"
         ],
@@ -1975,6 +2001,31 @@
                       "required": [
                         "totalPipelineUsd"
                       ]
+                    },
+                    "costEconomics": {
+                      "type": "object",
+                      "properties": {
+                        "totalCostUsd": {
+                          "type": "number",
+                          "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
+                        },
+                        "costOfAcquisitionPct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                        },
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
+                        }
+                      },
+                      "required": [
+                        "totalCostUsd",
+                        "costOfAcquisitionPct",
+                        "roiMultiple"
+                      ],
+                      "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
                     },
                     "timeSeries": {
                       "type": "array",
@@ -2157,6 +2208,7 @@
                   "required": [
                     "featureSlug",
                     "headline",
+                    "costEconomics",
                     "timeSeries",
                     "organizations",
                     "leads",

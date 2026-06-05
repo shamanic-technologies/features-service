@@ -272,11 +272,18 @@ const revenueEventSchema = z.object({
   contributionUsd: z.number(),
 });
 
+const revenueCostEconomicsSchema = z.object({
+  totalCostUsd: z.number().describe("Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."),
+  costOfAcquisitionPct: z.number().nullable().describe("(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."),
+  roiMultiple: z.number().nullable().describe("totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."),
+});
+
 const featureRevenueResponseSchema = z.object({
   featureSlug: z.string(),
   headline: z.object({
     totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline. Null when no funnel is wired or the brand has no saved economics."),
   }),
+  costEconomics: revenueCostEconomicsSchema.describe("Derived cost economics. Always present; ratios are null per the documented null semantics."),
   timeSeries: z.array(revenueTimeSeriesPointSchema).describe("Cumulative pipeline ordered by event date. Empty until per-event timestamps exist (email-gateway)."),
   organizations: z.array(revenueOrganizationSchema),
   leads: z.array(revenueLeadSchema),
@@ -294,7 +301,8 @@ registry.registerPath({
     "Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. " +
     "Rates + terminal LTR come from the brand's sales economics. " +
     "timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. " +
-    "totalPipelineUsd is null when no funnel is wired for the feature or the brand has no saved economics.",
+    "totalPipelineUsd is null when no funnel is wired for the feature or the brand has no saved economics. " +
+    "costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
