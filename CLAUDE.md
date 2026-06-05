@@ -19,6 +19,17 @@ npm run generate:openapi # Regenerate openapi.json from Zod schemas
 - OpenAPI: auto-generated from Zod schemas via `@asteasolutions/zod-to-openapi`
 - Deployed on Railway via Dockerfile
 
+## CI test flake — `EnvironmentTeardownError`
+
+CI's `pnpm test` runs every suite **twice** — once from `src/*.test.ts` and once from the
+compiled `dist/*.test.js` — so console output volume is doubled. This intermittently trips a
+vitest worker-teardown race: `EnvironmentTeardownError: Closing rpc while "onUserConsoleLog"
+was pending` (often attributed to `src/routes/features.test.ts`). It surfaces as **1 unhandled
+error with ALL tests passing** (`407 passed`, `1 error`, exit 1). It is a non-deterministic
+flake, NOT a logic failure: if the summary shows all tests green + only this teardown error,
+**rerun the job** (`gh run rerun <runId> --failed`) — it passes on retry. Do not chase it as a
+code bug. Follow-up worth doing: make CI run src OR dist, not both (halves runtime + the flake).
+
 ## Key Files
 
 | File | Purpose |

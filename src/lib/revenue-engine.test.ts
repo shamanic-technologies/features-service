@@ -79,6 +79,53 @@ describe("computeRevenue — org dedup (MAX inside, SUM between)", () => {
   });
 });
 
+// 5-stage funnel: contacted < sent < delivered (delivery) + visit/reply (engagement)
+const STAGE_PATHS: ResolvedPath[] = [
+  { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery" },
+  { tag: "sent", signal: "sent", expectedRevenueUsd: 6, kind: "delivery" },
+  { tag: "delivered", signal: "delivered", expectedRevenueUsd: 12, kind: "delivery" },
+  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement" },
+  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, kind: "engagement" },
+];
+
+describe("computeRevenue — tag collapse (furthest delivery stage, engagement multi-tag)", () => {
+  it("contacted only → tag [contacted], EV from contacted stage", () => {
+    const r = computeRevenue(STAGE_PATHS, [person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: false, delivered: false, clicked: false, positiveReply: false } })]);
+    expect(r.leads[0].tags).toEqual(["contacted"]);
+    expect(r.leads[0].expectedRevenueUsd).toBe(3);
+  });
+
+  it("contacted+sent+delivered (no engagement) → only the FURTHEST stage tag", () => {
+    const r = computeRevenue(STAGE_PATHS, [person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false } })]);
+    expect(r.leads[0].tags).toEqual(["delivered"]);
+    expect(r.leads[0].expectedRevenueUsd).toBe(12);
+  });
+
+  it("engagement suppresses the delivery tag → clicked shows [visit], not [delivered]", () => {
+    const r = computeRevenue(STAGE_PATHS, [person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: true, positiveReply: false } })]);
+    expect(r.leads[0].tags).toEqual(["visit"]);
+    expect(r.leads[0].expectedRevenueUsd).toBe(20);
+  });
+
+  it("both engagements → multi-tag [visit, reply]", () => {
+    const r = computeRevenue(STAGE_PATHS, [person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: true, positiveReply: true } })]);
+    expect(r.leads[0].tags.sort()).toEqual(["reply", "visit"]);
+    expect(r.leads[0].expectedRevenueUsd).toBe(120);
+  });
+
+  it("events ledger itemises EVERY dated stage (delivery + engagement)", () => {
+    const r = computeRevenue(STAGE_PATHS, [
+      person({
+        leadId: "l1", orgId: "o1",
+        signals: { contacted: true, sent: true, delivered: true, clicked: true, positiveReply: false },
+        signalDates: { contacted: "2026-01-01T00:00:00Z", sent: "2026-01-02T00:00:00Z", delivered: "2026-01-03T00:00:00Z", clicked: "2026-01-04T00:00:00Z" },
+      }),
+    ]);
+    expect(r.events.map((e) => e.eventType)).toEqual(["contacted", "sent", "delivered", "visit"]);
+    expect(r.events.find((e) => e.eventType === "contacted")!.contributionUsd).toBe(3);
+  });
+});
+
 describe("computeRevenue — lead dedup across campaign rows", () => {
   it("same leadId in two rows → one person, signals OR'd", () => {
     const r = computeRevenue(PATHS, [

@@ -39,12 +39,19 @@ describe("sales funnel — resolvePaths", () => {
     expect(byTag.contacted.expectedRevenueUsd).toBeCloseTo(12);
   });
 
-  it("delivery-stage paths are not itemised in the ledger; engagement paths are", () => {
-    expect(byTag.contacted.ledger).toBe(false);
-    expect(byTag.sent.ledger).toBe(false);
-    expect(byTag.delivered.ledger).toBe(false);
-    expect(byTag.visit.ledger).toBe(true);
-    expect(byTag.reply.ledger).toBe(true);
+  it("tags delivery stages as delivery (ascending order) and visit/reply as engagement", () => {
+    expect(byTag.contacted.kind).toBe("delivery");
+    expect(byTag.sent.kind).toBe("delivery");
+    expect(byTag.delivered.kind).toBe("delivery");
+    expect(byTag.visit.kind).toBe("engagement");
+    expect(byTag.reply.kind).toBe("engagement");
+    // delivery stages must be in ascending funnel order (engine picks the last fired)
+    const order = paths.filter((p) => p.kind === "delivery").map((p) => p.tag);
+    expect(order).toEqual(["contacted", "sent", "delivered"]);
+  });
+
+  it("every path is itemised in the events ledger", () => {
+    expect(paths.every((p) => p.ledger !== false)).toBe(true);
   });
 
   it("upstream rates scale the stage EVs down", () => {

@@ -35,10 +35,13 @@ export interface ResolvedPath {
   /** LTR × rate-chain — the expected revenue this path contributes when its signal fired. */
   expectedRevenueUsd: number;
   /**
-   * Whether a fired event of this path is itemised in the events ledger. Defaults to true.
-   * Delivery-stage paths (contacted/sent/delivered) set false: they drive EV + dates + the
-   * time-series but are not listed per-lead in the events table (avoids a row per stage).
+   * "delivery" = a cumulative funnel milestone (contacted/sent/delivered); only the FURTHEST
+   * reached one is shown as the entity's tag, and it is suppressed once an engagement fired.
+   * "engagement" (default) = a terminal conversion (visit/reply); shown multi-tag.
+   * Delivery paths must be listed in ascending funnel order so the last fired = furthest.
    */
+  kind?: "delivery" | "engagement";
+  /** Whether a fired event of this path is itemised in the events ledger. Defaults to true. */
   ledger?: boolean;
 }
 
@@ -172,20 +175,31 @@ function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
   return [...byLead.values()];
 }
 
-/** Per-person EV = MAX over fired paths; tags = union; date = max fired-event date. */
+/**
+ * Per-person EV = MAX over fired paths; date = max fired-event date; firedEvents = every
+ * fired path (for the ledger). Tags collapse delivery stages to the FURTHEST reached one and
+ * suppress it once an engagement fired — so a row shows its single funnel position, or its
+ * terminal conversions (visit/reply), not every milestone it passed.
+ */
 function evForPerson(person: EnginePerson, paths: ResolvedPath[]): PersonEv {
   let ev = 0;
-  const tags: string[] = [];
   const firedEvents: FiredEvent[] = [];
   let date: string | null = null;
+  const engagementTags: string[] = [];
+  let furthestDeliveryTag: string | null = null;
   for (const path of paths) {
     if (!person.signals[path.signal]) continue;
-    if (!tags.includes(path.tag)) tags.push(path.tag);
     if (path.expectedRevenueUsd > ev) ev = path.expectedRevenueUsd;
     const eventDate = person.signalDates?.[path.signal] ?? null;
     firedEvents.push({ tag: path.tag, eventDate, contributionUsd: path.expectedRevenueUsd, ledger: path.ledger !== false });
     date = maxDate(date, eventDate);
+    if (path.kind === "delivery") {
+      furthestDeliveryTag = path.tag; // paths are in ascending funnel order → last fired = furthest
+    } else if (!engagementTags.includes(path.tag)) {
+      engagementTags.push(path.tag);
+    }
   }
+  const tags = engagementTags.length > 0 ? engagementTags : furthestDeliveryTag ? [furthestDeliveryTag] : [];
   return { person, ev, tags, date, firedEvents };
 }
 
