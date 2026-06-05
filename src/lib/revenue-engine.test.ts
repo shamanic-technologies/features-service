@@ -17,6 +17,7 @@ function person(over: Partial<EnginePerson> & { leadId: string; signals: Record<
     orgId: null,
     orgName: null,
     orgLogoUrl: null,
+    orgDomain: null,
     ...over,
   };
 }
@@ -76,6 +77,35 @@ describe("computeRevenue — org dedup (MAX inside, SUM between)", () => {
     expect(r.organizations).toHaveLength(1);
     expect(r.organizations[0].orgId).toBeNull();
     expect(r.headline.totalPipelineUsd).toBe(20);
+  });
+});
+
+describe("computeRevenue — orgDomain (for logo.dev)", () => {
+  it("domain present → surfaced on both leads[] and organizations[]", () => {
+    const r = computeRevenue(PATHS, [
+      person({ leadId: "l1", orgId: "o1", orgName: "Acme", orgDomain: "acme.com", signals: { clicked: true, positiveReply: false } }),
+    ]);
+    expect(r.leads[0].orgDomain).toBe("acme.com");
+    expect(r.organizations[0].orgDomain).toBe("acme.com");
+  });
+
+  it("domain unknown → null on both leads[] and organizations[]", () => {
+    const r = computeRevenue(PATHS, [
+      person({ leadId: "l1", orgId: "o1", orgName: "Acme", orgDomain: null, signals: { clicked: true, positiveReply: false } }),
+    ]);
+    expect(r.leads[0].orgDomain).toBeNull();
+    expect(r.organizations[0].orgDomain).toBeNull();
+  });
+
+  it("org-level domain coalesces a sibling's domain even when the top-EV person has none", () => {
+    const r = computeRevenue(PATHS, [
+      // top-EV person (reply, 120) has no domain; sibling (visit, 20) carries it
+      person({ leadId: "l1", firstName: "Reply", orgId: "o1", orgName: "Acme", orgDomain: null, signals: { clicked: false, positiveReply: true } }),
+      person({ leadId: "l2", firstName: "Click", orgId: "o1", orgName: "Acme", orgDomain: "acme.com", signals: { clicked: true, positiveReply: false } }),
+    ]);
+    expect(r.organizations).toHaveLength(1);
+    expect(r.organizations[0].topPerson.firstName).toBe("Reply"); // argmax unchanged
+    expect(r.organizations[0].orgDomain).toBe("acme.com"); // coalesced from the sibling
   });
 });
 

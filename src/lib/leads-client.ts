@@ -8,6 +8,25 @@ interface LeadOrganization {
   id?: string | null;
   name?: string | null;
   logoUrl?: string | null;
+  /** Bare company domain (no protocol), e.g. "cascobay.com". */
+  primaryDomain?: string | null;
+  /** Canonical company website URL (with protocol), e.g. "https://cascobay.com". */
+  websiteUrl?: string | null;
+}
+
+/**
+ * Bare hostname (no protocol, no leading "www.", no path) from a website URL — the shape
+ * logo.dev expects. Returns null for empty / malformed input: a missing or unparseable URL
+ * means "domain unknown" (the documented orgDomain=null case), not an error to surface.
+ */
+function domainFromUrl(websiteUrl: string | null | undefined): string | null {
+  if (!websiteUrl) return null;
+  try {
+    const host = new URL(websiteUrl).hostname.replace(/^www\./i, "");
+    return host.length > 0 ? host : null;
+  } catch {
+    return null;
+  }
 }
 
 interface LeadRow {
@@ -94,6 +113,8 @@ export async function fetchLeadsForRevenue(
       orgId: org?.id ?? null,
       orgName: org?.name ?? null,
       orgLogoUrl: org?.logoUrl ?? null,
+      // Prefer the bare primaryDomain; fall back to a hostname parsed from websiteUrl. Null when neither known.
+      orgDomain: org?.primaryDomain ?? domainFromUrl(org?.websiteUrl),
       signals,
     };
   });
