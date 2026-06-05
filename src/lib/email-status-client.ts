@@ -36,6 +36,7 @@ export interface SignalDates {
   contacted: string | null;
   sent: string | null;
   delivered: string | null;
+  open: string | null;
   clicked: string | null;
   positiveReply: string | null;
 }
@@ -103,6 +104,7 @@ export async function fetchEventTimestamps(
       contacted: minDate(broadcast?.firstContactedAt ?? null, transactional?.firstContactedAt ?? null),
       sent: minDate(broadcast?.firstSentAt ?? null, transactional?.firstSentAt ?? null),
       delivered: minDate(broadcast?.firstDeliveredAt ?? null, transactional?.firstDeliveredAt ?? null),
+      open: minDate(broadcast?.firstOpenedAt ?? null, transactional?.firstOpenedAt ?? null),
       clicked: minDate(broadcast?.firstClickedAt ?? null, transactional?.firstClickedAt ?? null),
       positiveReply: minDate(broadcast?.firstRepliedAt ?? null, transactional?.firstRepliedAt ?? null),
     });
