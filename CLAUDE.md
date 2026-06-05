@@ -71,6 +71,19 @@ extraction-quality prompt**, not just UI help text — it's what brand-service's
 the value. Pick a clear `extractKey`; org name/url/logo are already known by construction (don't
 ask), prefer extraction over user-entry for anything scrapeable.
 
+## Revenue engine is time-dependent — decay tests need RELATIVE dates
+
+`computeRevenue` defaults `now = Date.now()` and the `/features/:slug/revenue` route calls it
+with no `now`. So any stage that carries a `staleAfterMs` decay window (sales funnel:
+contacted/sent/delivered/open, and Phase 2 reply→meeting 14d / meeting→close 30d) is evaluated
+against wall-clock. **Test fixtures for a windowed stage MUST use relative dates** (`daysAgo(n)`),
+never fixed ISO strings — a fixed past date silently crosses its window as real time advances and
+the test rots. This bit Phase 2 (#214): Phase 1's route happy-path fixture pinned a reply at
+`2026-02-01`; once reply gained a 14d window that 4-month-old reply decayed and the assertion
+flipped 140→20. Engine unit tests sidestep this by passing an explicit `NOW` constant +
+`ago(days)` helper — mirror that. Terminals with no window (click `visit`, `closeWin`) are
+date-safe. Close-win books **full LTR** (realized revenue) and is immune to decay.
+
 ## Two expert-quote features — don't conflate
 
 - `pr-expert-quote-outreach` — autonomous PR quote outreach.
