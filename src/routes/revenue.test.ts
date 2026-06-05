@@ -32,6 +32,7 @@ process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
 const { db } = await import("../db/index.js");
+const { __resetPlatformRatesCache } = await import("../lib/platform-rates-client.js");
 const app = (await import("../index.js")).default;
 
 const AUTH = {
@@ -51,11 +52,23 @@ const ECONOMICS = {
   visitToClosePct: 2,
 };
 
+// Platform funnel: sent/contacted=1, delivered/sent=1, clicked/delivered=0.1, posReply/delivered=0.1
+//   pClose_click=0.02, pClose_reply=0.12, pClose_deliv=max(0.1·0.02, 0.1·0.12)=0.012
+//   → contacted=sent=delivered EV = 1000·0.012 = 12 ; click EV = 20 ; reply EV = 120
+const PLATFORM_STATS = {
+  broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, clicked: 10, repliesPositive: 10 } },
+};
+
 function leadRow(over: Record<string, unknown>): Record<string, unknown> {
   return {
     leadId: "l1",
     email: "l1@x.com",
+    contacted: true,
+    sent: true,
+    delivered: true,
     clicked: false,
+    bounced: false,
+    unsubscribed: false,
     replied: false,
     replyClassification: null,
     lead: { firstName: "A", lastName: "B", photoUrl: null, organization: { id: "o1", name: "Org1", logoUrl: null } },
@@ -64,14 +77,17 @@ function leadRow(over: Record<string, unknown>): Record<string, unknown> {
 }
 
 /** email → first*At, mapped onto the email-gateway /orgs/status brand-scope shape. */
-type Timestamps = Record<string, { firstClickedAt?: string | null; firstRepliedAt?: string | null }>;
+type Timestamps = Record<string, { firstContactedAt?: string | null; firstClickedAt?: string | null; firstRepliedAt?: string | null }>;
 
-/** Route fetch mock keyed by URL substring. economics + leads + status timestamps overridable. */
-function mockFetch(opts: { economics?: unknown; leads?: unknown[]; timestamps?: Timestamps } = {}): void {
+/** Route fetch mock keyed by URL substring. economics + leads + status timestamps + platform stats overridable. */
+function mockFetch(opts: { economics?: unknown; leads?: unknown[]; timestamps?: Timestamps; platformStats?: unknown } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     if (url.includes("/sales-economics")) {
       return new Response(JSON.stringify({ salesEconomics: opts.economics ?? null }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/public/stats")) {
+      return new Response(JSON.stringify(opts.platformStats ?? PLATFORM_STATS), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("/orgs/leads")) {
       return new Response(JSON.stringify({ leads: opts.leads ?? [] }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -91,6 +107,7 @@ function mockFetch(opts: { economics?: unknown; leads?: unknown[]; timestamps?: 
 
 describe("GET /features/:featureSlug/revenue", () => {
   beforeEach(() => {
+    __resetPlatformRatesCache();
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
   });
   afterEach(() => vi.restoreAllMocks());
@@ -150,6 +167,43 @@ describe("GET /features/:featureSlug/revenue", () => {
     ]);
     expect(res.body.events).toHaveLength(2);
     expect(res.body.events.find((e: any) => e.eventType === "reply").eventDate).toBe("2026-02-01T00:00:00Z");
+  });
+
+  it("earns stage EV from Contacted/Delivered onward (no click or reply)", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [leadRow({ leadId: "l3", email: "cold@z.com", lead: { firstName: "Cold", lastName: "Z", photoUrl: null, organization: { id: "o3", name: "Org3", logoUrl: null } } })],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(12); // delivered-stage EV, no click/reply
+    expect(res.body.leads).toHaveLength(1);
+    expect(res.body.leads[0].expectedRevenueUsd).toBe(12);
+    expect(res.body.leads[0].tags).toContain("delivered");
+    expect(res.body.events).toEqual([]); // delivery-stage events are not itemised
+  });
+
+  it("bounced lead earns no expected revenue (excluded even if clicked)", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [leadRow({ leadId: "l4", email: "bounce@z.com", clicked: true, bounced: true })],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(0);
+    expect(res.body.leads).toEqual([]);
+  });
+
+  it("502 when platform rates (/public/stats) fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
+      if (url.includes("/public/stats")) return new Response("boom", { status: 500 });
+      if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
+      return new Response("{}", { status: 200 });
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(502);
   });
 
   it("degrades to dateless (still 200, pipeline correct) when email-gateway /orgs/status fails", async () => {
