@@ -13,6 +13,9 @@
  */
 
 interface StatusScope {
+  firstContactedAt?: string | null;
+  firstSentAt?: string | null;
+  firstDeliveredAt?: string | null;
   firstClickedAt?: string | null;
   firstRepliedAt?: string | null;
   firstOpenedAt?: string | null;
@@ -30,6 +33,9 @@ interface StatusResult {
 }
 
 export interface SignalDates {
+  contacted: string | null;
+  sent: string | null;
+  delivered: string | null;
   clicked: string | null;
   positiveReply: string | null;
 }
@@ -94,6 +100,9 @@ export async function fetchEventTimestamps(
     const broadcast = scopeFor(item.broadcast, campaignScoped);
     const transactional = scopeFor(item.transactional, campaignScoped);
     result.set(item.email, {
+      contacted: minDate(broadcast?.firstContactedAt ?? null, transactional?.firstContactedAt ?? null),
+      sent: minDate(broadcast?.firstSentAt ?? null, transactional?.firstSentAt ?? null),
+      delivered: minDate(broadcast?.firstDeliveredAt ?? null, transactional?.firstDeliveredAt ?? null),
       clicked: minDate(broadcast?.firstClickedAt ?? null, transactional?.firstClickedAt ?? null),
       positiveReply: minDate(broadcast?.firstRepliedAt ?? null, transactional?.firstRepliedAt ?? null),
     });

@@ -34,6 +34,12 @@ export interface ResolvedPath {
   signal: string;
   /** LTR × rate-chain — the expected revenue this path contributes when its signal fired. */
   expectedRevenueUsd: number;
+  /**
+   * Whether a fired event of this path is itemised in the events ledger. Defaults to true.
+   * Delivery-stage paths (contacted/sent/delivered) set false: they drive EV + dates + the
+   * time-series but are not listed per-lead in the events table (avoids a row per stage).
+   */
+  ledger?: boolean;
 }
 
 export interface EnginePerson {
@@ -108,6 +114,7 @@ interface FiredEvent {
   tag: string;
   eventDate: string | null;
   contributionUsd: number;
+  ledger: boolean;
 }
 
 interface PersonEv {
@@ -176,7 +183,7 @@ function evForPerson(person: EnginePerson, paths: ResolvedPath[]): PersonEv {
     if (!tags.includes(path.tag)) tags.push(path.tag);
     if (path.expectedRevenueUsd > ev) ev = path.expectedRevenueUsd;
     const eventDate = person.signalDates?.[path.signal] ?? null;
-    firedEvents.push({ tag: path.tag, eventDate, contributionUsd: path.expectedRevenueUsd });
+    firedEvents.push({ tag: path.tag, eventDate, contributionUsd: path.expectedRevenueUsd, ledger: path.ledger !== false });
     date = maxDate(date, eventDate);
   }
   return { person, ev, tags, date, firedEvents };
@@ -208,6 +215,7 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
   const events: EventRow[] = [];
   for (const entry of scored) {
     for (const ev of entry.firedEvents) {
+      if (!ev.ledger) continue; // delivery-stage events drive EV/dates but aren't itemised
       if (!ev.eventDate) continue; // can't place an undated event on the ledger
       events.push({
         leadId: entry.person.leadId,

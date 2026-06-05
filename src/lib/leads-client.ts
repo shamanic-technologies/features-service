@@ -14,7 +14,12 @@ interface LeadRow {
   leadId: string;
   email?: string | null;
   // Delivery-status overlay (brand- or campaign-scoped depending on the query params).
+  contacted?: boolean;
+  sent?: boolean;
+  delivered?: boolean;
   clicked?: boolean;
+  bounced?: boolean;
+  unsubscribed?: boolean;
   replied?: boolean;
   replyClassification?: "positive" | "negative" | "neutral" | null;
   // Canonical lead payload.
@@ -69,6 +74,17 @@ export async function fetchLeadsForRevenue(
   const data = (await response.json()) as { leads: LeadRow[] };
   return data.leads.map((row) => {
     const org = row.lead?.organization ?? null;
+    // Bounced / unsubscribed leads are dead — no forward expected revenue at any stage.
+    const dead = Boolean(row.bounced) || Boolean(row.unsubscribed);
+    const signals = dead
+      ? { contacted: false, sent: false, delivered: false, clicked: false, positiveReply: false }
+      : {
+          contacted: Boolean(row.contacted),
+          sent: Boolean(row.sent),
+          delivered: Boolean(row.delivered),
+          clicked: Boolean(row.clicked),
+          positiveReply: Boolean(row.replied) && row.replyClassification === "positive",
+        };
     return {
       leadId: row.leadId,
       email: row.email ?? null,
@@ -78,10 +94,7 @@ export async function fetchLeadsForRevenue(
       orgId: org?.id ?? null,
       orgName: org?.name ?? null,
       orgLogoUrl: org?.logoUrl ?? null,
-      signals: {
-        clicked: Boolean(row.clicked),
-        positiveReply: Boolean(row.replied) && row.replyClassification === "positive",
-      },
+      signals,
     };
   });
 }
