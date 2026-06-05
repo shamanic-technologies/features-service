@@ -44,11 +44,13 @@ export interface ResolvedPath {
   /** Whether a fired event of this path is itemised in the events ledger. Defaults to true. */
   ledger?: boolean;
   /**
-   * Decay window in ms. When this is the FURTHEST reached stage (a delivery milestone with no
-   * engagement fired) and `now − eventDate > staleAfterMs`, the lead is considered DEAD — it
-   * stalled before reaching the next stage. Only meaningful on delivery paths. Omitted →
-   * the stage never decays (e.g. engagement terminals stay alive). Decay also no-ops when the
-   * furthest stage has no known date (fail-open: never kill a lead whose progress we can't see).
+   * Decay window in ms. When this is the FURTHEST reached stage and `now − eventDate >
+   * staleAfterMs`, the lead is considered DEAD — it stalled before advancing to the next stage.
+   * Applies to ANY kind: pre-engagement delivery milestones (contacted/sent/delivered/open) and
+   * post-engagement stages (reply → meeting, meeting → close). Omitted → the stage never decays
+   * (terminals: click stays alive, closeWin is realized revenue immune to decay). Decay also
+   * no-ops when the furthest stage has no known date (fail-open: never kill a lead whose
+   * progress we can't see).
    */
   staleAfterMs?: number;
 }
@@ -220,32 +222,36 @@ function evForPerson(person: EnginePerson, paths: ResolvedPath[], now: number): 
   let date: string | null = null;
   const engagementTags: string[] = [];
   let furthestDeliveryTag: string | null = null;
-  let furthestDeliveryDate: string | null = null;
-  let furthestDeliveryStaleAfterMs: number | null = null;
+  // Furthest reached stage = the LAST fired path (paths are in ascending funnel order), across
+  // ALL kinds. Its window + date drive decay: a lead's status is its most-advanced stage, and a
+  // stage that should have advanced (reply→meeting, meeting→close, delivered→open) but didn't
+  // within its window is dead. Stages with no window (click, closeWin) are terminal-alive.
+  let furthestStaleAfterMs: number | null = null;
+  let furthestDate: string | null = null;
   for (const path of paths) {
     if (!person.signals[path.signal]) continue;
     if (path.expectedRevenueUsd > evRaw) evRaw = path.expectedRevenueUsd;
     const eventDate = person.signalDates?.[path.signal] ?? null;
     firedEvents.push({ tag: path.tag, eventDate, contributionUsd: path.expectedRevenueUsd, ledger: path.ledger !== false });
     date = maxDate(date, eventDate);
+    // Last fired in iteration order = furthest reached stage (drives decay, any kind).
+    furthestStaleAfterMs = path.staleAfterMs ?? null;
+    furthestDate = eventDate;
     if (path.kind === "delivery") {
-      // paths are in ascending funnel order → last fired = furthest
-      furthestDeliveryTag = path.tag;
-      furthestDeliveryDate = eventDate;
-      furthestDeliveryStaleAfterMs = path.staleAfterMs ?? null;
+      furthestDeliveryTag = path.tag; // last delivery = furthest delivery (tag display when no engagement)
     } else if (!engagementTags.includes(path.tag)) {
       engagementTags.push(path.tag);
     }
   }
 
-  // Decay: a lead that reached only a delivery stage (no engagement) and has sat there past
-  // that stage's window with no advance is DEAD. Engagement (click/reply) never decays here —
-  // its onward decay (→ meeting → close-win) is a Phase 2 concern needing upstream timestamps.
-  // Fail-open: no known date for the furthest stage → cannot time it → stay alive.
+  // Decay: the lead's FURTHEST reached stage carries a window it failed to advance past → DEAD.
+  // Pre-engagement (contacted/sent/delivered/open) AND post-engagement (reply/meeting) decay the
+  // same way; terminal stages (click/closeWin) have no window → never decay (closeWin = realized,
+  // immune even when old). Fail-open: no known date for the furthest stage → can't time it → alive.
   let dead = false;
   let deathDate: string | null = null;
-  if (engagementTags.length === 0 && furthestDeliveryStaleAfterMs !== null && furthestDeliveryDate !== null) {
-    const deathMs = Date.parse(furthestDeliveryDate) + furthestDeliveryStaleAfterMs;
+  if (furthestStaleAfterMs !== null && furthestDate !== null) {
+    const deathMs = Date.parse(furthestDate) + furthestStaleAfterMs;
     if (now > deathMs) {
       dead = true;
       deathDate = new Date(deathMs).toISOString();
