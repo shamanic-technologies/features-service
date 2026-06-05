@@ -7,6 +7,7 @@ import { getFunnel } from "../lib/funnel-registry.js";
 import { fetchSalesEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
+import { fetchPlatformEmailRates } from "../lib/platform-rates-client.js";
 import {
   computeRevenue,
   type OrganizationRow,
@@ -80,7 +81,12 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       return res.json(emptyResult(featureSlug, null));
     }
 
-    const paths = funnel.resolvePaths(economics);
+    // Platform-global email funnel rates (cached) — let a lead earn expected revenue from
+    // its furthest reached stage (Contacted onward), not only from a click / positive reply.
+    // Fail-loud: these are a core input to the pipeline total.
+    const platformRates = await fetchPlatformEmailRates();
+
+    const paths = funnel.resolvePaths({ economics, platformRates });
     const persons = await fetchLeadsForRevenue(brandId, campaignId, { orgId, userId, runId, featureSlug: headerFeatureSlug });
 
     // Secondary enrichment: per-event timestamps for dates / time-series / events.
@@ -90,7 +96,15 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       const timestamps = await fetchEventTimestamps(brandId, campaignId, emails, { orgId, userId, runId, featureSlug: headerFeatureSlug });
       for (const person of persons) {
         const dates = person.email ? timestamps.get(person.email) : undefined;
-        if (dates) person.signalDates = { clicked: dates.clicked, positiveReply: dates.positiveReply };
+        if (dates) {
+          person.signalDates = {
+            contacted: dates.contacted,
+            sent: dates.sent,
+            delivered: dates.delivered,
+            clicked: dates.clicked,
+            positiveReply: dates.positiveReply,
+          };
+        }
       }
     } catch (err) {
       console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
