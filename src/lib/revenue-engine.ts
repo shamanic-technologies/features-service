@@ -53,6 +53,8 @@ export interface EnginePerson {
   orgId: string | null;
   orgName: string | null;
   orgLogoUrl: string | null;
+  /** Company domain (no protocol, no www), for the dashboard to build a logo.dev URL. Null when unknown. */
+  orgDomain: string | null;
   /** Recipient email — used by the route to join per-event timestamps; ignored by the engine. */
   email?: string | null;
   /** Which funnel signals fired for this person (e.g. { clicked: true, positiveReply: false }). */
@@ -71,6 +73,8 @@ export interface OrganizationRow {
   orgId: string | null;
   orgName: string | null;
   orgLogoUrl: string | null;
+  /** Company domain (no protocol, no www) for logo.dev. First non-null across the org's leads; null when none known. */
+  orgDomain: string | null;
   topPerson: TopPerson;
   tags: string[];
   expectedRevenueUsd: number;
@@ -85,6 +89,8 @@ export interface LeadRow {
   photoUrl: string | null;
   orgName: string | null;
   orgLogoUrl: string | null;
+  /** Company domain (no protocol, no www) for logo.dev. Null when unknown for this lead's org. */
+  orgDomain: string | null;
   tags: string[];
   expectedRevenueUsd: number;
   /** Most-advanced (max) event date for the lead. Null when no event date is known. */
@@ -171,6 +177,7 @@ function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
       existing.orgName = row.orgName;
       existing.orgLogoUrl = row.orgLogoUrl;
     }
+    if (!existing.orgDomain && row.orgDomain) existing.orgDomain = row.orgDomain;
   }
   return [...byLead.values()];
 }
@@ -219,6 +226,7 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     photoUrl: person.photoUrl,
     orgName: person.orgName,
     orgLogoUrl: person.orgLogoUrl,
+    orgDomain: person.orgDomain,
     tags,
     expectedRevenueUsd: ev,
     date,
@@ -259,10 +267,12 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     let top = bucket[0];
     const tags: string[] = [];
     let orgDate: string | null = null;
+    let orgDomain: string | null = null; // first non-null domain across the org's leads
     for (const entry of bucket) {
       if (entry.ev > top.ev) top = entry;
       for (const tag of entry.tags) if (!tags.includes(tag)) tags.push(tag);
       orgDate = maxDate(orgDate, entry.date);
+      if (!orgDomain && entry.person.orgDomain) orgDomain = entry.person.orgDomain;
     }
     const orgEv = top.ev; // MAX inside the org
     totalPipelineUsd += orgEv; // SUM between distinct orgs
@@ -270,6 +280,7 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
       orgId: top.person.orgId,
       orgName: top.person.orgName,
       orgLogoUrl: top.person.orgLogoUrl,
+      orgDomain,
       topPerson: {
         firstName: top.person.firstName,
         lastName: top.person.lastName,

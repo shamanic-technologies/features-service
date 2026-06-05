@@ -202,6 +202,41 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.leads).toEqual([]);
   });
 
+  // ── orgDomain (for logo.dev) ──────────────────────────────────────────────────
+
+  it("orgDomain — organization.primaryDomain surfaced on organizations[] and leads[]", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [leadRow({ leadId: "l1", email: "click@cascobay.com", clicked: true, lead: { firstName: "Click", lastName: "X", photoUrl: null, organization: { id: "o1", name: "Casco Bay", logoUrl: null, primaryDomain: "cascobay.com" } } })],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.organizations[0].orgDomain).toBe("cascobay.com");
+    expect(res.body.leads[0].orgDomain).toBe("cascobay.com");
+  });
+
+  it("orgDomain — falls back to a domain parsed from websiteUrl when primaryDomain is null", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [leadRow({ leadId: "l1", email: "click@cascobay.com", clicked: true, lead: { firstName: "Click", lastName: "X", photoUrl: null, organization: { id: "o1", name: "Casco Bay", logoUrl: null, primaryDomain: null, websiteUrl: "https://www.cascobay.com/about" } } })],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.organizations[0].orgDomain).toBe("cascobay.com"); // protocol + www + path stripped
+    expect(res.body.leads[0].orgDomain).toBe("cascobay.com");
+  });
+
+  it("orgDomain — null when neither primaryDomain nor websiteUrl is known", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [leadRow({ leadId: "l1", email: "click@x.com", clicked: true, lead: { firstName: "Click", lastName: "X", photoUrl: null, organization: { id: "o1", name: "Org1", logoUrl: null } } })],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.organizations[0].orgDomain).toBeNull();
+    expect(res.body.leads[0].orgDomain).toBeNull();
+  });
+
   it("502 when platform rates (/public/stats) fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
