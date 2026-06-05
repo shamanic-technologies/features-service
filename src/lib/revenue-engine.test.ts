@@ -89,4 +89,49 @@ describe("computeRevenue — lead dedup across campaign rows", () => {
     expect(r.leads[0].expectedRevenueUsd).toBe(120); // OR → both → max
     expect(r.leads[0].tags.sort()).toEqual(["reply", "visit"]);
   });
+
+  it("signal dates merge to the earliest (MIN) across rows", () => {
+    const r = computeRevenue(PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { clicked: true, positiveReply: false }, signalDates: { clicked: "2026-02-01T00:00:00Z" } }),
+      person({ leadId: "l1", orgId: "o1", signals: { clicked: true, positiveReply: false }, signalDates: { clicked: "2026-01-01T00:00:00Z" } }),
+    ]);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].eventDate).toBe("2026-01-01T00:00:00Z");
+  });
+});
+
+describe("computeRevenue — dates, time series, events", () => {
+  it("no signal dates → dateless output (null dates, empty series/events)", () => {
+    const r = computeRevenue(PATHS, [person({ leadId: "l1", orgId: "o1", signals: { clicked: true, positiveReply: false } })]);
+    expect(r.leads[0].date).toBeNull();
+    expect(r.organizations[0].mostAdvancedDate).toBeNull();
+    expect(r.timeSeries).toEqual([]);
+    expect(r.events).toEqual([]);
+  });
+
+  it("entity date = MAX of fired-event dates; one event row per fired dated event", () => {
+    const r = computeRevenue(PATHS, [
+      person({ leadId: "l1", firstName: "Jo", lastName: "Vo", orgId: "o1", orgName: "Org1", signals: { clicked: true, positiveReply: true }, signalDates: { clicked: "2026-01-01T00:00:00Z", positiveReply: "2026-03-01T00:00:00Z" } }),
+    ]);
+    expect(r.leads[0].date).toBe("2026-03-01T00:00:00Z"); // max(click, reply)
+    expect(r.organizations[0].mostAdvancedDate).toBe("2026-03-01T00:00:00Z");
+    expect(r.events).toHaveLength(2);
+    const reply = r.events.find((e) => e.eventType === "reply")!;
+    expect(reply.person).toBe("Jo Vo");
+    expect(reply.org).toBe("Org1");
+    expect(reply.contributionUsd).toBe(120);
+  });
+
+  it("time series cumulates org EV ordered by org date; undated org absent but in total", () => {
+    const r = computeRevenue(PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { clicked: false, positiveReply: true }, signalDates: { positiveReply: "2026-02-01T00:00:00Z" } }), // 120 @ Feb
+      person({ leadId: "l2", orgId: "o2", signals: { clicked: true, positiveReply: false }, signalDates: { clicked: "2026-01-01T00:00:00Z" } }),       // 20 @ Jan
+      person({ leadId: "l3", orgId: "o3", signals: { clicked: true, positiveReply: false } }),                                                          // 20 undated
+    ]);
+    expect(r.headline.totalPipelineUsd).toBe(160); // all three orgs
+    expect(r.timeSeries).toEqual([
+      { date: "2026-01-01T00:00:00Z", cumulativePipelineUsd: 20 },
+      { date: "2026-02-01T00:00:00Z", cumulativePipelineUsd: 140 },
+    ]); // o3 (undated) absent from the timeline
+  });
 });

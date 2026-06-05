@@ -6,27 +6,26 @@ import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { getFunnel } from "../lib/funnel-registry.js";
 import { fetchSalesEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
-import { computeRevenue, type OrganizationRow, type LeadRow } from "../lib/revenue-engine.js";
+import { fetchEventTimestamps } from "../lib/email-status-client.js";
+import {
+  computeRevenue,
+  type OrganizationRow,
+  type LeadRow,
+  type TimeSeriesPoint,
+  type EventRow,
+} from "../lib/revenue-engine.js";
 import { traceEvent } from "../lib/trace-event.js";
 
 const router = Router();
 
-/** P1 payload — timeSeries + events stay empty until per-event timestamps exist (email-gateway). */
 interface RevenueResponse {
   featureSlug: string;
   /** totalPipelineUsd is null when no funnel is wired or the brand has no economics saved. */
   headline: { totalPipelineUsd: number | null };
-  timeSeries: Array<{ date: string; cumulativePipelineUsd: number }>;
+  timeSeries: TimeSeriesPoint[];
   organizations: OrganizationRow[];
   leads: LeadRow[];
-  events: Array<{
-    leadId: string;
-    person: string | null;
-    org: string | null;
-    eventType: string;
-    eventDate: string;
-    contributionUsd: number;
-  }>;
+  events: EventRow[];
 }
 
 function emptyResult(featureSlug: string, totalPipelineUsd: number | null): RevenueResponse {
@@ -43,9 +42,13 @@ function emptyResult(featureSlug: string, totalPipelineUsd: number | null): Reve
 // ── GET /features/:featureSlug/revenue ───────────────────────────────────────
 //
 // Expected pipeline revenue for a feature, scoped to a brand (optionally one campaign).
-// features-service is the single source: it computes the headline, the organizations
-// table and the leads table. timeSeries + events + the date columns are deferred until
-// email-gateway exposes per-event timestamps.
+// features-service is the single source: headline pipeline, organizations + leads tables,
+// the cumulative time-series and the per-event ledger.
+//
+// Economics + leads are fail-loud (the pipeline total must be exact). Per-event timestamps
+// from email-gateway are a SECONDARY enrichment used only for the dates / time-series /
+// events: if that call fails, we log and degrade to dateless output (the pipeline total,
+// orgs and leads stay correct) rather than failing the whole endpoint.
 
 router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
   const { featureSlug } = req.params;
@@ -80,6 +83,19 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     const paths = funnel.resolvePaths(economics);
     const persons = await fetchLeadsForRevenue(brandId, campaignId, { orgId, userId, runId, featureSlug: headerFeatureSlug });
 
+    // Secondary enrichment: per-event timestamps for dates / time-series / events.
+    // Best-effort — a failure degrades to dateless output, it does NOT fail the endpoint.
+    const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
+    try {
+      const timestamps = await fetchEventTimestamps(brandId, campaignId, emails, { orgId, userId, runId, featureSlug: headerFeatureSlug });
+      for (const person of persons) {
+        const dates = person.email ? timestamps.get(person.email) : undefined;
+        if (dates) person.signalDates = { clicked: dates.clicked, positiveReply: dates.positiveReply };
+      }
+    } catch (err) {
+      console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
+    }
+
     const result = computeRevenue(paths, persons);
 
     traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${result.organizations.length}, pipelineUsd=${result.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
@@ -87,10 +103,10 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     const response: RevenueResponse = {
       featureSlug,
       headline: result.headline,
-      timeSeries: [],
+      timeSeries: result.timeSeries,
       organizations: result.organizations,
       leads: result.leads,
-      events: [],
+      events: result.events,
     };
     res.json(response);
   } catch (error) {
