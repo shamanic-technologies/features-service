@@ -12,6 +12,7 @@ interface LeadOrganization {
 
 interface LeadRow {
   leadId: string;
+  email?: string | null;
   // Delivery-status overlay (brand- or campaign-scoped depending on the query params).
   clicked?: boolean;
   replied?: boolean;
@@ -70,6 +71,7 @@ export async function fetchLeadsForRevenue(
     const org = row.lead?.organization ?? null;
     return {
       leadId: row.leadId,
+      email: row.email ?? null,
       firstName: row.lead?.firstName ?? null,
       lastName: row.lead?.lastName ?? null,
       photoUrl: row.lead?.photoUrl ?? null,

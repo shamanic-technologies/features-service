@@ -54,6 +54,7 @@ const ECONOMICS = {
 function leadRow(over: Record<string, unknown>): Record<string, unknown> {
   return {
     leadId: "l1",
+    email: "l1@x.com",
     clicked: false,
     replied: false,
     replyClassification: null,
@@ -62,8 +63,11 @@ function leadRow(over: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-/** Route fetch mock keyed by URL substring. economics + leads overridable per-test. */
-function mockFetch(opts: { economics?: unknown; leads?: unknown[] } = {}): void {
+/** email → first*At, mapped onto the email-gateway /orgs/status brand-scope shape. */
+type Timestamps = Record<string, { firstClickedAt?: string | null; firstRepliedAt?: string | null }>;
+
+/** Route fetch mock keyed by URL substring. economics + leads + status timestamps overridable. */
+function mockFetch(opts: { economics?: unknown; leads?: unknown[]; timestamps?: Timestamps } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     if (url.includes("/sales-economics")) {
@@ -71,6 +75,14 @@ function mockFetch(opts: { economics?: unknown; leads?: unknown[] } = {}): void 
     }
     if (url.includes("/orgs/leads")) {
       return new Response(JSON.stringify({ leads: opts.leads ?? [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/orgs/status")) {
+      const ts = opts.timestamps ?? {};
+      const results = Object.entries(ts).map(([email, scope]) => ({
+        email,
+        broadcast: { byCampaign: null, campaign: null, brand: { contacted: true, sent: true, delivered: true, opened: true, clicked: true, replied: true, replyClassification: "positive", bounced: false, unsubscribed: false, lastDeliveredAt: null, ...scope }, global: { email: { bounced: false, unsubscribed: false } } },
+      }));
+      return new Response(JSON.stringify({ results }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     // runs-service trace events etc. — ignore
     return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
@@ -111,13 +123,19 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.leads).toEqual([]);
   });
 
-  it("happy path — headline + orgs + leads populated, timeSeries/events empty", async () => {
+  const HAPPY_LEADS = [
+    leadRow({ leadId: "l1", email: "click@x.com", clicked: true, lead: { firstName: "Click", lastName: "X", photoUrl: null, organization: { id: "o1", name: "Org1", logoUrl: null } } }),
+    leadRow({ leadId: "l2", email: "reply@y.com", replied: true, replyClassification: "positive", lead: { firstName: "Reply", lastName: "Y", photoUrl: null, organization: { id: "o2", name: "Org2", logoUrl: null } } }),
+  ];
+
+  it("happy path with per-event timestamps — headline + tables + timeSeries + events", async () => {
     mockFetch({
       economics: ECONOMICS,
-      leads: [
-        leadRow({ leadId: "l1", clicked: true, lead: { firstName: "Click", lastName: "X", photoUrl: null, organization: { id: "o1", name: "Org1", logoUrl: null } } }),
-        leadRow({ leadId: "l2", replied: true, replyClassification: "positive", lead: { firstName: "Reply", lastName: "Y", photoUrl: null, organization: { id: "o2", name: "Org2", logoUrl: null } } }),
-      ],
+      leads: HAPPY_LEADS,
+      timestamps: {
+        "click@x.com": { firstClickedAt: "2026-01-01T00:00:00Z" },
+        "reply@y.com": { firstRepliedAt: "2026-02-01T00:00:00Z" },
+      },
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
@@ -125,10 +143,29 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.headline.totalPipelineUsd).toBe(140);
     expect(res.body.organizations).toHaveLength(2);
     expect(res.body.leads).toHaveLength(2);
-    expect(res.body.timeSeries).toEqual([]);
+    expect(res.body.organizations[0].expectedRevenueUsd).toBe(120); // sorted EV desc
+    expect(res.body.timeSeries).toEqual([
+      { date: "2026-01-01T00:00:00Z", cumulativePipelineUsd: 20 },
+      { date: "2026-02-01T00:00:00Z", cumulativePipelineUsd: 140 },
+    ]);
+    expect(res.body.events).toHaveLength(2);
+    expect(res.body.events.find((e: any) => e.eventType === "reply").eventDate).toBe("2026-02-01T00:00:00Z");
+  });
+
+  it("degrades to dateless (still 200, pipeline correct) when email-gateway /orgs/status fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
+      if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
+      if (url.includes("/orgs/status")) return new Response("boom", { status: 502 });
+      return new Response("{}", { status: 200 });
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(140); // pipeline still exact
+    expect(res.body.timeSeries).toEqual([]); // enrichment absent
     expect(res.body.events).toEqual([]);
-    // sorted by EV desc
-    expect(res.body.organizations[0].expectedRevenueUsd).toBe(120);
+    expect(res.body.leads[0].date).toBeNull();
   });
 
   it("502 when lead-service fails", async () => {
