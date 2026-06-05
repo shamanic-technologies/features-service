@@ -77,7 +77,10 @@ function leadRow(over: Record<string, unknown>): Record<string, unknown> {
 }
 
 /** email → first*At, mapped onto the email-gateway /orgs/status brand-scope shape. */
-type Timestamps = Record<string, { firstContactedAt?: string | null; firstClickedAt?: string | null; firstRepliedAt?: string | null }>;
+type Timestamps = Record<string, { firstContactedAt?: string | null; firstSentAt?: string | null; firstDeliveredAt?: string | null; firstOpenedAt?: string | null; firstClickedAt?: string | null; firstRepliedAt?: string | null }>;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const daysAgo = (n: number): string => new Date(Date.now() - n * DAY_MS).toISOString();
 
 /** runs-service /v1/stats/costs response carrying a single workflow group of `cents`. */
 function costGroups(cents: number): string {
@@ -332,5 +335,34 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(502);
+  });
+
+  // ── decay (stall phase-out) ───────────────────────────────────────────────
+
+  it("maps firstOpenedAt → opened stage (alive, tag opened)", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [leadRow({ leadId: "lo", email: "open@x.com", lead: { firstName: "Op", lastName: "En", photoUrl: null, organization: { id: "o1", name: "Org1", logoUrl: null } } })],
+      timestamps: { "open@x.com": { firstDeliveredAt: daysAgo(3), firstOpenedAt: daysAgo(2) } },
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(12); // opened carries delivered-stage EV
+    expect(res.body.leads[0].tags).toContain("opened");
+  });
+
+  it("stalled lead drops off the total but stays in the leads table with a stale tag", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [leadRow({ leadId: "lc", email: "cold@x.com", sent: false, delivered: false, lead: { firstName: "Co", lastName: "Ld", photoUrl: null, organization: { id: "o9", name: "Org9", logoUrl: null } } })],
+      timestamps: { "cold@x.com": { firstContactedAt: daysAgo(20) } }, // contacted 20d ago, window 7d
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(0);
+    expect(res.body.organizations).toEqual([]);
+    expect(res.body.leads).toHaveLength(1);
+    expect(res.body.leads[0].expectedRevenueUsd).toBe(0);
+    expect(res.body.leads[0].tags).toContain("stale");
   });
 });

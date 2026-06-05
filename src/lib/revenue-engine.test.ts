@@ -267,3 +267,108 @@ describe("computeRevenue — dates, time series, events", () => {
     ]); // o3 (undated) absent from the timeline
   });
 });
+
+// ── Decay (stage staleness) ───────────────────────────────────────────────────
+const DAY = 24 * 60 * 60 * 1000;
+const NOW = Date.parse("2026-06-01T00:00:00Z");
+const ago = (days: number): string => new Date(NOW - days * DAY).toISOString();
+
+// Mirrors the sales funnel: pre-engagement delivery stages carry a decay window; click/reply don't.
+const DECAY_PATHS: ResolvedPath[] = [
+  { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery", staleAfterMs: 7 * DAY },
+  { tag: "sent", signal: "sent", expectedRevenueUsd: 6, kind: "delivery", staleAfterMs: 3 * DAY },
+  { tag: "delivered", signal: "delivered", expectedRevenueUsd: 12, kind: "delivery", staleAfterMs: 14 * DAY },
+  { tag: "opened", signal: "open", expectedRevenueUsd: 12, kind: "delivery", staleAfterMs: 14 * DAY },
+  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement" },
+  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, kind: "engagement" },
+];
+
+describe("computeRevenue — decay (stall phase-out)", () => {
+  it("contacted but no sent past the 1-week window → dead (0 EV, stale tag, off the total)", () => {
+    const r = computeRevenue(DECAY_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { contacted: true }, signalDates: { contacted: ago(8) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(0);
+    expect(r.organizations).toEqual([]);
+    expect(r.leads).toHaveLength(1); // still shown
+    expect(r.leads[0].expectedRevenueUsd).toBe(0);
+    expect(r.leads[0].tags).toEqual(["contacted", "stale"]);
+    expect(r.events).toEqual([]);
+  });
+
+  it("contacted within the window → alive", () => {
+    const r = computeRevenue(DECAY_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { contacted: true }, signalDates: { contacted: ago(5) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(3);
+    expect(r.leads[0].tags).toEqual(["contacted"]);
+  });
+
+  it("sent stalls on the tighter 3-day window (furthest stage drives decay)", () => {
+    const r = computeRevenue(DECAY_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: true }, signalDates: { contacted: ago(6), sent: ago(4) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(0); // sent 4d ago > 3d window
+    expect(r.leads[0].tags).toEqual(["sent", "stale"]);
+  });
+
+  it("delivered: alive at 10d, dead at 15d", () => {
+    const alive = computeRevenue(DECAY_PATHS, [person({ leadId: "l1", signals: { delivered: true }, signalDates: { delivered: ago(10) } })], NOW);
+    expect(alive.headline.totalPipelineUsd).toBe(12);
+    const dead = computeRevenue(DECAY_PATHS, [person({ leadId: "l1", signals: { delivered: true }, signalDates: { delivered: ago(15) } })], NOW);
+    expect(dead.headline.totalPipelineUsd).toBe(0);
+  });
+
+  it("open resets the clock: opened 10d ago is alive (tag opened) even though delivered is old", () => {
+    const r = computeRevenue(DECAY_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { delivered: true, open: true }, signalDates: { delivered: ago(40), open: ago(10) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(12);
+    expect(r.leads[0].tags).toEqual(["opened"]);
+  });
+
+  it("opened but stalled past 2 weeks → dead", () => {
+    const r = computeRevenue(DECAY_PATHS, [
+      person({ leadId: "l1", signals: { delivered: true, open: true }, signalDates: { delivered: ago(40), open: ago(20) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(0);
+  });
+
+  it("engagement never decays in Phase 1: a 60-day-old click stays alive", () => {
+    const r = computeRevenue(DECAY_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { delivered: true, clicked: true }, signalDates: { delivered: ago(90), clicked: ago(60) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(20);
+    expect(r.leads[0].tags).toEqual(["visit"]);
+  });
+
+  it("fail-open: a delivery stage with no known date never decays", () => {
+    const r = computeRevenue(DECAY_PATHS, [
+      person({ leadId: "l1", signals: { delivered: true } }), // no signalDates
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(12);
+  });
+
+  it("time series steps UP at engagement and DOWN at a stalled org's death; final = alive total", () => {
+    const r = computeRevenue(DECAY_PATHS, [
+      person({ leadId: "l1", orgId: "alive", signals: { clicked: true }, signalDates: { clicked: "2026-01-01T00:00:00Z" } }), // +20, stays
+      person({ leadId: "l2", orgId: "dead", signals: { delivered: true }, signalDates: { delivered: ago(20) } }),             // +12 then -12 (death = 20d-14d = 6d ago)
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(20); // only the alive org
+    expect(r.timeSeries).toEqual([
+      { date: "2026-01-01T00:00:00Z", cumulativePipelineUsd: 20 },
+      { date: ago(20), cumulativePipelineUsd: 32 },
+      { date: ago(6), cumulativePipelineUsd: 20 }, // stalled org phased out
+    ]);
+  });
+
+  it("org with one alive + one stalled member stays alive at the live member's EV", () => {
+    const r = computeRevenue(DECAY_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { clicked: true }, signalDates: { clicked: ago(2) } }),     // alive 20
+      person({ leadId: "l2", orgId: "o1", signals: { contacted: true }, signalDates: { contacted: ago(30) } }), // stale
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(20);
+    expect(r.organizations).toHaveLength(1);
+    expect(r.leads).toHaveLength(2); // both rows shown
+  });
+});

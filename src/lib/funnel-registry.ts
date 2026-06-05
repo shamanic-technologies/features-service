@@ -40,6 +40,19 @@ export interface FunnelDefinition {
 
 const pct = (n: number): number => n / 100;
 
+// Global decay windows (not per-brand): a lead that reaches a delivery stage and sits there
+// past this window with no advance to the next stage is considered DEAD (stalled → no expected
+// revenue). Applied only to pre-engagement stages, whose next stage we can OBSERVE from the
+// email funnel. A click / positive reply never decays here — its onward decay (→ meeting booked
+// → close win) needs upstream per-lead timestamps and is tracked as a Phase 2 follow-up.
+const DAY_MS = 24 * 60 * 60 * 1000;
+const STALE = {
+  contacted: 7 * DAY_MS,   // Contacted → Sent within 1 week
+  sent: 3 * DAY_MS,        // Sent → Delivered within 3 days
+  delivered: 14 * DAY_MS,  // Delivered → Open within 2 weeks
+  open: 14 * DAY_MS,       // Open → Click / Positive Reply within 2 weeks
+} as const;
+
 /**
  * Sales funnel — expected pipeline revenue from the lead's furthest reached stage.
  *
@@ -56,7 +69,7 @@ const pct = (n: number): number => n / 100;
  */
 const salesFunnel: FunnelDefinition = {
   economicsSource: "sales-economics",
-  signals: ["contacted", "sent", "delivered", "clicked", "positiveReply"],
+  signals: ["contacted", "sent", "delivered", "open", "clicked", "positiveReply"],
   resolvePaths: ({ economics: e, platformRates: r }) => {
     const ltr = e.lifetimeRevenueUsd;
     const pCloseClick = Math.max(pct(e.visitToClosePct), pct(e.visitToMeetingPct) * pct(e.meetingToClosePct));
@@ -64,10 +77,14 @@ const salesFunnel: FunnelDefinition = {
     const pCloseDeliv = Math.max(r.clickedPerDelivered * pCloseClick, r.positiveReplyPerDelivered * pCloseReply);
     const pCloseSent = r.deliveredPerSent * pCloseDeliv;
     const pCloseContact = r.sentPerContacted * pCloseSent;
+    // `open` is a delivery milestone between delivered and click/reply: it carries the same
+    // close probability as delivered (no platform open→close rate exists yet), so it adds no EV
+    // — its role is the decay checkpoint (resets the stale clock to the open date) + the tag.
     return [
-      { tag: "contacted", signal: "contacted", expectedRevenueUsd: ltr * pCloseContact, kind: "delivery" },
-      { tag: "sent", signal: "sent", expectedRevenueUsd: ltr * pCloseSent, kind: "delivery" },
-      { tag: "delivered", signal: "delivered", expectedRevenueUsd: ltr * pCloseDeliv, kind: "delivery" },
+      { tag: "contacted", signal: "contacted", expectedRevenueUsd: ltr * pCloseContact, kind: "delivery", staleAfterMs: STALE.contacted },
+      { tag: "sent", signal: "sent", expectedRevenueUsd: ltr * pCloseSent, kind: "delivery", staleAfterMs: STALE.sent },
+      { tag: "delivered", signal: "delivered", expectedRevenueUsd: ltr * pCloseDeliv, kind: "delivery", staleAfterMs: STALE.delivered },
+      { tag: "opened", signal: "open", expectedRevenueUsd: ltr * pCloseDeliv, kind: "delivery", staleAfterMs: STALE.open },
       { tag: "visit", signal: "clicked", expectedRevenueUsd: ltr * pCloseClick, kind: "engagement" },
       { tag: "reply", signal: "positiveReply", expectedRevenueUsd: ltr * pCloseReply, kind: "engagement" },
     ];
