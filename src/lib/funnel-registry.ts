@@ -49,9 +49,10 @@ const pct = (n: number): number => n / 100;
  *   pClose_sent    = P(deliv|sent)    · pClose_deliv
  *   pClose_contact = P(sent|contacted) · pClose_sent
  *
- * Each path EV = LTR × pClose_stage. Delivery-stage paths (contacted/sent/delivered) drive
- * EV + dates + the time-series but are NOT itemised in the events ledger (`ledger:false`) —
- * only the click/reply engagement events are (avoids a row-per-lead-per-stage ledger).
+ * Each path EV = LTR × pClose_stage. Delivery stages (contacted/sent/delivered) are `kind:
+ * "delivery"` — listed in ascending order so the engine surfaces only the FURTHEST reached one
+ * as the tag; visit/reply are `kind: "engagement"` (terminal, multi-tag). Every path is
+ * itemised in the events ledger.
  */
 const salesFunnel: FunnelDefinition = {
   economicsSource: "sales-economics",
@@ -64,11 +65,11 @@ const salesFunnel: FunnelDefinition = {
     const pCloseSent = r.deliveredPerSent * pCloseDeliv;
     const pCloseContact = r.sentPerContacted * pCloseSent;
     return [
-      { tag: "contacted", signal: "contacted", expectedRevenueUsd: ltr * pCloseContact, ledger: false },
-      { tag: "sent", signal: "sent", expectedRevenueUsd: ltr * pCloseSent, ledger: false },
-      { tag: "delivered", signal: "delivered", expectedRevenueUsd: ltr * pCloseDeliv, ledger: false },
-      { tag: "visit", signal: "clicked", expectedRevenueUsd: ltr * pCloseClick, ledger: true },
-      { tag: "reply", signal: "positiveReply", expectedRevenueUsd: ltr * pCloseReply, ledger: true },
+      { tag: "contacted", signal: "contacted", expectedRevenueUsd: ltr * pCloseContact, kind: "delivery" },
+      { tag: "sent", signal: "sent", expectedRevenueUsd: ltr * pCloseSent, kind: "delivery" },
+      { tag: "delivered", signal: "delivered", expectedRevenueUsd: ltr * pCloseDeliv, kind: "delivery" },
+      { tag: "visit", signal: "clicked", expectedRevenueUsd: ltr * pCloseClick, kind: "engagement" },
+      { tag: "reply", signal: "positiveReply", expectedRevenueUsd: ltr * pCloseReply, kind: "engagement" },
     ];
   },
 };
