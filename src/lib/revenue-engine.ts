@@ -149,6 +149,17 @@ function minDate(a: string | null, b: string | null): string | null {
   return a <= b ? a : b;
 }
 
+/**
+ * Compare two ISO timestamps most-recent-first (descending). ISO-8601 sorts
+ * lexicographically. A null date (no known conversion date) sorts LAST.
+ */
+function cmpDateDesc(a: string | null, b: string | null): number {
+  if (a === b) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  return a < b ? 1 : a > b ? -1 : 0;
+}
+
 function personName(p: EnginePerson): string | null {
   const name = [p.firstName, p.lastName].filter(Boolean).join(" ").trim();
   return name.length > 0 ? name : null;
@@ -213,6 +224,12 @@ function evForPerson(person: EnginePerson, paths: ResolvedPath[]): PersonEv {
 export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]): RevenueResult {
   const persons = dedupPersonsByLead(rawPersons);
 
+  // Funnel stage ordinal: index in `paths` (ascending funnel order) → higher = more advanced.
+  // An entity's status = the FURTHEST stage it reached = max rank over its tags.
+  const stageRank = new Map(paths.map((p, i) => [p.tag, i] as const));
+  const rankOfTags = (tags: string[]): number =>
+    tags.reduce((max, t) => Math.max(max, stageRank.get(t) ?? -1), -1);
+
   // Score every person, keep only those actually in the pipeline (EV > 0).
   const scored = persons
     .map((person) => evForPerson(person, paths))
@@ -231,7 +248,14 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     expectedRevenueUsd: ev,
     date,
   }));
-  leads.sort((a, b) => b.expectedRevenueUsd - a.expectedRevenueUsd);
+  // Default sort: most-advanced status first, then most-recent conversion date, then EV (deterministic).
+  leads.sort((a, b) => {
+    const r = rankOfTags(b.tags) - rankOfTags(a.tags);
+    if (r !== 0) return r;
+    const d = cmpDateDesc(a.date, b.date);
+    if (d !== 0) return d;
+    return b.expectedRevenueUsd - a.expectedRevenueUsd;
+  });
 
   // Events table — one row per fired, dated event.
   const events: EventRow[] = [];
@@ -249,7 +273,14 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
       });
     }
   }
-  events.sort((a, b) => (a.eventDate < b.eventDate ? -1 : a.eventDate > b.eventDate ? 1 : 0));
+  // Default sort: most-advanced status first, then most-recent date, then contribution (deterministic).
+  events.sort((a, b) => {
+    const r = (stageRank.get(b.eventType) ?? -1) - (stageRank.get(a.eventType) ?? -1);
+    if (r !== 0) return r;
+    const d = cmpDateDesc(a.eventDate, b.eventDate);
+    if (d !== 0) return d;
+    return b.contributionUsd - a.contributionUsd;
+  });
 
   // Organizations — dedup on org id (no org → singleton keyed by leadId).
   // MAX person EV inside the org; union of tags; argmax person = topPerson; max member date.
@@ -291,7 +322,14 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
       mostAdvancedDate: orgDate,
     });
   }
-  organizations.sort((a, b) => b.expectedRevenueUsd - a.expectedRevenueUsd);
+  // Default sort: most-advanced status first, then most-recent conversion date, then EV (deterministic).
+  organizations.sort((a, b) => {
+    const r = rankOfTags(b.tags) - rankOfTags(a.tags);
+    if (r !== 0) return r;
+    const d = cmpDateDesc(a.mostAdvancedDate, b.mostAdvancedDate);
+    if (d !== 0) return d;
+    return b.expectedRevenueUsd - a.expectedRevenueUsd;
+  });
 
   // Time series — cumulate org EV ordered by org event date. Undated orgs are absent
   // from the series (still counted in the headline total — no silent inflation).

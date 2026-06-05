@@ -151,8 +151,63 @@ describe("computeRevenue — tag collapse (furthest delivery stage, engagement m
         signalDates: { contacted: "2026-01-01T00:00:00Z", sent: "2026-01-02T00:00:00Z", delivered: "2026-01-03T00:00:00Z", clicked: "2026-01-04T00:00:00Z" },
       }),
     ]);
-    expect(r.events.map((e) => e.eventType)).toEqual(["contacted", "sent", "delivered", "visit"]);
+    // Default sort is most-advanced status first → visit, delivered, sent, contacted.
+    expect(r.events.map((e) => e.eventType)).toEqual(["visit", "delivered", "sent", "contacted"]);
     expect(r.events.find((e) => e.eventType === "contacted")!.contributionUsd).toBe(3);
+  });
+});
+
+describe("computeRevenue — default sort (most-advanced status desc, then date desc)", () => {
+  const D = (iso: string) => iso;
+
+  it("leads: most-advanced status first (reply > visit > delivered)", () => {
+    const r = computeRevenue(STAGE_PATHS, [
+      person({ leadId: "deliv", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false } }),
+      person({ leadId: "rep", orgId: "o2", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: true } }),
+      person({ leadId: "vis", orgId: "o3", signals: { contacted: true, sent: true, delivered: true, clicked: true, positiveReply: false } }),
+    ]);
+    expect(r.leads.map((l) => l.leadId)).toEqual(["rep", "vis", "deliv"]);
+  });
+
+  it("leads: iso-status → most-recent conversion date first", () => {
+    const r = computeRevenue(STAGE_PATHS, [
+      person({ leadId: "old", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false }, signalDates: { delivered: D("2026-01-01T00:00:00Z") } }),
+      person({ leadId: "new", orgId: "o2", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false }, signalDates: { delivered: D("2026-03-01T00:00:00Z") } }),
+      person({ leadId: "mid", orgId: "o3", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false }, signalDates: { delivered: D("2026-02-01T00:00:00Z") } }),
+    ]);
+    expect(r.leads.map((l) => l.leadId)).toEqual(["new", "mid", "old"]);
+  });
+
+  it("leads: iso-status → null conversion date sorts last", () => {
+    const r = computeRevenue(STAGE_PATHS, [
+      person({ leadId: "undated", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false } }),
+      person({ leadId: "dated", orgId: "o2", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false }, signalDates: { delivered: D("2026-01-01T00:00:00Z") } }),
+    ]);
+    expect(r.leads.map((l) => l.leadId)).toEqual(["dated", "undated"]);
+  });
+
+  it("organizations: furthest stage desc, then most-recent date desc", () => {
+    const r = computeRevenue(STAGE_PATHS, [
+      person({ leadId: "l1", orgId: "deliv", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false }, signalDates: { delivered: D("2026-05-01T00:00:00Z") } }),
+      person({ leadId: "l2", orgId: "repA", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: true }, signalDates: { positiveReply: D("2026-01-01T00:00:00Z") } }),
+      person({ leadId: "l3", orgId: "repB", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: true }, signalDates: { positiveReply: D("2026-02-01T00:00:00Z") } }),
+    ]);
+    // both reply orgs (rank 4) before the delivered org (rank 2); reply orgs by recent date desc.
+    expect(r.organizations.map((o) => o.orgId)).toEqual(["repB", "repA", "deliv"]);
+  });
+
+  it("events: most-advanced status desc, then most-recent date desc across leads", () => {
+    const r = computeRevenue(STAGE_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: false, delivered: false, clicked: true, positiveReply: false }, signalDates: { contacted: D("2026-01-01T00:00:00Z"), clicked: D("2026-01-10T00:00:00Z") } }),
+      person({ leadId: "l2", orgId: "o2", signals: { contacted: true, sent: false, delivered: false, clicked: true, positiveReply: false }, signalDates: { contacted: D("2026-02-01T00:00:00Z"), clicked: D("2026-02-10T00:00:00Z") } }),
+    ]);
+    // visit events (rank 3) before contacted events (rank 0); within each stage recent-first.
+    expect(r.events.map((e) => `${e.eventType}@${e.eventDate}`)).toEqual([
+      "visit@2026-02-10T00:00:00Z",
+      "visit@2026-01-10T00:00:00Z",
+      "contacted@2026-02-01T00:00:00Z",
+      "contacted@2026-01-01T00:00:00Z",
+    ]);
   });
 });
 
