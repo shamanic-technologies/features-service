@@ -8,6 +8,7 @@ import { fetchSalesEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents } from "../lib/runs-cost-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
+import { fetchQualifications } from "../lib/qualifications-client.js";
 import { fetchPlatformEmailRates } from "../lib/platform-rates-client.js";
 import {
   computeRevenue,
@@ -140,6 +141,30 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       }
     } catch (err) {
       console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
+    }
+
+    // Secondary enrichment #2: per-lead manual-qualification timestamps (meeting booked / closed).
+    // These drive the Phase 2 post-engagement decay (reply → meeting → close) + close-win as
+    // realized revenue. Best-effort — a failure degrades to no meeting/close dates (Phase 1 decay
+    // + pipeline stay correct), it does NOT fail the endpoint. A known timestamp IS the signal
+    // (mirrors how `open` was derived from firstOpenedAt).
+    try {
+      const quals = await fetchQualifications(brandId, campaignId, emails, { orgId, userId, runId, featureSlug: headerFeatureSlug });
+      for (const person of persons) {
+        const q = person.email ? quals.get(person.email) : undefined;
+        if (!q) continue;
+        person.signalDates = person.signalDates ?? {};
+        if (q.meetingBookedAt) {
+          person.signals.meeting = true;
+          person.signalDates.meeting = q.meetingBookedAt;
+        }
+        if (q.closedAt) {
+          person.signals.closeWin = true;
+          person.signalDates.closeWin = q.closedAt;
+        }
+      }
+    } catch (err) {
+      console.warn(`[features-service] qualification enrichment failed (degrading to no meeting/close dates): ${(err as Error).message}`);
     }
 
     const result = computeRevenue(paths, persons);

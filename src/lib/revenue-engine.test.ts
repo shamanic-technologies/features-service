@@ -372,3 +372,100 @@ describe("computeRevenue — decay (stall phase-out)", () => {
     expect(r.leads).toHaveLength(2); // both rows shown
   });
 });
+
+// ── Phase 2 decay: post-engagement (reply → meeting → close-win) ──────────────────
+// Mirrors the live sales funnel: reply carries a 14d onward window, meeting a 30d window,
+// click & closeWin are terminals with no window. closeWin EV = full LTR (realized).
+const PHASE2_PATHS: ResolvedPath[] = [
+  { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery", staleAfterMs: 7 * DAY },
+  { tag: "sent", signal: "sent", expectedRevenueUsd: 6, kind: "delivery", staleAfterMs: 3 * DAY },
+  { tag: "delivered", signal: "delivered", expectedRevenueUsd: 12, kind: "delivery", staleAfterMs: 14 * DAY },
+  { tag: "opened", signal: "open", expectedRevenueUsd: 12, kind: "delivery", staleAfterMs: 14 * DAY },
+  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement" },
+  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, kind: "engagement", staleAfterMs: 14 * DAY },
+  { tag: "meeting", signal: "meeting", expectedRevenueUsd: 300, kind: "engagement", staleAfterMs: 30 * DAY },
+  { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 1000, kind: "engagement" },
+];
+
+describe("computeRevenue — Phase 2 decay (post-engagement)", () => {
+  it("reply within 14d, no meeting → alive at reply EV, tag [reply]", () => {
+    const r = computeRevenue(PHASE2_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true }, signalDates: { positiveReply: ago(10) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(120);
+    expect(r.leads[0].tags).toEqual(["reply"]);
+  });
+
+  it("reply 20d ago, no meeting → dead (0 EV, [reply, stale], off total, kept in leads)", () => {
+    const r = computeRevenue(PHASE2_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true }, signalDates: { positiveReply: ago(20) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(0);
+    expect(r.organizations).toEqual([]);
+    expect(r.leads).toHaveLength(1);
+    expect(r.leads[0].expectedRevenueUsd).toBe(0);
+    expect(r.leads[0].tags).toEqual(["reply", "stale"]);
+    expect(r.events).toEqual([]);
+  });
+
+  it("meeting booked within 30d → alive at meeting EV, tag includes meeting", () => {
+    const r = computeRevenue(PHASE2_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true, meeting: true }, signalDates: { positiveReply: ago(20), meeting: ago(10) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(300); // meeting EV (reply alone would be dead at 20d, but meeting reset the clock)
+    expect(r.leads[0].tags.sort()).toEqual(["meeting", "reply"]);
+  });
+
+  it("meeting 40d ago, no close → dead ([reply, meeting, stale], off total)", () => {
+    const r = computeRevenue(PHASE2_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true, meeting: true }, signalDates: { positiveReply: ago(60), meeting: ago(40) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(0);
+    expect(r.leads[0].expectedRevenueUsd).toBe(0);
+    expect(r.leads[0].tags).toContain("stale");
+    expect(r.leads[0].tags).toContain("meeting");
+  });
+
+  it("closed-won books full LTR and never decays, even 400 days old", () => {
+    const r = computeRevenue(PHASE2_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true, meeting: true, closeWin: true }, signalDates: { positiveReply: ago(420), meeting: ago(410), closeWin: ago(400) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(1000); // full LTR (MAX over fired paths)
+    expect(r.leads[0].expectedRevenueUsd).toBe(1000);
+    expect(r.leads[0].tags).toContain("closeWin");
+    expect(r.leads[0].tags).not.toContain("stale");
+  });
+
+  it("closeWin with no prior reply/meeting → tag [closeWin] alone (delivery suppressed), EV = LTR", () => {
+    const r = computeRevenue(PHASE2_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { delivered: true, closeWin: true }, signalDates: { delivered: ago(300), closeWin: ago(250) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(1000);
+    expect(r.leads[0].tags).toEqual(["closeWin"]);
+  });
+
+  it("fail-open: replied but reply date unknown → alive even if an earlier delivery is old & stale", () => {
+    const r = computeRevenue(PHASE2_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { delivered: true, positiveReply: true }, signalDates: { delivered: ago(90) } }), // no reply date
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(120); // furthest stage = reply (undated) → fail-open
+    expect(r.leads[0].tags).toEqual(["reply"]);
+  });
+
+  it("a click (visit) still never decays in Phase 2: a 60-day-old click stays alive", () => {
+    const r = computeRevenue(PHASE2_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { delivered: true, clicked: true }, signalDates: { delivered: ago(90), clicked: ago(60) } }),
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(20);
+    expect(r.leads[0].tags).toEqual(["visit"]);
+  });
+
+  it("closeWin steps the time series UP and stays (realized revenue never reverses)", () => {
+    const r = computeRevenue(PHASE2_PATHS, [
+      person({ leadId: "l1", orgId: "won", signals: { closeWin: true }, signalDates: { closeWin: "2026-01-01T00:00:00Z" } }),
+      person({ leadId: "l2", orgId: "dead", signals: { positiveReply: true }, signalDates: { positiveReply: ago(20) } }), // reply 20d → dead
+    ], NOW);
+    expect(r.headline.totalPipelineUsd).toBe(1000); // only the closed org
+    expect(r.timeSeries[0]).toEqual({ date: "2026-01-01T00:00:00Z", cumulativePipelineUsd: 1000 });
+  });
+});

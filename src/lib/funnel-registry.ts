@@ -40,17 +40,22 @@ export interface FunnelDefinition {
 
 const pct = (n: number): number => n / 100;
 
-// Global decay windows (not per-brand): a lead that reaches a delivery stage and sits there
-// past this window with no advance to the next stage is considered DEAD (stalled → no expected
-// revenue). Applied only to pre-engagement stages, whose next stage we can OBSERVE from the
-// email funnel. A click / positive reply never decays here — its onward decay (→ meeting booked
-// → close win) needs upstream per-lead timestamps and is tracked as a Phase 2 follow-up.
+// Global decay windows (not per-brand): a lead that reaches a stage and sits there past this
+// window with no advance to the next stage is considered DEAD (stalled → no expected revenue).
+// Phase 1 covers the pre-engagement stages (next stage observable from the email funnel). Phase 2
+// extends decay PAST engagement using per-lead manual-qualification timestamps:
+//   Positive Reply → Meeting Booked within 2 weeks, else dead
+//   Meeting Booked → Close Win       within 1 month, else dead
+//   Close Win                        = realized revenue (full LTR), never decays (terminal)
+// A click (visit) has NO onward window — it stays a terminal, no decay.
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STALE = {
   contacted: 7 * DAY_MS,   // Contacted → Sent within 1 week
   sent: 3 * DAY_MS,        // Sent → Delivered within 3 days
   delivered: 14 * DAY_MS,  // Delivered → Open within 2 weeks
   open: 14 * DAY_MS,       // Open → Click / Positive Reply within 2 weeks
+  reply: 14 * DAY_MS,      // Positive Reply → Meeting Booked within 2 weeks
+  meeting: 30 * DAY_MS,    // Meeting Booked → Close Win within 1 month
 } as const;
 
 /**
@@ -69,24 +74,33 @@ const STALE = {
  */
 const salesFunnel: FunnelDefinition = {
   economicsSource: "sales-economics",
-  signals: ["contacted", "sent", "delivered", "open", "clicked", "positiveReply"],
+  signals: ["contacted", "sent", "delivered", "open", "clicked", "positiveReply", "meeting", "closeWin"],
   resolvePaths: ({ economics: e, platformRates: r }) => {
     const ltr = e.lifetimeRevenueUsd;
     const pCloseClick = Math.max(pct(e.visitToClosePct), pct(e.visitToMeetingPct) * pct(e.meetingToClosePct));
     const pCloseReply = pct(e.replyToMeetingPct) * pct(e.meetingToClosePct);
+    const pCloseMeeting = pct(e.meetingToClosePct); // a booked meeting closes at the meeting→close rate
     const pCloseDeliv = Math.max(r.clickedPerDelivered * pCloseClick, r.positiveReplyPerDelivered * pCloseReply);
     const pCloseSent = r.deliveredPerSent * pCloseDeliv;
     const pCloseContact = r.sentPerContacted * pCloseSent;
     // `open` is a delivery milestone between delivered and click/reply: it carries the same
     // close probability as delivered (no platform open→close rate exists yet), so it adds no EV
     // — its role is the decay checkpoint (resets the stale clock to the open date) + the tag.
+    //
+    // Phase 2 post-engagement stages (per-lead manual-qualification timestamps drive the dates):
+    //   reply    now carries a 14d onward window (reply → meeting booked).
+    //   meeting  EV = LTR × P(close|meeting); 30d onward window (meeting → close win).
+    //   closeWin = realized revenue (full LTR), no window → terminal, immune to decay.
+    // All are `engagement` kind (multi-tag, monotonic EV: reply < meeting < closeWin).
     return [
       { tag: "contacted", signal: "contacted", expectedRevenueUsd: ltr * pCloseContact, kind: "delivery", staleAfterMs: STALE.contacted },
       { tag: "sent", signal: "sent", expectedRevenueUsd: ltr * pCloseSent, kind: "delivery", staleAfterMs: STALE.sent },
       { tag: "delivered", signal: "delivered", expectedRevenueUsd: ltr * pCloseDeliv, kind: "delivery", staleAfterMs: STALE.delivered },
       { tag: "opened", signal: "open", expectedRevenueUsd: ltr * pCloseDeliv, kind: "delivery", staleAfterMs: STALE.open },
       { tag: "visit", signal: "clicked", expectedRevenueUsd: ltr * pCloseClick, kind: "engagement" },
-      { tag: "reply", signal: "positiveReply", expectedRevenueUsd: ltr * pCloseReply, kind: "engagement" },
+      { tag: "reply", signal: "positiveReply", expectedRevenueUsd: ltr * pCloseReply, kind: "engagement", staleAfterMs: STALE.reply },
+      { tag: "meeting", signal: "meeting", expectedRevenueUsd: ltr * pCloseMeeting, kind: "engagement", staleAfterMs: STALE.meeting },
+      { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: ltr, kind: "engagement" },
     ];
   },
 };

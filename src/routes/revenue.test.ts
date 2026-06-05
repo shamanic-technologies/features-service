@@ -87,8 +87,21 @@ function costGroups(cents: number): string {
   return JSON.stringify({ groups: [{ dimensions: {}, totalCostInUsdCents: String(cents), runCount: 0, minStartedAt: null, maxStartedAt: null }] });
 }
 
-/** Route fetch mock keyed by URL substring. economics + leads + status timestamps + platform stats + cost overridable. */
-function mockFetch(opts: { economics?: unknown; leads?: unknown[]; timestamps?: Timestamps; platformStats?: unknown; costCents?: number } = {}): void {
+/** email → first meeting-booked / closed manual-qualification timestamps. */
+type Qualifications = Record<string, { meetingBookedAt?: string; closedAt?: string }>;
+
+/** Map the `quals` fixture into email-gateway /orgs/manual-qualifications rows (sorted DESC IRL; order-agnostic here). */
+function qualRows(quals: Qualifications): unknown[] {
+  const rows: unknown[] = [];
+  for (const [email, q] of Object.entries(quals)) {
+    if (q.meetingBookedAt) rows.push({ id: `q-${email}-m`, orgId: "org-1", campaignId: "c1", instantlyCampaignId: "ic1", email, status: "lead_meeting_booked", qualifiedBy: "u1", notes: null, qualifiedAt: q.meetingBookedAt });
+    if (q.closedAt) rows.push({ id: `q-${email}-c`, orgId: "org-1", campaignId: "c1", instantlyCampaignId: "ic1", email, status: "lead_closed", qualifiedBy: "u1", notes: null, qualifiedAt: q.closedAt });
+  }
+  return rows;
+}
+
+/** Route fetch mock keyed by URL substring. economics + leads + status timestamps + manual quals + platform stats + cost overridable. */
+function mockFetch(opts: { economics?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     if (url.includes("/stats/costs")) {
@@ -99,6 +112,10 @@ function mockFetch(opts: { economics?: unknown; leads?: unknown[]; timestamps?: 
     }
     if (url.includes("/public/stats")) {
       return new Response(JSON.stringify(opts.platformStats ?? PLATFORM_STATS), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/manual-qualifications")) {
+      const qualifications = opts.qualRowsRaw ?? qualRows(opts.quals ?? {});
+      return new Response(JSON.stringify({ qualifications }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("/orgs/leads")) {
       return new Response(JSON.stringify({ leads: opts.leads ?? [] }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -157,12 +174,17 @@ describe("GET /features/:featureSlug/revenue", () => {
   ];
 
   it("happy path with per-event timestamps — headline + tables + timeSeries + events", async () => {
+    // Dates within the reply→meeting window (14d): a bare positive reply now decays under Phase 2,
+    // so the happy-path reply must be recent. click (visit) is terminal and never decays. Compute
+    // once and reuse so the engine's pass-through dates match the assertions deterministically.
+    const clickAt = daysAgo(13);
+    const replyAt = daysAgo(5);
     mockFetch({
       economics: ECONOMICS,
       leads: HAPPY_LEADS,
       timestamps: {
-        "click@x.com": { firstClickedAt: "2026-01-01T00:00:00Z" },
-        "reply@y.com": { firstRepliedAt: "2026-02-01T00:00:00Z" },
+        "click@x.com": { firstClickedAt: clickAt },
+        "reply@y.com": { firstRepliedAt: replyAt },
       },
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
@@ -173,11 +195,11 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.leads).toHaveLength(2);
     expect(res.body.organizations[0].expectedRevenueUsd).toBe(120); // sorted EV desc
     expect(res.body.timeSeries).toEqual([
-      { date: "2026-01-01T00:00:00Z", cumulativePipelineUsd: 20 },
-      { date: "2026-02-01T00:00:00Z", cumulativePipelineUsd: 140 },
+      { date: clickAt, cumulativePipelineUsd: 20 },  // older click first
+      { date: replyAt, cumulativePipelineUsd: 140 }, // then reply
     ]);
     expect(res.body.events).toHaveLength(2);
-    expect(res.body.events.find((e: any) => e.eventType === "reply").eventDate).toBe("2026-02-01T00:00:00Z");
+    expect(res.body.events.find((e: any) => e.eventType === "reply").eventDate).toBe(replyAt);
   });
 
   it("earns stage EV from Contacted/Delivered onward (no click or reply)", async () => {
@@ -364,5 +386,84 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.leads).toHaveLength(1);
     expect(res.body.leads[0].expectedRevenueUsd).toBe(0);
     expect(res.body.leads[0].tags).toContain("stale");
+  });
+
+  // ── Phase 2: post-engagement decay + close-win (manual-qualification enrichment) ───
+
+  const REPLY_LEAD = (over: Record<string, unknown> = {}) =>
+    leadRow({ leadId: "lr", email: "reply@x.com", replied: true, replyClassification: "positive", lead: { firstName: "Re", lastName: "Ply", photoUrl: null, organization: { id: "or", name: "OrgR", logoUrl: null } }, ...over });
+
+  it("meeting-booked enrichment → meeting stage EV (300), tag meeting, alive (resets the reply clock)", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [REPLY_LEAD()],
+      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(20) } }, // reply 20d ago alone would decay (14d window)
+      quals: { "reply@x.com": { meetingBookedAt: daysAgo(5) } },      // …but a meeting 5d ago resets the clock
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(300); // meeting EV bump over reply's 120
+    expect(res.body.leads[0].expectedRevenueUsd).toBe(300);
+    expect(res.body.leads[0].tags).toContain("meeting");
+    expect(res.body.leads[0].tags).not.toContain("stale");
+  });
+
+  it("closed-won enrichment → books full LTR (1000), tag closeWin, never decays even if old", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [REPLY_LEAD()],
+      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(420) } },
+      quals: { "reply@x.com": { meetingBookedAt: daysAgo(410), closedAt: daysAgo(400) } },
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(1000); // full LTR realized
+    expect(res.body.leads[0].expectedRevenueUsd).toBe(1000);
+    expect(res.body.leads[0].tags).toContain("closeWin");
+    expect(res.body.leads[0].tags).not.toContain("stale");
+  });
+
+  it("positive-reply lead with no meeting within 14d decays out (stale), no qualification data", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [REPLY_LEAD()],
+      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(20) } }, // reply 20d ago, window 14d, no meeting
+      quals: {},
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(0);
+    expect(res.body.organizations).toEqual([]);
+    expect(res.body.leads).toHaveLength(1);
+    expect(res.body.leads[0].expectedRevenueUsd).toBe(0);
+    expect(res.body.leads[0].tags).toEqual(["reply", "stale"]);
+  });
+
+  it("degrades (still 200, Phase 1 pipeline correct) when /orgs/manual-qualifications fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
+      if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
+      if (url.includes("/public/stats")) return new Response(JSON.stringify(PLATFORM_STATS), { status: 200 });
+      if (url.includes("/manual-qualifications")) return new Response("boom", { status: 502 });
+      if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
+      if (url.includes("/orgs/status")) return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      return new Response("{}", { status: 200 });
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(140); // click 20 + reply 120, unaffected by missing quals
+  });
+
+  it("logs a warning (no silent truncation) when manual-qualifications returns the 500-row cap", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const capped = Array.from({ length: 500 }, (_, i) => ({
+      id: `q${i}`, orgId: "org-1", campaignId: "c1", instantlyCampaignId: "ic1",
+      email: `lead${i}@x.com`, status: "lead_meeting_booked", qualifiedBy: "u1", notes: null, qualifiedAt: daysAgo(1),
+    }));
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, qualRowsRaw: capped });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(warnSpy.mock.calls.some(([msg]) => typeof msg === "string" && msg.includes("manual-qualifications hit 500-row cap"))).toBe(true);
   });
 });
