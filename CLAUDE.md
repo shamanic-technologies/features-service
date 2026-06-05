@@ -19,6 +19,12 @@ npm run generate:openapi # Regenerate openapi.json from Zod schemas
 - OpenAPI: auto-generated from Zod schemas via `@asteasolutions/zod-to-openapi`
 - Deployed on Railway via Dockerfile
 
+**Package manager: pnpm is canonical.** The repo ships BOTH `package-lock.json` and
+`pnpm-lock.yaml`, but CI runs `pnpm test`. On a fresh Conductor workspace (`node_modules`
+absent), install with `pnpm install --frozen-lockfile` — not `npm ci` — so the local tree
+matches CI. The `npm run <script>` aliases above still work once deps are installed (pnpm
+just runs the same `package.json` scripts).
+
 ## CI test flake — `EnvironmentTeardownError`
 
 CI's `pnpm test` runs every suite **twice** — once from `src/*.test.ts` and once from the
