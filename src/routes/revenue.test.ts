@@ -79,10 +79,18 @@ function leadRow(over: Record<string, unknown>): Record<string, unknown> {
 /** email → first*At, mapped onto the email-gateway /orgs/status brand-scope shape. */
 type Timestamps = Record<string, { firstContactedAt?: string | null; firstClickedAt?: string | null; firstRepliedAt?: string | null }>;
 
-/** Route fetch mock keyed by URL substring. economics + leads + status timestamps + platform stats overridable. */
-function mockFetch(opts: { economics?: unknown; leads?: unknown[]; timestamps?: Timestamps; platformStats?: unknown } = {}): void {
+/** runs-service /v1/stats/costs response carrying a single workflow group of `cents`. */
+function costGroups(cents: number): string {
+  return JSON.stringify({ groups: [{ dimensions: {}, totalCostInUsdCents: String(cents), runCount: 0, minStartedAt: null, maxStartedAt: null }] });
+}
+
+/** Route fetch mock keyed by URL substring. economics + leads + status timestamps + platform stats + cost overridable. */
+function mockFetch(opts: { economics?: unknown; leads?: unknown[]; timestamps?: Timestamps; platformStats?: unknown; costCents?: number } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+    if (url.includes("/stats/costs")) {
+      return new Response(costGroups(opts.costCents ?? 0), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (url.includes("/sales-economics")) {
       return new Response(JSON.stringify({ salesEconomics: opts.economics ?? null }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
@@ -197,6 +205,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("502 when platform rates (/public/stats) fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
       if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
       if (url.includes("/public/stats")) return new Response("boom", { status: 500 });
       if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
@@ -209,6 +218,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("degrades to dateless (still 200, pipeline correct) when email-gateway /orgs/status fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
       if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
       if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
       if (url.includes("/orgs/status")) return new Response("boom", { status: 502 });
@@ -225,8 +235,64 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("502 when lead-service fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
       if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
       if (url.includes("/orgs/leads")) return new Response("boom", { status: 500 });
+      return new Response("{}", { status: 200 });
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(502);
+  });
+
+  // ── costEconomics ───────────────────────────────────────────────────────────
+
+  it("costEconomics — normal: finite cost-of-acquisition % and ROI multiple", async () => {
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000 }); // $70 cost, pipeline 140
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(140);
+    expect(res.body.costEconomics.totalCostUsd).toBe(70);
+    expect(res.body.costEconomics.costOfAcquisitionPct).toBeCloseTo(50); // 70/140*100
+    expect(res.body.costEconomics.roiMultiple).toBeCloseTo(2); // 140/70
+  });
+
+  it("costEconomics — null pipeline (no economics): both ratios null, totalCostUsd real", async () => {
+    mockFetch({ economics: null, costCents: 5000 });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBeNull();
+    expect(res.body.costEconomics.totalCostUsd).toBe(50);
+    expect(res.body.costEconomics.costOfAcquisitionPct).toBeNull();
+    expect(res.body.costEconomics.roiMultiple).toBeNull();
+  });
+
+  it("costEconomics — null pipeline (no funnel): present with both ratios null", async () => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue({ ...SALES_FEATURE, slug: "pr-cold-email-outreach" } as any);
+    mockFetch({ costCents: 3000 });
+    const res = await request(app).get("/features/pr-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBeNull();
+    expect(res.body.costEconomics.totalCostUsd).toBe(30);
+    expect(res.body.costEconomics.costOfAcquisitionPct).toBeNull();
+    expect(res.body.costEconomics.roiMultiple).toBeNull();
+  });
+
+  it("costEconomics — zero cost: roiMultiple null, costOfAcquisitionPct 0", async () => {
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 0 }); // pipeline 140, no cost
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(140);
+    expect(res.body.costEconomics.totalCostUsd).toBe(0);
+    expect(res.body.costEconomics.costOfAcquisitionPct).toBe(0);
+    expect(res.body.costEconomics.roiMultiple).toBeNull();
+  });
+
+  it("502 (fail-loud) when runs-service /v1/stats/costs fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("/stats/costs")) return new Response("boom", { status: 500 });
+      if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
+      if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
       return new Response("{}", { status: 200 });
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
