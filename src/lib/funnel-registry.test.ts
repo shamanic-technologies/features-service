@@ -22,9 +22,9 @@ describe("sales funnel — resolvePaths", () => {
   const paths = funnel.resolvePaths({ economics: ECONOMICS, platformRates: RATES });
   const byTag = Object.fromEntries(paths.map((p) => [p.tag, p]));
 
-  it("emits the 5 stage paths", () => {
-    expect(paths).toHaveLength(5);
-    expect(Object.keys(byTag).sort()).toEqual(["contacted", "delivered", "reply", "sent", "visit"]);
+  it("emits the 6 stage paths (incl. opened)", () => {
+    expect(paths).toHaveLength(6);
+    expect(Object.keys(byTag).sort()).toEqual(["contacted", "delivered", "opened", "reply", "sent", "visit"]);
   });
 
   it("click / reply EV come from sales-economics (rate-independent)", () => {
@@ -43,11 +43,25 @@ describe("sales funnel — resolvePaths", () => {
     expect(byTag.contacted.kind).toBe("delivery");
     expect(byTag.sent.kind).toBe("delivery");
     expect(byTag.delivered.kind).toBe("delivery");
+    expect(byTag.opened.kind).toBe("delivery");
     expect(byTag.visit.kind).toBe("engagement");
     expect(byTag.reply.kind).toBe("engagement");
     // delivery stages must be in ascending funnel order (engine picks the last fired)
     const order = paths.filter((p) => p.kind === "delivery").map((p) => p.tag);
-    expect(order).toEqual(["contacted", "sent", "delivered"]);
+    expect(order).toEqual(["contacted", "sent", "delivered", "opened"]);
+  });
+
+  it("opened carries the delivered close-probability (decay checkpoint, no extra EV)", () => {
+    expect(byTag.opened.expectedRevenueUsd).toBeCloseTo(byTag.delivered.expectedRevenueUsd);
+  });
+
+  it("pre-engagement delivery stages carry a decay window; engagement stages do not", () => {
+    expect(byTag.contacted.staleAfterMs).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(byTag.sent.staleAfterMs).toBe(3 * 24 * 60 * 60 * 1000);
+    expect(byTag.delivered.staleAfterMs).toBe(14 * 24 * 60 * 60 * 1000);
+    expect(byTag.opened.staleAfterMs).toBe(14 * 24 * 60 * 60 * 1000);
+    expect(byTag.visit.staleAfterMs).toBeUndefined();
+    expect(byTag.reply.staleAfterMs).toBeUndefined();
   });
 
   it("every path is itemised in the events ledger", () => {

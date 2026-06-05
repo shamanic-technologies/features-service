@@ -130,9 +130,12 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
             contacted: dates.contacted,
             sent: dates.sent,
             delivered: dates.delivered,
+            open: dates.open,
             clicked: dates.clicked,
             positiveReply: dates.positiveReply,
           };
+          // `open` has no boolean in the leads overlay — a known open timestamp IS the signal.
+          if (dates.open) person.signals.open = true;
         }
       }
     } catch (err) {
