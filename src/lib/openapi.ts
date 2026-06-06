@@ -292,7 +292,27 @@ const featureRevenueResponseSchema = z.object({
   events: z.array(revenueEventSchema).describe("One row per event. Empty until per-event timestamps exist (email-gateway)."),
 });
 
-registry.register("FeatureRevenueResponse", featureRevenueResponseSchema);
+const featureRevenueResponseRef = registry.register("FeatureRevenueResponse", featureRevenueResponseSchema);
+
+// Grouped variant — returned only when ?groupBy=campaignId. One LEAN group per campaign that has
+// runs for the brand+feature: campaignId + headline.totalPipelineUsd + costEconomics ONLY (the
+// dashboard campaigns row needs just revenue + ROI). Each group is byte-equal to the standalone
+// ?campaignId= call. The heavy per-campaign arrays (timeSeries/organizations/leads/events) are omitted.
+const revenueGroupSchema = z.object({
+  campaignId: z.string(),
+  headline: z.object({
+    totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline for this campaign. Null when no funnel is wired or the brand has no saved economics."),
+  }),
+  costEconomics: revenueCostEconomicsSchema,
+});
+
+const featureRevenueGroupedResponseSchema = z.object({
+  featureSlug: z.string(),
+  groupBy: z.literal("campaignId"),
+  groups: z.array(revenueGroupSchema),
+});
+
+const featureRevenueGroupedResponseRef = registry.register("FeatureRevenueGroupedResponse", featureRevenueGroupedResponseSchema);
 
 registry.registerPath({
   method: "get",
@@ -304,18 +324,21 @@ registry.registerPath({
     "Rates + terminal LTR come from the brand's sales economics. " +
     "timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. " +
     "totalPipelineUsd is null when no funnel is wired for the feature or the brand has no saved economics. " +
-    "costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple.",
+    "costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple. " +
+    "With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature " +
+    "(campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — revenue is brand-scoped."),
-      campaignId: z.string().optional().describe("Optional campaign drill-down."),
+      campaignId: z.string().optional().describe("Optional campaign drill-down (ignored when groupBy=campaignId)."),
+      groupBy: z.enum(["campaignId"]).optional().describe("When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview."),
     }),
   },
   responses: {
-    200: { description: "Feature revenue", content: { "application/json": { schema: featureRevenueResponseSchema } } },
+    200: { description: "Feature revenue (overview, or grouped when groupBy=campaignId)", content: { "application/json": { schema: z.union([featureRevenueResponseRef, featureRevenueGroupedResponseRef]) } } },
     400: { description: "Missing brandId", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },

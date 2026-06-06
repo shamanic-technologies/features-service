@@ -482,3 +482,130 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(warnSpy.mock.calls.some(([msg]) => typeof msg === "string" && msg.includes("manual-qualifications hit 500-row cap"))).toBe(true);
   });
 });
+
+// ── GET /features/:featureSlug/revenue?groupBy=campaignId ─────────────────────
+
+/** One campaign's downstream fixtures, keyed below by the x-campaign-id header every client sets. */
+type CampaignFixture = { costCents?: number; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications };
+
+/**
+ * Grouped-path fetch mock. The runs enumeration call (groupBy=campaignId, NO x-campaign-id)
+ * returns one group per campaign; every other call is keyed by the x-campaign-id header so the
+ * standalone ?campaignId= call and the grouped sub-computation hit byte-identical downstream data.
+ */
+function mockFetchGrouped(opts: { economics?: unknown; platformStats?: unknown; campaigns: Record<string, CampaignFixture> }): void {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+    const cid = (init?.headers as Record<string, string> | undefined)?.["x-campaign-id"];
+
+    if (url.includes("/stats/costs")) {
+      // Enumeration: groupBy=campaignId, no campaign header → one group per campaign.
+      if (url.includes("groupBy=campaignId")) {
+        const groups = Object.entries(opts.campaigns).map(([id, c]) => ({
+          dimensions: { campaignId: id }, totalCostInUsdCents: String(c.costCents ?? 0), runCount: 0, minStartedAt: null, maxStartedAt: null,
+        }));
+        return new Response(JSON.stringify({ groups }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      // Per-campaign cost: groupBy=workflowSlug + x-campaign-id → single group with that campaign's cost.
+      return new Response(costGroups(cid ? (opts.campaigns[cid]?.costCents ?? 0) : 0), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/sales-economics")) {
+      return new Response(JSON.stringify({ salesEconomics: opts.economics ?? null }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/public/stats")) {
+      return new Response(JSON.stringify(opts.platformStats ?? PLATFORM_STATS), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/manual-qualifications")) {
+      return new Response(JSON.stringify({ qualifications: qualRows(cid ? (opts.campaigns[cid]?.quals ?? {}) : {}) }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/orgs/leads")) {
+      return new Response(JSON.stringify({ leads: cid ? (opts.campaigns[cid]?.leads ?? []) : [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/orgs/status")) {
+      const ts = (cid ? opts.campaigns[cid]?.timestamps : {}) ?? {};
+      const results = Object.entries(ts).map(([email, scope]) => ({
+        email,
+        broadcast: { byCampaign: null, campaign: null, brand: { contacted: true, sent: true, delivered: true, opened: true, clicked: true, replied: true, replyClassification: "positive", bounced: false, unsubscribed: false, lastDeliveredAt: null, ...scope }, global: { email: { bounced: false, unsubscribed: false } } },
+      }));
+      return new Response(JSON.stringify({ results }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+}
+
+describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
+  beforeEach(() => {
+    __resetPlatformRatesCache();
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const replyLead = (org: string) => leadRow({ leadId: `lr-${org}`, email: `reply-${org}@x.com`, replied: true, replyClassification: "positive", lead: { firstName: "Re", lastName: "Ply", photoUrl: null, organization: { id: org, name: org, logoUrl: null } } });
+  const deliveredLead = (org: string) => leadRow({ leadId: `ld-${org}`, email: `cold-${org}@z.com`, lead: { firstName: "Co", lastName: "Ld", photoUrl: null, organization: { id: org, name: org, logoUrl: null } } });
+
+  it("returns one LEAN group per campaign with runs (campaignId + headline + costEconomics only)", async () => {
+    mockFetchGrouped({
+      economics: ECONOMICS,
+      campaigns: {
+        c1: { costCents: 7000, leads: [replyLead("o1")] },     // reply EV 120, $70 cost
+        c2: { costCents: 1000, leads: [deliveredLead("o2")] }, // delivered EV 12, $10 cost
+      },
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual(["featureSlug", "groupBy", "groups"]);
+    expect(res.body.featureSlug).toBe("sales-cold-email-outreach");
+    expect(res.body.groupBy).toBe("campaignId");
+    expect(res.body.groups).toHaveLength(2);
+    // Each group is lean — exactly campaignId + headline + costEconomics, no timeSeries/orgs/leads/events.
+    for (const g of res.body.groups) {
+      expect(Object.keys(g).sort()).toEqual(["campaignId", "costEconomics", "headline"]);
+    }
+    const byId = Object.fromEntries(res.body.groups.map((g: any) => [g.campaignId, g]));
+    expect(byId.c1.headline.totalPipelineUsd).toBe(120);
+    expect(byId.c1.costEconomics.totalCostUsd).toBe(70);
+    expect(byId.c1.costEconomics.roiMultiple).toBeCloseTo(120 / 70, 5);
+    expect(byId.c2.headline.totalPipelineUsd).toBe(12);
+    expect(byId.c2.costEconomics.totalCostUsd).toBe(10);
+    expect(byId.c2.costEconomics.costOfAcquisitionPct).toBeCloseTo((10 / 12) * 100, 5);
+  });
+
+  it("a group's headline + costEconomics are byte-equal to the standalone ?campaignId= call (incl. enrichment)", async () => {
+    const opts = {
+      economics: ECONOMICS,
+      campaigns: {
+        c1: { costCents: 5000, leads: [replyLead("o1")], quals: { "reply-o1@x.com": { meetingBookedAt: daysAgo(5), closedAt: daysAgo(2) } } }, // closeWin → full LTR 1000
+      },
+    };
+    mockFetchGrouped(opts);
+    const single = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&campaignId=c1").set(AUTH);
+    expect(single.status).toBe(200);
+    expect(single.body.headline.totalPipelineUsd).toBe(1000); // close-win books realized LTR
+
+    mockFetchGrouped(opts);
+    __resetPlatformRatesCache();
+    const grouped = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId").set(AUTH);
+    expect(grouped.status).toBe(200);
+    const g = grouped.body.groups.find((x: any) => x.campaignId === "c1");
+    expect(g.headline).toEqual(single.body.headline);
+    expect(g.costEconomics).toEqual(single.body.costEconomics);
+  });
+
+  it("empty groups[] when no campaign has runs for the brand+feature", async () => {
+    mockFetchGrouped({ economics: ECONOMICS, campaigns: {} });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.groupBy).toBe("campaignId");
+    expect(res.body.groups).toEqual([]);
+  });
+
+  it("unknown groupBy value falls back to the ungrouped overview response (no groupBy/groups keys)", async () => {
+    mockFetch({ economics: null });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=foo").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("headline");
+    expect(res.body).toHaveProperty("costEconomics");
+    expect(res.body).not.toHaveProperty("groupBy");
+    expect(res.body).not.toHaveProperty("groups");
+  });
+});
