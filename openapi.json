@@ -832,6 +832,78 @@
           "events"
         ]
       },
+      "FeatureRevenueGroupedResponse": {
+        "type": "object",
+        "properties": {
+          "featureSlug": {
+            "type": "string"
+          },
+          "groupBy": {
+            "type": "string",
+            "enum": [
+              "campaignId"
+            ]
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "campaignId": {
+                  "type": "string"
+                },
+                "headline": {
+                  "type": "object",
+                  "properties": {
+                    "totalPipelineUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Org-deduped expected pipeline for this campaign. Null when no funnel is wired or the brand has no saved economics."
+                    }
+                  },
+                  "required": [
+                    "totalPipelineUsd"
+                  ]
+                },
+                "costEconomics": {
+                  "type": "object",
+                  "properties": {
+                    "totalCostUsd": {
+                      "type": "number",
+                      "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
+                    },
+                    "costOfAcquisitionPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                    },
+                    "roiMultiple": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
+                    }
+                  },
+                  "required": [
+                    "totalCostUsd",
+                    "costOfAcquisitionPct",
+                    "roiMultiple"
+                  ]
+                }
+              },
+              "required": [
+                "campaignId",
+                "headline",
+                "costEconomics"
+              ]
+            }
+          }
+        },
+        "required": [
+          "featureSlug",
+          "groupBy",
+          "groups"
+        ]
+      },
       "WorkflowProjectionResponse": {
         "type": "object",
         "properties": {
@@ -2034,7 +2106,7 @@
     "/features/{featureSlug}/revenue": {
       "get": {
         "summary": "Expected pipeline revenue for a feature",
-        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. totalPipelineUsd is null when no funnel is wired for the feature or the brand has no saved economics. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple.",
+        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. totalPipelineUsd is null when no funnel is wired for the feature or the brand has no saved economics. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple. With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature (campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call.",
         "tags": [
           "Stats"
         ],
@@ -2060,11 +2132,24 @@
           {
             "schema": {
               "type": "string",
-              "description": "Optional campaign drill-down."
+              "description": "Optional campaign drill-down (ignored when groupBy=campaignId)."
             },
             "required": false,
-            "description": "Optional campaign drill-down.",
+            "description": "Optional campaign drill-down (ignored when groupBy=campaignId).",
             "name": "campaignId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "campaignId"
+              ],
+              "description": "When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview."
+            },
+            "required": false,
+            "description": "When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview.",
+            "name": "groupBy",
             "in": "query"
           },
           {
@@ -2113,251 +2198,17 @@
         ],
         "responses": {
           "200": {
-            "description": "Feature revenue",
+            "description": "Feature revenue (overview, or grouped when groupBy=campaignId)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "featureSlug": {
-                      "type": "string"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/FeatureRevenueResponse"
                     },
-                    "headline": {
-                      "type": "object",
-                      "properties": {
-                        "totalPipelineUsd": {
-                          "type": "number",
-                          "nullable": true,
-                          "description": "Org-deduped expected pipeline. Null when no funnel is wired or the brand has no saved economics."
-                        }
-                      },
-                      "required": [
-                        "totalPipelineUsd"
-                      ]
-                    },
-                    "costEconomics": {
-                      "type": "object",
-                      "properties": {
-                        "totalCostUsd": {
-                          "type": "number",
-                          "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
-                        },
-                        "costOfAcquisitionPct": {
-                          "type": "number",
-                          "nullable": true,
-                          "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
-                        },
-                        "roiMultiple": {
-                          "type": "number",
-                          "nullable": true,
-                          "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
-                        }
-                      },
-                      "required": [
-                        "totalCostUsd",
-                        "costOfAcquisitionPct",
-                        "roiMultiple"
-                      ],
-                      "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
-                    },
-                    "timeSeries": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "date": {
-                            "type": "string"
-                          },
-                          "cumulativePipelineUsd": {
-                            "type": "number"
-                          }
-                        },
-                        "required": [
-                          "date",
-                          "cumulativePipelineUsd"
-                        ]
-                      },
-                      "description": "Cumulative pipeline ordered by event date. Empty until per-event timestamps exist (email-gateway)."
-                    },
-                    "organizations": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "orgId": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "orgName": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "orgLogoUrl": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "orgDomain": {
-                            "type": "string",
-                            "nullable": true,
-                            "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
-                          },
-                          "topPerson": {
-                            "type": "object",
-                            "properties": {
-                              "firstName": {
-                                "type": "string",
-                                "nullable": true
-                              },
-                              "lastName": {
-                                "type": "string",
-                                "nullable": true
-                              },
-                              "photoUrl": {
-                                "type": "string",
-                                "nullable": true
-                              }
-                            },
-                            "required": [
-                              "firstName",
-                              "lastName",
-                              "photoUrl"
-                            ]
-                          },
-                          "tags": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          },
-                          "expectedRevenueUsd": {
-                            "type": "number"
-                          },
-                          "mostAdvancedDate": {
-                            "type": "string",
-                            "nullable": true,
-                            "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway)."
-                          }
-                        },
-                        "required": [
-                          "orgId",
-                          "orgName",
-                          "orgLogoUrl",
-                          "orgDomain",
-                          "topPerson",
-                          "tags",
-                          "expectedRevenueUsd",
-                          "mostAdvancedDate"
-                        ]
-                      }
-                    },
-                    "leads": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "leadId": {
-                            "type": "string"
-                          },
-                          "firstName": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "lastName": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "photoUrl": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "orgName": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "orgLogoUrl": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "orgDomain": {
-                            "type": "string",
-                            "nullable": true,
-                            "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
-                          },
-                          "tags": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          },
-                          "expectedRevenueUsd": {
-                            "type": "number"
-                          },
-                          "date": {
-                            "type": "string",
-                            "nullable": true,
-                            "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway)."
-                          }
-                        },
-                        "required": [
-                          "leadId",
-                          "firstName",
-                          "lastName",
-                          "photoUrl",
-                          "orgName",
-                          "orgLogoUrl",
-                          "orgDomain",
-                          "tags",
-                          "expectedRevenueUsd",
-                          "date"
-                        ]
-                      }
-                    },
-                    "events": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "leadId": {
-                            "type": "string"
-                          },
-                          "person": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "org": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "eventType": {
-                            "type": "string"
-                          },
-                          "eventDate": {
-                            "type": "string"
-                          },
-                          "contributionUsd": {
-                            "type": "number"
-                          }
-                        },
-                        "required": [
-                          "leadId",
-                          "person",
-                          "org",
-                          "eventType",
-                          "eventDate",
-                          "contributionUsd"
-                        ]
-                      },
-                      "description": "One row per event. Empty until per-event timestamps exist (email-gateway)."
+                    {
+                      "$ref": "#/components/schemas/FeatureRevenueGroupedResponse"
                     }
-                  },
-                  "required": [
-                    "featureSlug",
-                    "headline",
-                    "costEconomics",
-                    "timeSeries",
-                    "organizations",
-                    "leads",
-                    "events"
                   ]
                 }
               }
