@@ -167,7 +167,9 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       console.warn(`[features-service] qualification enrichment failed (degrading to no meeting/close dates): ${(err as Error).message}`);
     }
 
-    const result = computeRevenue(paths, persons);
+    // closeValueUsd = LTR — the per-lead cap for combining independent engagement routes (click +
+    // reply) as independent probabilities of one close (`undefined` keeps the wall-clock `now`).
+    const result = computeRevenue(paths, persons, undefined, economics.lifetimeRevenueUsd);
 
     traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${result.organizations.length}, pipelineUsd=${result.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 
