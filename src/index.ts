@@ -9,6 +9,7 @@ import healthRoutes from "./routes/health.js";
 import featuresRoutes from "./routes/features.js";
 import statsRoutes from "./routes/stats.js";
 import revenueRoutes from "./routes/revenue.js";
+import workflowProjectionRoutes from "./routes/workflow-projection.js";
 import publicRoutes from "./routes/public.js";
 import { registerSeedFeatures } from "./seed/register.js";
 
@@ -38,6 +39,7 @@ app.use(publicRoutes);
 app.use(featuresRoutes);
 app.use(statsRoutes);
 app.use(revenueRoutes);
+app.use(workflowProjectionRoutes);
 
 // 404 handler
 app.use((req, res) => {

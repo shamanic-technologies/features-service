@@ -6,8 +6,12 @@
  * that, when fired, contributes a precomputed expected-revenue amount) and a flat
  * list of per-row persons. The engine then applies the universal rule:
  *
- *   - MAX inside an entity  — a person's EV is the max over the paths whose signal
- *     fired; an org's EV is the max person EV across the org (1 org = 1 client = 1 LTR).
+ *   - Inside an entity      — mutually-exclusive funnel positions (delivery milestones, meeting,
+ *     closeWin) contribute via MAX (a lead is at exactly one; 1 org = 1 client = 1 LTR). Paths
+ *     flagged `engagementRoute` (e.g. click + reply) are INDEPENDENT, non-mutually-exclusive shots
+ *     at the SAME single close, so they are combined as independent probabilities bounded by one
+ *     close value (`closeValueUsd`). A person's EV = MAX(best single fired path, combined routes);
+ *     an org's EV = max person EV across the org.
  *   - SUM between entities   — total pipeline = sum of org EV over DISTINCT orgs.
  *
  * Dedup keys (see global identity-keying note):
@@ -41,6 +45,14 @@ export interface ResolvedPath {
    * Delivery paths must be listed in ascending funnel order so the last fired = furthest.
    */
   kind?: "delivery" | "engagement";
+  /**
+   * Marks an INDEPENDENT engagement route (e.g. click, reply) — a non-mutually-exclusive shot at
+   * the same single close. Paths sharing this flag are COMBINED as independent probabilities
+   * (bounded by `closeValueUsd`), not MAX'd: a lead that fired several routes earns strictly more
+   * than any one alone, capped at one close. Leave unset for mutually-exclusive positions (delivery
+   * milestones, meeting, closeWin) which stay MAX.
+   */
+  engagementRoute?: boolean;
   /** Whether a fired event of this path is itemised in the events ledger. Defaults to true. */
   ledger?: boolean;
   /**
@@ -211,13 +223,35 @@ function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
 }
 
 /**
- * Per-person EV = MAX over fired paths; date = max fired-event date; firedEvents = every
- * fired path (for the ledger). Tags collapse delivery stages to the FURTHEST reached one and
- * suppress it once an engagement fired — so a row shows its single funnel position, or its
- * terminal conversions (visit/reply), not every milestone it passed.
+ * Combine INDEPENDENT engagement-route EVs into one expected value, bounded by a single close.
+ *
+ * Each route's EV = closeValueUsd × P(close | that route fired). Treating the routes as independent
+ * shots at the SAME single close, P(close | any fired) = 1 − Π(1 − Pᵢ), so the combined EV is
+ * closeValueUsd × (1 − Π(1 − evᵢ/closeValueUsd)). For two routes this equals a + b − a·b/closeValueUsd:
+ * strictly greater than either alone, strictly less than their plain sum, and never above one close
+ * (1 lead = 1 LTR). Degrades to a plain sum when each evᵢ ≪ closeValueUsd. Empty list → 0. A
+ * non-positive close value (LTR 0 ⇒ every route EV is 0 too) → the bare max, which is 0.
  */
-function evForPerson(person: EnginePerson, paths: ResolvedPath[], now: number): PersonEv {
-  let evRaw = 0;
+function combineIndependent(evs: number[], closeValueUsd: number): number {
+  if (evs.length === 0) return 0;
+  if (evs.length === 1) return evs[0]; // single route → exact value, no float drift from the OR formula
+  if (closeValueUsd <= 0) return Math.max(...evs);
+  let surviveProduct = 1;
+  for (const ev of evs) surviveProduct *= 1 - ev / closeValueUsd;
+  return closeValueUsd * (1 - surviveProduct);
+}
+
+/**
+ * Per-person EV — mutually-exclusive positions (delivery milestones, meeting, closeWin) contribute
+ * via MAX; paths flagged `engagementRoute` (click + reply) are combined as independent probabilities
+ * bounded by `closeValueUsd`. evRaw = MAX(best single fired path, combined routes). date = max
+ * fired-event date; firedEvents = every fired path (for the ledger). Tags collapse delivery stages
+ * to the FURTHEST reached one and suppress it once an engagement fired — so a row shows its single
+ * funnel position, or its terminal conversions (visit/reply), not every milestone it passed.
+ */
+function evForPerson(person: EnginePerson, paths: ResolvedPath[], now: number, closeValueUsd: number): PersonEv {
+  let maxSingleEv = 0;
+  const routeEvs: number[] = [];
   const firedEvents: FiredEvent[] = [];
   let date: string | null = null;
   const engagementTags: string[] = [];
@@ -230,7 +264,8 @@ function evForPerson(person: EnginePerson, paths: ResolvedPath[], now: number): 
   let furthestDate: string | null = null;
   for (const path of paths) {
     if (!person.signals[path.signal]) continue;
-    if (path.expectedRevenueUsd > evRaw) evRaw = path.expectedRevenueUsd;
+    if (path.expectedRevenueUsd > maxSingleEv) maxSingleEv = path.expectedRevenueUsd;
+    if (path.engagementRoute) routeEvs.push(path.expectedRevenueUsd);
     const eventDate = person.signalDates?.[path.signal] ?? null;
     firedEvents.push({ tag: path.tag, eventDate, contributionUsd: path.expectedRevenueUsd, ledger: path.ledger !== false });
     date = maxDate(date, eventDate);
@@ -243,6 +278,13 @@ function evForPerson(person: EnginePerson, paths: ResolvedPath[], now: number): 
       engagementTags.push(path.tag);
     }
   }
+
+  // EV = MAX(best single fired path, combined engagement routes). Mutually-exclusive positions
+  // (delivery milestones, meeting, closeWin) only ever raise maxSingleEv; the independent routes
+  // (click + reply) combine as independent probabilities of the SAME single close, bounded by one
+  // close value — firing BOTH earns strictly more than either alone yet never exceeds one close.
+  // closeWin's full-LTR single path still dominates via the MAX (realized revenue).
+  const evRaw = Math.max(maxSingleEv, combineIndependent(routeEvs, closeValueUsd));
 
   // Decay: the lead's FURTHEST reached stage carries a window it failed to advance past → DEAD.
   // Pre-engagement (contacted/sent/delivered/open) AND post-engagement (reply/meeting) decay the
@@ -263,7 +305,7 @@ function evForPerson(person: EnginePerson, paths: ResolvedPath[], now: number): 
   return { person, ev: dead ? 0 : evRaw, evRaw, dead, deathDate, tags, date, firedEvents };
 }
 
-export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[], now: number = Date.now()): RevenueResult {
+export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[], now: number = Date.now(), closeValueUsd = 0): RevenueResult {
   const persons = dedupPersonsByLead(rawPersons);
 
   // Funnel stage ordinal: index in `paths` (ascending funnel order) → higher = more advanced.
@@ -275,7 +317,7 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
   // Score every person; keep those that entered the pipeline (raw EV > 0) — including the
   // ones that have since decayed (they still show in the leads table, tagged `stale`).
   const scored = persons
-    .map((person) => evForPerson(person, paths, now))
+    .map((person) => evForPerson(person, paths, now, closeValueUsd))
     .filter((p) => p.evRaw > 0);
 
   // Leads table — one row per engaged person. Live EV (0 for decayed leads), `stale` tag carried.

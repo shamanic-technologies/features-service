@@ -134,7 +134,7 @@ function computeGroupStats(
 /**
  * Build workflow upgrade chains for aggregation.
  */
-function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]> {
+export function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]> {
   const predecessorMap = new Map<string, string[]>();
   const idToSlug = new Map<string, string>();
   const activeWorkflows: WorkflowMetadata[] = [];
@@ -172,7 +172,7 @@ function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]
   return chains;
 }
 
-function aggregateAcrossChains(
+export function aggregateAcrossChains(
   chains: Map<string, string[]>,
   costGroups: { dimensions: Record<string, string | null>; totalCostInUsdCents: string; runCount: number }[],
   outcomeMap: Map<string, Record<string, number>>,

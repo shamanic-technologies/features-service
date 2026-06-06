@@ -469,3 +469,71 @@ describe("computeRevenue — Phase 2 decay (post-engagement)", () => {
     expect(r.timeSeries[0]).toEqual({ date: "2026-01-01T00:00:00Z", cumulativePipelineUsd: 1000 });
   });
 });
+
+// ── Engagement-route combine (click + reply summed as independent probabilities, bounded 1 LTR) ──
+// No decay windows on these fixtures → date-independent (terminals/engagement routes never decay).
+const LTR = 1000;
+const ROUTE_PATHS: ResolvedPath[] = [
+  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement", engagementRoute: true },
+  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, kind: "engagement", engagementRoute: true },
+];
+// delivery + both routes + convergence/terminal (meeting, closeWin are NOT routes → stay MAX).
+const FULL_PATHS: ResolvedPath[] = [
+  { tag: "delivered", signal: "delivered", expectedRevenueUsd: 12, kind: "delivery" },
+  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement", engagementRoute: true },
+  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, kind: "engagement", engagementRoute: true },
+  { tag: "meeting", signal: "meeting", expectedRevenueUsd: 300, kind: "engagement" },
+  { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 1000, kind: "engagement" },
+];
+
+describe("computeRevenue — engagement-route combine (independent-probability SUM)", () => {
+  it("click only → unchanged route EV", () => {
+    const r = computeRevenue(ROUTE_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: false } })], undefined, LTR);
+    expect(r.leads[0].expectedRevenueUsd).toBe(20);
+  });
+
+  it("reply only → unchanged route EV", () => {
+    const r = computeRevenue(ROUTE_PATHS, [person({ leadId: "l1", signals: { clicked: false, positiveReply: true } })], undefined, LTR);
+    expect(r.leads[0].expectedRevenueUsd).toBe(120);
+  });
+
+  it("BOTH routes → combined a+b−a·b/LTR, strictly > max(either) and < plain sum", () => {
+    const r = computeRevenue(ROUTE_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true } })], undefined, LTR);
+    const ev = r.leads[0].expectedRevenueUsd;
+    expect(ev).toBeCloseTo(137.6, 6); // 20 + 120 − 20·120/1000
+    expect(ev).toBeGreaterThan(120);  // > MAX of either route alone
+    expect(ev).toBeLessThan(140);     // < plain sum (independence discount)
+    expect(r.leads[0].tags.sort()).toEqual(["reply", "visit"]);
+  });
+
+  it("BOTH routes with high rates → bounded ≤ 1 LTR", () => {
+    const HOT: ResolvedPath[] = [
+      { tag: "visit", signal: "clicked", expectedRevenueUsd: 600, kind: "engagement", engagementRoute: true },
+      { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 800, kind: "engagement", engagementRoute: true },
+    ];
+    const r = computeRevenue(HOT, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true } })], undefined, LTR);
+    expect(r.leads[0].expectedRevenueUsd).toBeCloseTo(920, 6); // 600 + 800 − 480
+    expect(r.leads[0].expectedRevenueUsd).toBeLessThanOrEqual(LTR);
+  });
+
+  it("no cap passed (default 0) → routes fall back to bare MAX (no combine)", () => {
+    const r = computeRevenue(ROUTE_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true } })]);
+    expect(r.leads[0].expectedRevenueUsd).toBe(120);
+  });
+
+  it("delivery-furthest only (no engagement) → unchanged MAX", () => {
+    const r = computeRevenue(FULL_PATHS, [person({ leadId: "l1", signals: { delivered: true } })], undefined, LTR);
+    expect(r.leads[0].expectedRevenueUsd).toBe(12);
+    expect(r.leads[0].tags).toEqual(["delivered"]);
+  });
+
+  it("routes + meeting → MAX(combined, meeting) — convergence not double-counted", () => {
+    const r = computeRevenue(FULL_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true, meeting: true } })], undefined, LTR);
+    expect(r.leads[0].expectedRevenueUsd).toBe(300); // combined(137.6) < meeting(300) → meeting dominates
+  });
+
+  it("closeWin → full LTR dominates the combine (realized revenue)", () => {
+    const r = computeRevenue(FULL_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true, closeWin: true } })], undefined, LTR);
+    expect(r.leads[0].expectedRevenueUsd).toBe(1000);
+  });
+});

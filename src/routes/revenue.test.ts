@@ -202,6 +202,21 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.events.find((e: any) => e.eventType === "reply").eventDate).toBe(replyAt);
   });
 
+  it("one lead with BOTH click + positive reply → combined route EV (independent-probability SUM)", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [leadRow({ leadId: "lboth", email: "both@x.com", clicked: true, replied: true, replyClassification: "positive", lead: { firstName: "Bo", lastName: "Th", photoUrl: null, organization: { id: "ob", name: "OrgB", logoUrl: null } } })],
+      timestamps: { "both@x.com": { firstClickedAt: daysAgo(5), firstRepliedAt: daysAgo(5) } }, // reply within its 14d window → alive
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    // LTR=1000, visit EV 20 + reply EV 120 → combined 20 + 120 − 20·120/1000 = 137.6 (> MAX 120, < sum 140)
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(137.6, 5);
+    expect(res.body.leads).toHaveLength(1);
+    expect(res.body.leads[0].expectedRevenueUsd).toBeCloseTo(137.6, 5);
+    expect(res.body.leads[0].tags.sort()).toEqual(["reply", "visit"]);
+  });
+
   it("earns stage EV from Contacted/Delivered onward (no click or reply)", async () => {
     mockFetch({
       economics: ECONOMICS,
