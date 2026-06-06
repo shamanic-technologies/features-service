@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { SEED_FEATURES } from "./features.js";
-import { VALID_STATS_KEYS, VALID_ENTITY_TYPES } from "../lib/stats-registry.js";
+import { VALID_STATS_KEYS, VALID_ENTITY_TYPES, getPublicRegistry } from "../lib/stats-registry.js";
 
 describe("SEED_FEATURES — pr-expert-quote-outreach", () => {
   const FEATURED_SLUG = "pr-expert-quote-outreach";
@@ -343,6 +343,51 @@ describe("SEED_FEATURES — cold-email % Clicks stat", () => {
       });
     });
   }
+});
+
+describe("SEED_FEATURES — cold-email funnel Link Clicks step", () => {
+  // The 4 cold-email funnels that surface the website-visit (Link Clicks) stage
+  // between Opens and Positive reply. pr-cold-email-outreach uses a different
+  // (outletsDiscovered-led) funnel and is intentionally excluded.
+  const FUNNEL_CLICK_SLUGS = [
+    "sales-cold-email-outreach",
+    "hiring-cold-email-outreach",
+    "vc-cold-email-outreach",
+    "accelerators-cold-email-outreach",
+  ];
+
+  it("recipientsClicked renders the 'Link Clicks' label (not the ambiguous 'Clicks')", () => {
+    expect(getPublicRegistry().recipientsClicked.label).toBe("Link Clicks");
+  });
+
+  for (const slug of FUNNEL_CLICK_SLUGS) {
+    describe(slug, () => {
+      const seed = SEED_FEATURES.find((f) => f.slug === slug);
+      const funnelSteps = () => {
+        const charts = seed?.charts as Array<{ type: string; steps?: Array<{ key: string }> }>;
+        return charts.find((c) => c.type === "funnel-bar")?.steps?.map((s) => s.key) ?? [];
+      };
+
+      it("places recipientsClicked between recipientsOpened and recipientsRepliesPositive", () => {
+        const steps = funnelSteps();
+        const openIdx = steps.indexOf("recipientsOpened");
+        const clickIdx = steps.indexOf("recipientsClicked");
+        const positiveIdx = steps.indexOf("recipientsRepliesPositive");
+        expect(openIdx).toBeGreaterThanOrEqual(0);
+        expect(clickIdx).toBe(openIdx + 1);
+        expect(clickIdx).toBeLessThan(positiveIdx);
+      });
+    });
+  }
+});
+
+describe("SEED_FEATURES — pr-cold-email funnel unchanged", () => {
+  it("pr-cold-email-outreach funnel does NOT include recipientsClicked", () => {
+    const seed = SEED_FEATURES.find((f) => f.slug === "pr-cold-email-outreach");
+    const charts = seed?.charts as Array<{ type: string; steps?: Array<{ key: string }> }>;
+    const steps = charts.find((c) => c.type === "funnel-bar")?.steps?.map((s) => s.key) ?? [];
+    expect(steps).not.toContain("recipientsClicked");
+  });
 });
 
 describe("SEED_FEATURES — global invariants", () => {
