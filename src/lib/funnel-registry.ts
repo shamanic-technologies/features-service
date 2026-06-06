@@ -97,8 +97,12 @@ const salesFunnel: FunnelDefinition = {
       { tag: "sent", signal: "sent", expectedRevenueUsd: ltr * pCloseSent, kind: "delivery", staleAfterMs: STALE.sent },
       { tag: "delivered", signal: "delivered", expectedRevenueUsd: ltr * pCloseDeliv, kind: "delivery", staleAfterMs: STALE.delivered },
       { tag: "opened", signal: "open", expectedRevenueUsd: ltr * pCloseDeliv, kind: "delivery", staleAfterMs: STALE.open },
-      { tag: "visit", signal: "clicked", expectedRevenueUsd: ltr * pCloseClick, kind: "engagement" },
-      { tag: "reply", signal: "positiveReply", expectedRevenueUsd: ltr * pCloseReply, kind: "engagement", staleAfterMs: STALE.reply },
+      // click + reply are INDEPENDENT engagement routes to the same close (a lead can do both, and
+      // at pre-engagement stages we don't yet know which fires) → `engagementRoute` so the engine
+      // COMBINES them as independent probabilities bounded by 1 LTR, instead of MAX'ing. meeting and
+      // closeWin below are convergence/terminal positions (mutually exclusive) → left to MAX.
+      { tag: "visit", signal: "clicked", expectedRevenueUsd: ltr * pCloseClick, kind: "engagement", engagementRoute: true },
+      { tag: "reply", signal: "positiveReply", expectedRevenueUsd: ltr * pCloseReply, kind: "engagement", engagementRoute: true, staleAfterMs: STALE.reply },
       { tag: "meeting", signal: "meeting", expectedRevenueUsd: ltr * pCloseMeeting, kind: "engagement", staleAfterMs: STALE.meeting },
       { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: ltr, kind: "engagement" },
     ];
