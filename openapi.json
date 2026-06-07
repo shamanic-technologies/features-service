@@ -915,7 +915,8 @@
             "enum": [
               "meeting-booked",
               "self-serve"
-            ]
+            ],
+            "description": "Echo of the requested objective (defaults to meeting-booked). Deprecated — no longer affects the ranking, which is objective-agnostic."
           },
           "workflows": {
             "type": "array",
@@ -942,7 +943,7 @@
                 "costPerCloseUsd": {
                   "type": "number",
                   "nullable": true,
-                  "description": "Budget required per close for this workflow + objective. Null when there is no usable cost/conversion data."
+                  "description": "Budget required per close for this workflow. Null when there is no usable cost/conversion data."
                 },
                 "projection": {
                   "type": "object",
@@ -951,7 +952,7 @@
                     "replies": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Expected positive replies from the budget. Null for self-serve."
+                      "description": "Expected positive replies from the budget. Null when the workflow has no reply cost."
                     },
                     "visits": {
                       "type": "number",
@@ -961,7 +962,7 @@
                     "meetings": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Expected meetings booked. Null for self-serve."
+                      "description": "Expected meetings booked (from both the reply and click routes)."
                     },
                     "closes": {
                       "type": "number",
@@ -2274,7 +2275,7 @@
     "/features/{featureSlug}/workflow-projection": {
       "get": {
         "summary": "Rank workflows by cost-per-close and project a budget",
-        "description": "Ranks a brand's workflows by combined cost-per-close (the reply + click engagement routes funded by one budget) for an objective, and — when budgetUsd is given — projects that budget through the funnel. Per-workflow unit costs (cost per positive reply / per click) are global cross-org workflow efficiency (same source as /public/stats/best), aggregated over each workflow's upgrade chain. Conversion rates + LTR come from the brand's saved sales-economics. recommendedWorkflowDynastySlug is the workflow with the lowest costPerCloseUsd; recommendedBudgetUsd = 10 × that cost.",
+        "description": "Ranks a brand's workflows by combined cost-per-close (the reply + click engagement routes funded by one budget) and — when budgetUsd is given — projects that budget through the funnel. Objective-agnostic: every non-zero conversion path counts, so the ranking does not depend on the campaign objective. Per-workflow unit costs (cost per positive reply / per click) are global cross-org workflow efficiency (same source as /public/stats/best), aggregated over each workflow's upgrade chain. Conversion rates + LTR come from the brand's saved sales-economics. recommendedWorkflowDynastySlug is the workflow with the lowest costPerCloseUsd; recommendedBudgetUsd = 10 × that cost.",
         "tags": [
           "Stats"
         ],
@@ -2304,10 +2305,10 @@
                 "meeting-booked",
                 "self-serve"
               ],
-              "description": "meeting-booked: reply + click → meeting → close; self-serve: click → direct close."
+              "description": "Deprecated — no longer affects the ranking (objective-agnostic: every non-zero conversion path counts). Accepted + echoed for back-compat; defaults to meeting-booked."
             },
-            "required": true,
-            "description": "meeting-booked: reply + click → meeting → close; self-serve: click → direct close.",
+            "required": false,
+            "description": "Deprecated — no longer affects the ranking (objective-agnostic: every non-zero conversion path counts). Accepted + echoed for back-compat; defaults to meeting-booked.",
             "name": "objective",
             "in": "query"
           },
@@ -2381,7 +2382,8 @@
                       "enum": [
                         "meeting-booked",
                         "self-serve"
-                      ]
+                      ],
+                      "description": "Echo of the requested objective (defaults to meeting-booked). Deprecated — no longer affects the ranking, which is objective-agnostic."
                     },
                     "workflows": {
                       "type": "array",
@@ -2408,7 +2410,7 @@
                           "costPerCloseUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Budget required per close for this workflow + objective. Null when there is no usable cost/conversion data."
+                            "description": "Budget required per close for this workflow. Null when there is no usable cost/conversion data."
                           },
                           "projection": {
                             "type": "object",
@@ -2417,7 +2419,7 @@
                               "replies": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Expected positive replies from the budget. Null for self-serve."
+                                "description": "Expected positive replies from the budget. Null when the workflow has no reply cost."
                               },
                               "visits": {
                                 "type": "number",
@@ -2427,7 +2429,7 @@
                               "meetings": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Expected meetings booked. Null for self-serve."
+                                "description": "Expected meetings booked (from both the reply and click routes)."
                               },
                               "closes": {
                                 "type": "number",
@@ -2495,7 +2497,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId or invalid objective",
+            "description": "Missing brandId",
             "content": {
               "application/json": {
                 "schema": {

@@ -53,8 +53,8 @@ const ECONOMICS = {
 };
 
 // Platform funnel: sent/contacted=1, delivered/sent=1, clicked/delivered=0.1, posReply/delivered=0.1
-//   pClose_click=0.02, pClose_reply=0.12, pClose_deliv=max(0.1·0.02, 0.1·0.12)=0.012
-//   → contacted=sent=delivered EV = 1000·0.012 = 12 ; click EV = 20 ; reply EV = 120
+//   pClose_click=orP(0.02, 0.015)=0.0347, pClose_reply=0.12, pClose_deliv=orP(0.1·0.0347, 0.1·0.12)=0.0154284
+//   → contacted=sent=delivered EV = 1000·0.0154284 = 15.4284 ; click EV = 34.7 ; reply EV = 120
 const PLATFORM_STATS = {
   broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, clicked: 10, repliesPositive: 10 } },
 };
@@ -189,15 +189,16 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    // o1: visit EV 20, o2: reply EV 120 → total 140
-    expect(res.body.headline.totalPipelineUsd).toBe(140);
+    // o1: visit EV 34.7, o2: reply EV 120 → total 154.7
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5);
     expect(res.body.organizations).toHaveLength(2);
     expect(res.body.leads).toHaveLength(2);
-    expect(res.body.organizations[0].expectedRevenueUsd).toBe(120); // sorted EV desc
-    expect(res.body.timeSeries).toEqual([
-      { date: clickAt, cumulativePipelineUsd: 20 },  // older click first
-      { date: replyAt, cumulativePipelineUsd: 140 }, // then reply
-    ]);
+    expect(res.body.organizations[0].expectedRevenueUsd).toBe(120); // reply org first (furthest stage), EV desc
+    expect(res.body.timeSeries).toHaveLength(2);
+    expect(res.body.timeSeries[0].date).toBe(clickAt); // older click first
+    expect(res.body.timeSeries[0].cumulativePipelineUsd).toBeCloseTo(34.7, 5);
+    expect(res.body.timeSeries[1].date).toBe(replyAt); // then reply
+    expect(res.body.timeSeries[1].cumulativePipelineUsd).toBeCloseTo(154.7, 5);
     expect(res.body.events).toHaveLength(2);
     expect(res.body.events.find((e: any) => e.eventType === "reply").eventDate).toBe(replyAt);
   });
@@ -210,10 +211,10 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    // LTR=1000, visit EV 20 + reply EV 120 → combined 20 + 120 − 20·120/1000 = 137.6 (> MAX 120, < sum 140)
-    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(137.6, 5);
+    // LTR=1000, visit EV 34.7 + reply EV 120 → combined 1000·(1−(1−0.0347)(1−0.12)) = 150.536 (> MAX 120, < sum 154.7)
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(150.536, 5);
     expect(res.body.leads).toHaveLength(1);
-    expect(res.body.leads[0].expectedRevenueUsd).toBeCloseTo(137.6, 5);
+    expect(res.body.leads[0].expectedRevenueUsd).toBeCloseTo(150.536, 5);
     expect(res.body.leads[0].tags.sort()).toEqual(["reply", "visit"]);
   });
 
@@ -224,9 +225,9 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(12); // delivered-stage EV, no click/reply
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(15.42836, 4); // delivered-stage EV, no click/reply
     expect(res.body.leads).toHaveLength(1);
-    expect(res.body.leads[0].expectedRevenueUsd).toBe(12);
+    expect(res.body.leads[0].expectedRevenueUsd).toBeCloseTo(15.42836, 4);
     expect(res.body.leads[0].tags).toContain("delivered");
     expect(res.body.events).toEqual([]); // delivery-stage events are not itemised
   });
@@ -301,7 +302,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(140); // pipeline still exact
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // pipeline still exact
     expect(res.body.timeSeries).toEqual([]); // enrichment absent
     expect(res.body.events).toEqual([]);
     expect(res.body.leads[0].date).toBeNull();
@@ -322,13 +323,13 @@ describe("GET /features/:featureSlug/revenue", () => {
   // ── costEconomics ───────────────────────────────────────────────────────────
 
   it("costEconomics — normal: finite cost-of-acquisition % and ROI multiple", async () => {
-    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000 }); // $70 cost, pipeline 140
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000 }); // $70 cost, pipeline 154.7
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(140);
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5);
     expect(res.body.costEconomics.totalCostUsd).toBe(70);
-    expect(res.body.costEconomics.costOfAcquisitionPct).toBeCloseTo(50); // 70/140*100
-    expect(res.body.costEconomics.roiMultiple).toBeCloseTo(2); // 140/70
+    expect(res.body.costEconomics.costOfAcquisitionPct).toBeCloseTo((70 / 154.7) * 100, 4); // 70/154.7*100
+    expect(res.body.costEconomics.roiMultiple).toBeCloseTo(154.7 / 70, 4); // 154.7/70
   });
 
   it("costEconomics — null pipeline (no economics): both ratios null, totalCostUsd real", async () => {
@@ -353,10 +354,10 @@ describe("GET /features/:featureSlug/revenue", () => {
   });
 
   it("costEconomics — zero cost: roiMultiple null, costOfAcquisitionPct 0", async () => {
-    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 0 }); // pipeline 140, no cost
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 0 }); // pipeline 154.7, no cost
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(140);
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5);
     expect(res.body.costEconomics.totalCostUsd).toBe(0);
     expect(res.body.costEconomics.costOfAcquisitionPct).toBe(0);
     expect(res.body.costEconomics.roiMultiple).toBeNull();
@@ -384,7 +385,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(12); // opened carries delivered-stage EV
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(15.42836, 4); // opened carries delivered-stage EV
     expect(res.body.leads[0].tags).toContain("opened");
   });
 
@@ -467,7 +468,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(140); // click 20 + reply 120, unaffected by missing quals
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // click 34.7 + reply 120, unaffected by missing quals
   });
 
   it("logs a warning (no silent truncation) when manual-qualifications returns the 500-row cap", async () => {
@@ -548,7 +549,7 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
       economics: ECONOMICS,
       campaigns: {
         c1: { costCents: 7000, leads: [replyLead("o1")] },     // reply EV 120, $70 cost
-        c2: { costCents: 1000, leads: [deliveredLead("o2")] }, // delivered EV 12, $10 cost
+        c2: { costCents: 1000, leads: [deliveredLead("o2")] }, // delivered EV 15.4284, $10 cost
       },
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId").set(AUTH);
@@ -565,9 +566,9 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
     expect(byId.c1.headline.totalPipelineUsd).toBe(120);
     expect(byId.c1.costEconomics.totalCostUsd).toBe(70);
     expect(byId.c1.costEconomics.roiMultiple).toBeCloseTo(120 / 70, 5);
-    expect(byId.c2.headline.totalPipelineUsd).toBe(12);
+    expect(byId.c2.headline.totalPipelineUsd).toBeCloseTo(15.42836, 4);
     expect(byId.c2.costEconomics.totalCostUsd).toBe(10);
-    expect(byId.c2.costEconomics.costOfAcquisitionPct).toBeCloseTo((10 / 12) * 100, 5);
+    expect(byId.c2.costEconomics.costOfAcquisitionPct).toBeCloseTo((10 / 15.42836) * 100, 4);
   });
 
   it("a group's headline + costEconomics are byte-equal to the standalone ?campaignId= call (incl. enrichment)", async () => {
