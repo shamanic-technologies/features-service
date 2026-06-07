@@ -25,16 +25,16 @@ absent), install with `pnpm install --frozen-lockfile` — not `npm ci` — so t
 matches CI. The `npm run <script>` aliases above still work once deps are installed (pnpm
 just runs the same `package.json` scripts).
 
-## CI test flake — `EnvironmentTeardownError`
+## CI test flake — `EnvironmentTeardownError` (FIXED v0.41.3)
 
-CI's `pnpm test` runs every suite **twice** — once from `src/*.test.ts` and once from the
-compiled `dist/*.test.js` — so console output volume is doubled. This intermittently trips a
-vitest worker-teardown race: `EnvironmentTeardownError: Closing rpc while "onUserConsoleLog"
-was pending` (often attributed to `src/routes/features.test.ts`). It surfaces as **1 unhandled
-error with ALL tests passing** (`407 passed`, `1 error`, exit 1). It is a non-deterministic
-flake, NOT a logic failure: if the summary shows all tests green + only this teardown error,
-**rerun the job** (`gh run rerun <runId> --failed`) — it passes on retry. Do not chase it as a
-code bug. Follow-up worth doing: make CI run src OR dist, not both (halves runtime + the flake).
+**Fixed.** `vitest.config.ts` now sets `include: ["src/**/*.test.ts"]` so vitest collects
+tests from `src` ONLY. Previously CI ran `pnpm build` (emits `dist/*.test.js`) before
+`pnpm test`, and vitest's default glob picked up BOTH src and dist — running every suite
+**twice**, doubling console output and intermittently tripping a vitest worker-teardown race:
+`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`. It surfaced as
+**1 unhandled error with ALL tests passing** + exit 1. The src-only `include` halves runtime
+and removes the flake at the source. If a teardown error ever recurs despite this, confirm no
+new `include`/dist glob crept back in (`pnpm exec vitest list` must show only `src/` files).
 
 ## Key Files
 
