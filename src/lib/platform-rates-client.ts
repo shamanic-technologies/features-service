@@ -43,7 +43,12 @@ interface PublicStatsResponse {
   broadcast?: ProviderStats;
 }
 
-const TTL_MS = 30_000;
+// 5s = the dashboard poll cadence. The module-level cache is shared across ALL callers, so
+// this is one email-gateway fetch per 5s for the whole service (NOT per viewer / per campaign
+// in a groupBy loop). Matching the poll interval keeps the revenue number in sync with the
+// per-request-fresh cost/leads metrics — a longer TTL made revenue jump on a coarser cadence
+// than everything else on the dashboard.
+const TTL_MS = 5_000;
 let cache: { rates: PlatformEmailRates; expiresAt: number } | null = null;
 
 const ratio = (num: number, den: number): number => (den > 0 ? num / den : 0);

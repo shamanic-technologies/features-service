@@ -54,7 +54,7 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   recipientsBounced:        { kind: "raw", type: "count",    label: "Bounces",          source: "email-gateway" },
 
   // ── Reply aggregates: email-gateway (recipient-level) ───────────────────
-  recipientsRepliesPositive:  { kind: "raw", type: "count",   label: "Positive",         source: "email-gateway" },
+  recipientsRepliesPositive:  { kind: "raw", type: "count",   label: "Positive replies", source: "email-gateway" },
   recipientsRepliesNegative:  { kind: "raw", type: "count",   label: "Negative",         source: "email-gateway" },
   recipientsRepliesNeutral:   { kind: "raw", type: "count",   label: "Neutral",          source: "email-gateway" },
   recipientsRepliesAutoReply: { kind: "raw", type: "count",   label: "Auto-Reply",       source: "email-gateway" },
