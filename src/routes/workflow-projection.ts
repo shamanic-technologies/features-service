@@ -4,6 +4,7 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchSalesEconomics } from "../lib/sales-economics-client.js";
+import { orP } from "../lib/funnel-registry.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
@@ -56,37 +57,41 @@ interface WorkflowProjectionResponse {
 
 /**
  * Cost-per-close + (optional) budget projection for one workflow, given its unit costs and the
- * brand's economics. Same funnel rule as the revenue engine — the two engagement routes (reply +
- * click) are SUMMED, funded by the same budget — but here at the population/expected-count level,
- * so route volumes ADD (linearity of expectation), they are not OR'd as the per-lead engine does.
- *
- *   meeting-booked: closesPerBudget = m2c · ((1/replyUsd)·r2m + (1/clickUsd)·v2m)
- *   self-serve:     closesPerBudget = (1/clickUsd)·v2c
+ * brand's economics. OBJECTIVE-AGNOSTIC — every non-zero conversion path contributes; a workflow's
+ * ranking does not depend on the campaign objective (a workflow makes both clicks and replies). Same
+ * funnel as the revenue engine:
+ *   - a click closes via TWO independent (non-exclusive) routes — direct self-serve (v2c, "buy
+ *     without a meeting") OR via a booked meeting (v2m·m2c) — combined with orP:
+ *       pCloseClick = orP(v2c, v2m·m2c)
+ *   - a positive reply closes via a meeting: pCloseReply = r2m·m2c
+ * At the population/expected-count level the click-volume and reply-volume channels ADD by linearity
+ * of expectation (distinct from the per-lead engine, which OR-combines click vs reply):
+ *   closesPerBudget = (1/clickUsd)·pCloseClick + (1/replyUsd)·pCloseReply
  *
  * A route with a null unit cost contributes 0. closesPerBudget ≤ 0 → no usable data → both null.
  */
 function project(
-  objective: Objective,
   replyUsd: number | null,
   clickUsd: number | null,
   econ: BrandEcon,
   budgetUsd: number | null,
 ): { costPerCloseUsd: number | null; projection: Projection | null } {
-  const isMeeting = objective === "meeting-booked";
+  const pCloseClick = orP(econ.v2c, econ.v2m * econ.m2c);
+  const pCloseReply = econ.r2m * econ.m2c;
 
-  const closesPerBudget = isMeeting
-    ? ((replyUsd != null ? (1 / replyUsd) * econ.r2m : 0) +
-        (clickUsd != null ? (1 / clickUsd) * econ.v2m : 0)) * econ.m2c
-    : clickUsd != null ? (1 / clickUsd) * econ.v2c : 0;
+  const closesPerBudget =
+    (clickUsd != null ? (1 / clickUsd) * pCloseClick : 0) +
+    (replyUsd != null ? (1 / replyUsd) * pCloseReply : 0);
 
   if (closesPerBudget <= 0) return { costPerCloseUsd: null, projection: null };
   const costPerCloseUsd = 1 / closesPerBudget;
 
   if (budgetUsd == null || budgetUsd <= 0) return { costPerCloseUsd, projection: null };
 
-  const replies = isMeeting && replyUsd != null ? budgetUsd / replyUsd : null;
+  const replies = replyUsd != null ? budgetUsd / replyUsd : null;
   const visits = clickUsd != null ? budgetUsd / clickUsd : null;
-  const meetings = isMeeting ? (replies ?? 0) * econ.r2m + (visits ?? 0) * econ.v2m : null;
+  // Meetings come from BOTH routes (reply→meeting and click→meeting), regardless of objective.
+  const meetings = (replies ?? 0) * econ.r2m + (visits ?? 0) * econ.v2m;
   const closes = budgetUsd * closesPerBudget;
   const revenue = closes * econ.ltv;
   const cacPct = revenue > 0 ? (budgetUsd / revenue) * 100 : null;
@@ -98,10 +103,13 @@ function project(
 // ── GET /features/:featureSlug/workflow-projection ───────────────────────────
 //
 // Ranks a brand's workflows by combined cost-per-close (reply + click routes funded by one budget)
-// for an objective, and — when budgetUsd is given — projects that budget through the funnel. Inputs:
-// per-workflow unit costs (cost / positive reply, cost / click) are GLOBAL workflow efficiency
-// (cross-org, feature-scoped, same source as /public/stats/best); the conversion rates + LTR come
-// from the brand's saved sales-economics. features-service computes; the dashboard renders.
+// and — when budgetUsd is given — projects that budget through the funnel. OBJECTIVE-AGNOSTIC: a
+// workflow generates both clicks and replies, so every non-zero conversion path counts and the
+// ranking is the same regardless of campaign objective (the `objective` query param is accepted +
+// echoed for back-compat but no longer affects the math). Inputs: per-workflow unit costs (cost /
+// positive reply, cost / click) are GLOBAL workflow efficiency (cross-org, feature-scoped, same
+// source as /public/stats/best); the conversion rates + LTR come from the brand's saved
+// sales-economics. features-service computes; the dashboard renders.
 
 router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req, res) => {
   const { featureSlug } = req.params;
@@ -113,10 +121,9 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
   if (!brandId) {
     return res.status(400).json({ error: "brandId query parameter is required" });
   }
-  if (objectiveParam !== "meeting-booked" && objectiveParam !== "self-serve") {
-    return res.status(400).json({ error: "objective query parameter is required and must be 'meeting-booked' or 'self-serve'" });
-  }
-  const objective: Objective = objectiveParam;
+  // objective no longer gates the math (the ranking is objective-agnostic — see project()). It is
+  // still accepted + echoed back for response back-compat; default meeting-booked when absent/invalid.
+  const objective: Objective = objectiveParam === "self-serve" ? "self-serve" : "meeting-booked";
   const budgetUsd = budgetRaw != null && budgetRaw !== "" ? Number(budgetRaw) : null;
 
   try {
@@ -161,7 +168,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       const clickUsd = clicks > 0 && costUsd > 0 ? costUsd / clicks : null;
 
       const { costPerCloseUsd, projection } = econ
-        ? project(objective, replyUsd, clickUsd, econ, budgetUsd)
+        ? project(replyUsd, clickUsd, econ, budgetUsd)
         : { costPerCloseUsd: null, projection: null };
 
       projections.push({

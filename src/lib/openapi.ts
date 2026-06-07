@@ -348,9 +348,9 @@ registry.registerPath({
 // ── GET /features/:featureSlug/workflow-projection ─────────────────────────
 
 const workflowProjectionDetailSchema = z.object({
-  replies: z.number().nullable().describe("Expected positive replies from the budget. Null for self-serve."),
+  replies: z.number().nullable().describe("Expected positive replies from the budget. Null when the workflow has no reply cost."),
   visits: z.number().nullable().describe("Expected clicks/visits from the budget. Null when the workflow has no click cost."),
-  meetings: z.number().nullable().describe("Expected meetings booked. Null for self-serve."),
+  meetings: z.number().nullable().describe("Expected meetings booked (from both the reply and click routes)."),
   closes: z.number().nullable().describe("Expected closes from the budget."),
   revenue: z.number().nullable().describe("closes × LTR (lifetime revenue per close)."),
   cacPct: z.number().nullable().describe("(budget / revenue) × 100. Null when revenue is 0."),
@@ -362,13 +362,13 @@ const workflowProjectionItemSchema = z.object({
   workflowDynastyName: z.string().nullable(),
   replyUsd: z.number().nullable().describe("Cost per positive reply (USD). Null when the metric is absent or zero."),
   clickUsd: z.number().nullable().describe("Cost per click (USD). Null when the metric is absent or zero."),
-  costPerCloseUsd: z.number().nullable().describe("Budget required per close for this workflow + objective. Null when there is no usable cost/conversion data."),
+  costPerCloseUsd: z.number().nullable().describe("Budget required per close for this workflow. Null when there is no usable cost/conversion data."),
   projection: workflowProjectionDetailSchema.nullable().describe("Null when budgetUsd is absent/≤0 or the workflow has no usable data."),
 });
 
 const workflowProjectionResponseSchema = z.object({
   featureSlug: z.string(),
-  objective: z.enum(["meeting-booked", "self-serve"]),
+  objective: z.enum(["meeting-booked", "self-serve"]).describe("Echo of the requested objective (defaults to meeting-booked). Deprecated — no longer affects the ranking, which is objective-agnostic."),
   workflows: z.array(workflowProjectionItemSchema),
   recommendedWorkflowDynastySlug: z.string().nullable().describe("Workflow with the lowest costPerCloseUsd. Null when none has usable data."),
   recommendedBudgetUsd: z.number().nullable().describe("10 (target closes/month) × the best costPerCloseUsd. Null when there is no pick."),
@@ -381,7 +381,7 @@ registry.registerPath({
   path: "/features/{featureSlug}/workflow-projection",
   summary: "Rank workflows by cost-per-close and project a budget",
   description:
-    "Ranks a brand's workflows by combined cost-per-close (the reply + click engagement routes funded by one budget) for an objective, and — when budgetUsd is given — projects that budget through the funnel. " +
+    "Ranks a brand's workflows by combined cost-per-close (the reply + click engagement routes funded by one budget) and — when budgetUsd is given — projects that budget through the funnel. Objective-agnostic: every non-zero conversion path counts, so the ranking does not depend on the campaign objective. " +
     "Per-workflow unit costs (cost per positive reply / per click) are global cross-org workflow efficiency (same source as /public/stats/best), aggregated over each workflow's upgrade chain. " +
     "Conversion rates + LTR come from the brand's saved sales-economics. " +
     "recommendedWorkflowDynastySlug is the workflow with the lowest costPerCloseUsd; recommendedBudgetUsd = 10 × that cost.",
@@ -391,13 +391,13 @@ registry.registerPath({
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — conversion economics are brand-scoped."),
-      objective: z.enum(["meeting-booked", "self-serve"]).describe("meeting-booked: reply + click → meeting → close; self-serve: click → direct close."),
+      objective: z.enum(["meeting-booked", "self-serve"]).optional().describe("Deprecated — no longer affects the ranking (objective-agnostic: every non-zero conversion path counts). Accepted + echoed for back-compat; defaults to meeting-booked."),
       budgetUsd: z.string().optional().describe("Optional budget (USD) to project through the funnel."),
     }),
   },
   responses: {
     200: { description: "Workflow projection", content: { "application/json": { schema: workflowProjectionResponseSchema } } },
-    400: { description: "Missing brandId or invalid objective", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing brandId", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },

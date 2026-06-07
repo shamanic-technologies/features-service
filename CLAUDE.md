@@ -53,9 +53,19 @@ code bug. Follow-up worth doing: make CI run src OR dist, not both (halves runti
 ## OpenAPI Rule
 
 Every new or changed endpoint requires THREE changes in the same PR:
-1. Zod schema in `src/lib/schemas.ts`
+1. Zod schema in `src/lib/schemas.ts` (note: the `/revenue` + `/stats` response schemas
+   actually live inline in `src/lib/openapi.ts`, NOT `schemas.ts` — add new response
+   schemas where the sibling ones already are)
 2. Path entry in `src/lib/openapi.ts`
 3. Re-generated `openapi.json` (run `npm run generate:openapi`)
+
+**Polymorphic 200 (`z.union`) — build the union from the `registry.register()` RETURN
+values, not the raw schema instances.** A route that returns two shapes (e.g. `/revenue`
+overview vs `?groupBy=campaignId` grouped) needs `200: { schema: z.union([refA, refB]) }`.
+If you pass the raw `xSchema` instances, zod-to-openapi INLINES both bodies as `anyOf`
+(orphans the named components + bloats `openapi.json` by hundreds of lines). Capture the
+ref: `const refA = registry.register("Name", xSchema)` and put `refA` in the union → clean
+`oneOf`/`anyOf` of two `$ref`s. (Set 2026-06-07, v0.40.1 revenue groupBy — cost one regen.)
 
 **Scope:** this rule covers ENDPOINT shape changes. Editing seed feature `inputs`/`outputs`
 content in `src/seed/features.ts` does NOT touch OpenAPI — the schema is `inputs: z.array(z.any())`,

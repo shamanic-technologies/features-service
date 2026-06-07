@@ -40,6 +40,13 @@ export interface FunnelDefinition {
 
 const pct = (n: number): number => n / 100;
 
+/**
+ * Combine INDEPENDENT (non-exclusive) close probabilities into one: P(any) = 1 − Π(1 − pᵢ).
+ * ≥ max(pᵢ), ≤ Σpᵢ, always ≤ 1 — loses no route, never double-counts past one close. Mirrors the
+ * revenue-engine `combineIndependent` (which combines in EV/dollars); this one combines in probabilities.
+ */
+export const orP = (...ps: number[]): number => 1 - ps.reduce((survive, p) => survive * (1 - p), 1);
+
 // Global decay windows (not per-brand): a lead that reaches a stage and sits there past this
 // window with no advance to the next stage is considered DEAD (stalled → no expected revenue).
 // Phase 1 covers the pre-engagement stages (next stage observable from the email funnel). Phase 2
@@ -61,11 +68,15 @@ const STALE = {
 /**
  * Sales funnel — expected pipeline revenue from the lead's furthest reached stage.
  *
- *   pClose_click   = max(visitToClose, visitToMeeting × meetingToClose)   (sales-economics)
+ *   pClose_click   = orP(visitToClose, visitToMeeting × meetingToClose)   (two independent click routes)
  *   pClose_reply   = replyToMeeting × meetingToClose                       (sales-economics)
- *   pClose_deliv   = max( P(click|deliv)·pClose_click , P(posReply|deliv)·pClose_reply )
+ *   pClose_deliv   = orP( P(click|deliv)·pClose_click , P(posReply|deliv)·pClose_reply )
  *   pClose_sent    = P(deliv|sent)    · pClose_deliv
  *   pClose_contact = P(sent|contacted) · pClose_sent
+ *
+ * orP(a,b) = 1−(1−a)(1−b): independent-probability combine. A click can close self-serve AND via a
+ * booked meeting; a delivered lead can click AND reply. These routes are non-exclusive, so we combine
+ * them (never max — which silently drops the weaker route, undercounting the pipeline).
  *
  * Each path EV = LTR × pClose_stage. Delivery stages (contacted/sent/delivered) are `kind:
  * "delivery"` — listed in ascending order so the engine surfaces only the FURTHEST reached one
@@ -77,10 +88,16 @@ const salesFunnel: FunnelDefinition = {
   signals: ["contacted", "sent", "delivered", "open", "clicked", "positiveReply", "meeting", "closeWin"],
   resolvePaths: ({ economics: e, platformRates: r }) => {
     const ltr = e.lifetimeRevenueUsd;
-    const pCloseClick = Math.max(pct(e.visitToClosePct), pct(e.visitToMeetingPct) * pct(e.meetingToClosePct));
+    // A click closes via TWO independent (non-exclusive) routes: direct self-serve (visitToClose =
+    // "buy without a meeting") OR via a booked meeting (visitToMeeting · meetingToClose). A lead can
+    // do both → combine as independent probabilities (orP), bounded by 1. NOT max (drops the weaker
+    // route) and NOT a naive sum (can exceed 1).
+    const pCloseClick = orP(pct(e.visitToClosePct), pct(e.visitToMeetingPct) * pct(e.meetingToClosePct));
     const pCloseReply = pct(e.replyToMeetingPct) * pct(e.meetingToClosePct);
     const pCloseMeeting = pct(e.meetingToClosePct); // a booked meeting closes at the meeting→close rate
-    const pCloseDeliv = Math.max(r.clickedPerDelivered * pCloseClick, r.positiveReplyPerDelivered * pCloseReply);
+    // A delivered-but-not-yet-engaged lead can take the click route OR the reply route — independent,
+    // non-exclusive shots at the same close → combine via orP (was max, which dropped the weaker route).
+    const pCloseDeliv = orP(r.clickedPerDelivered * pCloseClick, r.positiveReplyPerDelivered * pCloseReply);
     const pCloseSent = r.deliveredPerSent * pCloseDeliv;
     const pCloseContact = r.sentPerContacted * pCloseSent;
     // `open` is a delivery milestone between delivered and click/reply: it carries the same
