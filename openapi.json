@@ -609,7 +609,7 @@
                   "sales-economics",
                   "cross-brand-average"
                 ],
-                "description": "Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the cross-brand average fallback (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no funnel wired or no economics applied)."
+                "description": "Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no funnel wired or no economics applied)."
               }
             },
             "required": [
@@ -877,7 +877,7 @@
                         "sales-economics",
                         "cross-brand-average"
                       ],
-                      "description": "Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the cross-brand average fallback (ESTIMATE). Null when the pipeline is null."
+                      "description": "Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (ESTIMATE). Null when the pipeline is null."
                     }
                   },
                   "required": [

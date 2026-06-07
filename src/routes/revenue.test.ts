@@ -100,21 +100,24 @@ function qualRows(quals: Qualifications): unknown[] {
   return rows;
 }
 
-/** Route fetch mock keyed by URL substring. economics + cross-brand average + leads + status timestamps + manual quals + platform stats + cost overridable. */
+/** Route fetch mock keyed by URL substring. effective economics (saved set + cross-brand average) + leads + status timestamps + manual quals + platform stats + cost overridable. */
 function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     if (url.includes("/stats/costs")) {
       return new Response(costGroups(opts.costCents ?? 0), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    // NOTE: order matters — "/sales-economics-average" contains "/sales-economics" as a substring, so
-    // this branch MUST precede the per-brand "/sales-economics" branch below or the average call routes
-    // to the per-brand handler. Defaults to { averages: null } (cold start → null pipeline).
-    if (url.includes("/sales-economics-average")) {
-      return new Response(JSON.stringify({ averages: opts.economicsAverage ?? null }), { status: 200, headers: { "Content-Type": "application/json" } });
-    }
-    if (url.includes("/sales-economics")) {
-      return new Response(JSON.stringify({ salesEconomics: opts.economics ?? null }), { status: 200, headers: { "Content-Type": "application/json" } });
+    // brand-service /orgs/brands/:brandId/sales-economics-effective — ONE call returning
+    // { economics, source }. Synthesize from fixtures: a saved set → "user"; else the cross-brand
+    // average → "cross-brand-average"; else cold start → { economics: null, source: null }.
+    if (url.includes("/sales-economics-effective")) {
+      const effective =
+        opts.economics != null
+          ? { economics: opts.economics, source: "user" }
+          : opts.economicsAverage != null
+            ? { economics: opts.economicsAverage, source: "cross-brand-average" }
+            : { economics: null, source: null };
+      return new Response(JSON.stringify(effective), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("/public/stats")) {
       return new Response(JSON.stringify(opts.platformStats ?? PLATFORM_STATS), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -168,28 +171,12 @@ describe("GET /features/:featureSlug/revenue", () => {
   });
 
   it("null pipeline when brand has no saved economics AND no cross-brand average (cold start)", async () => {
-    mockFetch({ economics: null }); // economicsAverage defaults to { averages: null }
+    mockFetch({ economics: null }); // no saved + no average → effective { economics: null, source: null }
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeNull();
     expect(res.body.headline.economicsSource).toBeNull();
     expect(res.body.leads).toEqual([]);
-  });
-
-  it("cross-brand-average fallback — no saved economics but average exists → computed + tagged estimate", async () => {
-    // No saved economics, but the cross-brand average matches ECONOMICS → same math as the happy path,
-    // now tagged provenance "cross-brand-average" so the dashboard can badge it estimated.
-    mockFetch({
-      economics: null,
-      economicsAverage: ECONOMICS,
-      leads: HAPPY_LEADS,
-      timestamps: { "click@x.com": { firstClickedAt: daysAgo(13) }, "reply@y.com": { firstRepliedAt: daysAgo(5) } },
-    });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
-    expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // visit 34.7 + reply 120, computed on the average
-    expect(res.body.headline.economicsSource).toBe("cross-brand-average");
-    expect(res.body.leads).toHaveLength(2);
   });
 
   const HAPPY_LEADS = [
@@ -226,6 +213,22 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.timeSeries[1].cumulativePipelineUsd).toBeCloseTo(154.7, 5);
     expect(res.body.events).toHaveLength(2);
     expect(res.body.events.find((e: any) => e.eventType === "reply").eventDate).toBe(replyAt);
+  });
+
+  it("cross-brand-average fallback — no saved economics but average exists → computed + tagged estimate", async () => {
+    // brand-service returns the cross-brand average (source "cross-brand-average") → same math as the
+    // happy path, now tagged provenance so the dashboard can badge it estimated.
+    mockFetch({
+      economics: null,
+      economicsAverage: ECONOMICS,
+      leads: HAPPY_LEADS,
+      timestamps: { "click@x.com": { firstClickedAt: daysAgo(13) }, "reply@y.com": { firstRepliedAt: daysAgo(5) } },
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // visit 34.7 + reply 120, computed on the average
+    expect(res.body.headline.economicsSource).toBe("cross-brand-average");
+    expect(res.body.leads).toHaveLength(2);
   });
 
   it("one lead with BOTH click + positive reply → combined route EV (independent-probability SUM)", async () => {
@@ -307,7 +310,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
-      if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
+      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
       if (url.includes("/public/stats")) return new Response("boom", { status: 500 });
       if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
       return new Response("{}", { status: 200 });
@@ -320,7 +323,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
-      if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
+      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
       if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
       if (url.includes("/orgs/status")) return new Response("boom", { status: 502 });
       return new Response("{}", { status: 200 });
@@ -337,7 +340,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
-      if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
+      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
       if (url.includes("/orgs/leads")) return new Response("boom", { status: 500 });
       return new Response("{}", { status: 200 });
     });
@@ -392,7 +395,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
       if (url.includes("/stats/costs")) return new Response("boom", { status: 500 });
-      if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
+      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
       if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
       return new Response("{}", { status: 200 });
     });
@@ -484,7 +487,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
-      if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
+      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
       if (url.includes("/public/stats")) return new Response(JSON.stringify(PLATFORM_STATS), { status: 200 });
       if (url.includes("/manual-qualifications")) return new Response("boom", { status: 502 });
       if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
@@ -524,10 +527,6 @@ function mockFetchGrouped(opts: { economics?: unknown; economicsAverage?: unknow
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     const cid = (init?.headers as Record<string, string> | undefined)?.["x-campaign-id"];
 
-    // Order matters: "/sales-economics-average" contains "/sales-economics" — match it first.
-    if (url.includes("/sales-economics-average")) {
-      return new Response(JSON.stringify({ averages: opts.economicsAverage ?? null }), { status: 200, headers: { "Content-Type": "application/json" } });
-    }
     if (url.includes("/stats/costs")) {
       // Enumeration: groupBy=campaignId, no campaign header → one group per campaign.
       if (url.includes("groupBy=campaignId")) {
@@ -539,8 +538,14 @@ function mockFetchGrouped(opts: { economics?: unknown; economicsAverage?: unknow
       // Per-campaign cost: groupBy=workflowSlug + x-campaign-id → single group with that campaign's cost.
       return new Response(costGroups(cid ? (opts.campaigns[cid]?.costCents ?? 0) : 0), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    if (url.includes("/sales-economics")) {
-      return new Response(JSON.stringify({ salesEconomics: opts.economics ?? null }), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (url.includes("/sales-economics-effective")) {
+      const effective =
+        opts.economics != null
+          ? { economics: opts.economics, source: "user" }
+          : opts.economicsAverage != null
+            ? { economics: opts.economicsAverage, source: "cross-brand-average" }
+            : { economics: null, source: null };
+      return new Response(JSON.stringify(effective), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("/public/stats")) {
       return new Response(JSON.stringify(opts.platformStats ?? PLATFORM_STATS), { status: 200, headers: { "Content-Type": "application/json" } });

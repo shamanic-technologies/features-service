@@ -44,15 +44,26 @@ export async function fetchSalesEconomics(
   return data.salesEconomics;
 }
 
+/** A brand's EFFECTIVE economics + provenance, as served by brand-service in ONE call. */
+export interface EffectiveEconomics {
+  /** The 5 conversion metrics, or null at cold start (nothing saved by any brand yet). */
+  economics: SalesEconomics | null;
+  /**
+   * Provenance of `economics`: "user" = the brand's own saved set; "cross-brand-average" = the
+   * org-wide average fallback (an ESTIMATE, never a user-confirmed number); null at cold start
+   * (economics is null). null ⟺ economics === null.
+   */
+  source: "user" | "cross-brand-average" | null;
+}
+
 /**
- * Fetch the CROSS-BRAND AVERAGE sales economics from brand-service — the average of every brand's
- * saved set, org-scoped. Used as a READ-TIME fallback when a brand never saved its own economics, so
- * revenue stays computable instead of a null pipeline. The caller tags any revenue computed on this
- * as "cross-brand-average" provenance (an ESTIMATE, never presented as a user-confirmed number).
- * Returns null when no brand has saved economics yet (cold start). Fails loud on any transport /
- * non-OK error (mirrors fetchSalesEconomics).
+ * Fetch a brand's EFFECTIVE sales economics from brand-service — ONE call that returns either the
+ * brand's own saved set ("user"), the org-wide cross-brand-average fallback ("cross-brand-average"),
+ * or null at cold start. brand-service OWNS the null→average defaulting now; features no longer
+ * reimplements it. Fails loud on any transport / non-OK error (mirrors fetchSalesEconomics).
  */
-export async function fetchCrossBrandAverage(
+export async function fetchEffectiveEconomics(
+  brandId: string,
   headers: {
     orgId: string;
     userId: string;
@@ -60,7 +71,7 @@ export async function fetchCrossBrandAverage(
     campaignId?: string;
     featureSlug?: string;
   },
-): Promise<SalesEconomics | null> {
+): Promise<EffectiveEconomics> {
   const url = process.env.BRAND_SERVICE_URL;
   const apiKey = process.env.BRAND_SERVICE_API_KEY;
   if (!url || !apiKey) {
@@ -72,19 +83,19 @@ export async function fetchCrossBrandAverage(
     "x-org-id": headers.orgId,
     "x-user-id": headers.userId,
     "x-run-id": headers.runId,
+    "x-brand-id": brandId,
   };
   if (headers.campaignId) reqHeaders["x-campaign-id"] = headers.campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const response = await fetch(`${url}/orgs/sales-economics-average`, {
+  const response = await fetch(`${url}/orgs/brands/${brandId}/sales-economics-effective`, {
     headers: reqHeaders,
   });
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`brand-service sales-economics-average failed (${response.status}): ${text}`);
+    throw new Error(`brand-service sales-economics-effective failed (${response.status}): ${text}`);
   }
 
-  const data = (await response.json()) as { averages: SalesEconomics | null };
-  return data.averages;
+  return (await response.json()) as EffectiveEconomics;
 }
