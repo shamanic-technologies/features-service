@@ -40,10 +40,22 @@ process.env.JOURNALISTS_SERVICE_URL = "http://journalists:3000";
 process.env.JOURNALISTS_SERVICE_API_KEY = "journalists-key";
 process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
+process.env.LEAD_SERVICE_URL = "http://lead:3000";
+process.env.LEAD_SERVICE_API_KEY = "lead-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
+// Mock the per-(org,brand) revenue engine so the public-revenue tests target the AGGREGATION
+// (enumerate pairs, cross-org sum, null handling, sort, cache) — the engine itself is covered by
+// revenue-engine.test.ts. buildCostEconomics + the default router stay real (importOriginal spread).
+const { mockComputeFeatureRevenue } = vi.hoisted(() => ({ mockComputeFeatureRevenue: vi.fn() }));
+vi.mock("./revenue.js", async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  computeFeatureRevenue: (...args: unknown[]) => mockComputeFeatureRevenue(...args),
+}));
+
 const app = (await import("../index.js")).default;
+const { __resetPublicRevenueCache } = await import("./public.js");
 
 const AUTH_HEADERS = {
   "x-api-key": "test-key",
@@ -434,5 +446,148 @@ describe("GET /stats/best (authenticated)", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.best).toBeDefined();
+  });
+});
+
+// ── GET /public/stats/revenue ─────────────────────────────────────────────
+
+interface PairResult { pipeline: number | null; costUsd: number }
+
+/** Drive the mocked engine: one deterministic result per `${orgId}::${brandId}`. */
+function setPairResults(pairs: Record<string, PairResult>): void {
+  mockComputeFeatureRevenue.mockImplementation(
+    async (...args: unknown[]) => {
+      const brandId = args[1] as string;
+      const headers = args[4] as { orgId: string };
+      const v = pairs[`${headers.orgId}::${brandId}`] ?? { pipeline: 0, costUsd: 0 };
+      return {
+        headline: { totalPipelineUsd: v.pipeline },
+        costEconomics: { totalCostUsd: v.costUsd, costOfAcquisitionPct: null, roiMultiple: null },
+        timeSeries: [], organizations: [], leads: [], events: [],
+      };
+    },
+  );
+}
+
+function mockRevenueFetch(
+  memberships: Array<{ orgId: string; brandId: string; workflowSlug: string }>,
+  brands: Array<{ id: string; name: string | null; domain: string | null }>,
+): void {
+  vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
+      return new Response(JSON.stringify({ memberships }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.startsWith("http://brand:3000/internal/brands")) {
+      return new Response(JSON.stringify({ brands }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+  });
+}
+
+describe("GET /public/stats/revenue", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    __resetPublicRevenueCache();
+  });
+
+  it("returns per-brand cross-org pipeline + CAC + ROI, sorted by pipeline desc", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    setPairResults({
+      "org-A::brand-1": { pipeline: 100, costUsd: 10 },
+      "org-B::brand-1": { pipeline: 40, costUsd: 5 },
+      "org-A::brand-2": { pipeline: 30, costUsd: 8 },
+    });
+    mockRevenueFetch(
+      [
+        { orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" },
+        { orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-2" }, // same pair → one compute
+        { orgId: "org-B", brandId: "brand-1", workflowSlug: "wf-1" },
+        { orgId: "org-A", brandId: "brand-2", workflowSlug: "wf-1" },
+      ],
+      [
+        { id: "brand-1", name: "Acme", domain: "acme.com" },
+        { id: "brand-2", name: "Beta", domain: "beta.io" },
+      ],
+    );
+
+    const res = await request(app).get("/public/stats/revenue?featureSlug=sales-cold-email-outreach&groupBy=brand");
+
+    expect(res.status).toBe(200);
+    expect(res.body.groupBy).toBe("brand");
+    expect(res.body.results).toHaveLength(2);
+
+    // brand-1 = 100 + 40 across its two orgs (no double-count), highest → first
+    const b1 = res.body.results[0];
+    expect(b1.brand.id).toBe("brand-1");
+    expect(b1.brand.name).toBe("Acme");
+    expect(b1.headline.totalPipelineUsd).toBe(140);
+    expect(b1.costEconomics.totalCostUsd).toBe(15); // 10 + 5
+    expect(b1.costEconomics.roiMultiple).toBeCloseTo(140 / 15, 5);
+    expect(b1.costEconomics.costOfAcquisitionPct).toBeCloseTo((15 / 140) * 100, 5);
+
+    const b2 = res.body.results[1];
+    expect(b2.brand.id).toBe("brand-2");
+    expect(b2.headline.totalPipelineUsd).toBe(30);
+    expect(b2.costEconomics.totalCostUsd).toBe(8);
+
+    // 3 distinct (org, brand) pairs → engine called exactly 3 times (not 4 — wf rows deduped)
+    expect(mockComputeFeatureRevenue).toHaveBeenCalledTimes(3);
+  });
+
+  it("null pipeline when a brand has no economics; cost present, ratios null", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    setPairResults({ "org-A::brand-9": { pipeline: null, costUsd: 12 } });
+    mockRevenueFetch(
+      [{ orgId: "org-A", brandId: "brand-9", workflowSlug: "wf-1" }],
+      [{ id: "brand-9", name: "NoEcon", domain: null }],
+    );
+
+    const res = await request(app).get("/public/stats/revenue?featureSlug=sales-cold-email-outreach&groupBy=brand");
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].headline.totalPipelineUsd).toBeNull();
+    expect(res.body.results[0].costEconomics.totalCostUsd).toBe(12);
+    expect(res.body.results[0].costEconomics.roiMultiple).toBeNull();
+    expect(res.body.results[0].costEconomics.costOfAcquisitionPct).toBeNull();
+  });
+
+  it("returns 400 when featureSlug is missing", async () => {
+    const res = await request(app).get("/public/stats/revenue?groupBy=brand");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/featureSlug/i);
+  });
+
+  it("returns 400 when groupBy is not 'brand'", async () => {
+    // groupBy is validated before the feature lookup — no findFirst mock (a queued Once would
+    // leak into the next test, since clearAllMocks does not drain the mockResolvedValueOnce queue).
+    const res = await request(app).get("/public/stats/revenue?featureSlug=sales-cold-email-outreach&groupBy=workflow");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/brand/i);
+  });
+
+  it("returns 404 when feature not found", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    const res = await request(app).get("/public/stats/revenue?featureSlug=nonexistent&groupBy=brand");
+    expect(res.status).toBe(404);
+  });
+
+  it("serves the second call within TTL from cache (engine not re-run)", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    setPairResults({ "org-A::brand-1": { pipeline: 50, costUsd: 4 } });
+    mockRevenueFetch(
+      [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }],
+      [{ id: "brand-1", name: "Acme", domain: "acme.com" }],
+    );
+
+    const r1 = await request(app).get("/public/stats/revenue?featureSlug=sales-cold-email-outreach&groupBy=brand");
+    const r2 = await request(app).get("/public/stats/revenue?featureSlug=sales-cold-email-outreach&groupBy=brand");
+
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    expect(r2.body).toEqual(r1.body);
+    expect(mockComputeFeatureRevenue).toHaveBeenCalledTimes(1); // second served from cache
   });
 });

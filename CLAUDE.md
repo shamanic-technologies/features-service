@@ -100,3 +100,29 @@ date-safe. Close-win books **full LTR** (realized revenue) and is immune to deca
 - `pr-expert-quote-opportunities` — HITL ranked queue (review → generate → send manually). `inbox` icon, displayOrder 10.
 
 Near-identical inputs/outputs/charts. Confirm the exact slug before editing — they diverge by intent.
+
+## Public cross-org revenue — reuse the engine via identity-forwarding, don't approximate
+
+`GET /public/stats/revenue?groupBy=brand` exposes the SAME expected-pipeline number as the
+authenticated dashboard (`/features/:slug/revenue`), cross-org. The pattern (don't rebuild it as a
+counts × per-stage-EV approximation — that loses company-dedup + decay and reads "lower quality"):
+
+- **Forward the owning org's identity.** lead-service `/orgs/leads` and brand-service
+  `/orgs/.../sales-economics` (and email-gateway `/orgs/status`, instantly `/orgs/manual-qualifications`)
+  authorize on `apiKeyAuth + requireOrgId` — only `x-org-id` is required; `x-user-id`/`x-run-id` are
+  optional, unvalidated context. So a service can run `computeFeatureRevenue` on ANY org's behalf by
+  setting `x-org-id` = that org + a service stub user/run. **Zero new cross-org reads needed.**
+- **Enumerate (org, brand[, workflow]) pairs** from lead-service `GET /internal/feature-memberships`
+  (reads `leads_campaigns.{org_id, brand_ids, workflow_slug, feature_slug}`), run the engine once per
+  `(org, brand)`, then **sum per brand across its orgs**. Leads are disjoint per org (a lead belongs to
+  exactly one org), so the sum never double-counts at the lead level. Cross-org same-company overlap is
+  the only residual approximation (rare).
+- **CAC/ROI** = `buildCostEconomics` (exported from `revenue.ts`) — byte-identical to the dashboard.
+- Heavy (one engine pass per pair) → cache the assembled response in-memory (`__resetPublicRevenueCache`
+  test seam).
+
+**Per-workflow revenue is NOT a `createdForBrandId` proxy.** 14/46 sales workflows span multiple brands
+(a template re-run across brands), so a workflow's LTR is not one brand's. Attribute at the
+`(brand × workflow)` cell — each run/recipient is single-brand, so cells are exact. Needs workflow-scoped
+COST (runs `groupBy=workflowSlug`) + a lead-service `workflowSlug` filter on `/orgs/leads`. Tracked as a
+follow-up in features-service#225.
