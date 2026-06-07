@@ -3201,6 +3201,175 @@
         }
       }
     },
+    "/public/stats/revenue": {
+      "get": {
+        "summary": "Cross-org expected pipeline revenue + CAC + ROI per brand (public, no auth)",
+        "description": "Per-brand expected pipeline revenue, cost-of-acquisition % and ROI multiple for a feature, aggregated cross-org. Runs the same expected-pipeline engine as GET /features/{featureSlug}/revenue once per (org, brand) that has leads for the feature, and sums each brand across the orgs it appears in (leads are disjoint per org, so no double-count). costEconomics is byte-identical to the dashboard's (buildCostEconomics). Only groupBy=brand is supported today — per-workflow revenue is a follow-up.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature slug (required)."
+            },
+            "required": true,
+            "description": "Feature slug (required).",
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "brand"
+              ],
+              "description": "Group results by brand (only supported value)."
+            },
+            "required": true,
+            "description": "Group results by brand (only supported value).",
+            "name": "groupBy",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-brand cross-org revenue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "groupBy": {
+                      "type": "string",
+                      "enum": [
+                        "brand"
+                      ]
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "brand": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "domain": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "domain"
+                            ]
+                          },
+                          "headline": {
+                            "type": "object",
+                            "properties": {
+                              "totalPipelineUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Cross-org expected pipeline for the brand (sum over the orgs it appears in). Null when no saved economics anywhere."
+                              }
+                            },
+                            "required": [
+                              "totalPipelineUsd"
+                            ]
+                          },
+                          "costEconomics": {
+                            "type": "object",
+                            "properties": {
+                              "totalCostUsd": {
+                                "type": "number",
+                                "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
+                              },
+                              "costOfAcquisitionPct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                              },
+                              "roiMultiple": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
+                              }
+                            },
+                            "required": [
+                              "totalCostUsd",
+                              "costOfAcquisitionPct",
+                              "roiMultiple"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "brand",
+                          "headline",
+                          "costEconomics"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "groupBy",
+                    "results"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/stats/ranked": {
       "get": {
         "summary": "Top workflows or brands ranked by output metric (authenticated)",

@@ -11,6 +11,9 @@ import {
   fetchBrandInfoBatch,
   type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
+import { getFunnel } from "../lib/funnel-registry.js";
+import { fetchFeatureMemberships } from "../lib/feature-memberships-client.js";
+import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
 
 const router = Router();
 
@@ -396,6 +399,129 @@ export async function handleBest(
   res.json({ best });
 }
 
+// ── Public revenue handler ───────────────────────────────────────────────────
+//
+// Cross-org expected pipeline revenue + CAC + ROI per brand for the public benchmarks
+// tables. Same EXACT engine the in-app dashboard runs (`/features/:slug/revenue`):
+// for each (org, brand) that has leads for the feature we run computeFeatureRevenue,
+// FORWARDING the owning org's x-org-id to the existing /orgs/* reads (those tiers require
+// only x-org-id, so a service can compute on any org's behalf). A brand's number is the
+// SUM across the orgs it appears in — leads are disjoint per org, so this never double-
+// counts at the lead level. CAC/ROI fall out of buildCostEconomics, byte-identical to the
+// dashboard. The compute is heavy (one engine pass per (org, brand)), so the assembled
+// response is cached in-memory for a short TTL — it is the same for every public caller.
+
+const SERVICE_IDENTITY = "features-service-public-revenue";
+const REVENUE_TTL_MS = 60_000;
+
+interface PublicRevenueResult {
+  brand: { id: string; name: string | null; domain: string | null };
+  headline: { totalPipelineUsd: number | null };
+  costEconomics: ReturnType<typeof buildCostEconomics>;
+}
+interface PublicRevenuePayload {
+  featureSlug: string;
+  groupBy: "brand";
+  results: PublicRevenueResult[];
+}
+
+const revenueCache = new Map<string, { payload: PublicRevenuePayload; expiresAt: number }>();
+
+/** Test seam — reset the in-memory public-revenue cache. */
+export function __resetPublicRevenueCache(): void {
+  revenueCache.clear();
+}
+
+export async function handlePublicRevenue(
+  featureSlug: string | undefined,
+  groupBy: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  if (!featureSlug) {
+    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
+    return;
+  }
+  // brand grouping only for now — per-workflow revenue (workflow-scoped cost + leads filter)
+  // ships as a follow-up once lead-service exposes the workflowSlug lead filter.
+  if (groupBy !== "brand") {
+    res.status(400).json({ error: "Query parameter 'groupBy' is required and must be 'brand'" });
+    return;
+  }
+
+  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
+  if (!feature) {
+    res.status(404).json({ error: "Feature not found" });
+    return;
+  }
+
+  const cacheKey = `${featureSlug}:${groupBy}`;
+  const cached = revenueCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    res.json(cached.payload);
+    return;
+  }
+
+  const funnel = getFunnel(featureSlug);
+  const memberships = await fetchFeatureMemberships(featureSlug);
+
+  // One revenue compute per DISTINCT (org, brand) pair (workflow collapsed for the brand table).
+  const pairKey = (orgId: string, brandId: string) => `${orgId}::${brandId}`;
+  const pairs = [
+    ...new Map(memberships.map((m) => [pairKey(m.orgId, m.brandId), { orgId: m.orgId, brandId: m.brandId }])).values(),
+  ];
+
+  const computed = await Promise.all(
+    pairs.map(async ({ orgId, brandId }) => {
+      const headers: DownstreamHeaders = { orgId, userId: SERVICE_IDENTITY, runId: SERVICE_IDENTITY, featureSlug };
+      const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers);
+      return { brandId, pipeline: body.headline.totalPipelineUsd, costUsd: body.costEconomics.totalCostUsd };
+    }),
+  );
+
+  // Aggregate per brand: pipeline = sum of the orgs' non-null pipelines (null iff EVERY org's is
+  // null — i.e. no saved economics anywhere); cost always sums. Leads are disjoint per org, so the
+  // sum does not double-count.
+  const byBrand = new Map<string, { pipelineSum: number; hasPipeline: boolean; costCents: number }>();
+  for (const c of computed) {
+    const agg = byBrand.get(c.brandId) ?? { pipelineSum: 0, hasPipeline: false, costCents: 0 };
+    if (c.pipeline !== null) {
+      agg.pipelineSum += c.pipeline;
+      agg.hasPipeline = true;
+    }
+    agg.costCents += Math.round(c.costUsd * 100);
+    byBrand.set(c.brandId, agg);
+  }
+
+  const brandIds = [...byBrand.keys()];
+  const brandInfo = await fetchBrandInfoBatch(brandIds);
+
+  const results: PublicRevenueResult[] = brandIds.map((brandId) => {
+    const agg = byBrand.get(brandId)!;
+    const totalPipelineUsd = agg.hasPipeline ? agg.pipelineSum : null;
+    const info = brandInfo.get(brandId);
+    return {
+      brand: { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null },
+      headline: { totalPipelineUsd },
+      costEconomics: buildCostEconomics(agg.costCents, totalPipelineUsd),
+    };
+  });
+
+  // Default sort: highest pipeline first (null pipeline last), then highest cost (deterministic).
+  results.sort((a, b) => {
+    const ap = a.headline.totalPipelineUsd;
+    const bp = b.headline.totalPipelineUsd;
+    if (ap === null && bp === null) return b.costEconomics.totalCostUsd - a.costEconomics.totalCostUsd;
+    if (ap === null) return 1;
+    if (bp === null) return -1;
+    if (bp !== ap) return bp - ap;
+    return b.costEconomics.totalCostUsd - a.costEconomics.totalCostUsd;
+  });
+
+  const payload: PublicRevenuePayload = { featureSlug, groupBy: "brand", results };
+  revenueCache.set(cacheKey, { payload, expiresAt: Date.now() + REVENUE_TTL_MS });
+  res.json(payload);
+}
+
 // ── GET /public/stats/ranked ─────────────────────────────────────────────────
 
 router.get("/public/stats/ranked", async (req, res) => {
@@ -416,6 +542,17 @@ router.get("/public/stats/best", async (req, res) => {
     await handleBest(req.query.featureSlug as string | undefined, req.query.groupBy as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public stats best error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/revenue ────────────────────────────────────────────────
+
+router.get("/public/stats/revenue", async (req, res) => {
+  try {
+    await handlePublicRevenue(req.query.featureSlug as string | undefined, req.query.groupBy as string | undefined, res);
+  } catch (error) {
+    console.error("[features-service] Public stats revenue error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
