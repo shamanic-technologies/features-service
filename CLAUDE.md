@@ -94,6 +94,35 @@ flipped 140→20. Engine unit tests sidestep this by passing an explicit `NOW` c
 `ago(days)` helper — mirror that. Terminals with no window (click `visit`, `closeWin`) are
 date-safe. Close-win books **full LTR** (realized revenue) and is immune to decay.
 
+## Revenue close-paths — combine via independent-OR (`orP`), NEVER `max`; ranking is objective-agnostic
+
+A lead reaches a close through MULTIPLE non-exclusive paths and they must be COMBINED, not MAX'd —
+`max` silently drops the weaker path and undercounts the pipeline. Two combine rules, two relations:
+
+- **A click closes via two independent routes** — direct self-serve (`visitToClosePct`, defined in
+  the dashboard sales-economics card as *"buy without a meeting (self-serve)"*) OR via a booked
+  meeting (`visitToMeetingPct · meetingToClosePct`). Combine: `pCloseClick = orP(v2c, v2m·m2c)`.
+- **A delivered-but-unengaged lead** can take the click route OR the reply route → `pCloseDeliv =
+  orP(click·pCloseClick, reply·pCloseReply)`.
+
+`orP(a,b) = 1−(1−a)(1−b)` (≥ max, ≤ sum, ≤ 1) lives in `funnel-registry.ts` (exported); it's the
+probability twin of the engine's `combineIndependent` (which combines in EV/dollars). The engine's
+`maxSingleEv` legitimately stays `max` — that's the lead's FURTHEST funnel POSITION (delivery vs
+meeting vs closeWin: a lead is at exactly one), not a set of independent close-paths.
+
+**`max` here was a real bug (#229).** It dropped the second click route everywhere (`/revenue` brand
++ campaign + groupBy AND `workflow-projection`). Before calling any close-path math "correct", check
+the brand-service field SEMANTICS — `visitToClose` is the DIRECT/self-serve close, NOT the all-routes
+click→close, so it's disjoint-but-independent from the meeting route and MUST be combined.
+
+**workflow-projection is objective-agnostic** — a workflow makes both clicks and replies, so the
+`objective` (meeting-booked/self-serve) does NOT gate which paths count. `closesPerBudget =
+(1/clickUsd)·orP(v2c, v2m·m2c) + (1/replyUsd)·(r2m·m2c)` (click-vs-reply ADD by linearity at the
+population level; the click's two sub-paths combine via orP). `objective` is no longer required and
+no longer affects the math — it's still accepted + echoed in the response for dashboard back-compat
+(the dashboard `WorkflowProjectionResponseSchema.objective` is a required enum; removing it from the
+response breaks `safeParse`). Don't re-add objective gating. (#229, v0.41.1.)
+
 ## Two expert-quote features — don't conflate
 
 - `pr-expert-quote-outreach` — autonomous PR quote outreach.
