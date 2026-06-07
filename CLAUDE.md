@@ -123,6 +123,16 @@ no longer affects the math — it's still accepted + echoed in the response for 
 (the dashboard `WorkflowProjectionResponseSchema.objective` is a required enum; removing it from the
 response breaks `safeParse`). Don't re-add objective gating. (#229, v0.41.1.)
 
+## revenue.test.ts `mockFetch` routes by URL SUBSTRING — order specific paths before their prefixes
+
+`mockFetch` / `mockFetchGrouped` dispatch on `url.includes("...")`. A new brand-service path that
+CONTAINS an existing one as a substring silently routes to the wrong handler unless its branch is
+placed FIRST. Concretely: `"/orgs/sales-economics-average".includes("/sales-economics") === true`, so
+the `/sales-economics-average` branch MUST precede the per-brand `/sales-economics` branch — otherwise
+the cross-brand-average call gets the per-brand `{ salesEconomics }` envelope (wrong shape) and the
+fallback test asserts the wrong thing with no error. When adding any downstream mock whose path is a
+superstring of an existing one, add it ABOVE the shorter match. (Set 2026-06-07, #236 cross-brand-average.)
+
 ## Two expert-quote features — don't conflate
 
 - `pr-expert-quote-outreach` — autonomous PR quote outreach.
