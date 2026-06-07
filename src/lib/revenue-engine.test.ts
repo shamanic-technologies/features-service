@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { computeRevenue, type ResolvedPath, type EnginePerson } from "./revenue-engine.js";
 
-// LTR=1000, visitToClose=2%, visitToMeeting=5%, meetingToClose=30%, replyToMeeting=40%
-//   visit_EV = 1000 × max(0.02, 0.05×0.30=0.015) = 20
-//   reply_EV = 1000 × 0.40 × 0.30               = 120
+// Engine is funnel-agnostic — these are arbitrary fixture EVs (NOT the live funnel formula, which
+// now combines the click's two routes via orP). visit_EV=20, reply_EV=120 keep the engine assertions
+// simple; the funnel→EV math itself is covered in funnel-registry.test.ts.
 const PATHS: ResolvedPath[] = [
   { tag: "visit", signal: "clicked", expectedRevenueUsd: 20 },
   { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120 },

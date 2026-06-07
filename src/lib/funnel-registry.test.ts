@@ -28,7 +28,7 @@ describe("sales funnel — resolvePaths", () => {
   });
 
   it("click / reply EV come from sales-economics (rate-independent)", () => {
-    expect(byTag.visit.expectedRevenueUsd).toBeCloseTo(20); // 1000·max(0.02, 0.05·0.30)
+    expect(byTag.visit.expectedRevenueUsd).toBeCloseTo(34.7); // 1000·orP(0.02, 0.05·0.30) = 1000·(1−0.98·0.985)
     expect(byTag.reply.expectedRevenueUsd).toBeCloseTo(120); // 1000·0.40·0.30
   });
 
@@ -43,10 +43,10 @@ describe("sales funnel — resolvePaths", () => {
   });
 
   it("delivered / sent / contacted chain the platform rates down to close", () => {
-    // pClose_deliv = max(0.1·0.02, 0.1·0.12) = 0.012 → 12 ; ×1 ×1 upstream
-    expect(byTag.delivered.expectedRevenueUsd).toBeCloseTo(12);
-    expect(byTag.sent.expectedRevenueUsd).toBeCloseTo(12);
-    expect(byTag.contacted.expectedRevenueUsd).toBeCloseTo(12);
+    // pClose_deliv = orP(0.1·0.0347, 0.1·0.12) = 1−(1−0.00347)(1−0.012) = 0.0154284 → 15.4284 ; ×1 ×1 upstream
+    expect(byTag.delivered.expectedRevenueUsd).toBeCloseTo(15.4284);
+    expect(byTag.sent.expectedRevenueUsd).toBeCloseTo(15.4284);
+    expect(byTag.contacted.expectedRevenueUsd).toBeCloseTo(15.4284);
   });
 
   it("tags delivery stages as delivery (ascending order) and visit/reply/meeting/closeWin as engagement", () => {
@@ -98,8 +98,8 @@ describe("sales funnel — resolvePaths", () => {
       platformRates: { ...RATES, sentPerContacted: 0.5, deliveredPerSent: 0.5 },
     });
     const t = Object.fromEntries(paths2.map((p) => [p.tag, p]));
-    expect(t.delivered.expectedRevenueUsd).toBeCloseTo(12); // unaffected by upstream
-    expect(t.sent.expectedRevenueUsd).toBeCloseTo(6); // ×0.5 delivered|sent
-    expect(t.contacted.expectedRevenueUsd).toBeCloseTo(3); // ×0.5 ×0.5
+    expect(t.delivered.expectedRevenueUsd).toBeCloseTo(15.4284); // unaffected by upstream
+    expect(t.sent.expectedRevenueUsd).toBeCloseTo(7.7142); // ×0.5 delivered|sent
+    expect(t.contacted.expectedRevenueUsd).toBeCloseTo(3.8571); // ×0.5 ×0.5
   });
 });
