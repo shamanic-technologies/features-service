@@ -3,8 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { getFunnel, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
-import { fetchSalesEconomics, fetchCrossBrandAverage } from "../lib/sales-economics-client.js";
+import { getFunnel } from "../lib/funnel-registry.js";
+import { fetchSalesEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
@@ -44,13 +44,8 @@ export function buildCostEconomics(totalCostInUsdCents: number, totalPipelineUsd
 
 interface RevenueResponse {
   featureSlug: string;
-  /**
-   * totalPipelineUsd is null when no funnel is wired, or the brand has no saved economics AND no
-   * cross-brand average exists yet (cold start). economicsSource tags the provenance of the economics
-   * used: "sales-economics" = the brand's own saved set; "cross-brand-average" = the fallback average
-   * (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no source applied).
-   */
-  headline: { totalPipelineUsd: number | null; economicsSource: EconomicsSource | null };
+  /** totalPipelineUsd is null when no funnel is wired or the brand has no economics saved. */
+  headline: { totalPipelineUsd: number | null };
   costEconomics: CostEconomics;
   timeSeries: TimeSeriesPoint[];
   organizations: OrganizationRow[];
@@ -65,7 +60,7 @@ export type DownstreamHeaders = { orgId: string; userId: string; runId: string; 
 
 function emptyBody(totalPipelineUsd: number | null, totalCostInUsdCents: number): RevenueBody {
   return {
-    headline: { totalPipelineUsd, economicsSource: null },
+    headline: { totalPipelineUsd },
     costEconomics: buildCostEconomics(totalCostInUsdCents, totalPipelineUsd),
     timeSeries: [],
     organizations: [],
@@ -103,24 +98,10 @@ export async function computeFeatureRevenue(
     return emptyBody(null, totalCostInUsdCents);
   }
 
-  // Economics (rates + terminal LTR). A brand that saved its own set computes on it ("sales-economics").
-  // A brand that never saved economics falls back to the CROSS-BRAND AVERAGE so revenue stays computable
-  // ("cross-brand-average") — tagged so the dashboard can badge it ESTIMATED, never as a user-confirmed
-  // number. If the average is ALSO null (no brand has saved economics yet — cold start) revenue is
-  // genuinely incomputable → null pipeline.
-  const savedEconomics = await fetchSalesEconomics(brandId, { ...headers, campaignId });
-  let economics: SalesEconomics;
-  let economicsSource: EconomicsSource;
-  if (savedEconomics) {
-    economics = savedEconomics;
-    economicsSource = "sales-economics";
-  } else {
-    const averageEconomics = await fetchCrossBrandAverage({ ...headers, campaignId });
-    if (!averageEconomics) {
-      return emptyBody(null, totalCostInUsdCents);
-    }
-    economics = averageEconomics;
-    economicsSource = "cross-brand-average";
+  // Economics (rates + terminal LTR). Unset → revenue incomputable → null pipeline.
+  const economics = await fetchSalesEconomics(brandId, { ...headers, campaignId });
+  if (!economics) {
+    return emptyBody(null, totalCostInUsdCents);
   }
 
   // Platform-global email funnel rates (cached) — let a lead earn expected revenue from
@@ -184,7 +165,7 @@ export async function computeFeatureRevenue(
   const result = computeRevenue(paths, persons, undefined, economics.lifetimeRevenueUsd);
 
   return {
-    headline: { ...result.headline, economicsSource },
+    headline: result.headline,
     costEconomics: buildCostEconomics(totalCostInUsdCents, result.headline.totalPipelineUsd),
     timeSeries: result.timeSeries,
     organizations: result.organizations,

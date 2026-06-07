@@ -29,7 +29,7 @@ export interface FunnelInputs {
   platformRates: PlatformEmailRates;
 }
 
-export type EconomicsSource = "sales-economics" | "cross-brand-average";
+export type EconomicsSource = "sales-economics";
 
 export interface FunnelDefinition {
   economicsSource: EconomicsSource;
