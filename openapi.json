@@ -600,11 +600,21 @@
               "totalPipelineUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "Org-deduped expected pipeline. Null when no funnel is wired or the brand has no saved economics."
+                "description": "Org-deduped expected pipeline. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."
+              },
+              "economicsSource": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "sales-economics",
+                  "cross-brand-average"
+                ],
+                "description": "Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the cross-brand average fallback (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no funnel wired or no economics applied)."
               }
             },
             "required": [
-              "totalPipelineUsd"
+              "totalPipelineUsd",
+              "economicsSource"
             ]
           },
           "costEconomics": {
@@ -858,11 +868,21 @@
                     "totalPipelineUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Org-deduped expected pipeline for this campaign. Null when no funnel is wired or the brand has no saved economics."
+                      "description": "Org-deduped expected pipeline for this campaign. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."
+                    },
+                    "economicsSource": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "sales-economics",
+                        "cross-brand-average"
+                      ],
+                      "description": "Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the cross-brand average fallback (ESTIMATE). Null when the pipeline is null."
                     }
                   },
                   "required": [
-                    "totalPipelineUsd"
+                    "totalPipelineUsd",
+                    "economicsSource"
                   ]
                 },
                 "costEconomics": {
@@ -2107,7 +2127,7 @@
     "/features/{featureSlug}/revenue": {
       "get": {
         "summary": "Expected pipeline revenue for a feature",
-        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. totalPipelineUsd is null when no funnel is wired for the feature or the brand has no saved economics. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple. With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature (campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call.",
+        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. totalPipelineUsd is null when no funnel is wired for the feature, or the brand has no saved economics AND no cross-brand average exists (cold start). When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple. With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature (campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call.",
         "tags": [
           "Stats"
         ],
