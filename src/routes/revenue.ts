@@ -27,13 +27,13 @@ const router = Router();
  *   - costOfAcquisitionPct:  (totalCostUsd / totalPipelineUsd) * 100; null when pipeline is null OR 0.
  *   - roiMultiple:           totalPipelineUsd / totalCostUsd; null when cost is 0 OR pipeline is null.
  */
-interface CostEconomics {
+export interface CostEconomics {
   totalCostUsd: number;
   costOfAcquisitionPct: number | null;
   roiMultiple: number | null;
 }
 
-function buildCostEconomics(totalCostInUsdCents: number, totalPipelineUsd: number | null): CostEconomics {
+export function buildCostEconomics(totalCostInUsdCents: number, totalPipelineUsd: number | null): CostEconomics {
   const totalCostUsd = totalCostInUsdCents / 100;
   const costOfAcquisitionPct =
     totalPipelineUsd === null || totalPipelineUsd === 0 ? null : (totalCostUsd / totalPipelineUsd) * 100;
@@ -54,9 +54,9 @@ interface RevenueResponse {
 }
 
 /** The revenue response body for one (brand, campaign?) scope — everything but the featureSlug. */
-type RevenueBody = Omit<RevenueResponse, "featureSlug">;
+export type RevenueBody = Omit<RevenueResponse, "featureSlug">;
 
-type DownstreamHeaders = { orgId: string; userId: string; runId: string; featureSlug?: string };
+export type DownstreamHeaders = { orgId: string; userId: string; runId: string; featureSlug?: string };
 
 function emptyBody(totalPipelineUsd: number | null, totalCostInUsdCents: number): RevenueBody {
   return {
@@ -81,7 +81,7 @@ function emptyBody(totalPipelineUsd: number | null, totalCostInUsdCents: number)
  * for dates / time-series / events / post-engagement decay / close-win: if a call fails we log and
  * degrade (the pipeline total, orgs and leads stay correct) rather than failing the whole endpoint.
  */
-async function computeFeatureRevenue(
+export async function computeFeatureRevenue(
   featureSlug: string,
   brandId: string,
   campaignId: string | undefined,

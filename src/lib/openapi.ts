@@ -528,6 +528,44 @@ registry.registerPath({
   },
 });
 
+// ── GET /public/stats/revenue ─────────────────────────────────────────────
+
+const publicRevenueResultSchema = z.object({
+  brand: rankedBrandSchema,
+  headline: z.object({
+    totalPipelineUsd: z.number().nullable().describe("Cross-org expected pipeline for the brand (sum over the orgs it appears in). Null when no saved economics anywhere."),
+  }),
+  costEconomics: revenueCostEconomicsSchema,
+});
+
+const publicRevenueResponseSchema = z.object({
+  featureSlug: z.string(),
+  groupBy: z.literal("brand"),
+  results: z.array(publicRevenueResultSchema),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/revenue",
+  summary: "Cross-org expected pipeline revenue + CAC + ROI per brand (public, no auth)",
+  description:
+    "Per-brand expected pipeline revenue, cost-of-acquisition % and ROI multiple for a feature, aggregated cross-org. " +
+    "Runs the same expected-pipeline engine as GET /features/{featureSlug}/revenue once per (org, brand) that has leads for the feature, and sums each brand across the orgs it appears in (leads are disjoint per org, so no double-count). " +
+    "costEconomics is byte-identical to the dashboard's (buildCostEconomics). Only groupBy=brand is supported today — per-workflow revenue is a follow-up.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string().describe("Feature slug (required)."),
+      groupBy: z.literal("brand").describe("Group results by brand (only supported value)."),
+    }),
+  },
+  responses: {
+    200: { description: "Per-brand cross-org revenue", content: { "application/json": { schema: publicRevenueResponseSchema } } },
+    400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── Authenticated ranked/best ────────────────────────────────────────────
 
 registry.registerPath({
