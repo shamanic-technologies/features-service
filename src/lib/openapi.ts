@@ -283,8 +283,7 @@ const revenueCostEconomicsSchema = z.object({
 const featureRevenueResponseSchema = z.object({
   featureSlug: z.string(),
   headline: z.object({
-    totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."),
-    economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the cross-brand average fallback (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no funnel wired or no economics applied)."),
+    totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline. Null when no funnel is wired or the brand has no saved economics."),
   }),
   costEconomics: revenueCostEconomicsSchema.describe("Derived cost economics. Always present; ratios are null per the documented null semantics."),
   timeSeries: z.array(revenueTimeSeriesPointSchema).describe("Cumulative pipeline ordered by event date. Empty until per-event timestamps exist (email-gateway)."),
@@ -302,8 +301,7 @@ const featureRevenueResponseRef = registry.register("FeatureRevenueResponse", fe
 const revenueGroupSchema = z.object({
   campaignId: z.string(),
   headline: z.object({
-    totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline for this campaign. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."),
-    economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the cross-brand average fallback (ESTIMATE). Null when the pipeline is null."),
+    totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline for this campaign. Null when no funnel is wired or the brand has no saved economics."),
   }),
   costEconomics: revenueCostEconomicsSchema,
 });
@@ -325,8 +323,7 @@ registry.registerPath({
     "Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. " +
     "Rates + terminal LTR come from the brand's sales economics. " +
     "timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. " +
-    "totalPipelineUsd is null when no funnel is wired for the feature, or the brand has no saved economics AND no cross-brand average exists (cold start). " +
-    "When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. " +
+    "totalPipelineUsd is null when no funnel is wired for the feature or the brand has no saved economics. " +
     "costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple. " +
     "With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature " +
     "(campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call.",
