@@ -123,6 +123,25 @@ no longer affects the math — it's still accepted + echoed in the response for 
 (the dashboard `WorkflowProjectionResponseSchema.objective` is a required enum; removing it from the
 response breaks `safeParse`). Don't re-add objective gating. (#229, v0.41.1.)
 
+## Public stat families are INDEPENDENT — fetch via `Promise.allSettled`, never `Promise.all`
+
+`handleRanked`/`handleBest` → `fetchOutcomeStats` (`src/routes/public.ts`) fans out to SEVERAL
+independent upstream stat families (email-gateway recipient stats, journalists stats; the registry
+has more sources but only these two are fetched today). They are NOT a transaction — one family's
+health says nothing about another's. `Promise.all` rejects the WHOLE batch if ANY member rejects, so
+a single upstream outage (e.g. journalists-service 500 from instantly-service being down) made the
+batch reject → `handleRanked` returned empty outcomes → `computeGroupStats` defaulted EVERY recipient
+stat to 0 while the separately-computed `totalCostInUsdCents`/`completedRuns` survived. That's the
+"200 OK, all funnel stats = 0, cost populated" prod incident.
+
+Use `Promise.allSettled` and merge only fulfilled families. A rejected family is **logged loudly**
+(`console.error` with `featureSlug` + `groupBy` + reason — fail-loud per family) and contributes no
+keys; its stats default to 0/null downstream, but the succeeding families still populate. Do NOT
+re-introduce `Promise.all` here, and do NOT swallow a family failure silently (no bare `.catch(()=>{})`).
+The DOD is "succeeding families never zeroed by a sibling's failure", NOT "failures masked as zero".
+Keep the cost/runs path (`fetchPublicCosts`, the outer `Promise.all` in `handleRanked`) untouched —
+cost is essential, not an optional outcome family. (Set 2026-06-08, PR #248 stat-families resilience.)
+
 ## revenue.test.ts `mockFetch` routes by URL SUBSTRING — order specific paths before their prefixes
 
 `mockFetch` / `mockFetchGrouped` dispatch on `url.includes("...")`. A new brand-service path that
