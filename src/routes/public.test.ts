@@ -314,6 +314,58 @@ describe("GET /public/stats/ranked", () => {
     expect(res.body.results[0].stats.totalCostInUsdCents).toBe(3000);
   });
 
+  it("populates recipient/email + cost stats even when the journalists family fails (one family reject does not zero the others)", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      // Independent journalists family is DOWN (mirrors the prod incident: instantly-service
+      // outage → journalists-service 500). The email/recipient + cost families are healthy.
+      if (url.startsWith("http://journalists:3000/public/stats")) {
+        return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500 });
+      }
+      if (url.startsWith("http://workflow:3000/public/workflows")) {
+        return new Response(JSON.stringify({ workflows: [
+          { id: "wf-1", workflowSlug: "sales-outreach-alpha", workflowName: "Sales Outreach Alpha", workflowDynastyName: "Sales Outreach Alpha", workflowDynastySlug: "sales-outreach-alpha", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
+        ] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
+        return new Response(JSON.stringify({ groups: [
+          { dimensions: { workflowSlug: "sales-outreach-alpha" }, totalCostInUsdCents: "1000", runCount: 5, minStartedAt: null, maxStartedAt: null },
+        ] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.startsWith("http://email:3000/public/stats")) {
+        return new Response(JSON.stringify({ groups: [
+          { key: "sales-outreach-alpha", broadcast: { recipientStats: { repliesPositive: 10, sent: 100, delivered: 90, opened: 50, clicked: 12 } } },
+        ] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    });
+
+    const res = await request(app)
+      .get("/public/stats/ranked?featureSlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow");
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    // Sales recipient/email stats STILL populate despite the journalists 500 — the bug fixed.
+    expect(res.body.results[0].stats.recipientsRepliesPositive).toBe(10);
+    expect(res.body.results[0].stats.recipientsSent).toBe(100);
+    expect(res.body.results[0].stats.recipientsDelivered).toBe(90);
+    expect(res.body.results[0].stats.recipientsOpened).toBe(50);
+    expect(res.body.results[0].stats.recipientsClicked).toBe(12);
+    // Cost path survives too.
+    expect(res.body.results[0].stats.totalCostInUsdCents).toBe(1000);
+    expect(res.body.results[0].stats.completedRuns).toBe(5);
+    // The failed family is logged loudly with context (fail loud, not silently swallowed).
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('outcome stat family "journalists" failed'),
+      expect.anything(),
+    );
+
+    errSpy.mockRestore();
+  });
+
   it("supports groupBy=brand with enriched brand info", async () => {
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
     mockFetchResponses({
