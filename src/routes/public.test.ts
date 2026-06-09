@@ -398,6 +398,47 @@ describe("GET /public/stats/ranked", () => {
     expect(brandCalls).toHaveLength(1);
     expect(brandCalls[0][0]).toBe("http://brand:3000/internal/brands?ids=brand-2,brand-1");
   });
+
+  it("adds public-safe cumulative timeline points to brand ranked results when dated aggregate data exists", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockFetchResponses({
+      "http://runs:3000/v1/stats/public/costs": {
+        groups: [
+          { dimensions: { brandId: "brand-1" }, totalCostInUsdCents: "500", runCount: 3, minStartedAt: null, maxStartedAt: null },
+          { dimensions: { brandId: "brand-2" }, totalCostInUsdCents: "1500", runCount: 7, minStartedAt: null, maxStartedAt: null },
+        ],
+      },
+      "http://email:3000/public/stats": {
+        groups: [
+          {
+            key: "brand-1",
+            broadcast: { recipientStats: { repliesPositive: 5, sent: 50, opened: 25, clicked: 6 } },
+            timeline: [
+              { date: "2026-06-01", recipientsSent: 10, recipientsOpened: 4, recipientsClicked: 1, recipientsRepliesPositive: 0 },
+              { date: "2026-06-02", recipientsSent: 15, recipientsOpened: 8, recipientsClicked: 2, recipientsRepliesPositive: 1 },
+            ],
+          },
+          {
+            key: "brand-2",
+            broadcast: { recipientStats: { repliesPositive: 15, sent: 60, opened: 30, clicked: 9 } },
+          },
+        ],
+      },
+    });
+
+    const res = await request(app)
+      .get("/public/stats/ranked?featureSlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=brand");
+
+    expect(res.status).toBe(200);
+    const byBrand = Object.fromEntries(res.body.results.map((r: any) => [r.brand.id, r]));
+    expect(byBrand["brand-1"].timeline).toEqual([
+      { date: "2026-06-01", cumulativePipelineUsd: null, emailsSent: 10, emailsOpened: 4, emailsClicked: 1, emailsReplied: 0 },
+      { date: "2026-06-02", cumulativePipelineUsd: null, emailsSent: 25, emailsOpened: 12, emailsClicked: 3, emailsReplied: 1 },
+    ]);
+    expect(byBrand["brand-2"]).not.toHaveProperty("timeline");
+    expect(JSON.stringify(byBrand["brand-1"].timeline)).not.toContain("@");
+    expect(JSON.stringify(byBrand["brand-1"].timeline)).not.toContain("campaign");
+  });
 });
 
 // ── GET /public/stats/best ────────────────────────────────────────────────
@@ -505,13 +546,16 @@ describe("GET /stats/best (authenticated)", () => {
 
 interface PairResult { pipeline: number | null; costUsd: number }
 
-/** Drive the mocked engine: one deterministic result per `${orgId}::${brandId}`. */
+/** Drive the mocked engine: one deterministic result per `${orgId}::${brandId}` or `${orgId}::${brandId}::${workflowSlug}`. */
 function setPairResults(pairs: Record<string, PairResult>): void {
   mockComputeFeatureRevenue.mockImplementation(
     async (...args: unknown[]) => {
       const brandId = args[1] as string;
-      const headers = args[4] as { orgId: string };
-      const v = pairs[`${headers.orgId}::${brandId}`] ?? { pipeline: 0, costUsd: 0 };
+      const workflowSlug = args[3] as string | undefined;
+      const headers = args[5] as { orgId: string };
+      const v = (workflowSlug ? pairs[`${headers.orgId}::${brandId}::${workflowSlug}`] : undefined)
+        ?? pairs[`${headers.orgId}::${brandId}`]
+        ?? { pipeline: 0, costUsd: 0 };
       return {
         headline: { totalPipelineUsd: v.pipeline },
         costEconomics: { totalCostUsd: v.costUsd, costOfAcquisitionPct: null, roiMultiple: null },
@@ -606,18 +650,62 @@ describe("GET /public/stats/revenue", () => {
     expect(res.body.results[0].costEconomics.costOfAcquisitionPct).toBeNull();
   });
 
+  it("returns public workflow pipeline + ROI from exact (org, brand, workflow) cells", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    setPairResults({
+      "org-A::brand-1::wf-old": { pipeline: 40, costUsd: 4 },
+      "org-A::brand-1::wf-new": { pipeline: 60, costUsd: 6 },
+      "org-B::brand-2::wf-new": { pipeline: 30, costUsd: 3 },
+      "org-A::brand-3::wf-solo": { pipeline: null, costUsd: 5 },
+    });
+    vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
+        return new Response(JSON.stringify({ memberships: [
+          { orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-old" },
+          { orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-new" },
+          { orgId: "org-B", brandId: "brand-2", workflowSlug: "wf-new" },
+          { orgId: "org-A", brandId: "brand-3", workflowSlug: "wf-solo" },
+        ] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.startsWith("http://workflow:3000/public/workflows")) {
+        return new Response(JSON.stringify({ workflows: [
+          { id: "old-id", workflowSlug: "wf-old", workflowName: "Old", workflowDynastyName: "New", workflowDynastySlug: "wf-new", version: 1, status: "deprecated", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: "new-id" },
+          { id: "new-id", workflowSlug: "wf-new", workflowName: "New", workflowDynastyName: "New", workflowDynastySlug: "wf-new", version: 2, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: "brand-1", upgradedTo: null },
+          { id: "solo-id", workflowSlug: "wf-solo", workflowName: "Solo", workflowDynastyName: "Solo", workflowDynastySlug: "wf-solo", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
+        ] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    });
+
+    const res = await request(app).get("/public/stats/revenue?featureSlug=sales-cold-email-outreach&groupBy=workflow");
+
+    expect(res.status).toBe(200);
+    expect(res.body.groupBy).toBe("workflow");
+    expect(res.body.results).toHaveLength(2);
+    const bySlug = Object.fromEntries(res.body.results.map((r: any) => [r.workflow.workflowSlug, r]));
+    expect(bySlug["wf-new"].workflow.workflowName).toBe("New");
+    expect(bySlug["wf-new"].headline.totalPipelineUsd).toBe(130); // old chain 40 + new cells 60 + 30
+    expect(bySlug["wf-new"].costEconomics.totalCostUsd).toBe(13);
+    expect(bySlug["wf-new"].costEconomics.roiMultiple).toBe(10);
+    expect(bySlug["wf-solo"].headline.totalPipelineUsd).toBeNull();
+    expect(bySlug["wf-solo"].costEconomics.totalCostUsd).toBe(5);
+    expect(bySlug["wf-solo"].costEconomics.roiMultiple).toBeNull();
+    expect(mockComputeFeatureRevenue).toHaveBeenCalledTimes(4);
+  });
+
   it("returns 400 when featureSlug is missing", async () => {
     const res = await request(app).get("/public/stats/revenue?groupBy=brand");
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/featureSlug/i);
   });
 
-  it("returns 400 when groupBy is not 'brand'", async () => {
+  it("returns 400 when groupBy is not supported", async () => {
     // groupBy is validated before the feature lookup — no findFirst mock (a queued Once would
     // leak into the next test, since clearAllMocks does not drain the mockResolvedValueOnce queue).
-    const res = await request(app).get("/public/stats/revenue?featureSlug=sales-cold-email-outreach&groupBy=workflow");
+    const res = await request(app).get("/public/stats/revenue?featureSlug=sales-cold-email-outreach&groupBy=foo");
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/brand/i);
+    expect(res.body.error).toMatch(/brand.*workflow/i);
   });
 
   it("returns 404 when feature not found", async () => {
