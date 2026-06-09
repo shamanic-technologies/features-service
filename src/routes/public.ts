@@ -87,18 +87,32 @@ async function fetchOutcomeStats(
   const sources = requiredSources(keys);
   const merged = new Map<string, Record<string, number>>();
 
-  const promises: Promise<Map<string, Record<string, number>>>[] = [];
-  if (sources.has("email-gateway")) promises.push(fetchPublicEmailStats(featureSlug, groupBy));
-  if (sources.has("journalists")) promises.push(fetchPublicJournalistsStats(featureSlug, groupBy));
+  // Each stat family is an INDEPENDENT upstream source. A failure in one (e.g. a
+  // journalists-service 500) must NOT zero the others — so fetch via allSettled and
+  // merge only the families that succeeded. A rejected family is logged loudly (fail
+  // loud per family, per CLAUDE.md) and simply contributes no keys; its stats default
+  // to 0/null downstream, but the succeeding families still populate. One upstream
+  // outage can no longer blank the unrelated sales recipient/email stats.
+  const families: { source: string; promise: Promise<Map<string, Record<string, number>>> }[] = [];
+  if (sources.has("email-gateway")) families.push({ source: "email-gateway", promise: fetchPublicEmailStats(featureSlug, groupBy) });
+  if (sources.has("journalists")) families.push({ source: "journalists", promise: fetchPublicJournalistsStats(featureSlug, groupBy) });
 
-  const results = await Promise.all(promises);
-  for (const map of results) {
-    for (const [key, stats] of map) {
+  const results = await Promise.allSettled(families.map((f) => f.promise));
+  results.forEach((result, i) => {
+    const { source } = families[i];
+    if (result.status === "rejected") {
+      console.error(
+        `[features-service] outcome stat family "${source}" failed (featureSlug=${featureSlug}, groupBy=${groupBy}) — other families unaffected:`,
+        result.reason,
+      );
+      return;
+    }
+    for (const [key, stats] of result.value) {
       const existing = merged.get(key) ?? {};
       Object.assign(existing, stats);
       merged.set(key, existing);
     }
-  }
+  });
 
   return merged;
 }

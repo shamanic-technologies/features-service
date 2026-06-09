@@ -351,6 +351,7 @@ registry.registerPath({
 // ── GET /features/:featureSlug/workflow-projection ─────────────────────────
 
 const workflowProjectionDetailSchema = z.object({
+  contactedLeads: z.number().nullable().describe("Expected unique leads contacted from the budget. Null when the workflow has no usable contacted-lead denominator."),
   replies: z.number().nullable().describe("Expected positive replies from the budget. Null when the workflow has no reply cost."),
   visits: z.number().nullable().describe("Expected clicks/visits from the budget. Null when the workflow has no click cost."),
   meetings: z.number().nullable().describe("Expected meetings booked (from both the reply and click routes)."),
@@ -363,6 +364,7 @@ const workflowProjectionDetailSchema = z.object({
 const workflowProjectionItemSchema = z.object({
   workflowDynastySlug: z.string(),
   workflowDynastyName: z.string().nullable(),
+  contactedUsd: z.number().nullable().describe("Cost per unique lead contacted (USD). Null when the contacted-lead denominator is absent or zero."),
   replyUsd: z.number().nullable().describe("Cost per positive reply (USD). Null when the metric is absent or zero."),
   clickUsd: z.number().nullable().describe("Cost per click (USD). Null when the metric is absent or zero."),
   costPerCloseUsd: z.number().nullable().describe("Budget required per close for this workflow. Null when there is no usable cost/conversion data."),
