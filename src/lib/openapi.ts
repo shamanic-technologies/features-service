@@ -541,6 +541,7 @@ const publicRevenueResultSchema = z.object({
     totalPipelineUsd: z.number().nullable().describe("Cross-org expected pipeline for the brand (sum over the orgs it appears in). Null when no saved economics anywhere."),
   }),
   costEconomics: revenueCostEconomicsSchema,
+  timeline: z.array(revenueTimeSeriesPointSchema).optional().describe("Public-safe cumulative expected-pipeline timeline for this brand. Omitted when no dated revenue events exist."),
 });
 
 const publicRevenueResponseSchema = z.object({

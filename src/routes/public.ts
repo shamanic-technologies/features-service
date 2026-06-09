@@ -432,6 +432,7 @@ interface PublicRevenueResult {
   brand: { id: string; name: string | null; domain: string | null };
   headline: { totalPipelineUsd: number | null };
   costEconomics: ReturnType<typeof buildCostEconomics>;
+  timeline?: Array<{ date: string; cumulativePipelineUsd: number }>;
 }
 interface PublicRevenuePayload {
   featureSlug: string;
@@ -489,7 +490,12 @@ export async function handlePublicRevenue(
       const headers: DownstreamHeaders = { orgId, featureSlug };
       try {
         const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers);
-        return { brandId, pipeline: body.headline.totalPipelineUsd, costUsd: body.costEconomics.totalCostUsd };
+        return {
+          brandId,
+          pipeline: body.headline.totalPipelineUsd,
+          costUsd: body.costEconomics.totalCostUsd,
+          timeSeries: body.timeSeries,
+        };
       } catch (error) {
         if (error instanceof BrandOwnershipError) {
           console.warn(
@@ -505,15 +511,22 @@ export async function handlePublicRevenue(
   // Aggregate per brand: pipeline = sum of the orgs' non-null pipelines (null iff EVERY org's is
   // null — i.e. no saved economics anywhere); cost always sums. Leads are disjoint per org, so the
   // sum does not double-count.
-  const byBrand = new Map<string, { pipelineSum: number; hasPipeline: boolean; costCents: number }>();
+  const byBrand = new Map<string, { pipelineSum: number; hasPipeline: boolean; costCents: number; timelineDeltas: Map<string, number> }>();
   for (const c of computed) {
     if (c === null) continue;
-    const agg = byBrand.get(c.brandId) ?? { pipelineSum: 0, hasPipeline: false, costCents: 0 };
+    const agg = byBrand.get(c.brandId) ?? { pipelineSum: 0, hasPipeline: false, costCents: 0, timelineDeltas: new Map<string, number>() };
     if (c.pipeline !== null) {
       agg.pipelineSum += c.pipeline;
       agg.hasPipeline = true;
     }
     agg.costCents += Math.round(c.costUsd * 100);
+    let previous = 0;
+    for (const point of c.timeSeries) {
+      const delta = point.cumulativePipelineUsd - previous;
+      previous = point.cumulativePipelineUsd;
+      if (delta <= 0) continue;
+      agg.timelineDeltas.set(point.date, (agg.timelineDeltas.get(point.date) ?? 0) + delta);
+    }
     byBrand.set(c.brandId, agg);
   }
 
@@ -524,10 +537,18 @@ export async function handlePublicRevenue(
     const agg = byBrand.get(brandId)!;
     const totalPipelineUsd = agg.hasPipeline ? agg.pipelineSum : null;
     const info = brandInfo.get(brandId);
+    let cumulativePipelineUsd = 0;
+    const timeline = [...agg.timelineDeltas.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, delta]) => {
+        cumulativePipelineUsd += delta;
+        return { date, cumulativePipelineUsd };
+      });
     return {
       brand: { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null },
       headline: { totalPipelineUsd },
       costEconomics: buildCostEconomics(agg.costCents, totalPipelineUsd),
+      ...(timeline.length > 0 ? { timeline } : {}),
     };
   });
 
