@@ -13,6 +13,7 @@ import {
 } from "../lib/public-stats-clients.js";
 import { getFunnel } from "../lib/funnel-registry.js";
 import { fetchFeatureMemberships } from "../lib/feature-memberships-client.js";
+import { BrandOwnershipError } from "../lib/sales-economics-client.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
 
 const router = Router();
@@ -486,8 +487,18 @@ export async function handlePublicRevenue(
   const computed = await Promise.all(
     pairs.map(async ({ orgId, brandId }) => {
       const headers: DownstreamHeaders = { orgId, featureSlug };
-      const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers);
-      return { brandId, pipeline: body.headline.totalPipelineUsd, costUsd: body.costEconomics.totalCostUsd };
+      try {
+        const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers);
+        return { brandId, pipeline: body.headline.totalPipelineUsd, costUsd: body.costEconomics.totalCostUsd };
+      } catch (error) {
+        if (error instanceof BrandOwnershipError) {
+          console.warn(
+            `[features-service] skipping stale feature membership for public revenue: featureSlug=${featureSlug}, orgId=${orgId}, brandId=${brandId}`,
+          );
+          return null;
+        }
+        throw error;
+      }
     }),
   );
 
@@ -496,6 +507,7 @@ export async function handlePublicRevenue(
   // sum does not double-count.
   const byBrand = new Map<string, { pipelineSum: number; hasPipeline: boolean; costCents: number }>();
   for (const c of computed) {
+    if (c === null) continue;
     const agg = byBrand.get(c.brandId) ?? { pipelineSum: 0, hasPipeline: false, costCents: 0 };
     if (c.pipeline !== null) {
       agg.pipelineSum += c.pipeline;

@@ -56,6 +56,7 @@ vi.mock("./revenue.js", async (importOriginal) => ({
 
 const app = (await import("../index.js")).default;
 const { __resetPublicRevenueCache } = await import("./public.js");
+const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 
 const AUTH_HEADERS = {
   "x-api-key": "test-key",
@@ -610,6 +611,36 @@ describe("GET /public/stats/revenue", () => {
     expect(res.body.results[0].costEconomics.totalCostUsd).toBe(12);
     expect(res.body.results[0].costEconomics.roiMultiple).toBeNull();
     expect(res.body.results[0].costEconomics.costOfAcquisitionPct).toBeNull();
+  });
+
+  it("skips stale memberships rejected by brand ownership while keeping valid brands", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockComputeFeatureRevenue.mockImplementation(async (...args: unknown[]) => {
+      const brandId = args[1] as string;
+      const headers = args[4] as { orgId: string };
+      if (brandId === "stale-brand") {
+        throw new BrandOwnershipError(brandId, headers.orgId, "Brand does not belong to the caller's org");
+      }
+      return {
+        headline: { totalPipelineUsd: 75 },
+        costEconomics: { totalCostUsd: 5, costOfAcquisitionPct: null, roiMultiple: null },
+        timeSeries: [], organizations: [], leads: [], events: [],
+      };
+    });
+    mockRevenueFetch(
+      [
+        { orgId: "org-A", brandId: "stale-brand", workflowSlug: "wf-1" },
+        { orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" },
+      ],
+      [{ id: "brand-1", name: "Acme", domain: "acme.com" }],
+    );
+
+    const res = await request(app).get("/public/stats/revenue?featureSlug=sales-cold-email-outreach&groupBy=brand");
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].brand.id).toBe("brand-1");
+    expect(res.body.results[0].headline.totalPipelineUsd).toBe(75);
   });
 
   it("returns 400 when featureSlug is missing", async () => {
