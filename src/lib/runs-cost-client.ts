@@ -12,7 +12,6 @@
 export async function fetchRunsCostCents(
   brandId: string,
   campaignId: string | undefined,
-  workflowSlug: string | undefined,
   featureSlug: string,
   headers: { orgId: string; userId: string; runId: string; featureSlug?: string },
 ): Promise<number> {
@@ -25,7 +24,6 @@ export async function fetchRunsCostCents(
   // Mirror /stats: group by workflowSlug, scope to the feature lineage, sum the groups.
   const params = new URLSearchParams({ groupBy: "workflowSlug", brandId, featureSlugs: featureSlug });
   if (campaignId) params.set("campaignId", campaignId);
-  if (workflowSlug) params.set("workflowSlug", workflowSlug);
 
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
@@ -35,7 +33,6 @@ export async function fetchRunsCostCents(
     "x-brand-id": brandId,
   };
   if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
-  if (workflowSlug) reqHeaders["x-workflow-slug"] = workflowSlug;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
   const response = await fetch(`${url}/v1/stats/costs?${params}`, { headers: reqHeaders });
@@ -108,50 +105,4 @@ export async function fetchCampaignIdsWithRuns(
     if (campaignId) ids.add(campaignId);
   }
   return [...ids];
-}
-
-/**
- * Enumerate workflow slugs that have runs for a brand+feature. Drives
- * GET /features/:slug/revenue?groupBy=workflowSlug.
- */
-export async function fetchWorkflowSlugsWithRuns(
-  brandId: string,
-  featureSlug: string,
-  headers: { orgId: string; userId: string; runId: string; featureSlug?: string },
-): Promise<string[]> {
-  const url = process.env.RUNS_SERVICE_URL;
-  const apiKey = process.env.RUNS_SERVICE_API_KEY;
-  if (!url || !apiKey) {
-    throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
-  }
-
-  const params = new URLSearchParams({ groupBy: "workflowSlug", brandId, featureSlugs: featureSlug });
-
-  const reqHeaders: Record<string, string> = {
-    "x-api-key": apiKey,
-    "x-org-id": headers.orgId,
-    "x-user-id": headers.userId,
-    "x-run-id": headers.runId,
-    "x-brand-id": brandId,
-  };
-  if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
-
-  const response = await fetch(`${url}/v1/stats/costs?${params}`, { headers: reqHeaders });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`runs-service /v1/stats/costs (groupBy=workflowSlug) failed (${response.status}): ${text}`);
-  }
-
-  const data = (await response.json()) as { groups?: Array<{ dimensions?: Record<string, string | null> }> };
-  if (!Array.isArray(data.groups)) {
-    throw new Error("runs-service /v1/stats/costs returned no groups array");
-  }
-
-  const slugs = new Set<string>();
-  for (const group of data.groups) {
-    const workflowSlug = group.dimensions?.workflowSlug;
-    if (workflowSlug) slugs.add(workflowSlug);
-  }
-  return [...slugs];
 }
