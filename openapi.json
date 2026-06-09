@@ -3358,6 +3358,25 @@
                               "costOfAcquisitionPct",
                               "roiMultiple"
                             ]
+                          },
+                          "timeline": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "date": {
+                                  "type": "string"
+                                },
+                                "cumulativePipelineUsd": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "date",
+                                "cumulativePipelineUsd"
+                              ]
+                            },
+                            "description": "Public-safe cumulative expected-pipeline timeline for this brand. Omitted when no dated revenue events exist."
                           }
                         },
                         "required": [
