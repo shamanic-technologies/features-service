@@ -1,5 +1,16 @@
 import type { SalesEconomics } from "./funnel-registry.js";
 
+export class BrandOwnershipError extends Error {
+  constructor(
+    readonly brandId: string,
+    readonly orgId: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "BrandOwnershipError";
+  }
+}
+
 /**
  * Fetch a brand's saved sales conversion economics from brand-service.
  * Returns null when the brand has no economics saved yet (revenue is then incomputable —
@@ -37,6 +48,9 @@ export async function fetchSalesEconomics(
 
   if (!response.ok) {
     const text = await response.text();
+    if (response.status === 403) {
+      throw new BrandOwnershipError(brandId, headers.orgId, `brand-service sales-economics failed (${response.status}): ${text}`);
+    }
     throw new Error(`brand-service sales-economics failed (${response.status}): ${text}`);
   }
 
@@ -94,6 +108,9 @@ export async function fetchEffectiveEconomics(
 
   if (!response.ok) {
     const text = await response.text();
+    if (response.status === 403) {
+      throw new BrandOwnershipError(brandId, headers.orgId, `brand-service sales-economics-effective failed (${response.status}): ${text}`);
+    }
     throw new Error(`brand-service sales-economics-effective failed (${response.status}): ${text}`);
   }
 
