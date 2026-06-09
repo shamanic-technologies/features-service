@@ -6,7 +6,7 @@ import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { getFunnel, type EconomicsSource } from "../lib/funnel-registry.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
-import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
+import { fetchRunsCostCents, fetchCampaignIdsWithRuns, fetchWorkflowSlugsWithRuns } from "../lib/runs-cost-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
 import { fetchPlatformEmailRates } from "../lib/platform-rates-client.js";
@@ -90,13 +90,14 @@ export async function computeFeatureRevenue(
   featureSlug: string,
   brandId: string,
   campaignId: string | undefined,
+  workflowSlug: string | undefined,
   funnel: ReturnType<typeof getFunnel>,
   headers: DownstreamHeaders,
 ): Promise<RevenueBody> {
   // Total run cost for this brand(+campaign), feature-scoped — same runs-service source as
   // /stats systemStats.totalCostInUsdCents. Required on every body (incl. null-pipeline paths),
   // so fetch it up front. Fail-loud: a swallowed error must not fake $0 cost / infinite ROI.
-  const totalCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers);
+  const totalCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, workflowSlug, featureSlug, headers);
 
   // No funnel wired for this feature yet → null pipeline (not an error).
   if (!funnel) {
@@ -120,7 +121,7 @@ export async function computeFeatureRevenue(
   const platformRates = await fetchPlatformEmailRates();
 
   const paths = funnel.resolvePaths({ economics, platformRates });
-  const persons = await fetchLeadsForRevenue(brandId, campaignId, headers);
+  const persons = await fetchLeadsForRevenue(brandId, campaignId, workflowSlug, headers);
 
   // Secondary enrichment: per-event timestamps for dates / time-series / events.
   // Best-effort — a failure degrades to dateless output, it does NOT fail the endpoint.
@@ -190,16 +191,17 @@ export async function computeFeatureRevenue(
 // features-service is the single source: headline pipeline, organizations + leads tables,
 // the cumulative time-series and the per-event ledger.
 //
-// With ?groupBy=campaignId the response collapses to one LEAN group per campaign that has runs
-// for the brand+feature — { campaignId, headline.totalPipelineUsd, costEconomics } only — so the
-// dashboard campaigns list gets every campaign's revenue + ROI in ONE call instead of N. Each
-// group's values are byte-equal to the standalone ?campaignId= call (same per-campaign compute).
+// With ?groupBy=campaignId or ?groupBy=workflowSlug the response collapses to one LEAN group per
+// campaign/workflow that has runs for the brand+feature — identity + headline.totalPipelineUsd +
+// costEconomics only — so list/table consumers get revenue + ROI in ONE call instead of N. Each
+// group's values are byte-equal to the standalone scoped compute.
 
 router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
   const brandId = req.query.brandId as string | undefined;
   const campaignId = req.query.campaignId as string | undefined;
+  const workflowSlug = req.query.workflowSlug as string | undefined;
   const groupBy = req.query.groupBy as string | undefined;
 
   if (!brandId) {
@@ -216,6 +218,10 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     // Resolved once and shared across every campaign — null when no funnel is wired for the feature.
     const funnel = getFunnel(featureSlug);
 
+    if (groupBy && groupBy !== "campaignId" && groupBy !== "workflowSlug") {
+      return res.status(400).json({ error: "Unsupported groupBy. Supported values: campaignId, workflowSlug" });
+    }
+
     // ── Grouped: one lean group per campaign (dashboard campaigns list) ──────────
     if (groupBy === "campaignId") {
       const campaignIds = await fetchCampaignIdsWithRuns(brandId, featureSlug, headers);
@@ -224,7 +230,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
 
       const groups = await Promise.all(
         campaignIds.map(async (cid) => {
-          const body = await computeFeatureRevenue(featureSlug, brandId, cid, funnel, headers);
+          const body = await computeFeatureRevenue(featureSlug, brandId, cid, undefined, funnel, headers);
           return { campaignId: cid, headline: body.headline, costEconomics: body.costEconomics };
         }),
       );
@@ -234,10 +240,28 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       return res.json({ featureSlug, groupBy: "campaignId", groups });
     }
 
-    // ── Overview: single brand-scoped (optionally one-campaign) response (unchanged) ──
-    traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
+    // ── Grouped: one lean group per workflow (dashboard/report workflow tables) ──
+    if (groupBy === "workflowSlug") {
+      const workflowSlugs = await fetchWorkflowSlugsWithRuns(brandId, featureSlug, headers);
 
-    const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, funnel, headers);
+      traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, workflows=${workflowSlugs.length}` }, req.headers).catch(() => {});
+
+      const groups = await Promise.all(
+        workflowSlugs.map(async (slug) => {
+          const body = await computeFeatureRevenue(featureSlug, brandId, undefined, slug, funnel, headers);
+          return { workflowSlug: slug, headline: body.headline, costEconomics: body.costEconomics };
+        }),
+      );
+
+      traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}` }, req.headers).catch(() => {});
+
+      return res.json({ featureSlug, groupBy: "workflowSlug", groups });
+    }
+
+    // ── Overview: single brand-scoped (optionally one-campaign) response (unchanged) ──
+    traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}, workflowSlug=${workflowSlug ?? "none"}` }, req.headers).catch(() => {});
+
+    const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, workflowSlug, funnel, headers);
 
     traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 

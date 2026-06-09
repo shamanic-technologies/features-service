@@ -6,10 +6,11 @@ import { STATS_REGISTRY } from "../lib/stats-registry.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
-  fetchPublicEmailStats,
+  fetchPublicEmailStatsWithTimelines,
   fetchPublicJournalistsStats,
   fetchBrandInfoBatch,
   type WorkflowMetadata,
+  type PublicBrandTimelinePoint,
 } from "../lib/public-stats-clients.js";
 import { getFunnel } from "../lib/funnel-registry.js";
 import { fetchFeatureMemberships } from "../lib/feature-memberships-client.js";
@@ -83,9 +84,10 @@ async function fetchOutcomeStats(
   featureSlug: string,
   groupBy: string,
   keys: string[],
-): Promise<Map<string, Record<string, number>>> {
+): Promise<{ stats: Map<string, Record<string, number>>; timelines: Map<string, PublicBrandTimelinePoint[]> }> {
   const sources = requiredSources(keys);
   const merged = new Map<string, Record<string, number>>();
+  const timelines = new Map<string, PublicBrandTimelinePoint[]>();
 
   // Each stat family is an INDEPENDENT upstream source. A failure in one (e.g. a
   // journalists-service 500) must NOT zero the others — so fetch via allSettled and
@@ -93,9 +95,9 @@ async function fetchOutcomeStats(
   // loud per family, per CLAUDE.md) and simply contributes no keys; its stats default
   // to 0/null downstream, but the succeeding families still populate. One upstream
   // outage can no longer blank the unrelated sales recipient/email stats.
-  const families: { source: string; promise: Promise<Map<string, Record<string, number>>> }[] = [];
-  if (sources.has("email-gateway")) families.push({ source: "email-gateway", promise: fetchPublicEmailStats(featureSlug, groupBy) });
-  if (sources.has("journalists")) families.push({ source: "journalists", promise: fetchPublicJournalistsStats(featureSlug, groupBy) });
+  const families: { source: string; promise: Promise<{ stats: Map<string, Record<string, number>>; timelines?: Map<string, PublicBrandTimelinePoint[]> }> }[] = [];
+  if (sources.has("email-gateway")) families.push({ source: "email-gateway", promise: fetchPublicEmailStatsWithTimelines(featureSlug, groupBy) });
+  if (sources.has("journalists")) families.push({ source: "journalists", promise: fetchPublicJournalistsStats(featureSlug, groupBy).then((stats) => ({ stats })) });
 
   const results = await Promise.allSettled(families.map((f) => f.promise));
   results.forEach((result, i) => {
@@ -107,14 +109,17 @@ async function fetchOutcomeStats(
       );
       return;
     }
-    for (const [key, stats] of result.value) {
+    for (const [key, stats] of result.value.stats) {
       const existing = merged.get(key) ?? {};
       Object.assign(existing, stats);
       merged.set(key, existing);
     }
+    for (const [key, timeline] of result.value.timelines ?? []) {
+      timelines.set(key, timeline);
+    }
   });
 
-  return merged;
+  return { stats: merged, timelines };
 }
 
 /**
@@ -260,11 +265,13 @@ export async function handleRanked(
 
   const allKeys = getAllOutputKeys();
 
-  const [workflows, costGroups, outcomeMap] = await Promise.all([
+  const [workflows, costGroups, outcomeResult] = await Promise.all([
     isBrandGrouping ? Promise.resolve([]) : fetchPublicWorkflows(featureSlug, "all"),
     fetchPublicCosts(featureSlug, statsGroupBy),
     fetchOutcomeStats(featureSlug, statsGroupBy, allKeys),
   ]);
+  const outcomeMap = outcomeResult.stats;
+  const timelineMap = outcomeResult.timelines;
 
   let costMap: Map<string, { totalCostInUsdCents: number; completedRuns: number }>;
   let aggregatedOutcomes: Map<string, Record<string, number>>;
@@ -312,7 +319,12 @@ export async function handleRanked(
   const results = top.map(({ key, stats }) => {
     if (isBrandGrouping) {
       const brand = brandInfoMap.get(key);
-      return { brand: { id: key, name: brand?.name ?? null, domain: brand?.domain ?? null }, stats };
+      const timeline = timelineMap.get(key);
+      return {
+        brand: { id: key, name: brand?.name ?? null, domain: brand?.domain ?? null },
+        stats,
+        ...(timeline && timeline.length > 0 ? { timeline } : {}),
+      };
     }
     const wf = workflowBySlug.get(key);
     return {
@@ -361,11 +373,12 @@ export async function handleBest(
   const isBrandMode = groupBy === "brand";
   const statsGroupBy = isBrandMode ? "brandId" : "workflowSlug";
 
-  const [workflows, costGroups, outcomeMap] = await Promise.all([
+  const [workflows, costGroups, outcomeResult] = await Promise.all([
     isBrandMode ? Promise.resolve([]) : fetchPublicWorkflows(featureSlug, "all"),
     fetchPublicCosts(featureSlug, statsGroupBy),
     fetchOutcomeStats(featureSlug, statsGroupBy, countKeys),
   ]);
+  const outcomeMap = outcomeResult.stats;
 
   let costMap: Map<string, { totalCostInUsdCents: number; completedRuns: number }>;
   let aggregatedOutcomes: Map<string, Record<string, number>>;
@@ -433,10 +446,24 @@ interface PublicRevenueResult {
   headline: { totalPipelineUsd: number | null };
   costEconomics: ReturnType<typeof buildCostEconomics>;
 }
+interface PublicWorkflowRevenueResult {
+  workflow: {
+    id: string | null;
+    workflowSlug: string;
+    workflowName: string | null;
+    workflowDynastyName: string | null;
+    workflowDynastySlug: string | null;
+    version: number | null;
+    featureSlug: string;
+    createdForBrandId: string | null;
+  };
+  headline: { totalPipelineUsd: number | null };
+  costEconomics: ReturnType<typeof buildCostEconomics>;
+}
 interface PublicRevenuePayload {
   featureSlug: string;
-  groupBy: "brand";
-  results: PublicRevenueResult[];
+  groupBy: "brand" | "workflow";
+  results: PublicRevenueResult[] | PublicWorkflowRevenueResult[];
 }
 
 const revenueCache = new Map<string, { payload: PublicRevenuePayload; expiresAt: number }>();
@@ -455,10 +482,8 @@ export async function handlePublicRevenue(
     res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
     return;
   }
-  // brand grouping only for now — per-workflow revenue (workflow-scoped cost + leads filter)
-  // ships as a follow-up once lead-service exposes the workflowSlug lead filter.
-  if (groupBy !== "brand") {
-    res.status(400).json({ error: "Query parameter 'groupBy' is required and must be 'brand'" });
+  if (groupBy !== "brand" && groupBy !== "workflow") {
+    res.status(400).json({ error: "Query parameter 'groupBy' is required and must be 'brand' or 'workflow'" });
     return;
   }
 
@@ -478,6 +503,85 @@ export async function handlePublicRevenue(
   const funnel = getFunnel(featureSlug);
   const memberships = await fetchFeatureMemberships(featureSlug);
 
+  if (groupBy === "workflow") {
+    const workflows = await fetchPublicWorkflows(featureSlug, "all");
+    const chains = buildUpgradeChains(workflows);
+    const activeSlugFor = new Map<string, string>();
+    for (const [activeSlug, chainSlugs] of chains) {
+      for (const slug of chainSlugs) activeSlugFor.set(slug, activeSlug);
+    }
+
+    const cellKey = (orgId: string, brandId: string, workflowSlug: string) => `${orgId}::${brandId}::${workflowSlug}`;
+    const cells = [
+      ...new Map(
+        memberships.map((m) => [
+          cellKey(m.orgId, m.brandId, m.workflowSlug),
+          { orgId: m.orgId, brandId: m.brandId, workflowSlug: m.workflowSlug },
+        ]),
+      ).values(),
+    ];
+
+    const computed = await Promise.all(
+      cells.map(async ({ orgId, brandId, workflowSlug }) => {
+        const headers: DownstreamHeaders = { orgId, userId: SERVICE_IDENTITY, runId: SERVICE_IDENTITY, featureSlug };
+        const body = await computeFeatureRevenue(featureSlug, brandId, undefined, workflowSlug, funnel, headers);
+        return {
+          workflowSlug,
+          activeSlug: activeSlugFor.get(workflowSlug) ?? workflowSlug,
+          pipeline: body.headline.totalPipelineUsd,
+          costUsd: body.costEconomics.totalCostUsd,
+        };
+      }),
+    );
+
+    const byWorkflow = new Map<string, { pipelineSum: number; hasPipeline: boolean; costCents: number }>();
+    for (const c of computed) {
+      const agg = byWorkflow.get(c.activeSlug) ?? { pipelineSum: 0, hasPipeline: false, costCents: 0 };
+      if (c.pipeline !== null) {
+        agg.pipelineSum += c.pipeline;
+        agg.hasPipeline = true;
+      }
+      agg.costCents += Math.round(c.costUsd * 100);
+      byWorkflow.set(c.activeSlug, agg);
+    }
+
+    const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
+    const results: PublicWorkflowRevenueResult[] = [...byWorkflow.keys()].map((slug) => {
+      const agg = byWorkflow.get(slug)!;
+      const totalPipelineUsd = agg.hasPipeline ? agg.pipelineSum : null;
+      const wf = workflowBySlug.get(slug);
+      return {
+        workflow: {
+          id: wf?.id ?? null,
+          workflowSlug: slug,
+          workflowName: wf?.workflowName ?? null,
+          workflowDynastyName: wf?.workflowDynastyName ?? null,
+          workflowDynastySlug: wf?.workflowDynastySlug ?? null,
+          version: wf?.version ?? null,
+          featureSlug,
+          createdForBrandId: wf?.createdForBrandId ?? null,
+        },
+        headline: { totalPipelineUsd },
+        costEconomics: buildCostEconomics(agg.costCents, totalPipelineUsd),
+      };
+    });
+
+    results.sort((a, b) => {
+      const ap = a.headline.totalPipelineUsd;
+      const bp = b.headline.totalPipelineUsd;
+      if (ap === null && bp === null) return b.costEconomics.totalCostUsd - a.costEconomics.totalCostUsd;
+      if (ap === null) return 1;
+      if (bp === null) return -1;
+      if (bp !== ap) return bp - ap;
+      return b.costEconomics.totalCostUsd - a.costEconomics.totalCostUsd;
+    });
+
+    const payload: PublicRevenuePayload = { featureSlug, groupBy: "workflow", results };
+    revenueCache.set(cacheKey, { payload, expiresAt: Date.now() + REVENUE_TTL_MS });
+    res.json(payload);
+    return;
+  }
+
   // One revenue compute per DISTINCT (org, brand) pair (workflow collapsed for the brand table).
   const pairKey = (orgId: string, brandId: string) => `${orgId}::${brandId}`;
   const pairs = [
@@ -487,7 +591,7 @@ export async function handlePublicRevenue(
   const computed = await Promise.all(
     pairs.map(async ({ orgId, brandId }) => {
       const headers: DownstreamHeaders = { orgId, userId: SERVICE_IDENTITY, runId: SERVICE_IDENTITY, featureSlug };
-      const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers);
+      const body = await computeFeatureRevenue(featureSlug, brandId, undefined, undefined, funnel, headers);
       return { brandId, pipeline: body.headline.totalPipelineUsd, costUsd: body.costEconomics.totalCostUsd };
     }),
   );

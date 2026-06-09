@@ -295,14 +295,15 @@ const featureRevenueResponseSchema = z.object({
 
 const featureRevenueResponseRef = registry.register("FeatureRevenueResponse", featureRevenueResponseSchema);
 
-// Grouped variant — returned only when ?groupBy=campaignId. One LEAN group per campaign that has
-// runs for the brand+feature: campaignId + headline.totalPipelineUsd + costEconomics ONLY (the
-// dashboard campaigns row needs just revenue + ROI). Each group is byte-equal to the standalone
-// ?campaignId= call. The heavy per-campaign arrays (timeSeries/organizations/leads/events) are omitted.
+// Grouped variant — returned when ?groupBy=campaignId or ?groupBy=workflowSlug. One LEAN group per
+// campaign/workflow that has runs for the brand+feature: identity + headline.totalPipelineUsd +
+// costEconomics ONLY. Each group is byte-equal to the standalone scoped compute. The heavy arrays
+// (timeSeries/organizations/leads/events) are omitted.
 const revenueGroupSchema = z.object({
-  campaignId: z.string(),
+  campaignId: z.string().optional(),
+  workflowSlug: z.string().optional(),
   headline: z.object({
-    totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline for this campaign. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."),
+    totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline for this group. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."),
     economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (ESTIMATE). Null when the pipeline is null."),
   }),
   costEconomics: revenueCostEconomicsSchema,
@@ -310,7 +311,7 @@ const revenueGroupSchema = z.object({
 
 const featureRevenueGroupedResponseSchema = z.object({
   featureSlug: z.string(),
-  groupBy: z.literal("campaignId"),
+  groupBy: z.enum(["campaignId", "workflowSlug"]),
   groups: z.array(revenueGroupSchema),
 });
 
@@ -328,8 +329,8 @@ registry.registerPath({
     "totalPipelineUsd is null when no funnel is wired for the feature, or the brand has no saved economics AND no cross-brand average exists (cold start). " +
     "When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. " +
     "costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple. " +
-    "With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature " +
-    "(campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call.",
+    "With ?groupBy=campaignId or ?groupBy=workflowSlug the response is instead one LEAN group per campaign/workflow that has runs for the brand+feature " +
+    "(identity + headline.totalPipelineUsd + costEconomics only); each group uses the same expected-revenue engine and cost economics as the overview.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
@@ -337,12 +338,13 @@ registry.registerPath({
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — revenue is brand-scoped."),
       campaignId: z.string().optional().describe("Optional campaign drill-down (ignored when groupBy=campaignId)."),
-      groupBy: z.enum(["campaignId"]).optional().describe("When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview."),
+      workflowSlug: z.string().optional().describe("Optional workflow drill-down (ignored when groupBy=workflowSlug)."),
+      groupBy: z.enum(["campaignId", "workflowSlug"]).optional().describe("Return one lean group per campaign or workflow with runs for the brand+feature instead of the single overview."),
     }),
   },
   responses: {
-    200: { description: "Feature revenue (overview, or grouped when groupBy=campaignId)", content: { "application/json": { schema: z.union([featureRevenueResponseRef, featureRevenueGroupedResponseRef]) } } },
-    400: { description: "Missing brandId", content: { "application/json": { schema: errorResponse } } },
+    200: { description: "Feature revenue (overview, or grouped when groupBy is set)", content: { "application/json": { schema: z.union([featureRevenueResponseRef, featureRevenueGroupedResponseRef]) } } },
+    400: { description: "Missing brandId or unsupported groupBy", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },
@@ -470,10 +472,20 @@ const rankedBrandSchema = z.object({
 
 const rankedStatsSchema = z.record(z.string(), z.number().nullable());
 
+const rankedBrandTimelinePointSchema = z.object({
+  date: z.string().describe("Public aggregate activity date for the brand point."),
+  cumulativePipelineUsd: z.number().nullable().describe("Reserved for public expected-pipeline sparklines. Null when this ranked aggregation only has email activity counts."),
+  emailsSent: z.number().nullable().describe("Cumulative public aggregate sent count through this date."),
+  emailsOpened: z.number().nullable().describe("Cumulative public aggregate opened count through this date."),
+  emailsClicked: z.number().nullable().describe("Cumulative public aggregate clicked count through this date."),
+  emailsReplied: z.number().nullable().describe("Cumulative public aggregate positive-reply count through this date."),
+});
+
 const rankedResultSchema = z.object({
   workflow: rankedWorkflowSchema.optional(),
   brand: rankedBrandSchema.optional(),
   stats: rankedStatsSchema,
+  timeline: z.array(rankedBrandTimelinePointSchema).optional().describe("Optional public-safe dated brand aggregate points for tiny benchmark sparklines. Present only for groupBy=brand when dated public activity exists; contains no recipient, lead, campaign, or org-internal detail."),
 });
 
 const rankedResponseSchema = z.object({
@@ -507,7 +519,7 @@ registry.registerPath({
   method: "get",
   path: "/public/stats/ranked",
   summary: "Top workflows or brands ranked by output metric (public, no auth)",
-  description: "Returns top workflows or brands ranked by an output metric for a feature.",
+  description: "Returns top workflows or brands ranked by an output metric for a feature. For groupBy=brand, each result may include an optional public-safe cumulative timeline derived from aggregate dated activity.",
   tags: ["Public"],
   request: { query: rankedQueryParams },
   responses: {
@@ -543,29 +555,56 @@ const publicRevenueResultSchema = z.object({
   costEconomics: revenueCostEconomicsSchema,
 });
 
-const publicRevenueResponseSchema = z.object({
+const publicWorkflowRevenueResultSchema = z.object({
+  workflow: z.object({
+    id: z.string().nullable(),
+    workflowSlug: z.string(),
+    workflowName: z.string().nullable(),
+    workflowDynastyName: z.string().nullable(),
+    workflowDynastySlug: z.string().nullable(),
+    version: z.number().int().nullable(),
+    featureSlug: z.string(),
+    createdForBrandId: z.string().nullable(),
+  }),
+  headline: z.object({
+    totalPipelineUsd: z.number().nullable().describe("Cross-org expected pipeline for the workflow (sum over exact org/brand/workflow cells, including deprecated workflow versions aggregated into the active workflow chain). Null when no cell has computable economics."),
+  }),
+  costEconomics: revenueCostEconomicsSchema,
+});
+
+const publicRevenueBrandResponseSchema = z.object({
   featureSlug: z.string(),
   groupBy: z.literal("brand"),
   results: z.array(publicRevenueResultSchema),
 });
 
+const publicRevenueWorkflowResponseSchema = z.object({
+  featureSlug: z.string(),
+  groupBy: z.literal("workflow"),
+  results: z.array(publicWorkflowRevenueResultSchema),
+});
+
+const publicRevenueBrandResponseRef = registry.register("PublicRevenueBrandResponse", publicRevenueBrandResponseSchema);
+const publicRevenueWorkflowResponseRef = registry.register("PublicRevenueWorkflowResponse", publicRevenueWorkflowResponseSchema);
+
 registry.registerPath({
   method: "get",
   path: "/public/stats/revenue",
-  summary: "Cross-org expected pipeline revenue + CAC + ROI per brand (public, no auth)",
+  summary: "Cross-org expected pipeline revenue + CAC + ROI per brand or workflow (public, no auth)",
   description:
-    "Per-brand expected pipeline revenue, cost-of-acquisition % and ROI multiple for a feature, aggregated cross-org. " +
-    "Runs the same expected-pipeline engine as GET /features/{featureSlug}/revenue once per (org, brand) that has leads for the feature, and sums each brand across the orgs it appears in (leads are disjoint per org, so no double-count). " +
-    "costEconomics is byte-identical to the dashboard's (buildCostEconomics). Only groupBy=brand is supported today — per-workflow revenue is a follow-up.",
+    "Public expected pipeline revenue, cost-of-acquisition % and ROI multiple for a feature, aggregated cross-org by brand or workflow. " +
+    "Runs the same expected-pipeline engine as GET /features/{featureSlug}/revenue. groupBy=brand computes one distinct (org, brand) pair and sums each brand across orgs. " +
+    "groupBy=workflow computes exact (org, brand, workflow) cells, then aggregates deprecated workflow versions into the active workflow chain. " +
+    "costEconomics is byte-identical to the dashboard's (buildCostEconomics).",
   tags: ["Public"],
   request: {
     query: z.object({
       featureSlug: z.string().describe("Feature slug (required)."),
-      groupBy: z.literal("brand").describe("Group results by brand (only supported value)."),
+      groupBy: z.enum(["brand", "workflow"]).describe("Group results by brand or workflow."),
     }),
   },
   responses: {
-    200: { description: "Per-brand cross-org revenue", content: { "application/json": { schema: publicRevenueResponseSchema } } },
+    200: { description: "Public cross-org revenue", content: { "application/json": { schema: z.union([publicRevenueBrandResponseRef, publicRevenueWorkflowResponseRef]) } } },
     400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
   },

@@ -27,6 +27,20 @@ export interface CostGroup {
   maxStartedAt: string | null;
 }
 
+export interface PublicBrandTimelinePoint {
+  date: string;
+  cumulativePipelineUsd: number | null;
+  emailsSent: number | null;
+  emailsOpened: number | null;
+  emailsClicked: number | null;
+  emailsReplied: number | null;
+}
+
+export interface PublicEmailStatsResult {
+  stats: Map<string, Record<string, number>>;
+  timelines: Map<string, PublicBrandTimelinePoint[]>;
+}
+
 // ── Workflow metadata ────────────────────────────────────────────────────────
 
 export async function fetchPublicWorkflows(
@@ -71,10 +85,10 @@ export async function fetchPublicCosts(
 
 // ── Email stats (email-gateway) ──────────────────────────────────────────────
 
-export async function fetchPublicEmailStats(
+export async function fetchPublicEmailStatsWithTimelines(
   featureSlugs: string,
   groupBy: string,
-): Promise<Map<string, Record<string, number>>> {
+): Promise<PublicEmailStatsResult> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
 
   const url = `${process.env.EMAIL_GATEWAY_SERVICE_URL}/public/stats?${params}`;
@@ -88,18 +102,30 @@ export async function fetchPublicEmailStats(
   }
 
   const data = await response.json() as Record<string, unknown>;
-  const result = new Map<string, Record<string, number>>();
+  const stats = new Map<string, Record<string, number>>();
+  const timelines = new Map<string, PublicBrandTimelinePoint[]>();
 
   if (data.groups && Array.isArray(data.groups)) {
     for (const group of data.groups as Array<Record<string, unknown>>) {
       const groupKey = String(group.key ?? "__total__");
-      result.set(groupKey, extractBroadcastEmailFields(group));
+      stats.set(groupKey, extractBroadcastEmailFields(group));
+      const timeline = extractPublicTimeline(group);
+      if (timeline.length > 0) timelines.set(groupKey, timeline);
     }
   } else {
-    result.set("__total__", extractBroadcastEmailFields(data));
+    stats.set("__total__", extractBroadcastEmailFields(data));
+    const timeline = extractPublicTimeline(data);
+    if (timeline.length > 0) timelines.set("__total__", timeline);
   }
 
-  return result;
+  return { stats, timelines };
+}
+
+export async function fetchPublicEmailStats(
+  featureSlugs: string,
+  groupBy: string,
+): Promise<Map<string, Record<string, number>>> {
+  return (await fetchPublicEmailStatsWithTimelines(featureSlugs, groupBy)).stats;
 }
 
 function extractBroadcastEmailFields(data: Record<string, unknown>): Record<string, number> {
@@ -122,6 +148,93 @@ function extractBroadcastEmailFields(data: Record<string, unknown>): Record<stri
   result.recipientsRepliesAutoReply = recipientStats.repliesAutoReply;
 
   return result;
+}
+
+function numberOrNull(value: unknown): number | null {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+function firstNumber(data: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const n = numberOrNull(data[key]);
+    if (n !== null) return n;
+  }
+  return null;
+}
+
+function timelineCounts(point: Record<string, unknown>): {
+  sent: number | null;
+  opened: number | null;
+  clicked: number | null;
+  replied: number | null;
+  cumulative: boolean;
+} {
+  const broadcast = point.broadcast as Record<string, unknown> | undefined;
+  const recipientStats = broadcast?.recipientStats as Record<string, unknown> | undefined;
+  const flat = recipientStats ?? point;
+  const cumulative = [
+    "cumulativeEmailsSent",
+    "cumulativeEmailsOpened",
+    "cumulativeEmailsClicked",
+    "cumulativeEmailsReplied",
+    "cumulativeRecipientsSent",
+    "cumulativeRecipientsOpened",
+    "cumulativeRecipientsClicked",
+    "cumulativeRecipientsRepliesPositive",
+  ].some((key) => flat[key] != null);
+
+  return {
+    sent: firstNumber(flat, cumulative ? ["cumulativeEmailsSent", "cumulativeRecipientsSent"] : ["emailsSent", "recipientsSent", "sent"]),
+    opened: firstNumber(flat, cumulative ? ["cumulativeEmailsOpened", "cumulativeRecipientsOpened"] : ["emailsOpened", "recipientsOpened", "opened"]),
+    clicked: firstNumber(flat, cumulative ? ["cumulativeEmailsClicked", "cumulativeRecipientsClicked"] : ["emailsClicked", "recipientsClicked", "clicked"]),
+    replied: firstNumber(flat, cumulative ? ["cumulativeEmailsReplied", "cumulativeRecipientsRepliesPositive"] : ["emailsReplied", "recipientsRepliesPositive", "repliesPositive"]),
+    cumulative,
+  };
+}
+
+function extractPublicTimeline(data: Record<string, unknown>): PublicBrandTimelinePoint[] {
+  const raw = Array.isArray(data.timeline)
+    ? data.timeline
+    : Array.isArray(data.timeSeries)
+      ? data.timeSeries
+      : [];
+
+  const rows = raw
+    .filter((p): p is Record<string, unknown> => p !== null && typeof p === "object" && typeof (p as Record<string, unknown>).date === "string")
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  let sent = 0;
+  let opened = 0;
+  let clicked = 0;
+  let replied = 0;
+
+  const points: PublicBrandTimelinePoint[] = [];
+  for (const row of rows) {
+    const counts = timelineCounts(row);
+    if (counts.cumulative) {
+      if (counts.sent !== null) sent = counts.sent;
+      if (counts.opened !== null) opened = counts.opened;
+      if (counts.clicked !== null) clicked = counts.clicked;
+      if (counts.replied !== null) replied = counts.replied;
+    } else {
+      sent += counts.sent ?? 0;
+      opened += counts.opened ?? 0;
+      clicked += counts.clicked ?? 0;
+      replied += counts.replied ?? 0;
+    }
+
+    points.push({
+      date: String(row.date),
+      cumulativePipelineUsd: null,
+      emailsSent: sent,
+      emailsOpened: opened,
+      emailsClicked: clicked,
+      emailsReplied: replied,
+    });
+  }
+
+  return points;
 }
 
 // ── Journalist stats (journalists-service) ───────────────────────────────────
