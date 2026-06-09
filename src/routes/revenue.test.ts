@@ -634,13 +634,107 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
     expect(res.body.groups).toEqual([]);
   });
 
-  it("unknown groupBy value falls back to the ungrouped overview response (no groupBy/groups keys)", async () => {
-    mockFetch({ economics: null });
+  it("unknown groupBy value fails loudly instead of returning an overview-shaped payload", async () => {
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=foo").set(AUTH);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Unsupported groupBy/i);
+  });
+});
+
+// ── GET /features/:featureSlug/revenue?groupBy=workflowSlug ──────────────────
+
+type WorkflowFixture = { costCents?: number; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications };
+
+function mockFetchWorkflowGrouped(opts: { economics?: unknown; economicsAverage?: unknown; platformStats?: unknown; workflows: Record<string, WorkflowFixture> }): void {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+    const workflowSlug = (init?.headers as Record<string, string> | undefined)?.["x-workflow-slug"];
+
+    if (url.includes("/stats/costs")) {
+      if (url.includes("groupBy=workflowSlug") && !workflowSlug) {
+        const groups = Object.entries(opts.workflows).map(([slug, c]) => ({
+          dimensions: { workflowSlug: slug },
+          totalCostInUsdCents: String(c.costCents ?? 0),
+          runCount: 1,
+          minStartedAt: null,
+          maxStartedAt: null,
+        }));
+        return new Response(JSON.stringify({ groups }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(costGroups(workflowSlug ? (opts.workflows[workflowSlug]?.costCents ?? 0) : 0), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/sales-economics-effective")) {
+      const effective =
+        opts.economics != null
+          ? { economics: opts.economics, source: "user" }
+          : opts.economicsAverage != null
+            ? { economics: opts.economicsAverage, source: "cross-brand-average" }
+            : { economics: null, source: null };
+      return new Response(JSON.stringify(effective), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/public/stats")) {
+      return new Response(JSON.stringify(opts.platformStats ?? PLATFORM_STATS), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/manual-qualifications")) {
+      return new Response(JSON.stringify({ qualifications: qualRows(workflowSlug ? (opts.workflows[workflowSlug]?.quals ?? {}) : {}) }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/orgs/leads")) {
+      expect(url).toContain("workflowSlug=");
+      return new Response(JSON.stringify({ leads: workflowSlug ? (opts.workflows[workflowSlug]?.leads ?? []) : [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/orgs/status")) {
+      const ts = (workflowSlug ? opts.workflows[workflowSlug]?.timestamps : {}) ?? {};
+      const results = Object.entries(ts).map(([email, scope]) => ({
+        email,
+        broadcast: { byCampaign: null, campaign: null, brand: { contacted: true, sent: true, delivered: true, opened: true, clicked: true, replied: true, replyClassification: "positive", bounced: false, unsubscribed: false, lastDeliveredAt: null, ...scope }, global: { email: { bounced: false, unsubscribed: false } } },
+      }));
+      return new Response(JSON.stringify({ results }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+}
+
+describe("GET /features/:featureSlug/revenue?groupBy=workflowSlug", () => {
+  beforeEach(() => {
+    __resetPlatformRatesCache();
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const replyLead = (slug: string) => leadRow({ leadId: `lr-${slug}`, email: `reply-${slug}@x.com`, replied: true, replyClassification: "positive", lead: { firstName: "Re", lastName: "Ply", photoUrl: null, organization: { id: `org-${slug}`, name: slug, logoUrl: null } } });
+  const deliveredLead = (slug: string) => leadRow({ leadId: `ld-${slug}`, email: `cold-${slug}@z.com`, lead: { firstName: "Co", lastName: "Ld", photoUrl: null, organization: { id: `org-${slug}`, name: slug, logoUrl: null } } });
+
+  it("returns one LEAN group per workflow with runs (workflowSlug + headline + costEconomics only)", async () => {
+    mockFetchWorkflowGrouped({
+      economics: ECONOMICS,
+      workflows: {
+        "wf-reply": { costCents: 6000, leads: [replyLead("wf-reply")] },
+        "wf-delivered": { costCents: 1200, leads: [deliveredLead("wf-delivered")] },
+      },
+    });
+
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=workflowSlug").set(AUTH);
+
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty("headline");
-    expect(res.body).toHaveProperty("costEconomics");
-    expect(res.body).not.toHaveProperty("groupBy");
-    expect(res.body).not.toHaveProperty("groups");
+    expect(Object.keys(res.body).sort()).toEqual(["featureSlug", "groupBy", "groups"]);
+    expect(res.body.groupBy).toBe("workflowSlug");
+    expect(res.body.groups).toHaveLength(2);
+    for (const g of res.body.groups) {
+      expect(Object.keys(g).sort()).toEqual(["costEconomics", "headline", "workflowSlug"]);
+    }
+    const bySlug = Object.fromEntries(res.body.groups.map((g: any) => [g.workflowSlug, g]));
+    expect(bySlug["wf-reply"].headline.totalPipelineUsd).toBe(120);
+    expect(bySlug["wf-reply"].costEconomics.totalCostUsd).toBe(60);
+    expect(bySlug["wf-reply"].costEconomics.roiMultiple).toBe(2);
+    expect(bySlug["wf-delivered"].headline.totalPipelineUsd).toBeCloseTo(15.42836, 4);
+    expect(bySlug["wf-delivered"].costEconomics.totalCostUsd).toBe(12);
+  });
+
+  it("empty groups[] when no workflow has runs for the brand+feature", async () => {
+    mockFetchWorkflowGrouped({ economics: ECONOMICS, workflows: {} });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=workflowSlug").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.groupBy).toBe("workflowSlug");
+    expect(res.body.groups).toEqual([]);
   });
 });
