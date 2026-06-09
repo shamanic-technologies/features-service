@@ -851,8 +851,7 @@
           "groupBy": {
             "type": "string",
             "enum": [
-              "campaignId",
-              "workflowSlug"
+              "campaignId"
             ]
           },
           "groups": {
@@ -863,16 +862,13 @@
                 "campaignId": {
                   "type": "string"
                 },
-                "workflowSlug": {
-                  "type": "string"
-                },
                 "headline": {
                   "type": "object",
                   "properties": {
                     "totalPipelineUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Org-deduped expected pipeline for this group. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."
+                      "description": "Org-deduped expected pipeline for this campaign. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."
                     },
                     "economicsSource": {
                       "type": "string",
@@ -915,6 +911,7 @@
                 }
               },
               "required": [
+                "campaignId",
                 "headline",
                 "costEconomics"
               ]
@@ -1059,210 +1056,6 @@
           "workflows",
           "recommendedWorkflowDynastySlug",
           "recommendedBudgetUsd"
-        ]
-      },
-      "PublicRevenueBrandResponse": {
-        "type": "object",
-        "properties": {
-          "featureSlug": {
-            "type": "string"
-          },
-          "groupBy": {
-            "type": "string",
-            "enum": [
-              "brand"
-            ]
-          },
-          "results": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "brand": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string",
-                      "nullable": true
-                    },
-                    "domain": {
-                      "type": "string",
-                      "nullable": true
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "name",
-                    "domain"
-                  ]
-                },
-                "headline": {
-                  "type": "object",
-                  "properties": {
-                    "totalPipelineUsd": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Cross-org expected pipeline for the brand (sum over the orgs it appears in). Null when no saved economics anywhere."
-                    }
-                  },
-                  "required": [
-                    "totalPipelineUsd"
-                  ]
-                },
-                "costEconomics": {
-                  "type": "object",
-                  "properties": {
-                    "totalCostUsd": {
-                      "type": "number",
-                      "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
-                    },
-                    "costOfAcquisitionPct": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
-                    },
-                    "roiMultiple": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
-                    }
-                  },
-                  "required": [
-                    "totalCostUsd",
-                    "costOfAcquisitionPct",
-                    "roiMultiple"
-                  ]
-                }
-              },
-              "required": [
-                "brand",
-                "headline",
-                "costEconomics"
-              ]
-            }
-          }
-        },
-        "required": [
-          "featureSlug",
-          "groupBy",
-          "results"
-        ]
-      },
-      "PublicRevenueWorkflowResponse": {
-        "type": "object",
-        "properties": {
-          "featureSlug": {
-            "type": "string"
-          },
-          "groupBy": {
-            "type": "string",
-            "enum": [
-              "workflow"
-            ]
-          },
-          "results": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "workflow": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "nullable": true
-                    },
-                    "workflowSlug": {
-                      "type": "string"
-                    },
-                    "workflowName": {
-                      "type": "string",
-                      "nullable": true
-                    },
-                    "workflowDynastyName": {
-                      "type": "string",
-                      "nullable": true
-                    },
-                    "workflowDynastySlug": {
-                      "type": "string",
-                      "nullable": true
-                    },
-                    "version": {
-                      "type": "integer",
-                      "nullable": true
-                    },
-                    "featureSlug": {
-                      "type": "string"
-                    },
-                    "createdForBrandId": {
-                      "type": "string",
-                      "nullable": true
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "workflowSlug",
-                    "workflowName",
-                    "workflowDynastyName",
-                    "workflowDynastySlug",
-                    "version",
-                    "featureSlug",
-                    "createdForBrandId"
-                  ]
-                },
-                "headline": {
-                  "type": "object",
-                  "properties": {
-                    "totalPipelineUsd": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Cross-org expected pipeline for the workflow (sum over exact org/brand/workflow cells, including deprecated workflow versions aggregated into the active workflow chain). Null when no cell has computable economics."
-                    }
-                  },
-                  "required": [
-                    "totalPipelineUsd"
-                  ]
-                },
-                "costEconomics": {
-                  "type": "object",
-                  "properties": {
-                    "totalCostUsd": {
-                      "type": "number",
-                      "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
-                    },
-                    "costOfAcquisitionPct": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
-                    },
-                    "roiMultiple": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
-                    }
-                  },
-                  "required": [
-                    "totalCostUsd",
-                    "costOfAcquisitionPct",
-                    "roiMultiple"
-                  ]
-                }
-              },
-              "required": [
-                "workflow",
-                "headline",
-                "costEconomics"
-              ]
-            }
-          }
-        },
-        "required": [
-          "featureSlug",
-          "groupBy",
-          "results"
         ]
       }
     },
@@ -2346,7 +2139,7 @@
     "/features/{featureSlug}/revenue": {
       "get": {
         "summary": "Expected pipeline revenue for a feature",
-        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. totalPipelineUsd is null when no funnel is wired for the feature, or the brand has no saved economics AND no cross-brand average exists (cold start). When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple. With ?groupBy=campaignId or ?groupBy=workflowSlug the response is instead one LEAN group per campaign/workflow that has runs for the brand+feature (identity + headline.totalPipelineUsd + costEconomics only); each group uses the same expected-revenue engine and cost economics as the overview.",
+        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. totalPipelineUsd is null when no funnel is wired for the feature, or the brand has no saved economics AND no cross-brand average exists (cold start). When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple. With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature (campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call.",
         "tags": [
           "Stats"
         ],
@@ -2382,24 +2175,13 @@
           {
             "schema": {
               "type": "string",
-              "description": "Optional workflow drill-down (ignored when groupBy=workflowSlug)."
-            },
-            "required": false,
-            "description": "Optional workflow drill-down (ignored when groupBy=workflowSlug).",
-            "name": "workflowSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
               "enum": [
-                "campaignId",
-                "workflowSlug"
+                "campaignId"
               ],
-              "description": "Return one lean group per campaign or workflow with runs for the brand+feature instead of the single overview."
+              "description": "When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview."
             },
             "required": false,
-            "description": "Return one lean group per campaign or workflow with runs for the brand+feature instead of the single overview.",
+            "description": "When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview.",
             "name": "groupBy",
             "in": "query"
           },
@@ -2449,7 +2231,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Feature revenue (overview, or grouped when groupBy is set)",
+            "description": "Feature revenue (overview, or grouped when groupBy=campaignId)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2466,7 +2248,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId or unsupported groupBy",
+            "description": "Missing brandId",
             "content": {
               "application/json": {
                 "schema": {
@@ -3159,7 +2941,7 @@
     "/public/stats/ranked": {
       "get": {
         "summary": "Top workflows or brands ranked by output metric (public, no auth)",
-        "description": "Returns top workflows or brands ranked by an output metric for a feature. For groupBy=brand, each result may include an optional public-safe cumulative timeline derived from aggregate dated activity.",
+        "description": "Returns top workflows or brands ranked by an output metric for a feature.",
         "tags": [
           "Public"
         ],
@@ -3293,52 +3075,6 @@
                               "type": "number",
                               "nullable": true
                             }
-                          },
-                          "timeline": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "date": {
-                                  "type": "string",
-                                  "description": "Public aggregate activity date for the brand point."
-                                },
-                                "cumulativePipelineUsd": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "Reserved for public expected-pipeline sparklines. Null when this ranked aggregation only has email activity counts."
-                                },
-                                "emailsSent": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "Cumulative public aggregate sent count through this date."
-                                },
-                                "emailsOpened": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "Cumulative public aggregate opened count through this date."
-                                },
-                                "emailsClicked": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "Cumulative public aggregate clicked count through this date."
-                                },
-                                "emailsReplied": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "Cumulative public aggregate positive-reply count through this date."
-                                }
-                              },
-                              "required": [
-                                "date",
-                                "cumulativePipelineUsd",
-                                "emailsSent",
-                                "emailsOpened",
-                                "emailsClicked",
-                                "emailsReplied"
-                              ]
-                            },
-                            "description": "Optional public-safe dated brand aggregate points for tiny benchmark sparklines. Present only for groupBy=brand when dated public activity exists; contains no recipient, lead, campaign, or org-internal detail."
                           }
                         },
                         "required": [
@@ -3513,8 +3249,8 @@
     },
     "/public/stats/revenue": {
       "get": {
-        "summary": "Cross-org expected pipeline revenue + CAC + ROI per brand or workflow (public, no auth)",
-        "description": "Public expected pipeline revenue, cost-of-acquisition % and ROI multiple for a feature, aggregated cross-org by brand or workflow. Runs the same expected-pipeline engine as GET /features/{featureSlug}/revenue. groupBy=brand computes one distinct (org, brand) pair and sums each brand across orgs. groupBy=workflow computes exact (org, brand, workflow) cells, then aggregates deprecated workflow versions into the active workflow chain. costEconomics is byte-identical to the dashboard's (buildCostEconomics).",
+        "summary": "Cross-org expected pipeline revenue + CAC + ROI per brand (public, no auth)",
+        "description": "Per-brand expected pipeline revenue, cost-of-acquisition % and ROI multiple for a feature, aggregated cross-org. Runs the same expected-pipeline engine as GET /features/{featureSlug}/revenue once per (org, brand) that has leads for the feature, and sums each brand across the orgs it appears in (leads are disjoint per org, so no double-count). costEconomics is byte-identical to the dashboard's (buildCostEconomics). Only groupBy=brand is supported today — per-workflow revenue is a follow-up.",
         "tags": [
           "Public"
         ],
@@ -3533,30 +3269,109 @@
             "schema": {
               "type": "string",
               "enum": [
-                "brand",
-                "workflow"
+                "brand"
               ],
-              "description": "Group results by brand or workflow."
+              "description": "Group results by brand (only supported value)."
             },
             "required": true,
-            "description": "Group results by brand or workflow.",
+            "description": "Group results by brand (only supported value).",
             "name": "groupBy",
             "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "Public cross-org revenue",
+            "description": "Per-brand cross-org revenue",
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/PublicRevenueBrandResponse"
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
                     },
-                    {
-                      "$ref": "#/components/schemas/PublicRevenueWorkflowResponse"
+                    "groupBy": {
+                      "type": "string",
+                      "enum": [
+                        "brand"
+                      ]
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "brand": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "domain": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "domain"
+                            ]
+                          },
+                          "headline": {
+                            "type": "object",
+                            "properties": {
+                              "totalPipelineUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Cross-org expected pipeline for the brand (sum over the orgs it appears in). Null when no saved economics anywhere."
+                              }
+                            },
+                            "required": [
+                              "totalPipelineUsd"
+                            ]
+                          },
+                          "costEconomics": {
+                            "type": "object",
+                            "properties": {
+                              "totalCostUsd": {
+                                "type": "number",
+                                "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
+                              },
+                              "costOfAcquisitionPct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                              },
+                              "roiMultiple": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
+                              }
+                            },
+                            "required": [
+                              "totalCostUsd",
+                              "costOfAcquisitionPct",
+                              "roiMultiple"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "brand",
+                          "headline",
+                          "costEconomics"
+                        ]
+                      }
                     }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "groupBy",
+                    "results"
                   ]
                 }
               }
@@ -3781,52 +3596,6 @@
                               "type": "number",
                               "nullable": true
                             }
-                          },
-                          "timeline": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "date": {
-                                  "type": "string",
-                                  "description": "Public aggregate activity date for the brand point."
-                                },
-                                "cumulativePipelineUsd": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "Reserved for public expected-pipeline sparklines. Null when this ranked aggregation only has email activity counts."
-                                },
-                                "emailsSent": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "Cumulative public aggregate sent count through this date."
-                                },
-                                "emailsOpened": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "Cumulative public aggregate opened count through this date."
-                                },
-                                "emailsClicked": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "Cumulative public aggregate clicked count through this date."
-                                },
-                                "emailsReplied": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "Cumulative public aggregate positive-reply count through this date."
-                                }
-                              },
-                              "required": [
-                                "date",
-                                "cumulativePipelineUsd",
-                                "emailsSent",
-                                "emailsOpened",
-                                "emailsClicked",
-                                "emailsReplied"
-                              ]
-                            },
-                            "description": "Optional public-safe dated brand aggregate points for tiny benchmark sparklines. Present only for groupBy=brand when dated public activity exists; contains no recipient, lead, campaign, or org-internal detail."
                           }
                         },
                         "required": [

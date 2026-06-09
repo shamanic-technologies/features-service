@@ -62,7 +62,6 @@ interface LeadRow {
 export async function fetchLeadsForRevenue(
   brandId: string,
   campaignId: string | undefined,
-  workflowSlug: string | undefined,
   headers: { orgId: string; userId: string; runId: string; featureSlug?: string },
 ): Promise<EnginePerson[]> {
   const url = process.env.LEAD_SERVICE_URL;
@@ -73,7 +72,6 @@ export async function fetchLeadsForRevenue(
 
   const params = new URLSearchParams({ brandId });
   if (campaignId) params.set("campaignId", campaignId);
-  if (workflowSlug) params.set("workflowSlug", workflowSlug);
 
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
@@ -83,7 +81,6 @@ export async function fetchLeadsForRevenue(
     "x-brand-id": brandId,
   };
   if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
-  if (workflowSlug) reqHeaders["x-workflow-slug"] = workflowSlug;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
   const response = await fetch(`${url}/orgs/leads?${params}`, { headers: reqHeaders });
