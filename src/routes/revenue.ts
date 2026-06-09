@@ -61,7 +61,7 @@ interface RevenueResponse {
 /** The revenue response body for one (brand, campaign?) scope — everything but the featureSlug. */
 export type RevenueBody = Omit<RevenueResponse, "featureSlug">;
 
-export type DownstreamHeaders = { orgId: string; userId: string; runId: string; featureSlug?: string };
+export type DownstreamHeaders = { orgId: string; userId?: string; runId?: string; featureSlug?: string };
 
 function emptyBody(totalPipelineUsd: number | null, totalCostInUsdCents: number): RevenueBody {
   return {
