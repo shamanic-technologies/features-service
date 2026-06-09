@@ -45,8 +45,8 @@ const ECONOMICS = {
   visitToClosePct: 2,    // v2c 0.02
 };
 
-// Two dynasties. wf-a: $1000 cost / 100 clicks / 50 replies → clickUsd 10, replyUsd 20.
-//                wf-b: $1000 cost / 50 clicks / 10 replies  → clickUsd 20, replyUsd 100.
+// Two dynasties. wf-a: $1000 cost / 200 contacted / 100 clicks / 50 replies
+//                wf-b: $1000 cost / 200 contacted / 50 clicks / 10 replies
 function wf(over: Record<string, unknown>): Record<string, unknown> {
   return { id: "id", workflowSlug: "wf", workflowName: "WF", workflowDynastyName: "Dyn", workflowDynastySlug: "dyn", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null, ...over };
 }
@@ -58,8 +58,8 @@ function costGroup(slug: string, cents: number, runCount = 10): Record<string, u
   return { dimensions: { workflowSlug: slug }, totalCostInUsdCents: String(cents), runCount, minStartedAt: null, maxStartedAt: null };
 }
 const COST_GROUPS = [costGroup("wf-a", 100000), costGroup("wf-b", 100000)];
-function emailGroup(slug: string, clicked: number, repliesPositive: number): Record<string, unknown> {
-  return { key: slug, broadcast: { recipientStats: { contacted: 200, sent: 200, delivered: 200, opened: 150, clicked, bounced: 0, repliesPositive, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } };
+function emailGroup(slug: string, clicked: number, repliesPositive: number, contacted = 200): Record<string, unknown> {
+  return { key: slug, broadcast: { recipientStats: { contacted, sent: 200, delivered: 200, opened: 150, clicked, bounced: 0, repliesPositive, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } };
 }
 const EMAIL_GROUPS = [emailGroup("wf-a", 100, 50), emailGroup("wf-b", 50, 10)];
 
@@ -123,6 +123,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
 
     const a = byDynasty(res.body, "dyn-a");
     expect(a.workflowDynastyName).toBe("Dynasty A");
+    expect(a.contactedUsd).toBeCloseTo(5, 6); // $1000 / 200 contacted leads
     expect(a.replyUsd).toBeCloseTo(20, 6);  // $1000 / 50 replies
     expect(a.clickUsd).toBeCloseTo(10, 6);  // $1000 / 100 clicks
     // pCloseClick=orP(0.02,0.05·0.30)=0.0347, pCloseReply=0.40·0.30=0.12
@@ -143,6 +144,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
     expect(res.status).toBe(200);
     const a = byDynasty(res.body, "dyn-a");
+    expect(a.projection.contactedLeads).toBeCloseTo(200, 6); // 1000/5
     expect(a.projection.replies).toBeCloseTo(50, 6);    // 1000/20
     expect(a.projection.visits).toBeCloseTo(100, 6);    // 1000/10
     expect(a.projection.meetings).toBeCloseTo(25, 6);   // 50·0.4 + 100·0.05 (both routes)
@@ -195,6 +197,17 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(a.clickUsd).toBeCloseTo(10, 6);
     // closesPerBudget = (1/10)·0.0347 = 0.00347 → cpc ≈ 288.18 (reply route contributes 0)
     expect(a.costPerCloseUsd).toBeCloseTo(288.1844, 3);
+  });
+
+  it("workflow with no contacted-lead denominator → projection carries explicit contactedLeads null", async () => {
+    mockFetch({ emailGroups: [emailGroup("wf-a", 100, 50, 0)] });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
+    expect(res.status).toBe(200);
+    const a = byDynasty(res.body, "dyn-a");
+    expect(a.contactedUsd).toBeNull();
+    expect(a.projection.contactedLeads).toBeNull();
+    expect(a.projection.replies).toBeCloseTo(50, 6);
+    expect(a.projection.visits).toBeCloseTo(100, 6);
   });
 
   it("502 when a downstream source fails", async () => {

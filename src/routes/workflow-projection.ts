@@ -29,6 +29,7 @@ interface BrandEcon {
 }
 
 interface Projection {
+  contactedLeads: number | null;
   replies: number | null;
   visits: number | null;
   meetings: number | null;
@@ -41,6 +42,7 @@ interface Projection {
 interface WorkflowProjection {
   workflowDynastySlug: string;
   workflowDynastyName: string | null;
+  contactedUsd: number | null;
   replyUsd: number | null;
   clickUsd: number | null;
   costPerCloseUsd: number | null;
@@ -71,6 +73,7 @@ interface WorkflowProjectionResponse {
  * A route with a null unit cost contributes 0. closesPerBudget ≤ 0 → no usable data → both null.
  */
 function project(
+  contactedUsd: number | null,
   replyUsd: number | null,
   clickUsd: number | null,
   econ: BrandEcon,
@@ -88,6 +91,7 @@ function project(
 
   if (budgetUsd == null || budgetUsd <= 0) return { costPerCloseUsd, projection: null };
 
+  const contactedLeads = contactedUsd != null ? budgetUsd / contactedUsd : null;
   const replies = replyUsd != null ? budgetUsd / replyUsd : null;
   const visits = clickUsd != null ? budgetUsd / clickUsd : null;
   // Meetings come from BOTH routes (reply→meeting and click→meeting), regardless of objective.
@@ -97,7 +101,7 @@ function project(
   const cacPct = revenue > 0 ? (budgetUsd / revenue) * 100 : null;
   const cacAbs = closes > 0 ? budgetUsd / closes : null;
 
-  return { costPerCloseUsd, projection: { replies, visits, meetings, closes, revenue, cacPct, cacAbs } };
+  return { costPerCloseUsd, projection: { contactedLeads, replies, visits, meetings, closes, revenue, cacPct, cacAbs } };
 }
 
 // ── GET /features/:featureSlug/workflow-projection ───────────────────────────
@@ -161,19 +165,22 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       const wf = workflowBySlug.get(activeSlug);
       const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
       const costUsd = cost.totalCostInUsdCents / 100;
+      const contacted = outcomes.recipientsContacted ?? 0;
       const replies = outcomes.recipientsRepliesPositive ?? 0;
       const clicks = outcomes.recipientsClicked ?? 0;
 
+      const contactedUsd = Number.isFinite(contacted) && contacted > 0 && costUsd > 0 ? costUsd / contacted : null;
       const replyUsd = replies > 0 && costUsd > 0 ? costUsd / replies : null;
       const clickUsd = clicks > 0 && costUsd > 0 ? costUsd / clicks : null;
 
       const { costPerCloseUsd, projection } = econ
-        ? project(replyUsd, clickUsd, econ, budgetUsd)
+        ? project(contactedUsd, replyUsd, clickUsd, econ, budgetUsd)
         : { costPerCloseUsd: null, projection: null };
 
       projections.push({
         workflowDynastySlug: wf?.workflowDynastySlug ?? activeSlug,
         workflowDynastyName: wf?.workflowDynastyName ?? null,
+        contactedUsd,
         replyUsd,
         clickUsd,
         costPerCloseUsd,

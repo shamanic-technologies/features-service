@@ -950,6 +950,11 @@
                   "type": "string",
                   "nullable": true
                 },
+                "contactedUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Cost per unique lead contacted (USD). Null when the contacted-lead denominator is absent or zero."
+                },
                 "replyUsd": {
                   "type": "number",
                   "nullable": true,
@@ -969,6 +974,11 @@
                   "type": "object",
                   "nullable": true,
                   "properties": {
+                    "contactedLeads": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Expected unique leads contacted from the budget. Null when the workflow has no usable contacted-lead denominator."
+                    },
                     "replies": {
                       "type": "number",
                       "nullable": true,
@@ -1006,6 +1016,7 @@
                     }
                   },
                   "required": [
+                    "contactedLeads",
                     "replies",
                     "visits",
                     "meetings",
@@ -1020,6 +1031,7 @@
               "required": [
                 "workflowDynastySlug",
                 "workflowDynastyName",
+                "contactedUsd",
                 "replyUsd",
                 "clickUsd",
                 "costPerCloseUsd",
@@ -2417,6 +2429,11 @@
                             "type": "string",
                             "nullable": true
                           },
+                          "contactedUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Cost per unique lead contacted (USD). Null when the contacted-lead denominator is absent or zero."
+                          },
                           "replyUsd": {
                             "type": "number",
                             "nullable": true,
@@ -2436,6 +2453,11 @@
                             "type": "object",
                             "nullable": true,
                             "properties": {
+                              "contactedLeads": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Expected unique leads contacted from the budget. Null when the workflow has no usable contacted-lead denominator."
+                              },
                               "replies": {
                                 "type": "number",
                                 "nullable": true,
@@ -2473,6 +2495,7 @@
                               }
                             },
                             "required": [
+                              "contactedLeads",
                               "replies",
                               "visits",
                               "meetings",
@@ -2487,6 +2510,7 @@
                         "required": [
                           "workflowDynastySlug",
                           "workflowDynastyName",
+                          "contactedUsd",
                           "replyUsd",
                           "clickUsd",
                           "costPerCloseUsd",
