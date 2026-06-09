@@ -9,8 +9,8 @@ export async function fetchSalesEconomics(
   brandId: string,
   headers: {
     orgId: string;
-    userId: string;
-    runId: string;
+    userId?: string;
+    runId?: string;
     campaignId?: string;
     featureSlug?: string;
   },
@@ -24,10 +24,10 @@ export async function fetchSalesEconomics(
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
     "x-org-id": headers.orgId,
-    "x-user-id": headers.userId,
-    "x-run-id": headers.runId,
     "x-brand-id": brandId,
   };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
   if (headers.campaignId) reqHeaders["x-campaign-id"] = headers.campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
@@ -66,8 +66,8 @@ export async function fetchEffectiveEconomics(
   brandId: string,
   headers: {
     orgId: string;
-    userId: string;
-    runId: string;
+    userId?: string;
+    runId?: string;
     campaignId?: string;
     featureSlug?: string;
   },
@@ -81,10 +81,10 @@ export async function fetchEffectiveEconomics(
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
     "x-org-id": headers.orgId,
-    "x-user-id": headers.userId,
-    "x-run-id": headers.runId,
     "x-brand-id": brandId,
   };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
   if (headers.campaignId) reqHeaders["x-campaign-id"] = headers.campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 

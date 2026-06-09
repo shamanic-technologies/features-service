@@ -56,7 +56,7 @@ export async function fetchEventTimestamps(
   brandId: string,
   campaignId: string | undefined,
   emails: string[],
-  headers: { orgId: string; userId: string; runId: string; featureSlug?: string },
+  headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
 ): Promise<Map<string, SignalDates>> {
   const result = new Map<string, SignalDates>();
   if (emails.length === 0) return result;
@@ -71,10 +71,10 @@ export async function fetchEventTimestamps(
     "Content-Type": "application/json",
     "x-api-key": apiKey,
     "x-org-id": headers.orgId,
-    "x-user-id": headers.userId,
-    "x-run-id": headers.runId,
     "x-brand-id": brandId,
   };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
   if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 

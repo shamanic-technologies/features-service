@@ -13,7 +13,7 @@ export async function fetchRunsCostCents(
   brandId: string,
   campaignId: string | undefined,
   featureSlug: string,
-  headers: { orgId: string; userId: string; runId: string; featureSlug?: string },
+  headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
 ): Promise<number> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -28,10 +28,10 @@ export async function fetchRunsCostCents(
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
     "x-org-id": headers.orgId,
-    "x-user-id": headers.userId,
-    "x-run-id": headers.runId,
     "x-brand-id": brandId,
   };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
   if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
@@ -68,7 +68,7 @@ export async function fetchRunsCostCents(
 export async function fetchCampaignIdsWithRuns(
   brandId: string,
   featureSlug: string,
-  headers: { orgId: string; userId: string; runId: string; featureSlug?: string },
+  headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
 ): Promise<string[]> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -81,10 +81,10 @@ export async function fetchCampaignIdsWithRuns(
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
     "x-org-id": headers.orgId,
-    "x-user-id": headers.userId,
-    "x-run-id": headers.runId,
     "x-brand-id": brandId,
   };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
   const response = await fetch(`${url}/v1/stats/costs?${params}`, { headers: reqHeaders });

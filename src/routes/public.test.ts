@@ -586,6 +586,12 @@ describe("GET /public/stats/revenue", () => {
 
     // 3 distinct (org, brand) pairs → engine called exactly 3 times (not 4 — wf rows deduped)
     expect(mockComputeFeatureRevenue).toHaveBeenCalledTimes(3);
+    for (const call of mockComputeFeatureRevenue.mock.calls) {
+      const headers = call[4] as Record<string, unknown>;
+      expect(headers).toMatchObject({ featureSlug: "sales-cold-email-outreach" });
+      expect(headers).not.toHaveProperty("userId");
+      expect(headers).not.toHaveProperty("runId");
+    }
   });
 
   it("null pipeline when a brand has no economics; cost present, ratios null", async () => {
