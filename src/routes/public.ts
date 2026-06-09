@@ -7,9 +7,11 @@ import {
   fetchPublicWorkflows,
   fetchPublicCosts,
   fetchPublicEmailStats,
+  fetchPublicWorkflowEngagementLatency,
   fetchPublicJournalistsStats,
   fetchBrandInfoBatch,
   type WorkflowMetadata,
+  type EngagementLatencyMetric,
 } from "../lib/public-stats-clients.js";
 import { getFunnel } from "../lib/funnel-registry.js";
 import { fetchFeatureMemberships } from "../lib/feature-memberships-client.js";
@@ -535,6 +537,96 @@ export async function handlePublicRevenue(
   res.json(payload);
 }
 
+// ── Public workflow engagement latency handler ───────────────────────────────
+//
+// Public-safe workflow-level timing metrics for benchmark/report workflow rows.
+// The average/median math belongs to the email producer because median requires
+// event-level duration distributions; features-service only enriches the
+// producer-owned workflowSlug aggregates with public workflow identity and
+// filters out any unknown keys before returning a no-auth response.
+
+interface PublicWorkflowEngagementLatencyResult {
+  workflow: {
+    id: string;
+    workflowSlug: string;
+    workflowName: string;
+    workflowDynastyName: string;
+    workflowDynastySlug: string;
+    version: number;
+    featureSlug: string;
+    createdForBrandId: string | null;
+  };
+  timeToFirstLinkClick: EngagementLatencyMetric;
+  timeToFirstPositiveReply: EngagementLatencyMetric;
+}
+
+interface PublicWorkflowEngagementLatencyPayload {
+  featureSlug: string;
+  groupBy: "workflow";
+  results: PublicWorkflowEngagementLatencyResult[];
+}
+
+export async function handlePublicWorkflowEngagementLatency(
+  featureSlug: string | undefined,
+  groupBy: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  if (!featureSlug) {
+    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
+    return;
+  }
+  if (groupBy !== "workflow") {
+    res.status(400).json({ error: "Query parameter 'groupBy' is required and must be 'workflow'" });
+    return;
+  }
+
+  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
+  if (!feature) {
+    res.status(404).json({ error: "Feature not found" });
+    return;
+  }
+
+  const [workflows, latencyByWorkflow] = await Promise.all([
+    fetchPublicWorkflows(featureSlug, "active"),
+    fetchPublicWorkflowEngagementLatency(featureSlug),
+  ]);
+
+  const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
+  const results: PublicWorkflowEngagementLatencyResult[] = [];
+
+  for (const [workflowSlug, latency] of latencyByWorkflow) {
+    const wf = workflowBySlug.get(workflowSlug);
+    if (!wf) continue;
+    results.push({
+      workflow: {
+        id: wf.id,
+        workflowSlug: wf.workflowSlug,
+        workflowName: wf.workflowName,
+        workflowDynastyName: wf.workflowDynastyName,
+        workflowDynastySlug: wf.workflowDynastySlug,
+        version: wf.version,
+        featureSlug: wf.featureSlug,
+        createdForBrandId: wf.createdForBrandId,
+      },
+      timeToFirstLinkClick: latency.timeToFirstLinkClick,
+      timeToFirstPositiveReply: latency.timeToFirstPositiveReply,
+    });
+  }
+
+  results.sort((a, b) => {
+    const ar = a.timeToFirstPositiveReply.medianMs;
+    const br = b.timeToFirstPositiveReply.medianMs;
+    if (ar === null && br === null) return a.workflow.workflowSlug.localeCompare(b.workflow.workflowSlug);
+    if (ar === null) return 1;
+    if (br === null) return -1;
+    if (ar !== br) return ar - br;
+    return a.workflow.workflowSlug.localeCompare(b.workflow.workflowSlug);
+  });
+
+  const payload: PublicWorkflowEngagementLatencyPayload = { featureSlug, groupBy: "workflow", results };
+  res.json(payload);
+}
+
 // ── GET /public/stats/ranked ─────────────────────────────────────────────────
 
 router.get("/public/stats/ranked", async (req, res) => {
@@ -566,6 +658,17 @@ router.get("/public/stats/revenue", async (req, res) => {
     await handlePublicRevenue(req.query.featureSlug as string | undefined, req.query.groupBy as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public stats revenue error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/workflow-engagement-latency ───────────────────────────
+
+router.get("/public/stats/workflow-engagement-latency", async (req, res) => {
+  try {
+    await handlePublicWorkflowEngagementLatency(req.query.featureSlug as string | undefined, req.query.groupBy as string | undefined, res);
+  } catch (error) {
+    console.error("[features-service] Public workflow engagement latency error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

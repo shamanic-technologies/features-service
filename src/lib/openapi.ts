@@ -482,6 +482,24 @@ const rankedResponseSchema = z.object({
   results: z.array(rankedResultSchema),
 });
 
+const publicEngagementLatencyMetricSchema = z.object({
+  averageMs: z.number().nullable().describe("Average elapsed time in milliseconds. Null when sampleSize is 0."),
+  medianMs: z.number().nullable().describe("Median elapsed time in milliseconds. Null when sampleSize is 0."),
+  sampleSize: z.number().int().describe("Number of recipients included in this metric."),
+});
+
+const publicWorkflowEngagementLatencyResultSchema = z.object({
+  workflow: rankedWorkflowSchema,
+  timeToFirstLinkClick: publicEngagementLatencyMetricSchema,
+  timeToFirstPositiveReply: publicEngagementLatencyMetricSchema,
+});
+
+const publicWorkflowEngagementLatencyResponseSchema = z.object({
+  featureSlug: z.string(),
+  groupBy: z.literal("workflow"),
+  results: z.array(publicWorkflowEngagementLatencyResultSchema),
+});
+
 const rankedQueryParams = z.object({
   featureSlug: z.string().describe("Feature slug (required)"),
   objective: z.string().optional().describe("Stats key to sort by (defaults to costPerRecipientPositiveReplyCents)"),
@@ -566,6 +584,30 @@ registry.registerPath({
   },
   responses: {
     200: { description: "Per-brand cross-org revenue", content: { "application/json": { schema: publicRevenueResponseSchema } } },
+    400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/workflow-engagement-latency ────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/workflow-engagement-latency",
+  summary: "Average and median time-to-engagement per workflow (public, no auth)",
+  description:
+    "Returns public-safe workflow-level average and median elapsed time to first link click and first positive reply for a feature. " +
+    "The duration math is computed by the email stats producer from dated activity; features-service enriches only with public workflow identity. " +
+    "Only groupBy=workflow is supported.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string().describe("Feature slug (required)."),
+      groupBy: z.literal("workflow").describe("Group results by workflow (only supported value)."),
+    }),
+  },
+  responses: {
+    200: { description: "Per-workflow engagement latency metrics", content: { "application/json": { schema: publicWorkflowEngagementLatencyResponseSchema } } },
     400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
   },

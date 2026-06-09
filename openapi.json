@@ -3416,6 +3416,199 @@
         }
       }
     },
+    "/public/stats/workflow-engagement-latency": {
+      "get": {
+        "summary": "Average and median time-to-engagement per workflow (public, no auth)",
+        "description": "Returns public-safe workflow-level average and median elapsed time to first link click and first positive reply for a feature. The duration math is computed by the email stats producer from dated activity; features-service enriches only with public workflow identity. Only groupBy=workflow is supported.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature slug (required)."
+            },
+            "required": true,
+            "description": "Feature slug (required).",
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "workflow"
+              ],
+              "description": "Group results by workflow (only supported value)."
+            },
+            "required": true,
+            "description": "Group results by workflow (only supported value).",
+            "name": "groupBy",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-workflow engagement latency metrics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "groupBy": {
+                      "type": "string",
+                      "enum": [
+                        "workflow"
+                      ]
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "workflow": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "workflowSlug": {
+                                "type": "string"
+                              },
+                              "workflowName": {
+                                "type": "string"
+                              },
+                              "workflowDynastyName": {
+                                "type": "string"
+                              },
+                              "workflowDynastySlug": {
+                                "type": "string"
+                              },
+                              "version": {
+                                "type": "integer"
+                              },
+                              "featureSlug": {
+                                "type": "string"
+                              },
+                              "createdForBrandId": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "workflowSlug"
+                            ]
+                          },
+                          "timeToFirstLinkClick": {
+                            "type": "object",
+                            "properties": {
+                              "averageMs": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Average elapsed time in milliseconds. Null when sampleSize is 0."
+                              },
+                              "medianMs": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Median elapsed time in milliseconds. Null when sampleSize is 0."
+                              },
+                              "sampleSize": {
+                                "type": "integer",
+                                "description": "Number of recipients included in this metric."
+                              }
+                            },
+                            "required": [
+                              "averageMs",
+                              "medianMs",
+                              "sampleSize"
+                            ]
+                          },
+                          "timeToFirstPositiveReply": {
+                            "type": "object",
+                            "properties": {
+                              "averageMs": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Average elapsed time in milliseconds. Null when sampleSize is 0."
+                              },
+                              "medianMs": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Median elapsed time in milliseconds. Null when sampleSize is 0."
+                              },
+                              "sampleSize": {
+                                "type": "integer",
+                                "description": "Number of recipients included in this metric."
+                              }
+                            },
+                            "required": [
+                              "averageMs",
+                              "medianMs",
+                              "sampleSize"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "workflow",
+                          "timeToFirstLinkClick",
+                          "timeToFirstPositiveReply"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "groupBy",
+                    "results"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/stats/ranked": {
       "get": {
         "summary": "Top workflows or brands ranked by output metric (authenticated)",
