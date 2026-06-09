@@ -504,7 +504,11 @@ describe("GET /stats/best (authenticated)", () => {
 
 // ── GET /public/stats/revenue ─────────────────────────────────────────────
 
-interface PairResult { pipeline: number | null; costUsd: number }
+interface PairResult {
+  pipeline: number | null;
+  costUsd: number;
+  timeSeries?: Array<{ date: string; cumulativePipelineUsd: number }>;
+}
 
 /** Drive the mocked engine: one deterministic result per `${orgId}::${brandId}`. */
 function setPairResults(pairs: Record<string, PairResult>): void {
@@ -516,7 +520,7 @@ function setPairResults(pairs: Record<string, PairResult>): void {
       return {
         headline: { totalPipelineUsd: v.pipeline },
         costEconomics: { totalCostUsd: v.costUsd, costOfAcquisitionPct: null, roiMultiple: null },
-        timeSeries: [], organizations: [], leads: [], events: [],
+        timeSeries: v.timeSeries ?? [], organizations: [], leads: [], events: [],
       };
     },
   );
@@ -611,6 +615,43 @@ describe("GET /public/stats/revenue", () => {
     expect(res.body.results[0].costEconomics.totalCostUsd).toBe(12);
     expect(res.body.results[0].costEconomics.roiMultiple).toBeNull();
     expect(res.body.results[0].costEconomics.costOfAcquisitionPct).toBeNull();
+  });
+
+  it("returns a public brand revenue timeline aggregated across orgs", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    setPairResults({
+      "org-A::brand-1": {
+        pipeline: 100,
+        costUsd: 10,
+        timeSeries: [
+          { date: "2026-01-03T00:00:00.000Z", cumulativePipelineUsd: 30 },
+          { date: "2026-01-05T00:00:00.000Z", cumulativePipelineUsd: 60 },
+        ],
+      },
+      "org-B::brand-1": {
+        pipeline: 40,
+        costUsd: 5,
+        timeSeries: [
+          { date: "2026-01-04T00:00:00.000Z", cumulativePipelineUsd: 40 },
+        ],
+      },
+    });
+    mockRevenueFetch(
+      [
+        { orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" },
+        { orgId: "org-B", brandId: "brand-1", workflowSlug: "wf-1" },
+      ],
+      [{ id: "brand-1", name: "Acme", domain: "acme.com" }],
+    );
+
+    const res = await request(app).get("/public/stats/revenue?featureSlug=sales-cold-email-outreach&groupBy=brand");
+
+    expect(res.status).toBe(200);
+    expect(res.body.results[0].timeline).toEqual([
+      { date: "2026-01-03T00:00:00.000Z", cumulativePipelineUsd: 30 },
+      { date: "2026-01-04T00:00:00.000Z", cumulativePipelineUsd: 70 },
+      { date: "2026-01-05T00:00:00.000Z", cumulativePipelineUsd: 100 },
+    ]);
   });
 
   it("skips stale memberships rejected by brand ownership while keeping valid brands", async () => {
