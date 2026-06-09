@@ -425,7 +425,6 @@ export async function handleBest(
 // dashboard. The compute is heavy (one engine pass per (org, brand)), so the assembled
 // response is cached in-memory for a short TTL — it is the same for every public caller.
 
-const SERVICE_IDENTITY = "features-service-public-revenue";
 const REVENUE_TTL_MS = 60_000;
 
 interface PublicRevenueResult {
@@ -486,7 +485,7 @@ export async function handlePublicRevenue(
 
   const computed = await Promise.all(
     pairs.map(async ({ orgId, brandId }) => {
-      const headers: DownstreamHeaders = { orgId, userId: SERVICE_IDENTITY, runId: SERVICE_IDENTITY, featureSlug };
+      const headers: DownstreamHeaders = { orgId, featureSlug };
       const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers);
       return { brandId, pipeline: body.headline.totalPipelineUsd, costUsd: body.costEconomics.totalCostUsd };
     }),
