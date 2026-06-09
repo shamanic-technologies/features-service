@@ -27,6 +27,18 @@ export interface CostGroup {
   maxStartedAt: string | null;
 }
 
+export interface EngagementLatencyMetric {
+  averageMs: number | null;
+  medianMs: number | null;
+  sampleSize: number;
+}
+
+export interface WorkflowEngagementLatency {
+  workflowSlug: string;
+  timeToFirstLinkClick: EngagementLatencyMetric;
+  timeToFirstPositiveReply: EngagementLatencyMetric;
+}
+
 // ── Workflow metadata ────────────────────────────────────────────────────────
 
 export async function fetchPublicWorkflows(
@@ -100,6 +112,79 @@ export async function fetchPublicEmailStats(
   }
 
   return result;
+}
+
+export async function fetchPublicWorkflowEngagementLatency(
+  featureSlugs: string,
+): Promise<Map<string, WorkflowEngagementLatency>> {
+  const params = new URLSearchParams({ featureSlugs, groupBy: "workflowSlug" });
+
+  const url = `${process.env.EMAIL_GATEWAY_SERVICE_URL}/public/stats/engagement-latency?${params}`;
+  const response = await fetch(url, {
+    headers: { "x-api-key": process.env.EMAIL_GATEWAY_SERVICE_API_KEY! },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`[features-service] email-gateway /public/stats/engagement-latency failed: ${response.status} — ${body}`);
+  }
+
+  const data = await response.json() as Record<string, unknown>;
+  if (!Array.isArray(data.groups)) {
+    throw new Error("[features-service] email-gateway /public/stats/engagement-latency returned no groups array");
+  }
+
+  const result = new Map<string, WorkflowEngagementLatency>();
+  for (const group of data.groups) {
+    if (!isRecord(group)) {
+      throw new Error("[features-service] email-gateway engagement-latency group is not an object");
+    }
+    const workflowSlug = readString(group, "key");
+    result.set(workflowSlug, {
+      workflowSlug,
+      timeToFirstLinkClick: readLatencyMetric(group, "timeToFirstLinkClick"),
+      timeToFirstPositiveReply: readLatencyMetric(group, "timeToFirstPositiveReply"),
+    });
+  }
+
+  return result;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readString(data: Record<string, unknown>, key: string): string {
+  const value = data[key];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`[features-service] email-gateway engagement-latency missing string field: ${key}`);
+  }
+  return value;
+}
+
+function readNullableNumber(data: Record<string, unknown>, key: string): number | null {
+  const value = data[key];
+  if (value === null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  throw new Error(`[features-service] email-gateway engagement-latency invalid nullable number field: ${key}`);
+}
+
+function readNumber(data: Record<string, unknown>, key: string): number {
+  const value = data[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  throw new Error(`[features-service] email-gateway engagement-latency invalid number field: ${key}`);
+}
+
+function readLatencyMetric(data: Record<string, unknown>, key: string): EngagementLatencyMetric {
+  const value = data[key];
+  if (!isRecord(value)) {
+    throw new Error(`[features-service] email-gateway engagement-latency missing metric: ${key}`);
+  }
+  return {
+    averageMs: readNullableNumber(value, "averageMs"),
+    medianMs: readNullableNumber(value, "medianMs"),
+    sampleSize: readNumber(value, "sampleSize"),
+  };
 }
 
 function extractBroadcastEmailFields(data: Record<string, unknown>): Record<string, number> {

@@ -161,7 +161,7 @@ function mockFetchResponses(overrides: Record<string, unknown> = {}) {
 
   vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    for (const [prefix, body] of Object.entries(defaults)) {
+    for (const [prefix, body] of Object.entries(defaults).sort((a, b) => b[0].length - a[0].length)) {
       if (url.startsWith(prefix)) {
         return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
       }
@@ -447,6 +447,96 @@ describe("GET /public/stats/best", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.best.recipientsRepliesPositive).toBeNull();
+  });
+});
+
+// ── GET /public/stats/workflow-engagement-latency ─────────────────────────
+
+describe("GET /public/stats/workflow-engagement-latency", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  it("returns public per-workflow average and median time to click and positive reply", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockFetchResponses({
+      "http://email:3000/public/stats/engagement-latency": {
+        groups: [
+          {
+            key: "sales-outreach-alpha",
+            timeToFirstLinkClick: { averageMs: 86_400_000, medianMs: 43_200_000, sampleSize: 4 },
+            timeToFirstPositiveReply: { averageMs: 172_800_000, medianMs: 129_600_000, sampleSize: 3 },
+          },
+          {
+            key: "sales-outreach-beta",
+            timeToFirstLinkClick: { averageMs: null, medianMs: null, sampleSize: 0 },
+            timeToFirstPositiveReply: { averageMs: 259_200_000, medianMs: 259_200_000, sampleSize: 1 },
+          },
+        ],
+      },
+    });
+
+    const res = await request(app)
+      .get("/public/stats/workflow-engagement-latency?featureSlug=sales-cold-email-outreach&groupBy=workflow");
+
+    expect(res.status).toBe(200);
+    expect(res.body.featureSlug).toBe("sales-cold-email-outreach");
+    expect(res.body.groupBy).toBe("workflow");
+    expect(res.body.results).toHaveLength(2);
+    expect(res.body.results[0].workflow.workflowSlug).toBe("sales-outreach-alpha");
+    expect(res.body.results[0].workflow.workflowName).toBe("Sales Outreach Alpha");
+    expect(res.body.results[0].timeToFirstLinkClick).toEqual({ averageMs: 86_400_000, medianMs: 43_200_000, sampleSize: 4 });
+    expect(res.body.results[0].timeToFirstPositiveReply).toEqual({ averageMs: 172_800_000, medianMs: 129_600_000, sampleSize: 3 });
+    expect(res.body.results[1].timeToFirstLinkClick).toEqual({ averageMs: null, medianMs: null, sampleSize: 0 });
+
+    const calls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.map((call: unknown[]) => call[0] as string);
+    expect(calls).toContain("http://email:3000/public/stats/engagement-latency?featureSlugs=sales-cold-email-outreach&groupBy=workflowSlug");
+  });
+
+  it("filters unknown producer keys so public output only contains workflow identity", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockFetchResponses({
+      "http://email:3000/public/stats/engagement-latency": {
+        groups: [
+          {
+            key: "sales-outreach-alpha",
+            timeToFirstLinkClick: { averageMs: 10, medianMs: 10, sampleSize: 1 },
+            timeToFirstPositiveReply: { averageMs: 20, medianMs: 20, sampleSize: 1 },
+          },
+          {
+            key: "lead@example.com",
+            timeToFirstLinkClick: { averageMs: 1, medianMs: 1, sampleSize: 1 },
+            timeToFirstPositiveReply: { averageMs: 1, medianMs: 1, sampleSize: 1 },
+          },
+        ],
+      },
+    });
+
+    const res = await request(app)
+      .get("/public/stats/workflow-engagement-latency?featureSlug=sales-cold-email-outreach&groupBy=workflow");
+
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    expect(JSON.stringify(res.body)).not.toContain("lead@example.com");
+  });
+
+  it("returns 400 when featureSlug is missing", async () => {
+    const res = await request(app).get("/public/stats/workflow-engagement-latency?groupBy=workflow");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/featureSlug/i);
+  });
+
+  it("returns 400 when groupBy is not workflow", async () => {
+    const res = await request(app).get("/public/stats/workflow-engagement-latency?featureSlug=sales-cold-email-outreach&groupBy=brand");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/workflow/i);
+  });
+
+  it("returns 404 when feature not found", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    const res = await request(app).get("/public/stats/workflow-engagement-latency?featureSlug=nonexistent&groupBy=workflow");
+    expect(res.status).toBe(404);
   });
 });
 
