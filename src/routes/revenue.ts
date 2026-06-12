@@ -93,40 +93,62 @@ export async function computeFeatureRevenue(
   funnel: ReturnType<typeof getFunnel>,
   headers: DownstreamHeaders,
 ): Promise<RevenueBody> {
-  // Total run cost for this brand(+campaign), feature-scoped — same runs-service source as
-  // /stats systemStats.totalCostInUsdCents. Required on every body (incl. null-pipeline paths),
-  // so fetch it up front. Fail-loud: a swallowed error must not fake $0 cost / infinite ROI.
-  const totalCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers);
-
-  // No funnel wired for this feature yet → null pipeline (not an error).
+  // No funnel wired for this feature yet → null pipeline (not an error). `funnel` is known up
+  // front (caller param), so short-circuit BEFORE Wave A and fetch ONLY the cost the empty body
+  // needs — never over-fetching economics/rates/leads on the no-funnel path. Fail-loud: a
+  // swallowed cost error must not fake $0 cost / infinite ROI.
   if (!funnel) {
+    const totalCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers);
     return emptyBody(null, totalCostInUsdCents);
   }
 
-  // Economics (rates + terminal LTR) — ONE call. brand-service OWNS the null→cross-brand-average
-  // defaulting and tags provenance: source "user" = the brand's own saved set ("sales-economics");
-  // "cross-brand-average" = the org-wide average fallback (an ESTIMATE the dashboard can badge, never
-  // a user-confirmed number). economics is null only at cold start (no brand has saved economics yet)
-  // → revenue genuinely incomputable → null pipeline.
-  const { economics, source } = await fetchEffectiveEconomics(brandId, { ...headers, campaignId });
+  // ── Wave A: the four downstream reads with NO data dependency on each other, in parallel.
+  //   - fetchRunsCostCents     (runs-service)   — total feature-scoped cost, on every body.
+  //   - fetchEffectiveEconomics(brand-service)  — rates + terminal LTR; brand-service OWNS the
+  //     null→cross-brand-average defaulting + provenance ("user" = saved "sales-economics";
+  //     else "cross-brand-average", an ESTIMATE). economics is null only at cold start → null pipeline.
+  //   - fetchPlatformEmailRates(cached)         — platform-global funnel rates; lets a lead earn
+  //     from its furthest reached stage (Contacted onward), not only a click / positive reply.
+  //   - fetchLeadsForRevenue   (lead-service)   — the per-lead overlay (persons).
+  // All four are fail-loud (Promise.all rejects → the endpoint 502s): each is a core input to the
+  // pipeline total / cost / ROI; a swallowed error would fake a number. The economics===null
+  // cold-start path below over-fetches rates+leads — accepted for the common-path win.
+  const [totalCostInUsdCents, { economics, source }, platformRates, persons] = await Promise.all([
+    fetchRunsCostCents(brandId, campaignId, featureSlug, headers),
+    fetchEffectiveEconomics(brandId, { ...headers, campaignId }),
+    fetchPlatformEmailRates(),
+    fetchLeadsForRevenue(brandId, campaignId, headers),
+  ]);
+
   if (economics === null) {
     return emptyBody(null, totalCostInUsdCents);
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
 
-  // Platform-global email funnel rates (cached) — let a lead earn expected revenue from
-  // its furthest reached stage (Contacted onward), not only from a click / positive reply.
-  // Fail-loud: these are a core input to the pipeline total.
-  const platformRates = await fetchPlatformEmailRates();
-
   const paths = funnel.resolvePaths({ economics, platformRates });
-  const persons = await fetchLeadsForRevenue(brandId, campaignId, headers);
 
-  // Secondary enrichment: per-event timestamps for dates / time-series / events.
-  // Best-effort — a failure degrades to dateless output, it does NOT fail the endpoint.
+  // ── Wave B: the two SECONDARY enrichment reads, in parallel — both need persons' emails
+  // (from Wave A) but are independent of each other. Each is best-effort PER CALL (own catch →
+  // warn + null): a failure degrades that overlay (dateless / no meeting-close dates) but does
+  // NOT fail the endpoint (pipeline, orgs, leads stay correct). The two mutation loops below run
+  // AFTER both settle, in the SAME order as before — concurrency only moves fetch timing, the
+  // merge into persons is unchanged, so the response body is byte-identical.
+  //   - fetchEventTimestamps  (email-gateway) — per-event dates for dates / time-series / events.
+  //   - fetchQualifications   (instantly)     — meeting-booked / closed dates → Phase 2 decay
+  //     (reply → meeting → close) + close-win as realized revenue. A known timestamp IS the signal.
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
-  try {
-    const timestamps = await fetchEventTimestamps(brandId, campaignId, emails, headers);
+  const [timestamps, quals] = await Promise.all([
+    fetchEventTimestamps(brandId, campaignId, emails, headers).catch((err) => {
+      console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
+      return null;
+    }),
+    fetchQualifications(brandId, campaignId, emails, headers).catch((err) => {
+      console.warn(`[features-service] qualification enrichment failed (degrading to no meeting/close dates): ${(err as Error).message}`);
+      return null;
+    }),
+  ]);
+
+  if (timestamps) {
     for (const person of persons) {
       const dates = person.email ? timestamps.get(person.email) : undefined;
       if (dates) {
@@ -142,17 +164,9 @@ export async function computeFeatureRevenue(
         if (dates.open) person.signals.open = true;
       }
     }
-  } catch (err) {
-    console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
   }
 
-  // Secondary enrichment #2: per-lead manual-qualification timestamps (meeting booked / closed).
-  // These drive the Phase 2 post-engagement decay (reply → meeting → close) + close-win as
-  // realized revenue. Best-effort — a failure degrades to no meeting/close dates (Phase 1 decay
-  // + pipeline stay correct), it does NOT fail the endpoint. A known timestamp IS the signal
-  // (mirrors how `open` was derived from firstOpenedAt).
-  try {
-    const quals = await fetchQualifications(brandId, campaignId, emails, headers);
+  if (quals) {
     for (const person of persons) {
       const q = person.email ? quals.get(person.email) : undefined;
       if (!q) continue;
@@ -166,8 +180,6 @@ export async function computeFeatureRevenue(
         person.signalDates.closeWin = q.closedAt;
       }
     }
-  } catch (err) {
-    console.warn(`[features-service] qualification enrichment failed (degrading to no meeting/close dates): ${(err as Error).message}`);
   }
 
   // closeValueUsd = LTR — the per-lead cap for combining independent engagement routes (click +
