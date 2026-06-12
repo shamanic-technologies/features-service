@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { fetchSalesEconomics } from "../lib/sales-economics-client.js";
+import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { orP } from "../lib/funnel-registry.js";
 import {
   fetchPublicWorkflows,
@@ -112,8 +112,9 @@ function project(
 // ranking is the same regardless of campaign objective (the `objective` query param is accepted +
 // echoed for back-compat but no longer affects the math). Inputs: per-workflow unit costs (cost /
 // positive reply, cost / click) are GLOBAL workflow efficiency (cross-org, feature-scoped, same
-// source as /public/stats/best); the conversion rates + LTR come from the brand's saved
-// sales-economics. features-service computes; the dashboard renders.
+// source as /public/stats/best); the conversion rates + LTR come from the brand's EFFECTIVE
+// sales-economics (its own saved set, or the cross-brand-average when unset — brand-service owns the
+// defaulting; null only at cold start). features-service computes; the dashboard renders.
 
 router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req, res) => {
   const { featureSlug } = req.params;
@@ -136,13 +137,18 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       return res.status(404).json({ error: "Feature not found" });
     }
 
-    // Per-workflow GLOBAL unit costs (cross-org) + brand-scoped economics, fetched together.
-    const [workflows, costGroups, emailStats, economics] = await Promise.all([
+    // Per-workflow GLOBAL unit costs (cross-org) + brand-scoped EFFECTIVE economics, fetched together.
+    // brand-service OWNS the null→cross-brand-average defaulting (source "user" = the brand's own saved
+    // set; "cross-brand-average" = the org-wide estimate). economics is null ONLY at cold start (no brand
+    // has saved economics yet) → cost-per-close genuinely incomputable → null budget. features-service
+    // reimplements no averaging — it just consumes whatever brand-service deems effective.
+    const [workflows, costGroups, emailStats, effective] = await Promise.all([
       fetchPublicWorkflows(featureSlug, "all"),
       fetchPublicCosts(featureSlug, "workflowSlug"),
       fetchPublicEmailStats(featureSlug, "workflowSlug"),
-      fetchSalesEconomics(brandId, { orgId, userId, runId, featureSlug: headerFeatureSlug }),
+      fetchEffectiveEconomics(brandId, { orgId, userId, runId, featureSlug: headerFeatureSlug }),
     ]);
+    const economics = effective.economics;
 
     // Aggregate per-version cost + outcomes into the active workflow (dynasty upgrade chain),
     // exactly as /public/stats/best|ranked do — so a workflow's stats include its predecessors'.

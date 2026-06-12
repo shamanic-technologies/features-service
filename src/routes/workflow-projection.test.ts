@@ -63,7 +63,7 @@ function emailGroup(slug: string, clicked: number, repliesPositive: number, cont
 }
 const EMAIL_GROUPS = [emailGroup("wf-a", 100, 50), emailGroup("wf-b", 50, 10)];
 
-function mockFetch(opts: { workflows?: unknown[]; costGroups?: unknown[]; emailGroups?: unknown[]; economics?: unknown } = {}): void {
+function mockFetch(opts: { workflows?: unknown[]; costGroups?: unknown[]; emailGroups?: unknown[]; economics?: unknown; source?: unknown } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     if (url.includes("stats/public/costs")) {
@@ -75,9 +75,11 @@ function mockFetch(opts: { workflows?: unknown[]; costGroups?: unknown[]; emailG
     if (url.includes("/public/stats")) {
       return new Response(JSON.stringify({ groups: opts.emailGroups ?? EMAIL_GROUPS }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    if (url.includes("/sales-economics")) {
-      const salesEconomics = "economics" in opts ? opts.economics : ECONOMICS; // distinguish explicit null
-      return new Response(JSON.stringify({ salesEconomics }), { status: 200, headers: { "Content-Type": "application/json" } });
+    // Effective economics — brand-service owns saved-vs-average; the route reads { economics, source }.
+    if (url.includes("/sales-economics-effective")) {
+      const economics = "economics" in opts ? opts.economics : ECONOMICS; // distinguish explicit null (cold start)
+      const source = "source" in opts ? opts.source : economics == null ? null : "user";
+      return new Response(JSON.stringify({ economics, source }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
   });
@@ -175,8 +177,8 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(self.body.objective).toBe("self-serve");
   });
 
-  it("no brand economics → unit costs present, cost-per-close + projection + recommendation null", async () => {
-    mockFetch({ economics: null });
+  it("cold start (effective economics null) → unit costs present, cost-per-close + projection + recommendation null", async () => {
+    mockFetch({ economics: null, source: null }); // no brand on the platform has saved economics yet
     const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
     expect(res.status).toBe(200);
     const a = byDynasty(res.body, "dyn-a");
@@ -186,6 +188,19 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(a.projection).toBeNull();
     expect(res.body.recommendedWorkflowDynastySlug).toBeNull();
     expect(res.body.recommendedBudgetUsd).toBeNull();
+  });
+
+  it("no SAVED set but effective returns the cross-brand-average → non-null cost-per-close + budget", async () => {
+    // Brand hasn't saved economics; brand-service serves the org-wide average (source "cross-brand-average").
+    // features-service consumes it identically to a user-saved set — non-null budget, no averaging here.
+    mockFetch({ economics: ECONOMICS, source: "cross-brand-average" });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
+    expect(res.status).toBe(200);
+    const a = byDynasty(res.body, "dyn-a");
+    expect(a.costPerCloseUsd).toBeCloseTo(105.5966, 3); // same math as a saved set
+    expect(a.projection.closes).toBeCloseTo(9.47, 6);
+    expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a");
+    expect(res.body.recommendedBudgetUsd).toBeCloseTo(1055.966, 2);
   });
 
   it("workflow with no replies → replyUsd null, click route still funds closes", async () => {
@@ -216,7 +231,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
       if (url.includes("stats/public/costs")) return new Response("boom", { status: 500 });
       if (url.includes("/public/workflows")) return new Response(JSON.stringify({ workflows: WORKFLOWS }), { status: 200 });
       if (url.includes("/public/stats")) return new Response(JSON.stringify({ groups: EMAIL_GROUPS }), { status: 200 });
-      if (url.includes("/sales-economics")) return new Response(JSON.stringify({ salesEconomics: ECONOMICS }), { status: 200 });
+      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
       return new Response("{}", { status: 200 });
     });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked`).set(AUTH);
