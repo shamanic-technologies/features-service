@@ -510,6 +510,38 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.status).toBe(200);
     expect(warnSpy.mock.calls.some(([msg]) => typeof msg === "string" && msg.includes("manual-qualifications hit 500-row cap"))).toBe(true);
   });
+
+  it("Wave A fires its four independent downstream calls concurrently, not sequentially", async () => {
+    // Gate every Wave-A URL on a barrier that only releases once ALL FOUR are in flight. Parallel
+    // code (Promise.all) drives inFlight to 4 → barrier releases → all resolve. Sequential awaits
+    // would stall the first call on the barrier forever (inFlight stuck at 1) → vitest timeout. So
+    // the test PASSING is itself proof of concurrency; a regression to sequential awaits times out.
+    const WAVE_A = ["/stats/costs", "/sales-economics-effective", "/public/stats", "/orgs/leads"];
+    let inFlight = 0;
+    let releaseAll!: () => void;
+    const allInFlight = new Promise<void>((r) => { releaseAll = r; });
+    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      if (WAVE_A.some((p) => url.includes(p))) {
+        inFlight += 1;
+        if (inFlight === WAVE_A.length) releaseAll();
+        await allInFlight; // sequential code deadlocks here; parallel code sails through
+      }
+      if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+      if (url.includes("/public/stats")) return json(PLATFORM_STATS);
+      if (url.includes("/orgs/leads")) return json({ leads: HAPPY_LEADS });
+      if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
+      if (url.includes("/orgs/status")) return json({ results: [] });
+      return json({});
+    });
+
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(inFlight).toBe(WAVE_A.length); // all four were in flight simultaneously
+  });
 });
 
 // ── GET /features/:featureSlug/revenue?groupBy=campaignId ─────────────────────
