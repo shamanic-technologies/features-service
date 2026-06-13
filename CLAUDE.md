@@ -94,6 +94,24 @@ flipped 140→20. Engine unit tests sidestep this by passing an explicit `NOW` c
 `ago(days)` helper — mirror that. Terminals with no window (click `visit`, `closeWin`) are
 date-safe. Close-win books **full LTR** (realized revenue) and is immune to decay.
 
+## Public cost-per-outcome is PROJECTED (EV math), NOT the real tracked meeting/closed counts
+
+`GET /public/stats/cost-projection?featureSlug=` returns feature-wide EXPECTED `$/meeting-booked` +
+`$/purchase` for the landing. Real meeting-booked / closed events ARE tracked (instantly manual
+qualifications, `instantly_manual_qualifications_raw` — the SoT the revenue engine reads via
+`qualifications-client.ts`) but **thinly populated** (≈1 meeting / 4 closed in prod, 2026-06). So the
+public proof metric uses the PROJECTION, not the real counts. Do NOT re-propose exposing the raw
+tracked counts as the landing number — that path was considered and rejected for being too sparse.
+
+The math is the SAME EV funnel as the revenue engine / `workflow-projection`, single-sourced through
+`projectOutcomeCosts(econ, {clickUsd, replyUsd})` in `funnel-registry.ts`:
+`closesPerBudget = (1/clickUsd)·orP(v2c, v2m·m2c) + (1/replyUsd)·(r2m·m2c)`, `costPerPurchase =
+1/closesPerBudget`; `meetingsPerBudget = (1/clickUsd)·v2m + (1/replyUsd)·r2m`, `costPerMeeting =
+1/meetingsPerBudget`. Per brand pick the best workflow PER METRIC (lowest cost), then unweighted mean
+across client brands; null only when no brand has usable economics. No forced ordering between the two
+costs — high self-serve `v2c` lets purchases bypass meetings, so cost-per-meeting CAN exceed
+cost-per-purchase (correct, not a bug). (#274, PR #275.)
+
 ## Revenue close-paths — combine via independent-OR (`orP`), NEVER `max`; ranking is objective-agnostic
 
 A lead reaches a close through MULTIPLE non-exclusive paths and they must be COMBINED, not MAX'd —
