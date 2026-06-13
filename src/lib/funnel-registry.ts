@@ -47,6 +47,64 @@ const pct = (n: number): number => n / 100;
  */
 export const orP = (...ps: number[]): number => 1 - ps.reduce((survive, p) => survive * (1 - p), 1);
 
+// ── Projected cost-per-outcome (expected, not tracked) ───────────────────────
+//
+// Given a workflow's GLOBAL unit costs (cost per click / per positive reply) and a brand's
+// conversion economics, project the EXPECTED dollars to produce one PURCHASE and one MEETING
+// BOOKED. Same EV funnel as the revenue engine / workflow-projection's `project()`:
+//
+//   pCloseClick      = orP(v2c, v2m·m2c)            // self-serve OR click→meeting→close
+//   pCloseReply      = r2m·m2c
+//   closesPerBudget  = (1/clickUsd)·pCloseClick + (1/replyUsd)·pCloseReply   // ADD: linearity of expectation
+//   costPerPurchase  = 1 / closesPerBudget
+//
+//   meetingsPerBudget    = (1/clickUsd)·v2m + (1/replyUsd)·r2m   // same channels, stop one stage earlier (drop ·m2c)
+//   costPerMeetingBooked = 1 / meetingsPerBudget
+//
+// No forced ordering between the two costs: when self-serve v2c is high, purchases bypass meetings,
+// so cost-per-meeting can exceed cost-per-purchase — correct, not a bug. A route with a null unit
+// cost contributes 0; a perBudget ≤ 0 (no usable data) yields null for that metric.
+
+/** Brand conversion economics as decimals (brand-service stores percentages 0–100). */
+export interface ProjectionEconomics {
+  r2m: number; // P(meeting | positive reply)
+  v2m: number; // P(meeting | click/visit)
+  m2c: number; // P(close | meeting)
+  v2c: number; // P(close | click/visit) — direct, self-serve path
+}
+
+/** Global per-workflow unit costs (USD); null when the workflow has no clicks / replies. */
+export interface ProjectionUnitCosts {
+  clickUsd: number | null;
+  replyUsd: number | null;
+}
+
+export interface ProjectedOutcomeCosts {
+  costPerPurchaseUsd: number | null;
+  costPerMeetingBookedUsd: number | null;
+}
+
+export function projectOutcomeCosts(
+  econ: ProjectionEconomics,
+  costs: ProjectionUnitCosts,
+): ProjectedOutcomeCosts {
+  const pCloseClick = orP(econ.v2c, econ.v2m * econ.m2c);
+  const pCloseReply = econ.r2m * econ.m2c;
+
+  const closesPerBudget =
+    (costs.clickUsd != null ? (1 / costs.clickUsd) * pCloseClick : 0) +
+    (costs.replyUsd != null ? (1 / costs.replyUsd) * pCloseReply : 0);
+
+  const meetingsPerBudget =
+    (costs.clickUsd != null ? (1 / costs.clickUsd) * econ.v2m : 0) +
+    (costs.replyUsd != null ? (1 / costs.replyUsd) * econ.r2m : 0);
+
+  return {
+    costPerPurchaseUsd: closesPerBudget > 0 ? 1 / closesPerBudget : null,
+    costPerMeetingBookedUsd: meetingsPerBudget > 0 ? 1 / meetingsPerBudget : null,
+  };
+}
+
 // Global decay windows (not per-brand): a lead that reaches a stage and sits there past this
 // window with no advance to the next stage is considered DEAD (stalled → no expected revenue).
 // Phase 1 covers the pre-engagement stages (next stage observable from the email funnel). Phase 2

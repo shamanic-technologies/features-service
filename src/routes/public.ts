@@ -13,9 +13,9 @@ import {
   type WorkflowMetadata,
   type EngagementLatencyMetric,
 } from "../lib/public-stats-clients.js";
-import { getFunnel } from "../lib/funnel-registry.js";
+import { getFunnel, projectOutcomeCosts } from "../lib/funnel-registry.js";
 import { fetchFeatureMemberships } from "../lib/feature-memberships-client.js";
-import { BrandOwnershipError } from "../lib/sales-economics-client.js";
+import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
 
 const router = Router();
@@ -449,10 +449,24 @@ export function __resetPublicRevenueCache(): void {
   revenueCache.clear();
 }
 
+/** Slim feature-wide rollup of expected pipeline — sum of every brand's non-null totalPipelineUsd
+ *  (null when no brand has usable economics). Lets the landing show one number without the ~1.9 MB
+ *  per-brand timeline arrays. Derived from the SAME computed/cached payload as the full response. */
+function revenueRollup(payload: PublicRevenuePayload): { featureSlug: string; totalPipelineUsd: number | null } {
+  const vals = payload.results
+    .map((r) => r.headline.totalPipelineUsd)
+    .filter((v): v is number => v !== null);
+  return {
+    featureSlug: payload.featureSlug,
+    totalPipelineUsd: vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : null,
+  };
+}
+
 export async function handlePublicRevenue(
   featureSlug: string | undefined,
   groupBy: string | undefined,
   res: import("express").Response,
+  rollup = false,
 ): Promise<void> {
   if (!featureSlug) {
     res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
@@ -474,7 +488,7 @@ export async function handlePublicRevenue(
   const cacheKey = `${featureSlug}:${groupBy}`;
   const cached = revenueCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
-    res.json(cached.payload);
+    res.json(rollup ? revenueRollup(cached.payload) : cached.payload);
     return;
   }
 
@@ -567,7 +581,7 @@ export async function handlePublicRevenue(
 
   const payload: PublicRevenuePayload = { featureSlug, groupBy: "brand", results };
   revenueCache.set(cacheKey, { payload, expiresAt: Date.now() + REVENUE_TTL_MS });
-  res.json(payload);
+  res.json(rollup ? revenueRollup(payload) : payload);
 }
 
 // ── Public workflow engagement latency handler ───────────────────────────────
@@ -660,6 +674,134 @@ export async function handlePublicWorkflowEngagementLatency(
   res.json(payload);
 }
 
+// ── Public cost-projection handler ────────────────────────────────────────────
+//
+// Feature-wide EXPECTED (projected, not tracked) average cost per meeting-booked and per purchase.
+// Real meeting/closed events ARE tracked (instantly manual qualifications) but thinly populated, so
+// the landing wants the projection — the SAME EV math the revenue engine / workflow-projection run:
+// each workflow's GLOBAL unit costs (cost/click, cost/positive-reply — cross-org, feature-scoped) pushed
+// through each brand's EFFECTIVE conversion economics. Per brand we pick the BEST workflow for EACH metric
+// (lowest projected cost) independently, then take the unweighted mean across all client brands. Cross-org,
+// no auth. brand-service owns the null→cross-brand-average economics defaulting; a brand with no usable
+// economics contributes nothing. One economics fetch per brand → cached in-memory briefly.
+
+const COST_PROJECTION_TTL_MS = 60_000;
+
+interface PublicCostProjectionPayload {
+  featureSlug: string;
+  avgCostPerMeetingBooked: number | null;
+  avgCostPerPurchase: number | null;
+  brandCount: number;
+}
+
+const costProjectionCache = new Map<string, { payload: PublicCostProjectionPayload; expiresAt: number }>();
+
+/** Test seam — reset the in-memory cost-projection cache. */
+export function __resetPublicCostProjectionCache(): void {
+  costProjectionCache.clear();
+}
+
+export async function handlePublicCostProjection(
+  featureSlug: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  if (!featureSlug) {
+    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
+    return;
+  }
+
+  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
+  if (!feature) {
+    res.status(404).json({ error: "Feature not found" });
+    return;
+  }
+
+  const cached = costProjectionCache.get(featureSlug);
+  if (cached && cached.expiresAt > Date.now()) {
+    res.json(cached.payload);
+    return;
+  }
+
+  // GLOBAL per-workflow unit costs (cross-org, feature-scoped) — fetched once, shared across brands.
+  // Same dynasty-chain aggregation as /public/stats/best|ranked and the authed workflow-projection route.
+  const [workflows, costGroups, emailStats, memberships] = await Promise.all([
+    fetchPublicWorkflows(featureSlug, "all"),
+    fetchPublicCosts(featureSlug, "workflowSlug"),
+    fetchPublicEmailStats(featureSlug, "workflowSlug"),
+    fetchFeatureMemberships(featureSlug),
+  ]);
+
+  const chains = buildUpgradeChains(workflows);
+  const { costMap, aggregatedOutcomes } = aggregateAcrossChains(chains, costGroups, emailStats, "workflowSlug");
+
+  const unitCostList: { clickUsd: number | null; replyUsd: number | null }[] = [];
+  for (const [slug, cost] of costMap) {
+    const outcomes = aggregatedOutcomes.get(slug) ?? {};
+    const costUsd = cost.totalCostInUsdCents / 100;
+    const replies = outcomes.recipientsRepliesPositive ?? 0;
+    const clicks = outcomes.recipientsClicked ?? 0;
+    unitCostList.push({
+      clickUsd: clicks > 0 && costUsd > 0 ? costUsd / clicks : null,
+      replyUsd: replies > 0 && costUsd > 0 ? costUsd / replies : null,
+    });
+  }
+
+  // One economics fetch per DISTINCT brand (forward any owning org — the /orgs/* tier needs only x-org-id).
+  const brandToOrg = new Map<string, string>();
+  for (const m of memberships) {
+    if (!brandToOrg.has(m.brandId)) brandToOrg.set(m.brandId, m.orgId);
+  }
+
+  const perBrand = await Promise.all(
+    [...brandToOrg.entries()].map(async ([brandId, orgId]) => {
+      let economics;
+      try {
+        const effective = await fetchEffectiveEconomics(brandId, { orgId, featureSlug });
+        economics = effective.economics;
+      } catch (error) {
+        if (error instanceof BrandOwnershipError) {
+          console.log(
+            `[features-service] skipping stale feature membership for public cost-projection: featureSlug=${featureSlug}, orgId=${orgId}, brandId=${brandId}`,
+          );
+          return null;
+        }
+        throw error;
+      }
+      if (!economics) return null;
+
+      const econ = {
+        r2m: economics.replyToMeetingPct / 100,
+        v2m: economics.visitToMeetingPct / 100,
+        m2c: economics.meetingToClosePct / 100,
+        v2c: economics.visitToClosePct / 100,
+      };
+
+      // Best (lowest) projected cost per metric across this brand's workflows — picked independently per metric.
+      let bestMeeting: number | null = null;
+      let bestPurchase: number | null = null;
+      for (const unitCosts of unitCostList) {
+        const { costPerMeetingBookedUsd, costPerPurchaseUsd } = projectOutcomeCosts(econ, unitCosts);
+        if (costPerMeetingBookedUsd != null && (bestMeeting == null || costPerMeetingBookedUsd < bestMeeting)) bestMeeting = costPerMeetingBookedUsd;
+        if (costPerPurchaseUsd != null && (bestPurchase == null || costPerPurchaseUsd < bestPurchase)) bestPurchase = costPerPurchaseUsd;
+      }
+      if (bestMeeting == null && bestPurchase == null) return null;
+      return { bestMeeting, bestPurchase };
+    }),
+  );
+
+  const usable = perBrand.filter((b): b is { bestMeeting: number | null; bestPurchase: number | null } => b !== null);
+  const mean = (vals: number[]): number | null => (vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null);
+
+  const payload: PublicCostProjectionPayload = {
+    featureSlug,
+    avgCostPerMeetingBooked: mean(usable.map((b) => b.bestMeeting).filter((v): v is number => v !== null)),
+    avgCostPerPurchase: mean(usable.map((b) => b.bestPurchase).filter((v): v is number => v !== null)),
+    brandCount: usable.length,
+  };
+  costProjectionCache.set(featureSlug, { payload, expiresAt: Date.now() + COST_PROJECTION_TTL_MS });
+  res.json(payload);
+}
+
 // ── GET /public/stats/ranked ─────────────────────────────────────────────────
 
 router.get("/public/stats/ranked", async (req, res) => {
@@ -688,9 +830,25 @@ router.get("/public/stats/best", async (req, res) => {
 
 router.get("/public/stats/revenue", async (req, res) => {
   try {
-    await handlePublicRevenue(req.query.featureSlug as string | undefined, req.query.groupBy as string | undefined, res);
+    await handlePublicRevenue(
+      req.query.featureSlug as string | undefined,
+      req.query.groupBy as string | undefined,
+      res,
+      req.query.rollup === "true",
+    );
   } catch (error) {
     console.error("[features-service] Public stats revenue error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/cost-projection ────────────────────────────────────────
+
+router.get("/public/stats/cost-projection", async (req, res) => {
+  try {
+    await handlePublicCostProjection(req.query.featureSlug as string | undefined, res);
+  } catch (error) {
+    console.error("[features-service] Public stats cost-projection error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
