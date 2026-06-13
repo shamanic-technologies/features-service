@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getFunnel } from "./funnel-registry.js";
+import { getFunnel, orP, projectOutcomeCosts } from "./funnel-registry.js";
 
 const ECONOMICS = {
   lifetimeRevenueUsd: 1000,
@@ -101,5 +101,49 @@ describe("sales funnel — resolvePaths", () => {
     expect(t.delivered.expectedRevenueUsd).toBeCloseTo(15.4284); // unaffected by upstream
     expect(t.sent.expectedRevenueUsd).toBeCloseTo(7.7142); // ×0.5 delivered|sent
     expect(t.contacted.expectedRevenueUsd).toBeCloseTo(3.8571); // ×0.5 ×0.5
+  });
+});
+
+describe("projectOutcomeCosts — expected cost per purchase / meeting", () => {
+  // decimals of ECONOMICS above
+  const econ = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02 };
+
+  it("purchase cost = 1 / closesPerBudget (same formula as workflow-projection)", () => {
+    const clickUsd = 10;
+    const replyUsd = 5;
+    const pCloseClick = orP(econ.v2c, econ.v2m * econ.m2c);
+    const pCloseReply = econ.r2m * econ.m2c;
+    const closesPerBudget = (1 / clickUsd) * pCloseClick + (1 / replyUsd) * pCloseReply;
+    const { costPerPurchaseUsd } = projectOutcomeCosts(econ, { clickUsd, replyUsd });
+    expect(costPerPurchaseUsd).toBeCloseTo(1 / closesPerBudget);
+  });
+
+  it("meeting cost = 1 / ((1/clickUsd)·v2m + (1/replyUsd)·r2m)", () => {
+    const clickUsd = 10;
+    const replyUsd = 5;
+    const meetingsPerBudget = (1 / clickUsd) * econ.v2m + (1 / replyUsd) * econ.r2m;
+    const { costPerMeetingBookedUsd } = projectOutcomeCosts(econ, { clickUsd, replyUsd });
+    expect(costPerMeetingBookedUsd).toBeCloseTo(1 / meetingsPerBudget);
+  });
+
+  it("a null unit cost contributes 0 — metric still computed from the other leg", () => {
+    const { costPerPurchaseUsd, costPerMeetingBookedUsd } = projectOutcomeCosts(econ, { clickUsd: null, replyUsd: 5 });
+    expect(costPerPurchaseUsd).toBeCloseTo(1 / ((1 / 5) * econ.r2m * econ.m2c));
+    expect(costPerMeetingBookedUsd).toBeCloseTo(1 / ((1 / 5) * econ.r2m));
+  });
+
+  it("both unit costs null → no usable data → both null", () => {
+    expect(projectOutcomeCosts(econ, { clickUsd: null, replyUsd: null })).toEqual({
+      costPerPurchaseUsd: null,
+      costPerMeetingBookedUsd: null,
+    });
+  });
+
+  it("zero conversion rates → perBudget 0 → both null", () => {
+    const dead = { r2m: 0, v2m: 0, m2c: 0, v2c: 0 };
+    expect(projectOutcomeCosts(dead, { clickUsd: 10, replyUsd: 5 })).toEqual({
+      costPerPurchaseUsd: null,
+      costPerMeetingBookedUsd: null,
+    });
   });
 });

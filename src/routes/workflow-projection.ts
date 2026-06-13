@@ -4,7 +4,7 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
-import { orP } from "../lib/funnel-registry.js";
+import { projectOutcomeCosts } from "../lib/funnel-registry.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
@@ -79,15 +79,11 @@ function project(
   econ: BrandEcon,
   budgetUsd: number | null,
 ): { costPerCloseUsd: number | null; projection: Projection | null } {
-  const pCloseClick = orP(econ.v2c, econ.v2m * econ.m2c);
-  const pCloseReply = econ.r2m * econ.m2c;
-
-  const closesPerBudget =
-    (clickUsd != null ? (1 / clickUsd) * pCloseClick : 0) +
-    (replyUsd != null ? (1 / replyUsd) * pCloseReply : 0);
-
-  if (closesPerBudget <= 0) return { costPerCloseUsd: null, projection: null };
-  const costPerCloseUsd = 1 / closesPerBudget;
+  // Cost-per-close is single-sourced from the shared projection helper (same EV funnel as the
+  // public cost-projection endpoint and the revenue engine).
+  const { costPerPurchaseUsd } = projectOutcomeCosts(econ, { clickUsd, replyUsd });
+  if (costPerPurchaseUsd == null) return { costPerCloseUsd: null, projection: null };
+  const costPerCloseUsd = costPerPurchaseUsd;
 
   if (budgetUsd == null || budgetUsd <= 0) return { costPerCloseUsd, projection: null };
 
@@ -96,7 +92,7 @@ function project(
   const visits = clickUsd != null ? budgetUsd / clickUsd : null;
   // Meetings come from BOTH routes (reply→meeting and click→meeting), regardless of objective.
   const meetings = (replies ?? 0) * econ.r2m + (visits ?? 0) * econ.v2m;
-  const closes = budgetUsd * closesPerBudget;
+  const closes = budgetUsd / costPerCloseUsd; // = budgetUsd × closesPerBudget
   const revenue = closes * econ.ltv;
   const cacPct = revenue > 0 ? (budgetUsd / revenue) * 100 : null;
   const cacAbs = closes > 0 ? budgetUsd / closes : null;
