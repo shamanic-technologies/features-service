@@ -55,8 +55,9 @@ vi.mock("./revenue.js", async (importOriginal) => ({
 }));
 
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
+const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
 const AUTH_HEADERS = {
   "x-api-key": "test-key",
@@ -811,3 +812,227 @@ describe("GET /public/stats/revenue", () => {
     expect(mockComputeFeatureRevenue).toHaveBeenCalledTimes(1); // second served from cache
   });
 });
+
+// ── GET /public/stats/revenue?rollup=true ─────────────────────────────────────
+
+describe("GET /public/stats/revenue?rollup=true", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    __resetPublicRevenueCache();
+  });
+
+  it("returns the slim feature-wide totalPipelineUsd, no per-brand results/timelines", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    setPairResults({
+      "org-A::brand-1": { pipeline: 100, costUsd: 10 },
+      "org-B::brand-1": { pipeline: 40, costUsd: 5 },
+      "org-A::brand-2": { pipeline: 30, costUsd: 8 },
+    });
+    mockRevenueFetch(
+      [
+        { orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" },
+        { orgId: "org-B", brandId: "brand-1", workflowSlug: "wf-1" },
+        { orgId: "org-A", brandId: "brand-2", workflowSlug: "wf-1" },
+      ],
+      [
+        { id: "brand-1", name: "Acme", domain: "acme.com" },
+        { id: "brand-2", name: "Beta", domain: "beta.io" },
+      ],
+    );
+
+    const res = await request(app).get("/public/stats/revenue?featureSlug=sales-cold-email-outreach&groupBy=brand&rollup=true");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ featureSlug: "sales-cold-email-outreach", totalPipelineUsd: 170 }); // 140 + 30
+    expect(res.body).not.toHaveProperty("results");
+    expect(res.body).not.toHaveProperty("groupBy");
+  });
+
+  it("totalPipelineUsd is null when no brand has economics (all pipelines null)", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    setPairResults({ "org-A::brand-9": { pipeline: null, costUsd: 12 } });
+    mockRevenueFetch(
+      [{ orgId: "org-A", brandId: "brand-9", workflowSlug: "wf-1" }],
+      [{ id: "brand-9", name: "NoEcon", domain: null }],
+    );
+
+    const res = await request(app).get("/public/stats/revenue?featureSlug=sales-cold-email-outreach&groupBy=brand&rollup=true");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ featureSlug: "sales-cold-email-outreach", totalPipelineUsd: null });
+  });
+});
+
+// ── GET /public/stats/cost-projection ─────────────────────────────────────────
+
+describe("GET /public/stats/cost-projection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    __resetPublicCostProjectionCache();
+  });
+
+  // Brand economics (percentages, as brand-service stores them).
+  const ECON_1 = { lifetimeRevenueUsd: 1000, replyToMeetingPct: 40, visitToMeetingPct: 5, meetingToClosePct: 30, visitToClosePct: 2 };
+  const ECON_2 = { lifetimeRevenueUsd: 2000, replyToMeetingPct: 20, visitToMeetingPct: 10, meetingToClosePct: 50, visitToClosePct: 5 };
+  // decimals for the local expected-value computation
+  const e1 = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02 };
+  const e2 = { r2m: 0.2, v2m: 0.1, m2c: 0.5, v2c: 0.05 };
+  // wf-1 cheap (clickUsd=$10/10=1, replyUsd=$10/5=2) → always best; wf-2 expensive → never best.
+  const WF1 = { clickUsd: 1, replyUsd: 2 };
+
+  it("averages each brand's best-workflow projected cost across brands; cheapest workflow wins per metric", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockCostProjectionFetch({
+      memberships: [
+        { orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" },
+        { orgId: "org-B", brandId: "brand-2", workflowSlug: "wf-1" },
+      ],
+      economicsByBrand: { "brand-1": ECON_1, "brand-2": ECON_2 },
+    });
+
+    const res = await request(app).get("/public/stats/cost-projection?featureSlug=sales-cold-email-outreach");
+
+    expect(res.status).toBe(200);
+    expect(res.body.brandCount).toBe(2);
+
+    const p1 = projectOutcomeCosts(e1, WF1);
+    const p2 = projectOutcomeCosts(e2, WF1);
+    expect(res.body.avgCostPerMeetingBooked).toBeCloseTo((p1.costPerMeetingBookedUsd! + p2.costPerMeetingBookedUsd!) / 2, 5);
+    expect(res.body.avgCostPerPurchase).toBeCloseTo((p1.costPerPurchaseUsd! + p2.costPerPurchaseUsd!) / 2, 5);
+  });
+
+  it("skips a brand with no economics (excluded from brandCount and the means)", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockCostProjectionFetch({
+      memberships: [
+        { orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" },
+        { orgId: "org-B", brandId: "brand-2", workflowSlug: "wf-1" },
+      ],
+      economicsByBrand: { "brand-1": ECON_1, "brand-2": null }, // brand-2 cold-start: economics null
+    });
+
+    const res = await request(app).get("/public/stats/cost-projection?featureSlug=sales-cold-email-outreach");
+
+    expect(res.status).toBe(200);
+    expect(res.body.brandCount).toBe(1);
+    const p1 = projectOutcomeCosts(e1, WF1);
+    expect(res.body.avgCostPerMeetingBooked).toBeCloseTo(p1.costPerMeetingBookedUsd!, 5);
+    expect(res.body.avgCostPerPurchase).toBeCloseTo(p1.costPerPurchaseUsd!, 5);
+  });
+
+  it("skips a stale membership (brand-service 403) without failing the batch", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockCostProjectionFetch({
+      memberships: [
+        { orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" },
+        { orgId: "org-stale", brandId: "stale-brand", workflowSlug: "wf-1" },
+      ],
+      economicsByBrand: { "brand-1": ECON_1, "stale-brand": "403" },
+    });
+
+    const res = await request(app).get("/public/stats/cost-projection?featureSlug=sales-cold-email-outreach");
+
+    expect(res.status).toBe(200);
+    expect(res.body.brandCount).toBe(1);
+  });
+
+  it("returns nulls + brandCount 0 when no brand has usable economics", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockCostProjectionFetch({
+      memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }],
+      economicsByBrand: { "brand-1": null },
+    });
+
+    const res = await request(app).get("/public/stats/cost-projection?featureSlug=sales-cold-email-outreach");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ avgCostPerMeetingBooked: null, avgCostPerPurchase: null, brandCount: 0 });
+  });
+
+  it("returns 400 when featureSlug is missing", async () => {
+    const res = await request(app).get("/public/stats/cost-projection");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/featureSlug/i);
+  });
+
+  it("returns 404 when feature not found", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    const res = await request(app).get("/public/stats/cost-projection?featureSlug=nonexistent");
+    expect(res.status).toBe(404);
+  });
+
+  it("serves the second call within TTL from cache (no second economics fetch)", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    const fetchSpy = mockCostProjectionFetch({
+      memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }],
+      economicsByBrand: { "brand-1": ECON_1 },
+    });
+
+    const r1 = await request(app).get("/public/stats/cost-projection?featureSlug=sales-cold-email-outreach");
+    const callsAfterFirst = fetchSpy.mock.calls.length;
+    const r2 = await request(app).get("/public/stats/cost-projection?featureSlug=sales-cold-email-outreach");
+
+    expect(r1.status).toBe(200);
+    expect(r2.body).toEqual(r1.body);
+    expect(fetchSpy.mock.calls.length).toBe(callsAfterFirst); // no extra downstream calls on cache hit
+  });
+});
+
+/** Drive the cost-projection endpoint's downstream HTTP calls. wf-1 cheap, wf-2 expensive (never best). */
+interface MockEconomics {
+  lifetimeRevenueUsd: number;
+  replyToMeetingPct: number;
+  visitToMeetingPct: number;
+  meetingToClosePct: number;
+  visitToClosePct: number;
+}
+
+function mockCostProjectionFetch(opts: {
+  memberships: Array<{ orgId: string; brandId: string; workflowSlug: string }>;
+  economicsByBrand: Record<string, MockEconomics | null | "403">;
+}): ReturnType<typeof vi.fn> {
+  const workflows = [
+    { id: "w1", workflowSlug: "wf-1", workflowName: "WF One", workflowDynastyName: "WF One", workflowDynastySlug: "wf-1", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
+    { id: "w2", workflowSlug: "wf-2", workflowName: "WF Two", workflowDynastyName: "WF Two", workflowDynastySlug: "wf-2", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
+  ];
+  const costGroups = [
+    { dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "1000", runCount: 5, minStartedAt: null, maxStartedAt: null }, // $10
+    { dimensions: { workflowSlug: "wf-2" }, totalCostInUsdCents: "5000", runCount: 3, minStartedAt: null, maxStartedAt: null }, // $50
+  ];
+  const emailGroups = [
+    { key: "wf-1", broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, opened: 50, clicked: 10, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }, // clickUsd=1, replyUsd=2
+    { key: "wf-2", broadcast: { recipientStats: { contacted: 20, sent: 20, delivered: 20, opened: 10, clicked: 2, bounced: 0, repliesPositive: 1, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }, // clickUsd=25, replyUsd=50
+  ];
+
+  const spy = vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
+      return new Response(JSON.stringify({ memberships: opts.memberships }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.startsWith("http://workflow:3000/public/workflows")) {
+      return new Response(JSON.stringify({ workflows }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
+      return new Response(JSON.stringify({ groups: costGroups }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.startsWith("http://email:3000/public/stats")) {
+      return new Response(JSON.stringify({ groups: emailGroups }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const econMatch = url.match(/http:\/\/brand:3000\/orgs\/brands\/([^/]+)\/sales-economics-effective/);
+    if (econMatch) {
+      const brandId = econMatch[1];
+      const econ = opts.economicsByBrand[brandId];
+      if (econ === "403") {
+        return new Response(JSON.stringify({ error: "Brand does not belong to org" }), { status: 403 });
+      }
+      if (econ == null) {
+        return new Response(JSON.stringify({ economics: null, source: null }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ economics: econ, source: "user" }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+  });
+  return spy as unknown as ReturnType<typeof vi.fn>;
+}

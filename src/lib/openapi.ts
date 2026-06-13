@@ -568,6 +568,14 @@ const publicRevenueResponseSchema = z.object({
   results: z.array(publicRevenueResultSchema),
 });
 
+const publicRevenueRollupSchema = z.object({
+  featureSlug: z.string(),
+  totalPipelineUsd: z.number().nullable().describe("Feature-wide sum of every brand's expected pipeline (null when no brand has saved economics). Returned when rollup=true — no per-brand results/timelines."),
+});
+
+const publicRevenueResponseRef = registry.register("PublicRevenueResponse", publicRevenueResponseSchema);
+const publicRevenueRollupRef = registry.register("PublicRevenueRollup", publicRevenueRollupSchema);
+
 registry.registerPath({
   method: "get",
   path: "/public/stats/revenue",
@@ -575,17 +583,49 @@ registry.registerPath({
   description:
     "Per-brand expected pipeline revenue, cost-of-acquisition % and ROI multiple for a feature, aggregated cross-org. " +
     "Runs the same expected-pipeline engine as GET /features/{featureSlug}/revenue once per (org, brand) that has leads for the feature, and sums each brand across the orgs it appears in (leads are disjoint per org, so no double-count). " +
-    "costEconomics is byte-identical to the dashboard's (buildCostEconomics). Only groupBy=brand is supported today — per-workflow revenue is a follow-up.",
+    "costEconomics is byte-identical to the dashboard's (buildCostEconomics). Only groupBy=brand is supported today — per-workflow revenue is a follow-up. " +
+    "Pass rollup=true to get only the feature-wide totalPipelineUsd (no per-brand timelines, ~1 KB instead of ~1.9 MB).",
   tags: ["Public"],
   request: {
     query: z.object({
       featureSlug: z.string().describe("Feature slug (required)."),
       groupBy: z.literal("brand").describe("Group results by brand (only supported value)."),
+      rollup: z.literal("true").optional().describe("If 'true', return only { featureSlug, totalPipelineUsd } — the slim feature-wide rollup."),
     }),
   },
   responses: {
-    200: { description: "Per-brand cross-org revenue", content: { "application/json": { schema: publicRevenueResponseSchema } } },
+    200: { description: "Per-brand cross-org revenue, or the slim rollup when rollup=true", content: { "application/json": { schema: z.union([publicRevenueResponseRef, publicRevenueRollupRef]) } } },
     400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/cost-projection ─────────────────────────────────────────
+
+const publicCostProjectionResponseSchema = z.object({
+  featureSlug: z.string(),
+  avgCostPerMeetingBooked: z.number().nullable().describe("Feature-wide average EXPECTED USD cost per meeting booked (mean across client brands of each brand's best-workflow projection). Null when no brand has usable economics."),
+  avgCostPerPurchase: z.number().nullable().describe("Feature-wide average EXPECTED USD cost per purchase/close. Null when no brand has usable economics."),
+  brandCount: z.number().int().describe("Number of client brands with usable economics that contributed to the averages."),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/cost-projection",
+  summary: "Feature-wide expected cost per meeting-booked and per purchase (public, no auth)",
+  description:
+    "Cross-org EXPECTED (projected, not tracked) average cost to produce one meeting booked and one purchase for a feature. " +
+    "Uses the same EV funnel as the revenue engine / workflow-projection: each workflow's global unit costs (cost per click / per positive reply) pushed through each brand's effective conversion economics. " +
+    "Per brand the best workflow is picked for each metric independently, then averaged (unweighted) across all client brands. Null only when no brand has usable economics.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string().describe("Feature slug (required)."),
+    }),
+  },
+  responses: {
+    200: { description: "Feature-wide expected cost-per-outcome", content: { "application/json": { schema: publicCostProjectionResponseSchema } } },
+    400: { description: "Missing parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
   },
 });

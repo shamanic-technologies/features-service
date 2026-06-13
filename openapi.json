@@ -1057,6 +1057,132 @@
           "recommendedWorkflowDynastySlug",
           "recommendedBudgetUsd"
         ]
+      },
+      "PublicRevenueResponse": {
+        "type": "object",
+        "properties": {
+          "featureSlug": {
+            "type": "string"
+          },
+          "groupBy": {
+            "type": "string",
+            "enum": [
+              "brand"
+            ]
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "brand": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "domain": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "domain"
+                  ]
+                },
+                "headline": {
+                  "type": "object",
+                  "properties": {
+                    "totalPipelineUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Cross-org expected pipeline for the brand (sum over the orgs it appears in). Null when no saved economics anywhere."
+                    }
+                  },
+                  "required": [
+                    "totalPipelineUsd"
+                  ]
+                },
+                "costEconomics": {
+                  "type": "object",
+                  "properties": {
+                    "totalCostUsd": {
+                      "type": "number",
+                      "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
+                    },
+                    "costOfAcquisitionPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                    },
+                    "roiMultiple": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
+                    }
+                  },
+                  "required": [
+                    "totalCostUsd",
+                    "costOfAcquisitionPct",
+                    "roiMultiple"
+                  ]
+                },
+                "timeline": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "date": {
+                        "type": "string"
+                      },
+                      "cumulativePipelineUsd": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "date",
+                      "cumulativePipelineUsd"
+                    ]
+                  },
+                  "description": "Public-safe cumulative expected-pipeline timeline for this brand. Omitted when no dated revenue events exist."
+                }
+              },
+              "required": [
+                "brand",
+                "headline",
+                "costEconomics"
+              ]
+            }
+          }
+        },
+        "required": [
+          "featureSlug",
+          "groupBy",
+          "results"
+        ]
+      },
+      "PublicRevenueRollup": {
+        "type": "object",
+        "properties": {
+          "featureSlug": {
+            "type": "string"
+          },
+          "totalPipelineUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "Feature-wide sum of every brand's expected pipeline (null when no brand has saved economics). Returned when rollup=true — no per-brand results/timelines."
+          }
+        },
+        "required": [
+          "featureSlug",
+          "totalPipelineUsd"
+        ]
       }
     },
     "parameters": {}
@@ -3250,7 +3376,7 @@
     "/public/stats/revenue": {
       "get": {
         "summary": "Cross-org expected pipeline revenue + CAC + ROI per brand (public, no auth)",
-        "description": "Per-brand expected pipeline revenue, cost-of-acquisition % and ROI multiple for a feature, aggregated cross-org. Runs the same expected-pipeline engine as GET /features/{featureSlug}/revenue once per (org, brand) that has leads for the feature, and sums each brand across the orgs it appears in (leads are disjoint per org, so no double-count). costEconomics is byte-identical to the dashboard's (buildCostEconomics). Only groupBy=brand is supported today — per-workflow revenue is a follow-up.",
+        "description": "Per-brand expected pipeline revenue, cost-of-acquisition % and ROI multiple for a feature, aggregated cross-org. Runs the same expected-pipeline engine as GET /features/{featureSlug}/revenue once per (org, brand) that has leads for the feature, and sums each brand across the orgs it appears in (leads are disjoint per org, so no double-count). costEconomics is byte-identical to the dashboard's (buildCostEconomics). Only groupBy=brand is supported today — per-workflow revenue is a follow-up. Pass rollup=true to get only the feature-wide totalPipelineUsd (no per-brand timelines, ~1 KB instead of ~1.9 MB).",
         "tags": [
           "Public"
         ],
@@ -3277,11 +3403,100 @@
             "description": "Group results by brand (only supported value).",
             "name": "groupBy",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true"
+              ],
+              "description": "If 'true', return only { featureSlug, totalPipelineUsd } — the slim feature-wide rollup."
+            },
+            "required": false,
+            "description": "If 'true', return only { featureSlug, totalPipelineUsd } — the slim feature-wide rollup.",
+            "name": "rollup",
+            "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "Per-brand cross-org revenue",
+            "description": "Per-brand cross-org revenue, or the slim rollup when rollup=true",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/PublicRevenueResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PublicRevenueRollup"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/stats/cost-projection": {
+      "get": {
+        "summary": "Feature-wide expected cost per meeting-booked and per purchase (public, no auth)",
+        "description": "Cross-org EXPECTED (projected, not tracked) average cost to produce one meeting booked and one purchase for a feature. Uses the same EV funnel as the revenue engine / workflow-projection: each workflow's global unit costs (cost per click / per positive reply) pushed through each brand's effective conversion economics. Per brand the best workflow is picked for each metric independently, then averaged (unweighted) across all client brands. Null only when no brand has usable economics.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature slug (required)."
+            },
+            "required": true,
+            "description": "Feature slug (required).",
+            "name": "featureSlug",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Feature-wide expected cost-per-outcome",
             "content": {
               "application/json": {
                 "schema": {
@@ -3290,114 +3505,33 @@
                     "featureSlug": {
                       "type": "string"
                     },
-                    "groupBy": {
-                      "type": "string",
-                      "enum": [
-                        "brand"
-                      ]
+                    "avgCostPerMeetingBooked": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Feature-wide average EXPECTED USD cost per meeting booked (mean across client brands of each brand's best-workflow projection). Null when no brand has usable economics."
                     },
-                    "results": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "brand": {
-                            "type": "object",
-                            "properties": {
-                              "id": {
-                                "type": "string"
-                              },
-                              "name": {
-                                "type": "string",
-                                "nullable": true
-                              },
-                              "domain": {
-                                "type": "string",
-                                "nullable": true
-                              }
-                            },
-                            "required": [
-                              "id",
-                              "name",
-                              "domain"
-                            ]
-                          },
-                          "headline": {
-                            "type": "object",
-                            "properties": {
-                              "totalPipelineUsd": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Cross-org expected pipeline for the brand (sum over the orgs it appears in). Null when no saved economics anywhere."
-                              }
-                            },
-                            "required": [
-                              "totalPipelineUsd"
-                            ]
-                          },
-                          "costEconomics": {
-                            "type": "object",
-                            "properties": {
-                              "totalCostUsd": {
-                                "type": "number",
-                                "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
-                              },
-                              "costOfAcquisitionPct": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
-                              },
-                              "roiMultiple": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
-                              }
-                            },
-                            "required": [
-                              "totalCostUsd",
-                              "costOfAcquisitionPct",
-                              "roiMultiple"
-                            ]
-                          },
-                          "timeline": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "date": {
-                                  "type": "string"
-                                },
-                                "cumulativePipelineUsd": {
-                                  "type": "number"
-                                }
-                              },
-                              "required": [
-                                "date",
-                                "cumulativePipelineUsd"
-                              ]
-                            },
-                            "description": "Public-safe cumulative expected-pipeline timeline for this brand. Omitted when no dated revenue events exist."
-                          }
-                        },
-                        "required": [
-                          "brand",
-                          "headline",
-                          "costEconomics"
-                        ]
-                      }
+                    "avgCostPerPurchase": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Feature-wide average EXPECTED USD cost per purchase/close. Null when no brand has usable economics."
+                    },
+                    "brandCount": {
+                      "type": "integer",
+                      "description": "Number of client brands with usable economics that contributed to the averages."
                     }
                   },
                   "required": [
                     "featureSlug",
-                    "groupBy",
-                    "results"
+                    "avgCostPerMeetingBooked",
+                    "avgCostPerPurchase",
+                    "brandCount"
                   ]
                 }
               }
             }
           },
           "400": {
-            "description": "Missing or invalid parameters",
+            "description": "Missing parameters",
             "content": {
               "application/json": {
                 "schema": {
