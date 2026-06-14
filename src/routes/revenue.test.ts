@@ -348,6 +348,24 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.status).toBe(502);
   });
 
+  it("requests the slim lead projection (view=basic) from lead-service (#281)", async () => {
+    let leadsUrl: string | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
+      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
+      if (url.includes("/orgs/leads")) {
+        leadsUrl = url;
+        return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(leadsUrl).toBeDefined();
+    expect(new URL(leadsUrl!).searchParams.get("view")).toBe("basic");
+  });
+
   // ── costEconomics ───────────────────────────────────────────────────────────
 
   it("costEconomics — normal: finite cost-of-acquisition % and ROI multiple", async () => {
