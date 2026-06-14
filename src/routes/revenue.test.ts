@@ -49,6 +49,8 @@ const ECONOMICS = {
   replyToMeetingPct: 40,
   visitToMeetingPct: 5,
   meetingToClosePct: 30,
+  visitToSignupPct: 20,
+  signupToPaidClientPct: 10, // 0.20 × 0.10 = 0.02 = visitToClosePct
   visitToClosePct: 2,
 };
 
@@ -269,6 +271,87 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(0);
     expect(res.body.leads).toEqual([]);
+  });
+
+  // ── Outcome lenses (?lens=) ───────────────────────────────────────────────────
+
+  const LENS_LEADS = [
+    leadRow({ leadId: "lc", email: "click@x.com", clicked: true, lead: { firstName: "Click", lastName: "X", photoUrl: null, organization: { id: "oc", name: "OrgC", logoUrl: null } } }),
+    leadRow({ leadId: "lr", email: "reply@y.com", replied: true, replyClassification: "positive", lead: { firstName: "Reply", lastName: "Y", photoUrl: null, organization: { id: "or", name: "OrgR", logoUrl: null } } }),
+    leadRow({ leadId: "lb", email: "both@z.com", clicked: true, replied: true, replyClassification: "positive", lead: { firstName: "Bo", lastName: "Th", photoUrl: null, organization: { id: "ob", name: "OrgB", logoUrl: null } } }),
+    leadRow({ leadId: "lcold", email: "cold@w.com", lead: { firstName: "Cold", lastName: "W", photoUrl: null, organization: { id: "ow", name: "OrgW", logoUrl: null } } }),
+  ];
+
+  it("lens=signups — only clicked leads; prob == v2s, revenue == (v2s/100)·LTR", async () => {
+    mockFetch({ economics: ECONOMICS, leads: LENS_LEADS });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=signups").set(AUTH);
+    expect(res.status).toBe(200);
+    // clicked leads = lc + lb (the both-signals lead clicked too); reply-only + cold excluded
+    expect(res.body.leads.map((l: any) => l.leadId).sort()).toEqual(["lb", "lc"]);
+    for (const lead of res.body.leads) {
+      expect(lead.conversionProbabilityPct).toBe(20); // v2s
+      expect(lead.expectedRevenueUsd).toBeCloseTo(200, 6); // (20/100)·1000
+    }
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(400, 6); // 2 leads × 200
+    expect(res.body.headline.economicsSource).toBe("sales-economics");
+    expect(res.body.organizations).toEqual([]);
+    expect(res.body.timeSeries).toEqual([]);
+    expect(res.body.events).toEqual([]);
+  });
+
+  it("lens=booked-meetings — only positive-reply leads; prob == r2m, revenue == (r2m/100)·LTR", async () => {
+    mockFetch({ economics: ECONOMICS, leads: LENS_LEADS });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=booked-meetings").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.leads.map((l: any) => l.leadId).sort()).toEqual(["lb", "lr"]); // reply leads = lr + lb
+    for (const lead of res.body.leads) {
+      expect(lead.conversionProbabilityPct).toBe(40); // r2m
+      expect(lead.expectedRevenueUsd).toBeCloseTo(400, 6); // (40/100)·1000
+    }
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(800, 6); // 2 leads × 400
+  });
+
+  it("lens=sales — clicked-or-reply union; combined-OR per lead; both-signals > either single & ≤100", async () => {
+    mockFetch({ economics: ECONOMICS, leads: LENS_LEADS });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=sales").set(AUTH);
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.leads.map((l: any) => [l.leadId, l]));
+    expect(Object.keys(byId).sort()).toEqual(["lb", "lc", "lr"]); // cold excluded
+    // pClick = orP(0.02, 0.05·0.30) = 0.0347 → 3.47% / $34.7
+    expect(byId.lc.conversionProbabilityPct).toBeCloseTo(3.47, 6);
+    expect(byId.lc.expectedRevenueUsd).toBeCloseTo(34.7, 6);
+    // pReply = 0.40·0.30 = 0.12 → 12% / $120
+    expect(byId.lr.conversionProbabilityPct).toBeCloseTo(12, 6);
+    expect(byId.lr.expectedRevenueUsd).toBeCloseTo(120, 6);
+    // both = orP(0.0347, 0.12) = 0.150536 → 15.0536% / $150.536
+    expect(byId.lb.conversionProbabilityPct).toBeCloseTo(15.0536, 6);
+    expect(byId.lb.expectedRevenueUsd).toBeCloseTo(150.536, 6);
+    // both-signals strictly > either single, and ≤ 100
+    expect(byId.lb.conversionProbabilityPct).toBeGreaterThan(byId.lc.conversionProbabilityPct);
+    expect(byId.lb.conversionProbabilityPct).toBeGreaterThan(byId.lr.conversionProbabilityPct);
+    expect(byId.lb.conversionProbabilityPct).toBeLessThanOrEqual(100);
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(34.7 + 120 + 150.536, 5);
+  });
+
+  it("lens with no matching leads → empty leads + 0 pipeline", async () => {
+    mockFetch({ economics: ECONOMICS, leads: [LENS_LEADS[3]] }); // only the cold lead
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=signups").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.leads).toEqual([]);
+    expect(res.body.headline.totalPipelineUsd).toBe(0);
+  });
+
+  it("invalid lens value → 400", async () => {
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=bogus").set(AUTH);
+    expect(res.status).toBe(400);
+  });
+
+  it("no lens → leads carry NO conversionProbabilityPct (back-compat)", async () => {
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.leads.length).toBeGreaterThan(0);
+    for (const lead of res.body.leads) expect(lead).not.toHaveProperty("conversionProbabilityPct");
   });
 
   // ── orgDomain (for logo.dev) ──────────────────────────────────────────────────
