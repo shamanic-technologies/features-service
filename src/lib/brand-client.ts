@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "./fetch-retry.js";
+
 const BRAND_SERVICE_URL = process.env.BRAND_SERVICE_URL;
 const BRAND_SERVICE_API_KEY = process.env.BRAND_SERVICE_API_KEY;
 
@@ -56,7 +58,7 @@ export async function extractBrandFields(
   if (headers.campaignId) reqHeaders["x-campaign-id"] = headers.campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const response = await fetch(`${BRAND_SERVICE_URL}/orgs/brands/extract-fields`, {
+  const response = await fetchWithRetry(`${BRAND_SERVICE_URL}/orgs/brands/extract-fields`, {
     method: "POST",
     headers: reqHeaders,
     body: JSON.stringify({ fields }),

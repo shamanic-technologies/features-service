@@ -514,7 +514,7 @@ export async function handlePublicRevenue(
         };
       } catch (error) {
         if (error instanceof BrandOwnershipError) {
-          console.warn(
+          console.log(
             `[features-service] skipping stale feature membership for public revenue: featureSlug=${featureSlug}, orgId=${orgId}, brandId=${brandId}`,
           );
           return null;
