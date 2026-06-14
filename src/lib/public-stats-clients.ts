@@ -4,6 +4,8 @@
  * Service URLs and keys are read lazily from process.env.
  */
 
+import { fetchWithRetry } from "./fetch-retry.js";
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface WorkflowMetadata {
@@ -46,7 +48,7 @@ export async function fetchPublicWorkflows(
   status = "all",
 ): Promise<WorkflowMetadata[]> {
   const url = `${process.env.WORKFLOW_SERVICE_URL}/public/workflows?featureSlugs=${encodeURIComponent(featureSlugs)}&status=${status}`;
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     headers: { "x-api-key": process.env.WORKFLOW_SERVICE_API_KEY! },
   });
 
@@ -68,7 +70,7 @@ export async function fetchPublicCosts(
   const params = new URLSearchParams({ featureSlugs, groupBy });
 
   const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs?${params}`;
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY! },
   });
 
@@ -90,7 +92,7 @@ export async function fetchPublicEmailStats(
   const params = new URLSearchParams({ featureSlugs, groupBy });
 
   const url = `${process.env.EMAIL_GATEWAY_SERVICE_URL}/public/stats?${params}`;
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     headers: { "x-api-key": process.env.EMAIL_GATEWAY_SERVICE_API_KEY! },
   });
 
@@ -120,7 +122,7 @@ export async function fetchPublicWorkflowEngagementLatency(
   const params = new URLSearchParams({ featureSlugs, groupBy: "workflowSlug" });
 
   const url = `${process.env.EMAIL_GATEWAY_SERVICE_URL}/public/stats/engagement-latency?${params}`;
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     headers: { "x-api-key": process.env.EMAIL_GATEWAY_SERVICE_API_KEY! },
   });
 
@@ -218,7 +220,7 @@ export async function fetchPublicJournalistsStats(
   const params = new URLSearchParams({ featureSlugs, groupBy });
 
   const url = `${process.env.JOURNALISTS_SERVICE_URL}/public/stats?${params}`;
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     headers: { "x-api-key": process.env.JOURNALISTS_SERVICE_API_KEY! },
   });
 
@@ -287,7 +289,7 @@ export async function fetchBrandInfoBatch(brandIds: string[]): Promise<Map<strin
     chunks.map(async (chunk) => {
       const url = `${brandServiceUrl}/internal/brands?ids=${chunk.join(",")}`;
       try {
-        const response = await fetch(url, {
+        const response = await fetchWithRetry(url, {
           headers: { "x-api-key": brandServiceApiKey },
         });
 

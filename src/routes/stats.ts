@@ -5,6 +5,7 @@ import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { STATS_REGISTRY, getPublicRegistry, getEntityRegistry, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
 import { traceEvent } from "../lib/trace-event.js";
+import { fetchWithRetry } from "../lib/fetch-retry.js";
 
 const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL!;
 const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY!;
@@ -125,7 +126,7 @@ async function fetchEmailStats(
 
   const url = `${EMAIL_GATEWAY_SERVICE_URL}/orgs/stats?${params}`;
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: buildDownstreamHeaders(EMAIL_GATEWAY_SERVICE_API_KEY, orgId, identity),
     });
 
@@ -199,7 +200,7 @@ async function fetchRunsStats(
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
     });
 
@@ -273,7 +274,7 @@ async function fetchOutletsStats(
 
   const url = `${OUTLETS_SERVICE_URL}/orgs/outlets/stats?${params}`;
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: buildDownstreamHeaders(OUTLETS_SERVICE_API_KEY, orgId, identity),
     });
 
@@ -326,7 +327,7 @@ async function fetchJournalistsStats(
 
   const url = `${getJournalistsServiceUrl()}/orgs/stats?${params}`;
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: buildDownstreamHeaders(getJournalistsServiceApiKey(), orgId, identity),
     });
 
@@ -477,7 +478,7 @@ async function fetchLeadsStats(
 
   const url = `${getLeadServiceUrl()}/orgs/stats?${params}`;
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: buildDownstreamHeaders(getLeadServiceApiKey(), orgId, identity),
     });
 
@@ -533,8 +534,8 @@ async function fetchPressKitsStats(
 
   try {
     const [viewsRes, costsRes] = await Promise.all([
-      fetch(`${getPressKitsServiceUrl()}/media-kits/stats/views?${viewsParams}`, { headers }),
-      fetch(`${getPressKitsServiceUrl()}/media-kits/stats/costs?${costsParams}`, { headers }),
+      fetchWithRetry(`${getPressKitsServiceUrl()}/media-kits/stats/views?${viewsParams}`, { headers }),
+      fetchWithRetry(`${getPressKitsServiceUrl()}/media-kits/stats/costs?${costsParams}`, { headers }),
     ]);
 
     const viewsByGroup = new Map<string, { views: number; unique: number }>();
@@ -608,7 +609,7 @@ async function fetchJournalistsQuotesStats(
   const url = `${baseUrl}/orgs/quote-requests/stats?${params}`;
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: buildDownstreamHeaders(apiKey, orgId, identity),
     });
 
@@ -652,7 +653,7 @@ async function resolveBrandIdFromCampaign(
   if (!campaignUrl || !campaignKey) return null;
 
   try {
-    const response = await fetch(`${campaignUrl}/campaigns/${encodeURIComponent(campaignId)}`, {
+    const response = await fetchWithRetry(`${campaignUrl}/campaigns/${encodeURIComponent(campaignId)}`, {
       headers: buildDownstreamHeaders(campaignKey, orgId, identity),
     });
     if (!response.ok) {
@@ -690,7 +691,7 @@ async function fetchAiVisibilityStats(
   const url = `${baseUrl}/orgs/visibility-score-runs?${params}`;
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: buildDownstreamHeaders(apiKey, orgId, identity),
     });
 
@@ -790,7 +791,7 @@ async function fetchPipelineStats(
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs`;
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
         ...buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity),
@@ -897,7 +898,7 @@ async function fetchPipelineStatsForFilter(
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;
   try {
-    const response = await fetch(url, { headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity) });
+    const response = await fetchWithRetry(url, { headers: buildDownstreamHeaders(RUNS_SERVICE_API_KEY, orgId, identity) });
     if (!response.ok) { console.error(`[features-service] runs-service pipeline stats failed: ${response.status}`); return new Map(); }
 
     const data = await response.json() as { groups: Array<{ dimensions: Record<string, string | null>; runCount: number }> };
@@ -929,7 +930,7 @@ async function fetchActiveCampaigns(orgId: string, filters: Record<string, strin
   if (filters.campaignId) params.set("campaignId", filters.campaignId);
 
   try {
-    const response = await fetch(`${campaignUrl}/stats?${params}`, { headers: buildDownstreamHeaders(campaignKey, orgId, identity) });
+    const response = await fetchWithRetry(`${campaignUrl}/stats?${params}`, { headers: buildDownstreamHeaders(campaignKey, orgId, identity) });
     if (!response.ok) { console.error(`[features-service] campaign-service /stats failed: ${response.status}`); return 0; }
     const data = await response.json() as { stats: { byStatus: Record<string, number> } };
     return data.stats.byStatus?.active ?? data.stats.byStatus?.running ?? 0;

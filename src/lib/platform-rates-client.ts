@@ -15,6 +15,8 @@
  * via /public/stats?groupBy=workflowSlug, keyed per lead by workflowSlug.
  */
 
+import { fetchWithRetry } from "./fetch-retry.js";
+
 export interface PlatformEmailRates {
   /** P(sent | contacted) */
   sentPerContacted: number;
@@ -76,7 +78,7 @@ export async function fetchPlatformEmailRates(): Promise<PlatformEmailRates> {
     throw new Error("EMAIL_GATEWAY_SERVICE_URL or EMAIL_GATEWAY_SERVICE_API_KEY not configured");
   }
 
-  const response = await fetch(`${url}/public/stats`, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(`${url}/public/stats`, { headers: { "x-api-key": apiKey } });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`email-gateway /public/stats failed (${response.status}): ${text}`);
