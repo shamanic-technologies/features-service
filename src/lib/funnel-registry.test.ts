@@ -6,6 +6,8 @@ const ECONOMICS = {
   replyToMeetingPct: 40,
   visitToMeetingPct: 5,
   meetingToClosePct: 30,
+  visitToSignupPct: 20,
+  signupToPaidClientPct: 10, // 0.20 × 0.10 = 0.02 = visitToClosePct
   visitToClosePct: 2,
 };
 

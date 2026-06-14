@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { getFunnel, type EconomicsSource } from "../lib/funnel-registry.js";
+import { getFunnel, orP, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
@@ -12,6 +12,8 @@ import { fetchQualifications } from "../lib/qualifications-client.js";
 import { fetchPlatformEmailRates } from "../lib/platform-rates-client.js";
 import {
   computeRevenue,
+  dedupPersonsByLead,
+  type EnginePerson,
   type OrganizationRow,
   type LeadRow,
   type TimeSeriesPoint,
@@ -74,6 +76,103 @@ function emptyBody(totalPipelineUsd: number | null, totalCostInUsdCents: number)
   };
 }
 
+// ── Outcome lenses (dashboard Signups / Booked Meetings / Sales tabs) ─────────
+//
+// A lens segments the revenue overview to ONE outcome and attaches a per-lead conversion
+// probability. The probability is a FIXED per-signal rate from the brand's sales economics — NOT
+// the furthest-stage EV engine (no decay, no platform funnel rates). It reuses the SAME orP channel
+// model as `salesFunnel`: the sales-lens pClick/pReply below are byte-identical to its
+// pCloseClick/pCloseReply, just expressed as probabilities instead of dollars.
+export type Lens = "signups" | "booked-meetings" | "sales";
+export const LENS_VALUES: readonly Lens[] = ["signups", "booked-meetings", "sales"];
+
+const pct = (n: number): number => n / 100;
+
+/**
+ * The lead's conversion probability (decimal 0–1) for the lens, or null when the lead does not
+ * match the lens's engagement signal (filtered out of the lensed leads).
+ *   - signups         → website CLICK; P = visitToSignup
+ *   - booked-meetings → positive REPLY; P = replyToMeeting
+ *   - sales           → click and/or positive reply (union); per-lead combined-OR paid-close:
+ *       pClick = orP(visitToClose, visitToMeeting · meetingToClose)   (self-serve OR via meeting)
+ *       pReply = replyToMeeting · meetingToClose                       (reply → meeting → close)
+ *       clicked only → pClick ; reply only → pReply ; both → orP(pClick, pReply)
+ */
+function lensProbability(lens: Lens, signals: Record<string, boolean>, e: SalesEconomics): number | null {
+  const clicked = Boolean(signals.clicked);
+  const positiveReply = Boolean(signals.positiveReply);
+  switch (lens) {
+    case "signups":
+      return clicked ? pct(e.visitToSignupPct) : null;
+    case "booked-meetings":
+      return positiveReply ? pct(e.replyToMeetingPct) : null;
+    case "sales": {
+      if (!clicked && !positiveReply) return null;
+      const pClick = orP(pct(e.visitToClosePct), pct(e.visitToMeetingPct) * pct(e.meetingToClosePct));
+      const pReply = pct(e.replyToMeetingPct) * pct(e.meetingToClosePct);
+      if (clicked && positiveReply) return orP(pClick, pReply);
+      return clicked ? pClick : pReply;
+    }
+  }
+}
+
+/** Tags reflecting the engagement signals the lead actually holds, for the lensed lead row. */
+function lensTags(signals: Record<string, boolean>): string[] {
+  const tags: string[] = [];
+  if (signals.clicked) tags.push("visit");
+  if (signals.positiveReply) tags.push("reply");
+  return tags;
+}
+
+/**
+ * Lensed overview body: leads filtered to the lens signal, each carrying conversionProbabilityPct +
+ * lens expectedRevenueUsd (probability × LTR); headline.totalPipelineUsd = sum across those leads.
+ * organizations / timeSeries / events are empty (not consumed by the dashboard lens pages); date is
+ * null (Wave B per-event dates are skipped — the lens uses only clicked / positiveReply from Wave A).
+ */
+function buildLensBody(
+  lens: Lens,
+  rawPersons: EnginePerson[],
+  economics: SalesEconomics,
+  economicsSource: EconomicsSource,
+  totalCostInUsdCents: number,
+): RevenueBody {
+  const ltr = economics.lifetimeRevenueUsd;
+  const leads: LeadRow[] = [];
+  for (const person of dedupPersonsByLead(rawPersons)) {
+    const p = lensProbability(lens, person.signals, economics);
+    if (p === null) continue; // lead does not match this lens's engagement signal
+    leads.push({
+      leadId: person.leadId,
+      firstName: person.firstName,
+      lastName: person.lastName,
+      photoUrl: person.photoUrl,
+      orgName: person.orgName,
+      orgLogoUrl: person.orgLogoUrl,
+      orgDomain: person.orgDomain,
+      tags: lensTags(person.signals),
+      expectedRevenueUsd: p * ltr,
+      date: null,
+      conversionProbabilityPct: p * 100,
+    });
+  }
+  // Deterministic: highest expected revenue first, leadId tiebreak.
+  leads.sort(
+    (a, b) =>
+      b.expectedRevenueUsd - a.expectedRevenueUsd ||
+      (a.leadId < b.leadId ? -1 : a.leadId > b.leadId ? 1 : 0),
+  );
+  const totalPipelineUsd = leads.reduce((sum, l) => sum + l.expectedRevenueUsd, 0);
+  return {
+    headline: { totalPipelineUsd, economicsSource },
+    costEconomics: buildCostEconomics(totalCostInUsdCents, totalPipelineUsd),
+    timeSeries: [],
+    organizations: [],
+    leads,
+    events: [],
+  };
+}
+
 /**
  * Compute the full expected-pipeline revenue body for ONE (brand, campaign?) scope.
  *
@@ -92,6 +191,7 @@ export async function computeFeatureRevenue(
   campaignId: string | undefined,
   funnel: ReturnType<typeof getFunnel>,
   headers: DownstreamHeaders,
+  lens?: Lens,
 ): Promise<RevenueBody> {
   // No funnel wired for this feature yet → null pipeline (not an error). `funnel` is known up
   // front (caller param), so short-circuit BEFORE Wave A and fetch ONLY the cost the empty body
@@ -124,6 +224,12 @@ export async function computeFeatureRevenue(
     return emptyBody(null, totalCostInUsdCents);
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
+
+  // Lensed overview: a fixed per-signal probability from sales economics. Uses ONLY Wave A
+  // (economics + persons' clicked / positiveReply) — short-circuit BEFORE Wave B + the engine.
+  if (lens) {
+    return buildLensBody(lens, persons, economics, economicsSource, totalCostInUsdCents);
+  }
 
   const paths = funnel.resolvePaths({ economics, platformRates });
 
@@ -213,10 +319,16 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
   const brandId = req.query.brandId as string | undefined;
   const campaignId = req.query.campaignId as string | undefined;
   const groupBy = req.query.groupBy as string | undefined;
+  const lensParam = req.query.lens as string | undefined;
 
   if (!brandId) {
     return res.status(400).json({ error: "brandId query parameter is required" });
   }
+
+  if (lensParam !== undefined && !LENS_VALUES.includes(lensParam as Lens)) {
+    return res.status(400).json({ error: `lens must be one of: ${LENS_VALUES.join(", ")}` });
+  }
+  const lens = lensParam as Lens | undefined;
 
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
@@ -249,7 +361,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     // ── Overview: single brand-scoped (optionally one-campaign) response (unchanged) ──
     traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
 
-    const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, funnel, headers);
+    const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, funnel, headers, lens);
 
     traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 
