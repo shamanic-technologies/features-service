@@ -71,7 +71,11 @@ export async function fetchLeadsForRevenue(
     throw new Error("LEAD_SERVICE_URL or LEAD_SERVICE_API_KEY not configured");
   }
 
-  const params = new URLSearchParams({ brandId });
+  // view=basic asks lead-service for the slim lead projection (#273/#281): same envelope
+  // and delivery-status overlay, but each row's nested `lead` is trimmed to the handful of
+  // thin fields the revenue engine reads. Cuts a ~150 MB body ~10x for big brands, removing
+  // the `await response.json()` heap-OOM behind "Failed to compute feature revenue".
+  const params = new URLSearchParams({ brandId, view: "basic" });
   if (campaignId) params.set("campaignId", campaignId);
 
   const reqHeaders: Record<string, string> = {

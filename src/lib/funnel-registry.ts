@@ -20,6 +20,10 @@ export interface SalesEconomics {
   replyToMeetingPct: number;
   visitToMeetingPct: number;
   meetingToClosePct: number;
+  /** Website-click → signup rate (brand-service decomposes visitToClose = visitToSignup × signupToPaidClient). */
+  visitToSignupPct: number;
+  /** Signup → paying-client rate. */
+  signupToPaidClientPct: number;
   visitToClosePct: number;
 }
 

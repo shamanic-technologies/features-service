@@ -256,8 +256,9 @@ const revenueLeadSchema = z.object({
   orgLogoUrl: z.string().nullable(),
   orgDomain: z.string().nullable().describe("Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."),
   tags: z.array(z.string()),
-  expectedRevenueUsd: z.number(),
-  date: z.string().nullable().describe("Most-advanced event date. Null until per-event timestamps exist (email-gateway)."),
+  expectedRevenueUsd: z.number().describe("Expected revenue for this lead. On a lensed (?lens=) response this is the lens's expected revenue = (conversionProbabilityPct/100) × LTR; otherwise the engine's furthest-stage EV."),
+  date: z.string().nullable().describe("Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."),
+  conversionProbabilityPct: z.number().optional().describe("LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."),
 });
 
 const revenueTimeSeriesPointSchema = z.object({
@@ -338,11 +339,12 @@ registry.registerPath({
       brandId: z.string().describe("Brand UUID (required) — revenue is brand-scoped."),
       campaignId: z.string().optional().describe("Optional campaign drill-down (ignored when groupBy=campaignId)."),
       groupBy: z.enum(["campaignId"]).optional().describe("When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview."),
+      lens: z.enum(["signups", "booked-meetings", "sales"]).optional().describe("Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), sales=click and/or positive reply (combined-OR paid-close). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged."),
     }),
   },
   responses: {
-    200: { description: "Feature revenue (overview, or grouped when groupBy=campaignId)", content: { "application/json": { schema: z.union([featureRevenueResponseRef, featureRevenueGroupedResponseRef]) } } },
-    400: { description: "Missing brandId", content: { "application/json": { schema: errorResponse } } },
+    200: { description: "Feature revenue (overview, or grouped when groupBy=campaignId; lensed when ?lens= is set)", content: { "application/json": { schema: z.union([featureRevenueResponseRef, featureRevenueGroupedResponseRef]) } } },
+    400: { description: "Missing brandId or invalid lens value", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },

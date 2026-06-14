@@ -117,6 +117,12 @@ export interface LeadRow {
   expectedRevenueUsd: number;
   /** Most-advanced (max) event date for the lead. Null when no event date is known. */
   date: string | null;
+  /**
+   * Lens-only: the lead's conversion probability (0–100) for the requested outcome lens. Present
+   * ONLY on a lensed `?lens=` response; ABSENT on the default/grouped responses (keeps them
+   * byte-identical). Set by the lens path in `revenue.ts`, never by the engine.
+   */
+  conversionProbabilityPct?: number;
 }
 
 export interface TimeSeriesPoint {
@@ -195,7 +201,7 @@ function personName(p: EnginePerson): string | null {
 }
 
 /** Merge per-campaign rows of the same lead into one person; OR signals, MIN signal dates. */
-function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
+export function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
   const byLead = new Map<string, EnginePerson>();
   for (const row of rows) {
     const existing = byLead.get(row.leadId);
