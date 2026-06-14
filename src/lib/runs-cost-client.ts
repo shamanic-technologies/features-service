@@ -9,6 +9,8 @@
  * caller returns 502. This intentionally diverges from /stats's fetchRunsStats (fail-soft to
  * 0) — the revenue path treats cost as a core output, like its leads / economics clients.
  */
+import { fetchWithRetry } from "./fetch-retry.js";
+
 export async function fetchRunsCostCents(
   brandId: string,
   campaignId: string | undefined,
@@ -35,7 +37,7 @@ export async function fetchRunsCostCents(
   if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const response = await fetch(`${url}/v1/stats/costs?${params}`, { headers: reqHeaders });
+  const response = await fetchWithRetry(`${url}/v1/stats/costs?${params}`, { headers: reqHeaders });
 
   if (!response.ok) {
     const text = await response.text();
@@ -87,7 +89,7 @@ export async function fetchCampaignIdsWithRuns(
   if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const response = await fetch(`${url}/v1/stats/costs?${params}`, { headers: reqHeaders });
+  const response = await fetchWithRetry(`${url}/v1/stats/costs?${params}`, { headers: reqHeaders });
 
   if (!response.ok) {
     const text = await response.text();

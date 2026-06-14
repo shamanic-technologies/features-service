@@ -24,6 +24,8 @@
  * on them).
  */
 
+import { fetchWithRetry } from "./fetch-retry.js";
+
 const MAX_LIMIT = 500;
 
 type QualificationStatus =
@@ -83,7 +85,7 @@ export async function fetchQualifications(
   const params = new URLSearchParams({ limit: String(MAX_LIMIT) });
   if (campaignId) params.set("campaign_id", campaignId);
 
-  const response = await fetch(`${url}/orgs/manual-qualifications?${params}`, { headers: reqHeaders });
+  const response = await fetchWithRetry(`${url}/orgs/manual-qualifications?${params}`, { headers: reqHeaders });
 
   if (!response.ok) {
     const text = await response.text();

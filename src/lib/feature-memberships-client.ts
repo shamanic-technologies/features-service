@@ -11,6 +11,8 @@
  * api-key only (no identity headers) — it's a cross-org internal read.
  * Fails loud on any transport / non-OK error.
  */
+import { fetchWithRetry } from "./fetch-retry.js";
+
 export interface FeatureMembership {
   orgId: string;
   brandId: string;
@@ -25,7 +27,7 @@ export async function fetchFeatureMemberships(featureSlugs: string): Promise<Fea
   }
 
   const params = new URLSearchParams({ featureSlugs });
-  const response = await fetch(`${url}/internal/feature-memberships?${params}`, {
+  const response = await fetchWithRetry(`${url}/internal/feature-memberships?${params}`, {
     headers: { "x-api-key": apiKey },
   });
 

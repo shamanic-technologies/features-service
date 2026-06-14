@@ -1,4 +1,5 @@
 import type { EnginePerson } from "./revenue-engine.js";
+import { fetchWithRetry } from "./fetch-retry.js";
 
 /**
  * Shape of one leads_campaigns row returned by lead-service GET /orgs/leads.
@@ -83,7 +84,7 @@ export async function fetchLeadsForRevenue(
   if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const response = await fetch(`${url}/orgs/leads?${params}`, { headers: reqHeaders });
+  const response = await fetchWithRetry(`${url}/orgs/leads?${params}`, { headers: reqHeaders });
 
   if (!response.ok) {
     const text = await response.text();

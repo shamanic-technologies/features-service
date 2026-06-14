@@ -1,4 +1,5 @@
 import type { SalesEconomics } from "./funnel-registry.js";
+import { fetchWithRetry } from "./fetch-retry.js";
 
 export class BrandOwnershipError extends Error {
   constructor(
@@ -42,7 +43,7 @@ export async function fetchSalesEconomics(
   if (headers.campaignId) reqHeaders["x-campaign-id"] = headers.campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const response = await fetch(`${url}/orgs/brands/${brandId}/sales-economics`, {
+  const response = await fetchWithRetry(`${url}/orgs/brands/${brandId}/sales-economics`, {
     headers: reqHeaders,
   });
 
@@ -102,7 +103,7 @@ export async function fetchEffectiveEconomics(
   if (headers.campaignId) reqHeaders["x-campaign-id"] = headers.campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const response = await fetch(`${url}/orgs/brands/${brandId}/sales-economics-effective`, {
+  const response = await fetchWithRetry(`${url}/orgs/brands/${brandId}/sales-economics-effective`, {
     headers: reqHeaders,
   });
 

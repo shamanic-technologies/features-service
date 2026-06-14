@@ -1,3 +1,5 @@
+import { fetchWithRetry } from "./fetch-retry.js";
+
 export async function traceEvent(
   runId: string,
   payload: {
@@ -16,7 +18,7 @@ export async function traceEvent(
     return;
   }
   try {
-    await fetch(`${url}/v1/runs/${runId}/events`, {
+    await fetchWithRetry(`${url}/v1/runs/${runId}/events`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

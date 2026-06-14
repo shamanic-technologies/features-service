@@ -12,6 +12,8 @@
  * are a secondary enrichment; the pipeline total does not depend on them).
  */
 
+import { fetchWithRetry } from "./fetch-retry.js";
+
 interface StatusScope {
   firstContactedAt?: string | null;
   firstSentAt?: string | null;
@@ -83,7 +85,7 @@ export async function fetchEventTimestamps(
   if (campaignId) body.campaignId = campaignId;
   else body.brandId = brandId;
 
-  const response = await fetch(`${url}/orgs/status`, {
+  const response = await fetchWithRetry(`${url}/orgs/status`, {
     method: "POST",
     headers: reqHeaders,
     body: JSON.stringify(body),
