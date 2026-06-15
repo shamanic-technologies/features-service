@@ -28,11 +28,17 @@ const router = Router();
  *   - totalCostUsd:          total run cost in dollars (same source as /stats systemStats), >= 0.
  *   - costOfAcquisitionPct:  (totalCostUsd / totalPipelineUsd) * 100; null when pipeline is null OR 0.
  *   - roiMultiple:           totalPipelineUsd / totalCostUsd; null when cost is 0 OR pipeline is null.
+ *   - expectedConversions:   LENS ONLY — sum of per-lead conversion probability (decimal) across the
+ *                            lensed leads (totalPipelineUsd = expectedConversions × LTR). Absent off-lens.
+ *   - costPerConversionUsd:  LENS ONLY — totalCostUsd / expectedConversions; null when expectedConversions
+ *                            is 0. Absent off-lens.
  */
 export interface CostEconomics {
   totalCostUsd: number;
   costOfAcquisitionPct: number | null;
   roiMultiple: number | null;
+  expectedConversions?: number;
+  costPerConversionUsd?: number | null;
 }
 
 export function buildCostEconomics(totalCostInUsdCents: number, totalPipelineUsd: number | null): CostEconomics {
@@ -163,9 +169,17 @@ function buildLensBody(
       (a.leadId < b.leadId ? -1 : a.leadId > b.leadId ? 1 : 0),
   );
   const totalPipelineUsd = leads.reduce((sum, l) => sum + l.expectedRevenueUsd, 0);
+  // LENS ONLY: expected conversion COUNT = sum of per-lead probability (decimal). totalPipelineUsd =
+  // expectedConversions × LTR. costPerConversionUsd = totalCostUsd / expectedConversions (null at 0).
+  const expectedConversions = leads.reduce((sum, l) => sum + (l.conversionProbabilityPct ?? 0) / 100, 0);
+  const costEconomics = buildCostEconomics(totalCostInUsdCents, totalPipelineUsd);
   return {
     headline: { totalPipelineUsd, economicsSource },
-    costEconomics: buildCostEconomics(totalCostInUsdCents, totalPipelineUsd),
+    costEconomics: {
+      ...costEconomics,
+      expectedConversions,
+      costPerConversionUsd: expectedConversions === 0 ? null : costEconomics.totalCostUsd / expectedConversions,
+    },
     timeSeries: [],
     organizations: [],
     leads,
