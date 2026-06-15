@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { STATS_REGISTRY } from "../lib/stats-registry.js";
 
 vi.mock("../db/index.js", () => ({
   db: {
@@ -50,12 +51,18 @@ const AUTH_HEADERS = {
   "x-run-id": "run-1",
 };
 
+// Declares EVERY registry key so the fan-out scoping (GET /features/:slug/stats only calls the
+// sources a feature renders) keeps all 10 downstream fetchers active for the mapping/resilience
+// suites below. A narrow, realistically-scoped feature is exercised separately in the
+// "feature-scoped fan-out" describe.
 const MOCK_FEATURE = {
   id: "feat-1",
   slug: "sales-cold-email-outreach",
   name: "Sales Cold Email Outreach",
   description: "test",
   status: "active",
+  outputs: Object.keys(STATS_REGISTRY).map((key) => ({ key })),
+  charts: [],
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -427,5 +434,75 @@ describe("GET /entities/registry", () => {
   it("rejects requests without API key", async () => {
     const res = await request(app).get("/entities/registry");
     expect(res.status).toBe(401);
+  });
+});
+
+describe("GET /features/:featureSlug/stats — feature-scoped fan-out", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  // A realistically NARROW feature: cold-email outputs (email-gateway recipients + a runFilter
+  // count + derived rates) and a chart. Declares NO leads/outlets/journalists/press-kits keys,
+  // so the handler must NOT fan out to those siblings.
+  const NARROW_FEATURE = {
+    id: "feat-narrow",
+    slug: "sales-cold-email-outreach",
+    name: "Sales Cold Email Outreach",
+    description: "test",
+    status: "active",
+    outputs: [
+      { key: "emailsGenerated" },
+      { key: "recipientsContacted" },
+      { key: "recipientsSent" },
+      { key: "recipientsOpened" },
+      { key: "recipientOpenRate" },
+      { key: "costPerRecipientOpenCents" },
+    ],
+    charts: [
+      { key: "funnel", type: "funnel-bar", steps: [{ key: "recipientsContacted" }, { key: "recipientsClicked" }] },
+    ],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(NARROW_FEATURE as any);
+  });
+
+  afterEach(() => {
+    fetchSpy?.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it("only calls the sources the feature renders (email-gateway + runs); skips outlets/leads/journalists/press-kits", async () => {
+    const hosts = new Set<string>();
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      const host = new URL(url).host;
+      hosts.add(host);
+      if (url.includes("email:3000")) {
+        return new Response(JSON.stringify({ broadcast: { recipientStats: { contacted: 100, sent: 90, opened: 40 } } }), { status: 200 });
+      }
+      if (url.includes("runs:3000")) {
+        return new Response(JSON.stringify({ groups: [{ dimensions: { workflowSlug: "__total__" }, totalCostInUsdCents: "1000", runCount: 5, minStartedAt: null, maxStartedAt: null }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    const res = await request(app).get("/features/sales-cold-email-outreach/stats").set(AUTH_HEADERS);
+    expect(res.status).toBe(200);
+
+    // Rendered sources were hit…
+    expect(hosts.has("email:3000")).toBe(true);
+    expect(hosts.has("runs:3000")).toBe(true);
+    // …undeclared sources were NOT (these env hosts are configured, so a non-skip would hit them).
+    expect(hosts.has("outlets:3000")).toBe(false);
+    expect(hosts.has("leads:3000")).toBe(false);
+    expect(hosts.has("journalists:3000")).toBe(false);
+    expect(hosts.has("press-kits:3000")).toBe(false);
+
+    // Declared email-gateway stats populate; undeclared leads stats stay null (never fetched).
+    expect(res.body.stats.recipientsContacted).toBe(100);
+    expect(res.body.stats.leadsServed).toBeNull();
+    expect(res.body.systemStats.totalCostInUsdCents).toBe(1000);
   });
 });

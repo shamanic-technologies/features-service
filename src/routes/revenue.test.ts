@@ -790,6 +790,28 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
     expect(res.body.groups).toEqual([]);
   });
 
+  it("fetches brand-scoped economics ONCE for a multi-campaign grouped request (no per-campaign refetch)", async () => {
+    mockFetchGrouped({
+      economics: ECONOMICS,
+      campaigns: {
+        c1: { costCents: 7000, leads: [replyLead("o1")] },
+        c2: { costCents: 1000, leads: [deliveredLead("o2")] },
+        c3: { costCents: 2000, leads: [replyLead("o3")] },
+      },
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.groups).toHaveLength(3);
+
+    // brand-service economics are brand-scoped (identical across campaigns) → fetched once and
+    // shared, not once-per-campaign. Pre-#perf this was 3 calls (one per group).
+    const econCalls = vi.mocked(globalThis.fetch).mock.calls.filter(([input]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      return url.includes("/sales-economics-effective");
+    });
+    expect(econCalls.length).toBe(1);
+  });
+
   it("unknown groupBy value falls back to the ungrouped overview response (no groupBy/groups keys)", async () => {
     mockFetch({ economics: null });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=foo").set(AUTH);

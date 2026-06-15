@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { STATS_REGISTRY, getPublicRegistry, getEntityRegistry, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
+import { STATS_REGISTRY, getPublicRegistry, getEntityRegistry, requiredStatsSources, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
 
@@ -106,6 +106,22 @@ function computeAllDerivedStats(rawStats: Record<string, number>): Record<string
   }
 
   return result;
+}
+
+/**
+ * Deep-collect every `key` string nested anywhere in a feature's `outputs` / `charts` JSON
+ * (output items, funnel steps, breakdown segments, …). Unknown keys (chart ids, non-stat
+ * props) are filtered out downstream by `requiredStatsSources`, so over-collection is safe.
+ */
+function collectStatKeys(node: unknown, acc: Set<string>): void {
+  if (Array.isArray(node)) {
+    for (const item of node) collectStatKeys(item, acc);
+  } else if (node && typeof node === "object") {
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      if (k === "key" && typeof v === "string") acc.add(v);
+      else collectStatKeys(v, acc);
+    }
+  }
 }
 
 // ── Downstream fetch functions ──────────────────────────────────────────────
@@ -1004,16 +1020,32 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     traceEvent(runId, { service: "features-service", event: "feature-stats-start", detail: `featureSlug=${featureSlug}, groupBy=${groupByParam ?? "none"}, filters=${JSON.stringify(filters)}` }, req.headers).catch(() => {});
 
     const identity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };
+
+    // Scope the fan-out to the sources this feature actually renders (its outputs + charts).
+    // A feature never waits on a stat family it doesn't declare — e.g. a cold-email feature
+    // skips outlets / journalists / leads / press-kits / journalists-quotes / ai-visibility,
+    // each of which is a separate (often cold-starting) sibling HTTP call. runs (cost +
+    // systemStats) and activeCampaigns are universal, always fetched. A skipped source
+    // contributes no keys → its (unrendered) stats default to null downstream, exactly as a
+    // no-data fetch would. (See Promise.allSettled note for the PUBLIC path — here the families
+    // are core to the dashboard and stay fail-loud via fetchWithRetry inside each fetcher.)
+    const declaredKeys = new Set<string>();
+    collectStatKeys(feature.outputs, declaredKeys);
+    collectStatKeys(feature.charts, declaredKeys);
+    const { sources: neededSources, needsRunFilter } = requiredStatsSources([...declaredKeys]);
+    const EMPTY_STATS: Map<string, Record<string, number>> = new Map();
+    const skip = (): Promise<Map<string, Record<string, number>>> => Promise.resolve(EMPTY_STATS);
+
     const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, pressKitsStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns] = await Promise.all([
-      fetchEmailStats(orgId, groupBy, filters, identity),
+      neededSources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : skip(),
       fetchRunsStats(orgId, groupBy, filters, [featureSlug], identity),
-      fetchOutletsStats(orgId, groupBy, filters, identity),
-      fetchJournalistsStats(orgId, groupBy, filters, identity),
-      fetchLeadsStats(orgId, groupBy, filters, identity),
-      fetchPipelineStats(orgId, groupBy, filters, [featureSlug], identity),
-      fetchPressKitsStats(orgId, groupBy, filters, identity),
-      fetchJournalistsQuotesStats(orgId, filters, identity),
-      fetchAiVisibilityStats(orgId, filters, identity),
+      neededSources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : skip(),
+      neededSources.has("journalists") ? fetchJournalistsStats(orgId, groupBy, filters, identity) : skip(),
+      neededSources.has("leads") ? fetchLeadsStats(orgId, groupBy, filters, identity) : skip(),
+      needsRunFilter ? fetchPipelineStats(orgId, groupBy, filters, [featureSlug], identity) : skip(),
+      neededSources.has("press-kits") ? fetchPressKitsStats(orgId, groupBy, filters, identity) : skip(),
+      neededSources.has("journalists-quotes") ? fetchJournalistsQuotesStats(orgId, filters, identity) : skip(),
+      neededSources.has("ai-visibility") ? fetchAiVisibilityStats(orgId, filters, identity) : skip(),
       fetchActiveCampaigns(orgId, filters, identity),
     ]);
 
