@@ -279,6 +279,8 @@ const revenueCostEconomicsSchema = z.object({
   totalCostUsd: z.number().describe("Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."),
   costOfAcquisitionPct: z.number().nullable().describe("(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."),
   roiMultiple: z.number().nullable().describe("totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."),
+  expectedConversions: z.number().optional().describe("LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
+  costPerConversionUsd: z.number().nullable().optional().describe("LENS ONLY — totalCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
 });
 
 const featureRevenueResponseSchema = z.object({
