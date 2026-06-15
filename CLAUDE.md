@@ -189,7 +189,7 @@ NOT a silent swallow.
 **Env (both optional, sane defaults):** `FEATURE_VIEW_SNAPSHOT_TTL_MS` (default `5000` = the 5s freshness
 target) and `FEATURE_VIEW_CACHE_ENABLED` (default on; set `"false"` to bypass — tests that assert the pure
 live-compute path set it false). Future: event-driven invalidation (siblings publish domain events →
-incremental refresh) is the next medallion step beyond SWR if staleness ever bites. (PR #292.)
+incremental refresh) is the next medallion step beyond SWR if staleness ever bites. (PR #293.)
 
 ## `GET /features/:slug/stats` scopes its fan-out to the feature's DECLARED sources
 
