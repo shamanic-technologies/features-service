@@ -160,6 +160,41 @@ The DOD is "succeeding families never zeroed by a sibling's failure", NOT "failu
 Keep the cost/runs path (`fetchPublicCosts`, the outer `Promise.all` in `handleRanked`) untouched —
 cost is essential, not an optional outcome family. (Set 2026-06-08, PR #248 stat-families resilience.)
 
+## `GET /features/:slug/stats` scopes its fan-out to the feature's DECLARED sources
+
+The authed feature-stats handler (`src/routes/stats.ts`) does NOT call all 10 upstream stat
+families anymore — it derives the minimal source set from the feature's declared `outputs` +
+`charts` via `requiredStatsSources(keys)` (`stats-registry.ts`) and only fans out to those.
+`runs` (cost + systemStats) and `activeCampaigns` are UNIVERSAL — always fetched. A cold-email
+feature thus skips outlets/journalists/leads/press-kits/journalists-quotes/ai-visibility, none of
+which it renders; the endpoint stops waiting on those (often cold-starting) siblings. `Promise.all`
+here stays fail-loud per family (each fetcher wraps `fetchWithRetry` internally) — this is the
+authed dashboard path, NOT the public `Promise.allSettled` path above; don't conflate them.
+
+A skipped source contributes no keys → its (unrendered) stats default to `null` downstream, exactly
+as a no-data fetch would. So the response is byte-identical for the feature's DECLARED output keys +
+cost + systemStats; only keys the feature never renders may read `null` instead of a zero-fill —
+unobservable, since the dashboard renders `feature.outputs` only. `requiredStatsSources` resolves
+derived keys to their numerator+denominator sources and flags `needsRunFilter` for the pipeline
+(runFilter) family; unknown keys (chart ids like `funnel`) are ignored, so deep-collecting every
+nested `key` from outputs+charts and passing the lot is safe.
+
+**Test gotcha:** a feature mock fed to this handler MUST carry realistic `outputs`/`charts` — a mock
+without them yields an EMPTY required-source set and every source-fetcher is skipped, silently
+breaking mapping/resilience suites. `stats.test.ts`'s `MOCK_FEATURE` declares EVERY registry key
+(`Object.keys(STATS_REGISTRY).map(k => ({ key: k }))`) to keep all fetchers active; the narrow-scope
+behavior is asserted with a separate cold-email feature. (Set 2026-06-15, PR #289 fan-out scoping.)
+
+## Grouped revenue (`?groupBy=campaignId`) fetches brand economics ONCE, not per campaign
+
+`computeFeatureRevenue` takes an optional `economicsOverride` (`EffectiveEconomics`). Sales
+economics are brand-scoped (brand-service serves them at `/orgs/brands/:id/sales-economics-effective`
+— no campaign in the path), so the grouped route fetches them once before the per-campaign
+`Promise.all` and passes the result in, instead of each of N campaigns re-hitting brand-service. The
+override is skipped on the no-funnel short-circuit (which never reaches Wave A). The remaining
+per-campaign reads (runs-cost / leads / timestamps / quals) are genuinely campaign-scoped and still
+fan out per campaign — collapsing them brand-wide (`4N → 4`) is a deferred follow-up. (PR #289.)
+
 ## revenue.test.ts `mockFetch` routes by URL SUBSTRING — order specific paths before their prefixes
 
 `mockFetch` / `mockFetchGrouped` dispatch on `url.includes("...")`. A new brand-service path that
