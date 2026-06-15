@@ -333,12 +333,27 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(34.7 + 120 + 150.536, 5);
   });
 
-  it("lens with no matching leads → empty leads + 0 pipeline", async () => {
-    mockFetch({ economics: ECONOMICS, leads: [LENS_LEADS[3]] }); // only the cold lead
+  it("lens with no matching leads → empty leads + 0 pipeline; expectedConversions 0, costPerConversionUsd null", async () => {
+    mockFetch({ economics: ECONOMICS, leads: [LENS_LEADS[3]], costCents: 5000 }); // only the cold lead, $50 cost
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=signups").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.leads).toEqual([]);
     expect(res.body.headline.totalPipelineUsd).toBe(0);
+    expect(res.body.costEconomics.expectedConversions).toBe(0);
+    expect(res.body.costEconomics.costPerConversionUsd).toBeNull(); // div-by-zero guard
+  });
+
+  it("lens costEconomics — expectedConversions == sum(p); costPerConversionUsd == totalCostUsd / sum(p)", async () => {
+    mockFetch({ economics: ECONOMICS, leads: LENS_LEADS, costCents: 8000 }); // $80 cost
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=sales").set(AUTH);
+    expect(res.status).toBe(200);
+    // sales lens: lc=0.0347 + lr=0.12 + lb=0.150536 = 0.305236 (cold excluded)
+    const sumP = 0.0347 + 0.12 + 0.150536;
+    expect(res.body.costEconomics.expectedConversions).toBeCloseTo(sumP, 6);
+    expect(res.body.costEconomics.totalCostUsd).toBe(80);
+    expect(res.body.costEconomics.costPerConversionUsd).toBeCloseTo(80 / sumP, 5);
+    // totalPipelineUsd == expectedConversions × LTR
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(sumP * 1000, 3);
   });
 
   it("invalid lens value → 400", async () => {
@@ -352,6 +367,9 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.status).toBe(200);
     expect(res.body.leads.length).toBeGreaterThan(0);
     for (const lead of res.body.leads) expect(lead).not.toHaveProperty("conversionProbabilityPct");
+    // un-lensed costEconomics carries NEITHER lens-only field
+    expect(res.body.costEconomics).not.toHaveProperty("expectedConversions");
+    expect(res.body.costEconomics).not.toHaveProperty("costPerConversionUsd");
   });
 
   // ── orgDomain (for logo.dev) ──────────────────────────────────────────────────
@@ -730,6 +748,11 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
       expect(Object.keys(g).sort()).toEqual(["campaignId", "costEconomics", "headline"]);
     }
     const byId = Object.fromEntries(res.body.groups.map((g: any) => [g.campaignId, g]));
+    // grouped costEconomics carries NEITHER lens-only field
+    for (const g of res.body.groups) {
+      expect(g.costEconomics).not.toHaveProperty("expectedConversions");
+      expect(g.costEconomics).not.toHaveProperty("costPerConversionUsd");
+    }
     expect(byId.c1.headline.totalPipelineUsd).toBe(120);
     expect(byId.c1.costEconomics.totalCostUsd).toBe(70);
     expect(byId.c1.costEconomics.roiMultiple).toBeCloseTo(120 / 70, 5);
