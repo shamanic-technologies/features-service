@@ -12,6 +12,21 @@ npm run db:migrate:prod  # Run migrations on prod (tsx scripts/migrate-prod.ts)
 npm run generate:openapi # Regenerate openapi.json from Zod schemas
 ```
 
+## Migration gotcha — drizzle-kit meta snapshot is DRIFTED; strip spurious `features` drops
+
+`drizzle/meta/` is out of sync with the live `features` table (a prior schema simplify edited
+`schema.ts` without a matching migration). So **every** `npx drizzle-kit generate` re-emits
+unrelated teardown of `features` — `DROP COLUMN display_name/category/channel/audience_type/
+signature/forked_from/upgraded_to`, `DROP INDEX idx_features_signature`, and a **no-`IF EXISTS`
+`ALTER TABLE features DROP CONSTRAINT features_signature_unique`** that will **crash-loop boot**
+if those objects are already gone (migrations run at boot; a throw = Railway restart loop).
+
+When you generate a new migration, **hand-strip the SQL down to ONLY your intended statements**
+before committing (the runtime migrator checks journal `when`-ordering, not content, so editing the
+`.sql` is safe; leave the `meta/*_snapshot.json` as the new baseline). Reference: `0006_gold_view_
+snapshots.sql` was stripped to just its `CREATE TABLE`/`CREATE INDEX`. Reconciling the meta drift
+fully (so generate stops re-emitting the `features` drops) is a deferred follow-up. (Set 2026-06-15, PR #293.)
+
 ## Stack
 
 - TypeScript (strict), Express, Zod, Drizzle ORM, Postgres (Neon)
