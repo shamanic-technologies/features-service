@@ -44,6 +44,9 @@ export interface DerivedStatsKeyDef {
 
 export type StatsKeyDef = RawStatsKeyDef | DerivedStatsKeyDef;
 
+/** The upstream stat SOURCE a raw key is served from. */
+export type RawStatsSource = RawStatsKeyDef["source"];
+
 export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   // ── Raw counts: email-gateway (recipient-level) ──────────────────────────
   recipientsContacted:      { kind: "raw", type: "count",    label: "Contacted",        source: "email-gateway" },
@@ -252,6 +255,42 @@ export function getPublicRegistry(): Record<string, { type: string; label: strin
  */
 export function getEntityRegistry(): Record<string, EntityTypeDef> {
   return { ...ENTITY_REGISTRY };
+}
+
+/**
+ * Resolve the MINIMAL set of upstream stat SOURCES a feature actually renders, given the
+ * stat keys it declares (its `outputs` + `charts`). Derived keys are resolved to the sources
+ * of their numerator + denominator (transitively). Unknown keys (chart ids like "funnel",
+ * non-stat props) are ignored. `needsRunFilter` is true when any declared raw key carries a
+ * `runFilter` (the pipeline/run-count family, served by a SEPARATE runs-service call).
+ *
+ * Used by GET /features/:slug/stats to skip fan-out HTTP calls to sources the feature never
+ * renders — a lead-gen feature need not wait on outlets / journalists / press-kits / etc.
+ */
+export function requiredStatsSources(keys: string[]): {
+  sources: Set<RawStatsSource>;
+  needsRunFilter: boolean;
+} {
+  const sources = new Set<RawStatsSource>();
+  let needsRunFilter = false;
+  const seen = new Set<string>();
+
+  const visit = (key: string): void => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    const def = STATS_REGISTRY[key];
+    if (!def) return; // chart id / non-stat prop → ignore
+    if (def.kind === "raw") {
+      sources.add(def.source);
+      if (def.runFilter) needsRunFilter = true;
+    } else {
+      visit(def.numerator);
+      visit(def.denominator);
+    }
+  };
+
+  for (const key of keys) visit(key);
+  return { sources, needsRunFilter };
 }
 
 /**
