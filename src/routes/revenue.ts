@@ -4,7 +4,7 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { getFunnel, orP, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
-import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
+import { fetchEffectiveEconomics, type EffectiveEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
@@ -206,6 +206,10 @@ export async function computeFeatureRevenue(
   funnel: ReturnType<typeof getFunnel>,
   headers: DownstreamHeaders,
   lens?: Lens,
+  // Brand-scoped economics are identical across a brand's campaigns (brand-service serves them
+  // per brand, not per campaign). The grouped path fetches them ONCE and passes the result here
+  // so N campaigns don't each re-hit brand-service. Omitted → fetched in Wave A as before.
+  economicsOverride?: EffectiveEconomics,
 ): Promise<RevenueBody> {
   // No funnel wired for this feature yet → null pipeline (not an error). `funnel` is known up
   // front (caller param), so short-circuit BEFORE Wave A and fetch ONLY the cost the empty body
@@ -229,7 +233,7 @@ export async function computeFeatureRevenue(
   // cold-start path below over-fetches rates+leads — accepted for the common-path win.
   const [totalCostInUsdCents, { economics, source }, platformRates, persons] = await Promise.all([
     fetchRunsCostCents(brandId, campaignId, featureSlug, headers),
-    fetchEffectiveEconomics(brandId, { ...headers, campaignId }),
+    economicsOverride ?? fetchEffectiveEconomics(brandId, { ...headers, campaignId }),
     fetchPlatformEmailRates(),
     fetchLeadsForRevenue(brandId, campaignId, headers),
   ]);
@@ -360,9 +364,14 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
 
       traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaigns=${campaignIds.length}` }, req.headers).catch(() => {});
 
+      // Economics are brand-scoped (identical across campaigns) — fetch ONCE and share, so N
+      // campaigns don't each re-hit brand-service. Skipped entirely when no funnel is wired
+      // (computeFeatureRevenue short-circuits before Wave A and ignores the override).
+      const sharedEconomics = funnel ? await fetchEffectiveEconomics(brandId, headers) : undefined;
+
       const groups = await Promise.all(
         campaignIds.map(async (cid) => {
-          const body = await computeFeatureRevenue(featureSlug, brandId, cid, funnel, headers);
+          const body = await computeFeatureRevenue(featureSlug, brandId, cid, funnel, headers, undefined, sharedEconomics);
           return { campaignId: cid, headline: body.headline, costEconomics: body.costEconomics };
         }),
       );
