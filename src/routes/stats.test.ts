@@ -40,6 +40,7 @@ process.env.JOURNALISTS_SERVICE_URL = "http://journalists:3000";
 process.env.JOURNALISTS_SERVICE_API_KEY = "journalists-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
+process.env.FEATURE_VIEW_CACHE_ENABLED = "false"; // exercise the pure live-compute path here
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;

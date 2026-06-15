@@ -4,6 +4,7 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { STATS_REGISTRY, getPublicRegistry, getEntityRegistry, requiredStatsSources, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
+import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
 
@@ -1017,6 +1018,13 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     // Scope downstream calls to this feature
     filters.featureSlug = featureSlug;
 
+    // Served through the Gold snapshot cache (O(1) read; the 10-source fan-out recomputes a viewed
+    // cell off the request path ~per TTL). Scope key spans org + every query param that changes the body.
+    const payload = await servedCached({
+      view: "stats",
+      scopeKey: buildScopeKey(featureSlug, { orgId, groupBy: groupByParam, ...filters }),
+      orgId,
+      compute: async () => {
     traceEvent(runId, { service: "features-service", event: "feature-stats-start", detail: `featureSlug=${featureSlug}, groupBy=${groupByParam ?? "none"}, filters=${JSON.stringify(filters)}` }, req.headers).catch(() => {});
 
     const identity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };
@@ -1063,11 +1071,11 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         completedRuns: runsStatsMap.get("__total__")?.completedRuns ?? 0,
       };
 
-      return res.json({
+      return {
         featureSlug,
         systemStats: buildSystemStats(runsStatsMap.get("__total__"), activeCampaigns),
         stats: computeAllDerivedStats(rawStats),
-      });
+      };
     }
 
     const allGroupKeys = new Set<string>();
@@ -1105,7 +1113,11 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
 
     traceEvent(runId, { service: "features-service", event: "feature-stats-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}` }, req.headers).catch(() => {});
 
-    res.json({ featureSlug, groupBy, systemStats: buildSystemStats(totals, activeCampaigns), groups });
+        return { featureSlug, groupBy, systemStats: buildSystemStats(totals, activeCampaigns), groups };
+      },
+    });
+
+    res.json(payload);
   } catch (error) {
     console.error("[features-service] Feature stats error:", error);
     const auth = req as AuthenticatedRequest;
