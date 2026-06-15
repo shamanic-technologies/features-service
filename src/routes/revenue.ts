@@ -20,6 +20,7 @@ import {
   type EventRow,
 } from "../lib/revenue-engine.js";
 import { traceEvent } from "../lib/trace-event.js";
+import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 
 const router = Router();
 
@@ -359,36 +360,55 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     const funnel = getFunnel(featureSlug);
 
     // ── Grouped: one lean group per campaign (dashboard campaigns list) ──────────
+    // Served through the Gold snapshot cache (O(1) read; the fan-out recomputes off-path ~per TTL).
     if (groupBy === "campaignId") {
-      const campaignIds = await fetchCampaignIdsWithRuns(brandId, featureSlug, headers);
+      const payload = await servedCached({
+        view: "revenue-grouped",
+        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId" }),
+        orgId,
+        compute: async () => {
+          const campaignIds = await fetchCampaignIdsWithRuns(brandId, featureSlug, headers);
 
-      traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaigns=${campaignIds.length}` }, req.headers).catch(() => {});
+          traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaigns=${campaignIds.length}` }, req.headers).catch(() => {});
 
-      // Economics are brand-scoped (identical across campaigns) — fetch ONCE and share, so N
-      // campaigns don't each re-hit brand-service. Skipped entirely when no funnel is wired
-      // (computeFeatureRevenue short-circuits before Wave A and ignores the override).
-      const sharedEconomics = funnel ? await fetchEffectiveEconomics(brandId, headers) : undefined;
+          // Economics are brand-scoped (identical across campaigns) — fetch ONCE and share, so N
+          // campaigns don't each re-hit brand-service. Skipped entirely when no funnel is wired
+          // (computeFeatureRevenue short-circuits before Wave A and ignores the override).
+          const sharedEconomics = funnel ? await fetchEffectiveEconomics(brandId, headers) : undefined;
 
-      const groups = await Promise.all(
-        campaignIds.map(async (cid) => {
-          const body = await computeFeatureRevenue(featureSlug, brandId, cid, funnel, headers, undefined, sharedEconomics);
-          return { campaignId: cid, headline: body.headline, costEconomics: body.costEconomics };
-        }),
-      );
+          const groups = await Promise.all(
+            campaignIds.map(async (cid) => {
+              const body = await computeFeatureRevenue(featureSlug, brandId, cid, funnel, headers, undefined, sharedEconomics);
+              return { campaignId: cid, headline: body.headline, costEconomics: body.costEconomics };
+            }),
+          );
 
-      traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}` }, req.headers).catch(() => {});
+          traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}` }, req.headers).catch(() => {});
 
-      return res.json({ featureSlug, groupBy: "campaignId", groups });
+          return { featureSlug, groupBy: "campaignId", groups };
+        },
+      });
+
+      return res.json(payload);
     }
 
-    // ── Overview: single brand-scoped (optionally one-campaign) response (unchanged) ──
-    traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
+    // ── Overview / lens: single brand-scoped (optionally one-campaign) response ──
+    const payload = await servedCached({
+      view: lens ? "revenue-lens" : "revenue",
+      scopeKey: buildScopeKey(featureSlug, { orgId, brandId, campaignId, lens }),
+      orgId,
+      compute: async () => {
+        traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
 
-    const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, funnel, headers, lens);
+        const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, funnel, headers, lens);
 
-    traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
+        traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 
-    res.json({ featureSlug, ...body });
+        return { featureSlug, ...body };
+      },
+    });
+
+    res.json(payload);
   } catch (error) {
     console.error("[features-service] Feature revenue error:", error);
     if (runId) {

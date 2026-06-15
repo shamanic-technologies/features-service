@@ -12,6 +12,21 @@ npm run db:migrate:prod  # Run migrations on prod (tsx scripts/migrate-prod.ts)
 npm run generate:openapi # Regenerate openapi.json from Zod schemas
 ```
 
+## Migration gotcha — drizzle-kit meta snapshot is DRIFTED; strip spurious `features` drops
+
+`drizzle/meta/` is out of sync with the live `features` table (a prior schema simplify edited
+`schema.ts` without a matching migration). So **every** `npx drizzle-kit generate` re-emits
+unrelated teardown of `features` — `DROP COLUMN display_name/category/channel/audience_type/
+signature/forked_from/upgraded_to`, `DROP INDEX idx_features_signature`, and a **no-`IF EXISTS`
+`ALTER TABLE features DROP CONSTRAINT features_signature_unique`** that will **crash-loop boot**
+if those objects are already gone (migrations run at boot; a throw = Railway restart loop).
+
+When you generate a new migration, **hand-strip the SQL down to ONLY your intended statements**
+before committing (the runtime migrator checks journal `when`-ordering, not content, so editing the
+`.sql` is safe; leave the `meta/*_snapshot.json` as the new baseline). Reference: `0006_gold_view_
+snapshots.sql` was stripped to just its `CREATE TABLE`/`CREATE INDEX`. Reconciling the meta drift
+fully (so generate stops re-emitting the `features` drops) is a deferred follow-up. (Set 2026-06-15, PR #293.)
+
 ## Stack
 
 - TypeScript (strict), Express, Zod, Drizzle ORM, Postgres (Neon)
@@ -159,6 +174,37 @@ re-introduce `Promise.all` here, and do NOT swallow a family failure silently (n
 The DOD is "succeeding families never zeroed by a sibling's failure", NOT "failures masked as zero".
 Keep the cost/runs path (`fetchPublicCosts`, the outer `Promise.all` in `handleRanked`) untouched —
 cost is essential, not an optional outcome family. (Set 2026-06-08, PR #248 stat-families resilience.)
+
+## Data layering — features-service owns a GOLD serving layer (CQRS read model)
+
+features-service is otherwise a **derive-on-read aggregator** (the API-Composition pattern, Richardson):
+it owns no domain data, computing `/revenue` + `/stats` by live-fanning-out to N sibling services per
+request. That fan-out — amplified by sibling Neon cold-starts — is the dashboard's latency. The fix is
+the industry-canon answer to "API Composition too slow": a **Gold read model** (Richardson CQRS,
+Databricks medallion Gold, Kleppmann derived-data).
+
+- **Bronze/Silver: none.** The siblings (lead/brand/runs/email-gateway/…) stay source-of-truth and own
+  their own layers. features-service never ingests raw data.
+- **Gold: `feature_view_snapshots`** (`src/db/schema.ts`) — a denormalized snapshot of the exact response
+  body, keyed `(view, scope_key)` where `scope_key = buildScopeKey(featureSlug, {orgId, …query})`. Served
+  through `servedCached()` (`src/lib/view-cache.ts`) with **stale-while-revalidate**:
+  - fresh hit (age < TTL) → serve snapshot, no recompute;
+  - stale hit → serve snapshot NOW + single-flight background refresh (claims `refreshing_at` via a
+    conditional UPDATE, cross-replica safe);
+  - miss → compute live ONCE (fail-loud: a compute error propagates / 502s), persist, serve.
+  The slow fan-out thus runs ~once per TTL per *viewed* cell, OFF the request path; idle cells never refresh.
+
+**It is DERIVED + rebuildable** — dropping every row is safe (next read recomputes); siblings stay SoT.
+**Eventual-consistency is the accepted CQRS tradeoff**: a served body is "as-of `computed_at`", at most
+~TTL + one-fan-out stale. The revenue engine's day-scale decay is therefore as-of `computed_at` — negligible
+drift at the 5s default TTL. The cache is an OPTIMISATION, never SoT: a snapshot-table read error logs loud
+and falls through to a live compute (correct answer, just slow) — that fall-through is legitimate degradation,
+NOT a silent swallow.
+
+**Env (both optional, sane defaults):** `FEATURE_VIEW_SNAPSHOT_TTL_MS` (default `5000` = the 5s freshness
+target) and `FEATURE_VIEW_CACHE_ENABLED` (default on; set `"false"` to bypass — tests that assert the pure
+live-compute path set it false). Future: event-driven invalidation (siblings publish domain events →
+incremental refresh) is the next medallion step beyond SWR if staleness ever bites. (PR #293.)
 
 ## `GET /features/:slug/stats` scopes its fan-out to the feature's DECLARED sources
 

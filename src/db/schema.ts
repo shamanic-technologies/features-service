@@ -25,3 +25,35 @@ export const features = pgTable(
 );
 
 export type Feature = typeof features.$inferSelect;
+
+/**
+ * Gold serving layer (CQRS read model). A denormalized snapshot of an expensive feature view
+ * response (revenue / stats), keyed by its full query scope. The authed dashboard endpoints read
+ * this O(1) instead of live-fanning-out to N cold-starting siblings on every request; a background
+ * stale-while-revalidate refresh recomputes a viewed cell ~once per TTL, OFF the request path.
+ *
+ * Derived + rebuildable — the owning siblings stay source-of-truth (Kleppmann); dropping every row
+ * is safe (next read recomputes). NOT written directly by any external API.
+ */
+export const featureViewSnapshots = pgTable(
+  "feature_view_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Logical view family: "revenue" | "revenue-grouped" | "revenue-lens" | "stats". */
+    view: text("view").notNull(),
+    /** Canonical key over ALL inputs that change the body (featureSlug + sorted query string). */
+    scopeKey: text("scope_key").notNull(),
+    orgId: uuid("org_id").notNull(),
+    /** The exact response body served for this scope. */
+    body: jsonb("body").notNull(),
+    /** When `body` was computed — drives the TTL freshness check. */
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Single-flight guard: set while a background revalidate is in flight (claim cross-replica). */
+    refreshingAt: timestamp("refreshing_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("idx_feature_view_snapshots_view_scope").on(table.view, table.scopeKey),
+  ]
+);
+
+export type FeatureViewSnapshot = typeof featureViewSnapshots.$inferSelect;
