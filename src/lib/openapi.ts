@@ -412,6 +412,74 @@ registry.registerPath({
   },
 });
 
+// ── GET /features/:featureSlug/candidates ──────────────────────────────────
+
+const candidateConversionSchema = z.object({
+  rate: z.number().nullable().describe("P(goal-outcome | engaged click) from the brand's effective sales-economics. Null at cold start (no economics)."),
+  grain: z.enum(["brand-goal", "goal-global"]).nullable().describe("Provenance of the conversion rate: brand-goal = the brand's own saved economics; goal-global = the cross-org average fallback; null = cold start."),
+});
+
+const candidateCostSchema = z.object({
+  costPerLeadUsd: z.number().nullable().describe("Cost per contacted lead (USD). Null when there is no contacted-lead denominator."),
+  clickUsd: z.number().nullable().describe("Cost per click (USD). Null when absent/zero."),
+  replyUsd: z.number().nullable().describe("Cost per positive reply (USD). Null when absent/zero."),
+  grain: z.literal("goal-global").describe("Workflow unit costs are cross-org global efficiency (same source as /public/stats/best)."),
+});
+
+const candidateSampleSizeSchema = z.object({
+  runs: z.number().describe("Completed runs behind this candidate's cost evidence (chain-aggregated)."),
+  contacted: z.number(),
+  clicks: z.number(),
+  replies: z.number(),
+});
+
+const candidateSchema = z.object({
+  customerProfileId: z.string().nullable().describe("Persona lever — null until brand-service ships personas + runs are tuple-tagged (features-service#298). The persona grain is wired but inert; a null value + grain label is the truthful 'no persona-local data' signal."),
+  workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() }),
+  goal: z.enum(["signup", "meetingBooked", "purchase"]),
+  grain: z.enum(["persona", "brand-goal", "goal-global"]).describe("Finest fallback grain at which this candidate's evidence resolved. Never 'persona' until the write-side tuple-tagging lands."),
+  costPerOutcomeUsd: z.number().nullable().describe("The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."),
+  conversion: candidateConversionSchema,
+  cost: candidateCostSchema,
+  sampleSize: candidateSampleSizeSchema,
+});
+
+const candidatesResponseSchema = z.object({
+  featureSlug: z.string(),
+  brandId: z.string(),
+  goal: z.enum(["signup", "meetingBooked", "purchase"]),
+  brandProfileId: z.string().nullable().describe("Brand-profile-version context echoed back. Null until brand-service ships brand profiles."),
+  candidates: z.array(candidateSchema),
+});
+
+registry.register("CandidatesResponse", candidatesResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/features/{featureSlug}/candidates",
+  summary: "Serve the (customerProfileId, workflow) candidate set with per-candidate evidence + sample size",
+  description:
+    "Runtime per-lead selection evidence: returns the candidate SET — one per active workflow (and, once brand-service ships personas, per (customerProfileId, workflow) pair) — each with its OWN cost-per-outcome for the goal, the SAMPLE SIZE behind it, CONVERSION and COST evidence kept separate, and a labelled fallback GRAIN. Deliberately does NOT collapse to a single best: the consumer owns the uncertainty-aware selection policy (Thompson-style). " +
+    "Fallback grain ladder (finest→coarsest): persona (brandId×goal×brandProfileId×customerProfileId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The persona rung requires brand-service persona/brand-profile entities AND tuple-tagged runs (write-side blockers, features-service#298); until then customerProfileId is null and no candidate resolves at 'persona'. " +
+    "Reuses the workflow-projection data path: global per-workflow unit costs aggregated over the upgrade chain + the brand's EFFECTIVE sales-economics. Additive — does not change workflow-projection / stats/ranked.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ featureSlug: z.string() }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required) — conversion economics are brand-scoped."),
+      goal: z.enum(["signup", "meetingBooked", "purchase"]).describe("Optimization target (required). Maps to the projected cost-per-outcome."),
+      brandProfileId: z.string().optional().describe("Brand-profile-version context (optional, echoed). Inert until brand-service ships brand profiles."),
+    }),
+  },
+  responses: {
+    200: { description: "Candidate evidence set", content: { "application/json": { schema: candidatesResponseSchema } } },
+    400: { description: "Missing brandId or invalid goal", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /stats ──────────────────────────────────────────────────────────
 
 registry.registerPath({

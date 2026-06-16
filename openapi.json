@@ -1081,6 +1081,178 @@
           "recommendedBudgetUsd"
         ]
       },
+      "CandidatesResponse": {
+        "type": "object",
+        "properties": {
+          "featureSlug": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string",
+            "enum": [
+              "signup",
+              "meetingBooked",
+              "purchase"
+            ]
+          },
+          "brandProfileId": {
+            "type": "string",
+            "nullable": true,
+            "description": "Brand-profile-version context echoed back. Null until brand-service ships brand profiles."
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "customerProfileId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Persona lever — null until brand-service ships personas + runs are tuple-tagged (features-service#298). The persona grain is wired but inert; a null value + grain label is the truthful 'no persona-local data' signal."
+                },
+                "workflow": {
+                  "type": "object",
+                  "properties": {
+                    "workflowDynastySlug": {
+                      "type": "string"
+                    },
+                    "workflowDynastyName": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "workflowDynastySlug",
+                    "workflowDynastyName"
+                  ]
+                },
+                "goal": {
+                  "type": "string",
+                  "enum": [
+                    "signup",
+                    "meetingBooked",
+                    "purchase"
+                  ]
+                },
+                "grain": {
+                  "type": "string",
+                  "enum": [
+                    "persona",
+                    "brand-goal",
+                    "goal-global"
+                  ],
+                  "description": "Finest fallback grain at which this candidate's evidence resolved. Never 'persona' until the write-side tuple-tagging lands."
+                },
+                "costPerOutcomeUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."
+                },
+                "conversion": {
+                  "type": "object",
+                  "properties": {
+                    "rate": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "P(goal-outcome | engaged click) from the brand's effective sales-economics. Null at cold start (no economics)."
+                    },
+                    "grain": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "brand-goal",
+                        "goal-global"
+                      ],
+                      "description": "Provenance of the conversion rate: brand-goal = the brand's own saved economics; goal-global = the cross-org average fallback; null = cold start."
+                    }
+                  },
+                  "required": [
+                    "rate",
+                    "grain"
+                  ]
+                },
+                "cost": {
+                  "type": "object",
+                  "properties": {
+                    "costPerLeadUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Cost per contacted lead (USD). Null when there is no contacted-lead denominator."
+                    },
+                    "clickUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Cost per click (USD). Null when absent/zero."
+                    },
+                    "replyUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Cost per positive reply (USD). Null when absent/zero."
+                    },
+                    "grain": {
+                      "type": "string",
+                      "enum": [
+                        "goal-global"
+                      ],
+                      "description": "Workflow unit costs are cross-org global efficiency (same source as /public/stats/best)."
+                    }
+                  },
+                  "required": [
+                    "costPerLeadUsd",
+                    "clickUsd",
+                    "replyUsd",
+                    "grain"
+                  ]
+                },
+                "sampleSize": {
+                  "type": "object",
+                  "properties": {
+                    "runs": {
+                      "type": "number",
+                      "description": "Completed runs behind this candidate's cost evidence (chain-aggregated)."
+                    },
+                    "contacted": {
+                      "type": "number"
+                    },
+                    "clicks": {
+                      "type": "number"
+                    },
+                    "replies": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "runs",
+                    "contacted",
+                    "clicks",
+                    "replies"
+                  ]
+                }
+              },
+              "required": [
+                "customerProfileId",
+                "workflow",
+                "goal",
+                "grain",
+                "costPerOutcomeUsd",
+                "conversion",
+                "cost",
+                "sampleSize"
+              ]
+            }
+          }
+        },
+        "required": [
+          "featureSlug",
+          "brandId",
+          "goal",
+          "brandProfileId",
+          "candidates"
+        ]
+      },
       "PublicRevenueResponse": {
         "type": "object",
         "properties": {
@@ -2715,6 +2887,338 @@
           },
           "400": {
             "description": "Missing brandId",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/{featureSlug}/candidates": {
+      "get": {
+        "summary": "Serve the (customerProfileId, workflow) candidate set with per-candidate evidence + sample size",
+        "description": "Runtime per-lead selection evidence: returns the candidate SET — one per active workflow (and, once brand-service ships personas, per (customerProfileId, workflow) pair) — each with its OWN cost-per-outcome for the goal, the SAMPLE SIZE behind it, CONVERSION and COST evidence kept separate, and a labelled fallback GRAIN. Deliberately does NOT collapse to a single best: the consumer owns the uncertainty-aware selection policy (Thompson-style). Fallback grain ladder (finest→coarsest): persona (brandId×goal×brandProfileId×customerProfileId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The persona rung requires brand-service persona/brand-profile entities AND tuple-tagged runs (write-side blockers, features-service#298); until then customerProfileId is null and no candidate resolves at 'persona'. Reuses the workflow-projection data path: global per-workflow unit costs aggregated over the upgrade chain + the brand's EFFECTIVE sales-economics. Additive — does not change workflow-projection / stats/ranked.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "featureSlug",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID (required) — conversion economics are brand-scoped."
+            },
+            "required": true,
+            "description": "Brand UUID (required) — conversion economics are brand-scoped.",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "signup",
+                "meetingBooked",
+                "purchase"
+              ],
+              "description": "Optimization target (required). Maps to the projected cost-per-outcome."
+            },
+            "required": true,
+            "description": "Optimization target (required). Maps to the projected cost-per-outcome.",
+            "name": "goal",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand-profile-version context (optional, echoed). Inert until brand-service ships brand profiles."
+            },
+            "required": false,
+            "description": "Brand-profile-version context (optional, echoed). Inert until brand-service ships brand profiles.",
+            "name": "brandProfileId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Candidate evidence set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "goal": {
+                      "type": "string",
+                      "enum": [
+                        "signup",
+                        "meetingBooked",
+                        "purchase"
+                      ]
+                    },
+                    "brandProfileId": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Brand-profile-version context echoed back. Null until brand-service ships brand profiles."
+                    },
+                    "candidates": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "customerProfileId": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Persona lever — null until brand-service ships personas + runs are tuple-tagged (features-service#298). The persona grain is wired but inert; a null value + grain label is the truthful 'no persona-local data' signal."
+                          },
+                          "workflow": {
+                            "type": "object",
+                            "properties": {
+                              "workflowDynastySlug": {
+                                "type": "string"
+                              },
+                              "workflowDynastyName": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "workflowDynastySlug",
+                              "workflowDynastyName"
+                            ]
+                          },
+                          "goal": {
+                            "type": "string",
+                            "enum": [
+                              "signup",
+                              "meetingBooked",
+                              "purchase"
+                            ]
+                          },
+                          "grain": {
+                            "type": "string",
+                            "enum": [
+                              "persona",
+                              "brand-goal",
+                              "goal-global"
+                            ],
+                            "description": "Finest fallback grain at which this candidate's evidence resolved. Never 'persona' until the write-side tuple-tagging lands."
+                          },
+                          "costPerOutcomeUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."
+                          },
+                          "conversion": {
+                            "type": "object",
+                            "properties": {
+                              "rate": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "P(goal-outcome | engaged click) from the brand's effective sales-economics. Null at cold start (no economics)."
+                              },
+                              "grain": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "brand-goal",
+                                  "goal-global"
+                                ],
+                                "description": "Provenance of the conversion rate: brand-goal = the brand's own saved economics; goal-global = the cross-org average fallback; null = cold start."
+                              }
+                            },
+                            "required": [
+                              "rate",
+                              "grain"
+                            ]
+                          },
+                          "cost": {
+                            "type": "object",
+                            "properties": {
+                              "costPerLeadUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Cost per contacted lead (USD). Null when there is no contacted-lead denominator."
+                              },
+                              "clickUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Cost per click (USD). Null when absent/zero."
+                              },
+                              "replyUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Cost per positive reply (USD). Null when absent/zero."
+                              },
+                              "grain": {
+                                "type": "string",
+                                "enum": [
+                                  "goal-global"
+                                ],
+                                "description": "Workflow unit costs are cross-org global efficiency (same source as /public/stats/best)."
+                              }
+                            },
+                            "required": [
+                              "costPerLeadUsd",
+                              "clickUsd",
+                              "replyUsd",
+                              "grain"
+                            ]
+                          },
+                          "sampleSize": {
+                            "type": "object",
+                            "properties": {
+                              "runs": {
+                                "type": "number",
+                                "description": "Completed runs behind this candidate's cost evidence (chain-aggregated)."
+                              },
+                              "contacted": {
+                                "type": "number"
+                              },
+                              "clicks": {
+                                "type": "number"
+                              },
+                              "replies": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "runs",
+                              "contacted",
+                              "clicks",
+                              "replies"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "customerProfileId",
+                          "workflow",
+                          "goal",
+                          "grain",
+                          "costPerOutcomeUsd",
+                          "conversion",
+                          "cost",
+                          "sampleSize"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "brandId",
+                    "goal",
+                    "brandProfileId",
+                    "candidates"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing brandId or invalid goal",
             "content": {
               "application/json": {
                 "schema": {

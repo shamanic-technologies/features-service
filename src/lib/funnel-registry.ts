@@ -75,6 +75,7 @@ export interface ProjectionEconomics {
   v2m: number; // P(meeting | click/visit)
   m2c: number; // P(close | meeting)
   v2c: number; // P(close | click/visit) — direct, self-serve path
+  v2s: number; // P(signup | click/visit) — self-serve signup (visitToClose = v2s × signupToPaidClient)
 }
 
 /** Global per-workflow unit costs (USD); null when the workflow has no clicks / replies. */
@@ -86,6 +87,10 @@ export interface ProjectionUnitCosts {
 export interface ProjectedOutcomeCosts {
   costPerPurchaseUsd: number | null;
   costPerMeetingBookedUsd: number | null;
+  /** Cost per self-serve signup. Signups come from the CLICK route only (visitToSignupPct); a
+   * positive reply leads to a meeting → paying close (the "purchase" outcome), not a direct
+   * signup, so the reply channel does not fund signups here. Null when there is no click cost. */
+  costPerSignupUsd: number | null;
 }
 
 export function projectOutcomeCosts(
@@ -103,9 +108,14 @@ export function projectOutcomeCosts(
     (costs.clickUsd != null ? (1 / costs.clickUsd) * econ.v2m : 0) +
     (costs.replyUsd != null ? (1 / costs.replyUsd) * econ.r2m : 0);
 
+  // Signups are a click-route (self-serve) outcome: a budget spent on clicks yields v2s signups
+  // per click. The reply route closes via meetings (purchases), not direct signups.
+  const signupsPerBudget = costs.clickUsd != null ? (1 / costs.clickUsd) * econ.v2s : 0;
+
   return {
     costPerPurchaseUsd: closesPerBudget > 0 ? 1 / closesPerBudget : null,
     costPerMeetingBookedUsd: meetingsPerBudget > 0 ? 1 / meetingsPerBudget : null,
+    costPerSignupUsd: signupsPerBudget > 0 ? 1 / signupsPerBudget : null,
   };
 }
 
