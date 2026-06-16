@@ -877,8 +877,8 @@ describe("GET /public/stats/cost-projection", () => {
   const ECON_1 = { lifetimeRevenueUsd: 1000, replyToMeetingPct: 40, visitToMeetingPct: 5, meetingToClosePct: 30, visitToClosePct: 2 };
   const ECON_2 = { lifetimeRevenueUsd: 2000, replyToMeetingPct: 20, visitToMeetingPct: 10, meetingToClosePct: 50, visitToClosePct: 5 };
   // decimals for the local expected-value computation
-  const e1 = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02 };
-  const e2 = { r2m: 0.2, v2m: 0.1, m2c: 0.5, v2c: 0.05 };
+  const e1 = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04 };
+  const e2 = { r2m: 0.2, v2m: 0.1, m2c: 0.5, v2c: 0.05, v2s: 0.1 };
   // wf-1 cheap (clickUsd=$10/10=1, replyUsd=$10/5=2) → always best; wf-2 expensive → never best.
   const WF1 = { clickUsd: 1, replyUsd: 2 };
 

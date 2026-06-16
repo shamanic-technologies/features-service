@@ -26,6 +26,7 @@ interface BrandEcon {
   v2m: number; // P(meeting | click/visit)
   m2c: number; // P(close | meeting)
   v2c: number; // P(close | click/visit) — direct, self-serve path
+  v2s: number; // P(signup | click/visit) — self-serve signup
 }
 
 interface Projection {
@@ -159,6 +160,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
           v2m: economics.visitToMeetingPct / 100,
           m2c: economics.meetingToClosePct / 100,
           v2c: economics.visitToClosePct / 100,
+          v2s: economics.visitToSignupPct / 100,
         }
       : null;
 
