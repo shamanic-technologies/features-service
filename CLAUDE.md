@@ -12,6 +12,27 @@ npm run db:migrate:prod  # Run migrations on prod (tsx scripts/migrate-prod.ts)
 npm run generate:openapi # Regenerate openapi.json from Zod schemas
 ```
 
+## `GET /features/:slug/candidates` — persona + brand-profile dims are INTENTIONALLY inert (don't "fix" by mocking)
+
+The candidate-evidence endpoint (`src/routes/candidates.ts`, PR #299, issue #298) serves the
+`(customerProfileId, workflow)` candidate SET for campaign-service's runtime per-lead selection —
+each candidate with its own `costPerOutcomeUsd`, a `sampleSize` block, separate `conversion`/`cost`
+evidence, and a labelled fallback `grain` (`persona` → `brand-goal` → `goal-global`). It reuses the
+workflow-projection data path (`buildUpgradeChains`/`aggregateAcrossChains` + `fetchEffectiveEconomics`)
+and `projectOutcomeCosts` (extended with `costPerSignupUsd`, click-route self-serve).
+
+**`customerProfileId` is null on every candidate and no candidate resolves at the `persona` grain —
+BY DESIGN, until upstream lands.** brand-service has no persona/brand-profile entities
+(**brand-service#242**) and runs are not tagged with the `(goal, brandProfileId, customerProfileId,
+workflow)` tuple, nor can runs-service `/v1/stats/public/costs` `groupBy` it (**#300**). A null persona
++ honest `grain` label is the truthful "no persona-local data" signal — it is NOT a bug to patch by
+synthesizing personas or reaching into another service's gaps (that's the cross-brand-average revert
+trap, #236/#244). The contract is locked so the consumer builds once; the persona rung activates with
+ZERO contract change when #242 + #300 ship. The `Goal` type (`src/lib/goals.ts`) is brand-service-owned
+vocabulary mirrored locally (same convention as `SalesEconomics`) — no shared package is wired into
+features-service today; the publish-vs-mirror call is brand-service's when it builds goals (#242).
+Does NOT touch `workflow-projection` / `stats/ranked` (campaign creation unchanged). (Set 2026-06-16.)
+
 ## Migration gotcha — drizzle-kit meta snapshot is DRIFTED; strip spurious `features` drops
 
 `drizzle/meta/` is out of sync with the live `features` table (a prior schema simplify edited
