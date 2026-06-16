@@ -774,6 +774,7 @@ export async function handlePublicCostProjection(
         v2m: economics.visitToMeetingPct / 100,
         m2c: economics.meetingToClosePct / 100,
         v2c: economics.visitToClosePct / 100,
+        v2s: economics.visitToSignupPct / 100,
       };
 
       // Best (lowest) projected cost per metric across this brand's workflows — picked independently per metric.

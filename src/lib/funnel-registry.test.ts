@@ -108,7 +108,7 @@ describe("sales funnel — resolvePaths", () => {
 
 describe("projectOutcomeCosts — expected cost per purchase / meeting", () => {
   // decimals of ECONOMICS above
-  const econ = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02 };
+  const econ = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04 };
 
   it("purchase cost = 1 / closesPerBudget (same formula as workflow-projection)", () => {
     const clickUsd = 10;
@@ -138,14 +138,26 @@ describe("projectOutcomeCosts — expected cost per purchase / meeting", () => {
     expect(projectOutcomeCosts(econ, { clickUsd: null, replyUsd: null })).toEqual({
       costPerPurchaseUsd: null,
       costPerMeetingBookedUsd: null,
+      costPerSignupUsd: null,
     });
   });
 
-  it("zero conversion rates → perBudget 0 → both null", () => {
-    const dead = { r2m: 0, v2m: 0, m2c: 0, v2c: 0 };
+  it("zero conversion rates → perBudget 0 → all null", () => {
+    const dead = { r2m: 0, v2m: 0, m2c: 0, v2c: 0, v2s: 0 };
     expect(projectOutcomeCosts(dead, { clickUsd: 10, replyUsd: 5 })).toEqual({
       costPerPurchaseUsd: null,
       costPerMeetingBookedUsd: null,
+      costPerSignupUsd: null,
     });
+  });
+
+  it("signup cost = 1 / ((1/clickUsd)·v2s) — click route only", () => {
+    const { costPerSignupUsd } = projectOutcomeCosts(econ, { clickUsd: 10, replyUsd: 5 });
+    expect(costPerSignupUsd).toBeCloseTo(1 / ((1 / 10) * econ.v2s)); // 1/0.004 = 250
+  });
+
+  it("signup cost null when there is no click cost (replies do not fund signups)", () => {
+    const { costPerSignupUsd } = projectOutcomeCosts(econ, { clickUsd: null, replyUsd: 5 });
+    expect(costPerSignupUsd).toBeNull();
   });
 });
