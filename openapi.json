@@ -959,7 +959,7 @@
               "meeting-booked",
               "self-serve"
             ],
-            "description": "Echo of the requested objective (defaults to meeting-booked). Deprecated — no longer affects the ranking, which is objective-agnostic."
+            "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd."
           },
           "workflows": {
             "type": "array",
@@ -992,6 +992,11 @@
                   "type": "number",
                   "nullable": true,
                   "description": "Budget required per close for this workflow. Null when there is no usable cost/conversion data."
+                },
+                "costPerMeetingBookedUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Budget required per booked meeting for this workflow. Null when there is no usable cost/conversion data."
                 },
                 "projection": {
                   "type": "object",
@@ -1058,6 +1063,7 @@
                 "replyUsd",
                 "clickUsd",
                 "costPerCloseUsd",
+                "costPerMeetingBookedUsd",
                 "projection"
               ]
             }
@@ -1065,12 +1071,12 @@
           "recommendedWorkflowDynastySlug": {
             "type": "string",
             "nullable": true,
-            "description": "Workflow with the lowest costPerCloseUsd. Null when none has usable data."
+            "description": "Workflow with the lowest cost metric for the requested objective. Null when none has usable data."
           },
           "recommendedBudgetUsd": {
             "type": "number",
             "nullable": true,
-            "description": "10 (target closes/month) × the best costPerCloseUsd. Null when there is no pick."
+            "description": "10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve uses costPerCloseUsd. Null when there is no pick."
           }
         },
         "required": [
@@ -2976,8 +2982,8 @@
     },
     "/features/{featureSlug}/workflow-projection": {
       "get": {
-        "summary": "Rank workflows by cost-per-close and project a budget",
-        "description": "Ranks a brand's workflows by combined cost-per-close (the reply + click engagement routes funded by one budget) and — when budgetUsd is given — projects that budget through the funnel. Objective-agnostic: every non-zero conversion path counts, so the ranking does not depend on the campaign objective. Per-workflow unit costs (cost per positive reply / per click) are global cross-org workflow efficiency (same source as /public/stats/best), aggregated over each workflow's upgrade chain. Conversion rates + LTR come from the brand's EFFECTIVE sales-economics (its own saved set, or the cross-brand-average when unset — null only at cold start). recommendedWorkflowDynastySlug is the workflow with the lowest costPerCloseUsd; recommendedBudgetUsd = 10 × that cost.",
+        "summary": "Rank workflows by cost-per-outcome and project a budget",
+        "description": "Ranks a brand's workflows by the requested objective's cost-per-outcome (the reply + click engagement routes funded by one budget) and — when budgetUsd is given — projects that budget through the funnel. Per-workflow unit costs (cost per positive reply / per click) are global cross-org workflow efficiency (same source as /public/stats/best), aggregated over each workflow's upgrade chain. Conversion rates + LTR come from the brand's EFFECTIVE sales-economics (its own saved set, or the cross-brand-average when unset — null only at cold start). recommendedWorkflowDynastySlug is the workflow with the lowest objective metric; recommendedBudgetUsd = 10 × that cost.",
         "tags": [
           "Stats"
         ],
@@ -3007,10 +3013,10 @@
                 "meeting-booked",
                 "self-serve"
               ],
-              "description": "Deprecated — no longer affects the ranking (objective-agnostic: every non-zero conversion path counts). Accepted + echoed for back-compat; defaults to meeting-booked."
+              "description": "Controls which cost metric sizes recommendedBudgetUsd. Defaults to meeting-booked."
             },
             "required": false,
-            "description": "Deprecated — no longer affects the ranking (objective-agnostic: every non-zero conversion path counts). Accepted + echoed for back-compat; defaults to meeting-booked.",
+            "description": "Controls which cost metric sizes recommendedBudgetUsd. Defaults to meeting-booked.",
             "name": "objective",
             "in": "query"
           },
@@ -3085,7 +3091,7 @@
                         "meeting-booked",
                         "self-serve"
                       ],
-                      "description": "Echo of the requested objective (defaults to meeting-booked). Deprecated — no longer affects the ranking, which is objective-agnostic."
+                      "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd."
                     },
                     "workflows": {
                       "type": "array",
@@ -3118,6 +3124,11 @@
                             "type": "number",
                             "nullable": true,
                             "description": "Budget required per close for this workflow. Null when there is no usable cost/conversion data."
+                          },
+                          "costPerMeetingBookedUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Budget required per booked meeting for this workflow. Null when there is no usable cost/conversion data."
                           },
                           "projection": {
                             "type": "object",
@@ -3184,6 +3195,7 @@
                           "replyUsd",
                           "clickUsd",
                           "costPerCloseUsd",
+                          "costPerMeetingBookedUsd",
                           "projection"
                         ]
                       }
@@ -3191,12 +3203,12 @@
                     "recommendedWorkflowDynastySlug": {
                       "type": "string",
                       "nullable": true,
-                      "description": "Workflow with the lowest costPerCloseUsd. Null when none has usable data."
+                      "description": "Workflow with the lowest cost metric for the requested objective. Null when none has usable data."
                     },
                     "recommendedBudgetUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "10 (target closes/month) × the best costPerCloseUsd. Null when there is no pick."
+                      "description": "10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve uses costPerCloseUsd. Null when there is no pick."
                     }
                   },
                   "required": [

@@ -116,7 +116,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(res.status).toBe(404);
   });
 
-  it("no budget → per-workflow unit costs + cost-per-close, projection null, recommends cheapest", async () => {
+  it("no budget → per-workflow unit costs + costs per outcome, projection null, recommends cheapest meeting objective", async () => {
     mockFetch();
     const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked`).set(AUTH);
     expect(res.status).toBe(200);
@@ -131,14 +131,17 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     // pCloseClick=orP(0.02,0.05·0.30)=0.0347, pCloseReply=0.40·0.30=0.12
     // closesPerBudget = (1/10)·0.0347 + (1/20)·0.12 = 0.00347 + 0.006 = 0.00947 → cpc = 105.5966
     expect(a.costPerCloseUsd).toBeCloseTo(105.5966, 3);
+    // meetingsPerBudget = (1/10)·0.05 + (1/20)·0.40 = 0.005 + 0.02 = 0.025 → cpm = 40
+    expect(a.costPerMeetingBookedUsd).toBeCloseTo(40, 3);
     expect(a.projection).toBeNull(); // no budget
 
     const b = byDynasty(res.body, "dyn-b");
     // closesPerBudget = (1/20)·0.0347 + (1/100)·0.12 = 0.001735 + 0.0012 = 0.002935 → cpc = 340.7155
     expect(b.costPerCloseUsd).toBeCloseTo(340.7155, 3);
+    expect(b.costPerMeetingBookedUsd).toBeCloseTo(153.846, 3);
 
-    expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a"); // lower cpc
-    expect(res.body.recommendedBudgetUsd).toBeCloseTo(1055.966, 2); // 10 × 105.5966
+    expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a"); // lower cost per meeting
+    expect(res.body.recommendedBudgetUsd).toBeCloseTo(400, 2); // 10 × $40/meeting
   });
 
   it("with budget → full projection block", async () => {
@@ -156,7 +159,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(a.projection.cacAbs).toBeCloseTo(105.5966, 3); // 1000/9.47
   });
 
-  it("objective-agnostic — missing / meeting-booked / self-serve give the SAME ranking + projection", async () => {
+  it("objective controls only the recommendation metric; projection details remain the same", async () => {
     mockFetch();
     const none = await request(app).get(`${URL_BASE}?brandId=b1&budgetUsd=1000`).set(AUTH);
     const meeting = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
@@ -164,10 +167,14 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(none.status).toBe(200);
     expect(meeting.status).toBe(200);
     expect(self.status).toBe(200);
-    // objective no longer gates the math → identical workflows + recommendation regardless of objective
+    // Per-workflow facts are objective-independent.
     expect(none.body.workflows).toEqual(meeting.body.workflows);
     expect(self.body.workflows).toEqual(meeting.body.workflows);
-    expect(self.body.recommendedWorkflowDynastySlug).toBe(meeting.body.recommendedWorkflowDynastySlug);
+    // The recommended budget uses the objective's cost: meeting-booked → costPerMeetingBookedUsd,
+    // self-serve → costPerCloseUsd (legacy meaning of this endpoint's self-serve objective).
+    expect(meeting.body.recommendedBudgetUsd).toBeCloseTo(400, 2);
+    expect(none.body.recommendedBudgetUsd).toBeCloseTo(400, 2);
+    expect(self.body.recommendedBudgetUsd).toBeCloseTo(1055.966, 2);
     // both routes (click + reply) feed meetings now — non-null even under the former "self-serve"
     const selfA = byDynasty(self.body, "dyn-a");
     expect(selfA.projection.replies).toBeCloseTo(50, 6);
@@ -198,9 +205,10 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(res.status).toBe(200);
     const a = byDynasty(res.body, "dyn-a");
     expect(a.costPerCloseUsd).toBeCloseTo(105.5966, 3); // same math as a saved set
+    expect(a.costPerMeetingBookedUsd).toBeCloseTo(40, 3);
     expect(a.projection.closes).toBeCloseTo(9.47, 6);
     expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a");
-    expect(res.body.recommendedBudgetUsd).toBeCloseTo(1055.966, 2);
+    expect(res.body.recommendedBudgetUsd).toBeCloseTo(400, 2);
   });
 
   it("workflow with no replies → replyUsd null, click route still funds closes", async () => {
@@ -212,6 +220,29 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(a.clickUsd).toBeCloseTo(10, 6);
     // closesPerBudget = (1/10)·0.0347 = 0.00347 → cpc ≈ 288.18 (reply route contributes 0)
     expect(a.costPerCloseUsd).toBeCloseTo(288.1844, 3);
+    expect(a.costPerMeetingBookedUsd).toBeCloseTo(200, 3);
+  });
+
+  it("meeting-booked recommendation does not multiply by meeting→close", async () => {
+    mockFetch({
+      emailGroups: [emailGroup("wf-a", 0, 10, 100)],
+      costGroups: [costGroup("wf-a", 70000)],
+      economics: {
+        ...ECONOMICS,
+        replyToMeetingPct: 30,
+        visitToMeetingPct: 0.3,
+        meetingToClosePct: 30,
+        visitToClosePct: 0,
+      },
+    });
+
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked`).set(AUTH);
+    expect(res.status).toBe(200);
+    const a = byDynasty(res.body, "dyn-a");
+    expect(a.replyUsd).toBeCloseTo(70, 6);
+    expect(a.costPerMeetingBookedUsd).toBeCloseTo(233.333, 3); // $70 / 0.30
+    expect(a.costPerCloseUsd).toBeCloseTo(777.778, 3); // $70 / (0.30 × 0.30)
+    expect(res.body.recommendedBudgetUsd).toBeCloseTo(2333.333, 2); // 10 × costPerMeetingBookedUsd
   });
 
   it("workflow with no contacted-lead denominator → projection carries explicit contactedLeads null", async () => {

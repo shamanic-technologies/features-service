@@ -14,8 +14,8 @@ import { buildUpgradeChains, aggregateAcrossChains } from "./public.js";
 
 const router = Router();
 
-// Target closes/month used to size the recommended budget (recommendedBudgetUsd = TARGET × best cpc).
-const TARGET_CLOSES_PER_MONTH = 10;
+// Target outcomes/month used to size the recommended budget (recommendedBudgetUsd = TARGET × best metric).
+const TARGET_OUTCOMES_PER_MONTH = 10;
 
 type Objective = "meeting-booked" | "self-serve";
 
@@ -47,6 +47,7 @@ interface WorkflowProjection {
   replyUsd: number | null;
   clickUsd: number | null;
   costPerCloseUsd: number | null;
+  costPerMeetingBookedUsd: number | null;
   projection: Projection | null;
 }
 
@@ -59,10 +60,8 @@ interface WorkflowProjectionResponse {
 }
 
 /**
- * Cost-per-close + (optional) budget projection for one workflow, given its unit costs and the
- * brand's economics. OBJECTIVE-AGNOSTIC — every non-zero conversion path contributes; a workflow's
- * ranking does not depend on the campaign objective (a workflow makes both clicks and replies). Same
- * funnel as the revenue engine:
+ * Cost-per-outcome + (optional) budget projection for one workflow, given its unit costs and the
+ * brand's economics. Same funnel as the revenue engine:
  *   - a click closes via TWO independent (non-exclusive) routes — direct self-serve (v2c, "buy
  *     without a meeting") OR via a booked meeting (v2m·m2c) — combined with orP:
  *       pCloseClick = orP(v2c, v2m·m2c)
@@ -71,7 +70,8 @@ interface WorkflowProjectionResponse {
  * of expectation (distinct from the per-lead engine, which OR-combines click vs reply):
  *   closesPerBudget = (1/clickUsd)·pCloseClick + (1/replyUsd)·pCloseReply
  *
- * A route with a null unit cost contributes 0. closesPerBudget ≤ 0 → no usable data → both null.
+ * Meetings stop one stage earlier: (1/clickUsd)·v2m + (1/replyUsd)·r2m.
+ * A route with a null unit cost contributes 0. perBudget ≤ 0 → no usable data → null for that metric.
  */
 function project(
   contactedUsd: number | null,
@@ -79,35 +79,32 @@ function project(
   clickUsd: number | null,
   econ: BrandEcon,
   budgetUsd: number | null,
-): { costPerCloseUsd: number | null; projection: Projection | null } {
-  // Cost-per-close is single-sourced from the shared projection helper (same EV funnel as the
-  // public cost-projection endpoint and the revenue engine).
-  const { costPerPurchaseUsd } = projectOutcomeCosts(econ, { clickUsd, replyUsd });
-  if (costPerPurchaseUsd == null) return { costPerCloseUsd: null, projection: null };
+): { costPerCloseUsd: number | null; costPerMeetingBookedUsd: number | null; projection: Projection | null } {
+  // Outcome costs are single-sourced from the shared projection helper (same EV funnel as the
+  // public cost-projection endpoint, candidates endpoint, and revenue engine).
+  const { costPerPurchaseUsd, costPerMeetingBookedUsd } = projectOutcomeCosts(econ, { clickUsd, replyUsd });
   const costPerCloseUsd = costPerPurchaseUsd;
 
-  if (budgetUsd == null || budgetUsd <= 0) return { costPerCloseUsd, projection: null };
+  if (budgetUsd == null || budgetUsd <= 0) return { costPerCloseUsd, costPerMeetingBookedUsd, projection: null };
 
   const contactedLeads = contactedUsd != null ? budgetUsd / contactedUsd : null;
   const replies = replyUsd != null ? budgetUsd / replyUsd : null;
   const visits = clickUsd != null ? budgetUsd / clickUsd : null;
   // Meetings come from BOTH routes (reply→meeting and click→meeting), regardless of objective.
   const meetings = (replies ?? 0) * econ.r2m + (visits ?? 0) * econ.v2m;
-  const closes = budgetUsd / costPerCloseUsd; // = budgetUsd × closesPerBudget
-  const revenue = closes * econ.ltv;
-  const cacPct = revenue > 0 ? (budgetUsd / revenue) * 100 : null;
-  const cacAbs = closes > 0 ? budgetUsd / closes : null;
+  const closes = costPerCloseUsd != null ? budgetUsd / costPerCloseUsd : null; // = budgetUsd × closesPerBudget
+  const revenue = closes != null ? closes * econ.ltv : null;
+  const cacPct = revenue != null && revenue > 0 ? (budgetUsd / revenue) * 100 : null;
+  const cacAbs = closes != null && closes > 0 ? budgetUsd / closes : null;
 
-  return { costPerCloseUsd, projection: { contactedLeads, replies, visits, meetings, closes, revenue, cacPct, cacAbs } };
+  return { costPerCloseUsd, costPerMeetingBookedUsd, projection: { contactedLeads, replies, visits, meetings, closes, revenue, cacPct, cacAbs } };
 }
 
 // ── GET /features/:featureSlug/workflow-projection ───────────────────────────
 //
-// Ranks a brand's workflows by combined cost-per-close (reply + click routes funded by one budget)
-// and — when budgetUsd is given — projects that budget through the funnel. OBJECTIVE-AGNOSTIC: a
-// workflow generates both clicks and replies, so every non-zero conversion path counts and the
-// ranking is the same regardless of campaign objective (the `objective` query param is accepted +
-// echoed for back-compat but no longer affects the math). Inputs: per-workflow unit costs (cost /
+// Ranks a brand's workflows by the requested objective's cost-per-outcome (reply + click routes
+// funded by one budget) and — when budgetUsd is given — projects that budget through the funnel.
+// Inputs: per-workflow unit costs (cost /
 // positive reply, cost / click) are GLOBAL workflow efficiency (cross-org, feature-scoped, same
 // source as /public/stats/best); the conversion rates + LTR come from the brand's EFFECTIVE
 // sales-economics (its own saved set, or the cross-brand-average when unset — brand-service owns the
@@ -123,8 +120,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
   if (!brandId) {
     return res.status(400).json({ error: "brandId query parameter is required" });
   }
-  // objective no longer gates the math (the ranking is objective-agnostic — see project()). It is
-  // still accepted + echoed back for response back-compat; default meeting-booked when absent/invalid.
+  // Default meeting-booked when absent/invalid for response back-compat.
   const objective: Objective = objectiveParam === "self-serve" ? "self-serve" : "meeting-booked";
   const budgetUsd = budgetRaw != null && budgetRaw !== "" ? Number(budgetRaw) : null;
 
@@ -177,9 +173,9 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       const replyUsd = replies > 0 && costUsd > 0 ? costUsd / replies : null;
       const clickUsd = clicks > 0 && costUsd > 0 ? costUsd / clicks : null;
 
-      const { costPerCloseUsd, projection } = econ
+      const { costPerCloseUsd, costPerMeetingBookedUsd, projection } = econ
         ? project(contactedUsd, replyUsd, clickUsd, econ, budgetUsd)
-        : { costPerCloseUsd: null, projection: null };
+        : { costPerCloseUsd: null, costPerMeetingBookedUsd: null, projection: null };
 
       projections.push({
         workflowDynastySlug: wf?.workflowDynastySlug ?? activeSlug,
@@ -188,23 +184,30 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         replyUsd,
         clickUsd,
         costPerCloseUsd,
+        costPerMeetingBookedUsd,
         projection,
       });
     }
 
-    // Recommendation: the workflow with the LOWEST usable cost-per-close.
+    const recommendedMetric = (p: WorkflowProjection): number | null =>
+      objective === "meeting-booked" ? p.costPerMeetingBookedUsd : p.costPerCloseUsd;
+
+    // Recommendation: the workflow with the LOWEST usable cost-per-outcome for the requested objective.
     let recommended: WorkflowProjection | null = null;
     for (const p of projections) {
-      if (p.costPerCloseUsd == null) continue;
-      if (recommended == null || p.costPerCloseUsd < recommended.costPerCloseUsd!) recommended = p;
+      const metric = recommendedMetric(p);
+      if (metric == null) continue;
+      const current = recommended == null ? null : recommendedMetric(recommended);
+      if (current == null || metric < current) recommended = p;
     }
 
+    const recommendedCost = recommended == null ? null : recommendedMetric(recommended);
     const response: WorkflowProjectionResponse = {
       featureSlug,
       objective,
       workflows: projections,
       recommendedWorkflowDynastySlug: recommended?.workflowDynastySlug ?? null,
-      recommendedBudgetUsd: recommended != null ? TARGET_CLOSES_PER_MONTH * recommended.costPerCloseUsd! : null,
+      recommendedBudgetUsd: recommendedCost != null ? TARGET_OUTCOMES_PER_MONTH * recommendedCost : null,
     };
     res.json(response);
   } catch (error) {
