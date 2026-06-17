@@ -1081,6 +1081,170 @@
           "recommendedBudgetUsd"
         ]
       },
+      "PipelineActivityResponse": {
+        "type": "object",
+        "properties": {
+          "featureSlug": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "description": "Calendar date in the requested timezone (YYYY-MM-DD)."
+                },
+                "isToday": {
+                  "type": "boolean"
+                },
+                "metrics": {
+                  "type": "object",
+                  "properties": {
+                    "outreach": {
+                      "type": "object",
+                      "properties": {
+                        "actual": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                        },
+                        "expected": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected daily value from campaign daily budget and workflow unit evidence. Null when required producer inputs are unavailable."
+                        }
+                      },
+                      "required": [
+                        "actual",
+                        "expected"
+                      ]
+                    },
+                    "opens": {
+                      "type": "object",
+                      "properties": {
+                        "actual": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                        },
+                        "expected": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected daily value from campaign daily budget and workflow unit evidence. Null when required producer inputs are unavailable."
+                        }
+                      },
+                      "required": [
+                        "actual",
+                        "expected"
+                      ]
+                    },
+                    "clicks": {
+                      "type": "object",
+                      "properties": {
+                        "actual": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                        },
+                        "expected": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected daily value from campaign daily budget and workflow unit evidence. Null when required producer inputs are unavailable."
+                        }
+                      },
+                      "required": [
+                        "actual",
+                        "expected"
+                      ]
+                    },
+                    "signups": {
+                      "type": "object",
+                      "properties": {
+                        "actual": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                        },
+                        "expected": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected daily value from campaign daily budget and workflow unit evidence. Null when required producer inputs are unavailable."
+                        },
+                        "conversionPct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "visitToSignupPct used for signup projection. Null when brand economics are unavailable."
+                        }
+                      },
+                      "required": [
+                        "actual",
+                        "expected",
+                        "conversionPct"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "outreach",
+                    "opens",
+                    "clicks",
+                    "signups"
+                  ]
+                }
+              },
+              "required": [
+                "date",
+                "isToday",
+                "metrics"
+              ]
+            }
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "dailyBudgetUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "Sum of active campaign daily budgets for this brand + feature. Null when no complete daily budget is configured."
+              },
+              "openRatePct": {
+                "type": "number",
+                "nullable": true,
+                "description": "Observed broadcast open rate used for expected opens. Null when producer evidence is unavailable."
+              },
+              "clickToSignupPct": {
+                "type": "number",
+                "nullable": true,
+                "description": "Brand visit-to-signup conversion percent. Null when brand economics are unavailable."
+              }
+            },
+            "required": [
+              "dailyBudgetUsd",
+              "openRatePct",
+              "clickToSignupPct"
+            ]
+          }
+        },
+        "required": [
+          "featureSlug",
+          "brandId",
+          "timezone",
+          "generatedAt",
+          "days",
+          "summary"
+        ]
+      },
       "CandidatesResponse": {
         "type": "object",
         "properties": {
@@ -2887,6 +3051,325 @@
           },
           "400": {
             "description": "Missing brandId",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/{featureSlug}/pipeline-activity": {
+      "get": {
+        "summary": "Seven-day pipeline activity buckets for the brand overview",
+        "description": "Returns today plus future daily buckets for the dashboard grouped bar chart. Today includes actual-so-far from dated broadcast email events and the same daily expected values shown on future days. Expected outreach/clicks use active campaign daily budgets and workflow unit costs; expected opens use observed broadcast open rate; signups are clicks × the brand's saved visitToSignupPct / 100. Missing producer inputs return null for the affected expected values.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "featureSlug",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID (required)."
+            },
+            "required": true,
+            "description": "Brand UUID (required).",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Number of days to return. Defaults to 7."
+            },
+            "required": false,
+            "description": "Number of days to return. Defaults to 7.",
+            "name": "days",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "IANA timezone used for calendar day ordering and today's event bucket."
+            },
+            "required": true,
+            "description": "IANA timezone used for calendar day ordering and today's event bucket.",
+            "name": "timezone",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pipeline activity buckets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "timezone": {
+                      "type": "string"
+                    },
+                    "generatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "days": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "date": {
+                            "type": "string",
+                            "description": "Calendar date in the requested timezone (YYYY-MM-DD)."
+                          },
+                          "isToday": {
+                            "type": "boolean"
+                          },
+                          "metrics": {
+                            "type": "object",
+                            "properties": {
+                              "outreach": {
+                                "type": "object",
+                                "properties": {
+                                  "actual": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                                  },
+                                  "expected": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Expected daily value from campaign daily budget and workflow unit evidence. Null when required producer inputs are unavailable."
+                                  }
+                                },
+                                "required": [
+                                  "actual",
+                                  "expected"
+                                ]
+                              },
+                              "opens": {
+                                "type": "object",
+                                "properties": {
+                                  "actual": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                                  },
+                                  "expected": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Expected daily value from campaign daily budget and workflow unit evidence. Null when required producer inputs are unavailable."
+                                  }
+                                },
+                                "required": [
+                                  "actual",
+                                  "expected"
+                                ]
+                              },
+                              "clicks": {
+                                "type": "object",
+                                "properties": {
+                                  "actual": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                                  },
+                                  "expected": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Expected daily value from campaign daily budget and workflow unit evidence. Null when required producer inputs are unavailable."
+                                  }
+                                },
+                                "required": [
+                                  "actual",
+                                  "expected"
+                                ]
+                              },
+                              "signups": {
+                                "type": "object",
+                                "properties": {
+                                  "actual": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                                  },
+                                  "expected": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Expected daily value from campaign daily budget and workflow unit evidence. Null when required producer inputs are unavailable."
+                                  },
+                                  "conversionPct": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "visitToSignupPct used for signup projection. Null when brand economics are unavailable."
+                                  }
+                                },
+                                "required": [
+                                  "actual",
+                                  "expected",
+                                  "conversionPct"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "outreach",
+                              "opens",
+                              "clicks",
+                              "signups"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "date",
+                          "isToday",
+                          "metrics"
+                        ]
+                      }
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "dailyBudgetUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Sum of active campaign daily budgets for this brand + feature. Null when no complete daily budget is configured."
+                        },
+                        "openRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Observed broadcast open rate used for expected opens. Null when producer evidence is unavailable."
+                        },
+                        "clickToSignupPct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Brand visit-to-signup conversion percent. Null when brand economics are unavailable."
+                        }
+                      },
+                      "required": [
+                        "dailyBudgetUsd",
+                        "openRatePct",
+                        "clickToSignupPct"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "brandId",
+                    "timezone",
+                    "generatedAt",
+                    "days",
+                    "summary"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing/invalid brandId, days, or timezone",
             "content": {
               "application/json": {
                 "schema": {
