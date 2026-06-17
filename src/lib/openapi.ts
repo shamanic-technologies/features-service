@@ -441,7 +441,7 @@ const pipelineActivityResponseSchema = z.object({
   generatedAt: z.string().datetime(),
   days: z.array(pipelineActivityDaySchema),
   summary: z.object({
-    dailyBudgetUsd: z.number().nullable().describe("Sum of active/ongoing campaign daily budgets for this brand + feature. Null when no complete daily budget is configured."),
+    dailyBudgetUsd: z.number().nullable().describe("Sum of ongoing campaign daily budgets for this brand + feature. Null when no complete daily budget is configured."),
     openRatePct: z.number().nullable().describe("Observed broadcast open rate used for expected opens. Null when producer evidence is unavailable."),
     clickToSignupPct: z.number().nullable().describe("Brand visit-to-signup conversion percent. Null when brand economics are unavailable."),
   }),
@@ -455,7 +455,7 @@ registry.registerPath({
   summary: "Seven-day pipeline activity buckets for the brand overview",
   description:
     "Returns today plus future daily buckets for the dashboard grouped bar chart. Today includes actual-so-far from dated broadcast email events and the same daily expected values shown on future days. " +
-    "Expected outreach/clicks use active/ongoing campaign daily budgets and workflow unit costs; expected opens use observed broadcast open rate; signups are clicks × the brand's saved visitToSignupPct / 100. Brand-level pause does not change the campaign status used for this forecast. Missing producer inputs return null for the affected expected values.",
+    "Expected outreach/clicks use ongoing campaign daily budgets and workflow unit costs; expected opens use observed broadcast open rate; signups are clicks × the brand's saved visitToSignupPct / 100. Brand-level pause does not change the campaign status used for this forecast. Missing producer inputs return null for the affected expected values.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
