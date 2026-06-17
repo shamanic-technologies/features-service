@@ -101,7 +101,11 @@ interface EmailGatewayDayGroup {
   };
 }
 
-const ACTIVE_CAMPAIGN_STATUSES = new Set(["active", "ongoing", "running"]);
+const FORECASTABLE_CAMPAIGN_STATUSES = new Set(["active", "ongoing", "running", "paused", "held", "hold"]);
+
+function isForecastableCampaignStatus(status: string): boolean {
+  return FORECASTABLE_CAMPAIGN_STATUSES.has(status.toLowerCase());
+}
 
 function isValidTimeZone(timezone: string): boolean {
   try {
@@ -204,11 +208,11 @@ async function fetchCampaignBudgetPlan(
   }
 
   const data = (await response.json()) as { campaigns: CampaignRow[] };
-  const active = data.campaigns.filter((campaign) => ACTIVE_CAMPAIGN_STATUSES.has(campaign.status));
-  if (active.length === 0) return { dailyBudgetUsd: null, campaigns: [] };
+  const forecastable = data.campaigns.filter((campaign) => isForecastableCampaignStatus(campaign.status));
+  if (forecastable.length === 0) return { dailyBudgetUsd: null, campaigns: [] };
 
   const campaigns: BudgetedCampaign[] = [];
-  for (const campaign of active) {
+  for (const campaign of forecastable) {
     const dailyBudgetUsd = parsePositiveUsd(campaign.maxBudgetDailyUsd);
     if (dailyBudgetUsd === null) return { dailyBudgetUsd: null, campaigns: [] };
     campaigns.push({ id: campaign.id, workflowSlug: campaign.workflowSlug, dailyBudgetUsd });

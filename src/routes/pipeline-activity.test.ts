@@ -213,6 +213,49 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(res.body.summary.dailyBudgetUsd).toBeNull();
   });
 
+  it.each(["paused", "held"])("projects expected values for configured %s campaigns", async (status) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+    mockFetch({
+      campaigns: [{ id: "campaign-1", workflowSlug: "wf-a", status, maxBudgetDailyUsd: "50" }],
+      dailyStats: [
+        { key: "2026-06-17", broadcast: { recipientStats: { sent: 1, opened: 1, clicked: 1 } } },
+      ],
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&timezone=UTC")
+      .set(AUTH)
+      .expect(200);
+
+    expect(res.body.days[0].metrics.outreach).toEqual({ actual: 1, expected: 10 });
+    expect(res.body.days[1].metrics.outreach).toEqual({ actual: null, expected: 10 });
+    expect(res.body.summary.dailyBudgetUsd).toBe(50);
+  });
+
+  it.each(["stopped", "draft", "cancelled", "canceled", "completed", "failed"])(
+    "does not project expected values from %s campaigns",
+    async (status) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      mockFetch({
+        campaigns: [{ id: "campaign-1", workflowSlug: "wf-a", status, maxBudgetDailyUsd: "50" }],
+        dailyStats: [
+          { key: "2026-06-17", broadcast: { recipientStats: { sent: 1, opened: 1, clicked: 1 } } },
+        ],
+      });
+
+      const res = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&timezone=UTC")
+        .set(AUTH)
+        .expect(200);
+
+      expect(res.body.days[0].metrics.outreach).toEqual({ actual: 1, expected: null });
+      expect(res.body.days[1].metrics.outreach).toEqual({ actual: null, expected: null });
+      expect(res.body.summary.dailyBudgetUsd).toBeNull();
+    },
+  );
+
   it("orders days and buckets actuals by the requested timezone", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-17T02:30:00.000Z"));
