@@ -358,6 +358,7 @@ const workflowProjectionDetailSchema = z.object({
   contactedLeads: z.number().nullable().describe("Expected unique leads contacted from the budget. Null when the workflow has no usable contacted-lead denominator."),
   replies: z.number().nullable().describe("Expected positive replies from the budget. Null when the workflow has no reply cost."),
   visits: z.number().nullable().describe("Expected clicks/visits from the budget. Null when the workflow has no click cost."),
+  signups: z.number().nullable().describe("Expected signups from the budget (visits × visitToSignupPct). Null when the workflow has no click cost."),
   meetings: z.number().nullable().describe("Expected meetings booked (from both the reply and click routes)."),
   closes: z.number().nullable().describe("Expected closes from the budget."),
   revenue: z.number().nullable().describe("closes × LTR (lifetime revenue per close)."),
@@ -371,6 +372,7 @@ const workflowProjectionItemSchema = z.object({
   contactedUsd: z.number().nullable().describe("Cost per unique lead contacted (USD). Null when the contacted-lead denominator is absent or zero."),
   replyUsd: z.number().nullable().describe("Cost per positive reply (USD). Null when the metric is absent or zero."),
   clickUsd: z.number().nullable().describe("Cost per click (USD). Null when the metric is absent or zero."),
+  costPerSignupUsd: z.number().nullable().describe("Budget required per signup for this workflow. Null when there is no usable click/conversion data."),
   costPerCloseUsd: z.number().nullable().describe("Budget required per close for this workflow. Null when there is no usable cost/conversion data."),
   costPerMeetingBookedUsd: z.number().nullable().describe("Budget required per booked meeting for this workflow. Null when there is no usable cost/conversion data."),
   projection: workflowProjectionDetailSchema.nullable().describe("Null when budgetUsd is absent/≤0 or the workflow has no usable data."),
@@ -378,10 +380,10 @@ const workflowProjectionItemSchema = z.object({
 
 const workflowProjectionResponseSchema = z.object({
   featureSlug: z.string(),
-  objective: z.enum(["meeting-booked", "self-serve"]).describe("Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd."),
+  objective: z.enum(["meeting-booked", "self-serve", "signup", "purchase"]).describe("Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias."),
   workflows: z.array(workflowProjectionItemSchema),
   recommendedWorkflowDynastySlug: z.string().nullable().describe("Workflow with the lowest cost metric for the requested objective. Null when none has usable data."),
-  recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve uses costPerCloseUsd. Null when there is no pick."),
+  recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve/signup use costPerSignupUsd; purchase uses costPerCloseUsd. Null when there is no pick."),
 });
 
 registry.register("WorkflowProjectionResponse", workflowProjectionResponseSchema);
@@ -401,7 +403,7 @@ registry.registerPath({
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — conversion economics are brand-scoped."),
-      objective: z.enum(["meeting-booked", "self-serve"]).optional().describe("Controls which cost metric sizes recommendedBudgetUsd. Defaults to meeting-booked."),
+      objective: z.enum(["meeting-booked", "self-serve", "signup", "purchase"]).optional().describe("Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. Defaults to meeting-booked."),
       budgetUsd: z.string().optional().describe("Optional budget (USD) to project through the funnel."),
     }),
   },

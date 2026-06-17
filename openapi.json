@@ -957,9 +957,11 @@
             "type": "string",
             "enum": [
               "meeting-booked",
-              "self-serve"
+              "self-serve",
+              "signup",
+              "purchase"
             ],
-            "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd."
+            "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias."
           },
           "workflows": {
             "type": "array",
@@ -987,6 +989,11 @@
                   "type": "number",
                   "nullable": true,
                   "description": "Cost per click (USD). Null when the metric is absent or zero."
+                },
+                "costPerSignupUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Budget required per signup for this workflow. Null when there is no usable click/conversion data."
                 },
                 "costPerCloseUsd": {
                   "type": "number",
@@ -1016,6 +1023,11 @@
                       "type": "number",
                       "nullable": true,
                       "description": "Expected clicks/visits from the budget. Null when the workflow has no click cost."
+                    },
+                    "signups": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Expected signups from the budget (visits × visitToSignupPct). Null when the workflow has no click cost."
                     },
                     "meetings": {
                       "type": "number",
@@ -1047,6 +1059,7 @@
                     "contactedLeads",
                     "replies",
                     "visits",
+                    "signups",
                     "meetings",
                     "closes",
                     "revenue",
@@ -1062,6 +1075,7 @@
                 "contactedUsd",
                 "replyUsd",
                 "clickUsd",
+                "costPerSignupUsd",
                 "costPerCloseUsd",
                 "costPerMeetingBookedUsd",
                 "projection"
@@ -1076,7 +1090,7 @@
           "recommendedBudgetUsd": {
             "type": "number",
             "nullable": true,
-            "description": "10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve uses costPerCloseUsd. Null when there is no pick."
+            "description": "10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve/signup use costPerSignupUsd; purchase uses costPerCloseUsd. Null when there is no pick."
           }
         },
         "required": [
@@ -3011,12 +3025,14 @@
               "type": "string",
               "enum": [
                 "meeting-booked",
-                "self-serve"
+                "self-serve",
+                "signup",
+                "purchase"
               ],
-              "description": "Controls which cost metric sizes recommendedBudgetUsd. Defaults to meeting-booked."
+              "description": "Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. Defaults to meeting-booked."
             },
             "required": false,
-            "description": "Controls which cost metric sizes recommendedBudgetUsd. Defaults to meeting-booked.",
+            "description": "Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. Defaults to meeting-booked.",
             "name": "objective",
             "in": "query"
           },
@@ -3089,9 +3105,11 @@
                       "type": "string",
                       "enum": [
                         "meeting-booked",
-                        "self-serve"
+                        "self-serve",
+                        "signup",
+                        "purchase"
                       ],
-                      "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd."
+                      "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias."
                     },
                     "workflows": {
                       "type": "array",
@@ -3119,6 +3137,11 @@
                             "type": "number",
                             "nullable": true,
                             "description": "Cost per click (USD). Null when the metric is absent or zero."
+                          },
+                          "costPerSignupUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Budget required per signup for this workflow. Null when there is no usable click/conversion data."
                           },
                           "costPerCloseUsd": {
                             "type": "number",
@@ -3148,6 +3171,11 @@
                                 "type": "number",
                                 "nullable": true,
                                 "description": "Expected clicks/visits from the budget. Null when the workflow has no click cost."
+                              },
+                              "signups": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Expected signups from the budget (visits × visitToSignupPct). Null when the workflow has no click cost."
                               },
                               "meetings": {
                                 "type": "number",
@@ -3179,6 +3207,7 @@
                               "contactedLeads",
                               "replies",
                               "visits",
+                              "signups",
                               "meetings",
                               "closes",
                               "revenue",
@@ -3194,6 +3223,7 @@
                           "contactedUsd",
                           "replyUsd",
                           "clickUsd",
+                          "costPerSignupUsd",
                           "costPerCloseUsd",
                           "costPerMeetingBookedUsd",
                           "projection"
@@ -3208,7 +3238,7 @@
                     "recommendedBudgetUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve uses costPerCloseUsd. Null when there is no pick."
+                      "description": "10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve/signup use costPerSignupUsd; purchase uses costPerCloseUsd. Null when there is no pick."
                     }
                   },
                   "required": [
