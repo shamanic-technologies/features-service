@@ -11,6 +11,13 @@ function aggregateTransient(code: string): Error {
   return Object.assign(new Error("fetch failed"), { errors: [{ code }] });
 }
 
+/** The undici ConnectTimeoutError shape seen under `TypeError: fetch failed`. */
+function undiciConnectTimeout(): TypeError {
+  return new TypeError("fetch failed", {
+    cause: { name: "ConnectTimeoutError", code: "UND_ERR_CONNECT_TIMEOUT" },
+  });
+}
+
 describe("fetchWithRetry", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -31,6 +38,25 @@ describe("fetchWithRetry", () => {
     await a;
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps retrying undici connect timeouts long enough for slow sibling boots", async () => {
+    vi.useFakeTimers();
+    const ok = new Response("ok", { status: 200 });
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(undiciConnectTimeout())
+      .mockRejectedValueOnce(undiciConnectTimeout())
+      .mockRejectedValueOnce(undiciConnectTimeout())
+      .mockRejectedValueOnce(undiciConnectTimeout())
+      .mockResolvedValueOnce(ok);
+
+    const p = fetchWithRetry("http://sibling/x");
+    const a = expect(p).resolves.toBe(ok);
+    await vi.runAllTimersAsync();
+    await a;
+
+    expect(fetchSpy).toHaveBeenCalledTimes(5);
   });
 
   it("retries a transient AggregateError.errors rejection then succeeds", async () => {
@@ -67,7 +93,7 @@ describe("fetchWithRetry", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("gives up after the configured retries (1 initial + 3) on persistent transient errors", async () => {
+  it("gives up after the configured retries (1 initial + 6) on persistent transient errors", async () => {
     vi.useFakeTimers();
     const err = transientError("ECONNRESET");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(err);
@@ -77,6 +103,6 @@ describe("fetchWithRetry", () => {
     await vi.runAllTimersAsync();
     await a;
 
-    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    expect(fetchSpy).toHaveBeenCalledTimes(7);
   });
 });
