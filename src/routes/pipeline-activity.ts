@@ -101,10 +101,10 @@ interface EmailGatewayDayGroup {
   };
 }
 
-const FORECASTABLE_CAMPAIGN_STATUSES = new Set(["active", "ongoing", "running", "paused", "held", "hold"]);
+const ACTIVE_CAMPAIGN_STATUSES = new Set(["active", "ongoing", "running"]);
 
-function isForecastableCampaignStatus(status: string): boolean {
-  return FORECASTABLE_CAMPAIGN_STATUSES.has(status.toLowerCase());
+function isActiveCampaignStatus(status: string): boolean {
+  return ACTIVE_CAMPAIGN_STATUSES.has(status.toLowerCase());
 }
 
 function isValidTimeZone(timezone: string): boolean {
@@ -208,7 +208,7 @@ async function fetchCampaignBudgetPlan(
   }
 
   const data = (await response.json()) as { campaigns: CampaignRow[] };
-  const forecastable = data.campaigns.filter((campaign) => isForecastableCampaignStatus(campaign.status));
+  const forecastable = data.campaigns.filter((campaign) => isActiveCampaignStatus(campaign.status));
   if (forecastable.length === 0) return { dailyBudgetUsd: null, campaigns: [] };
 
   const campaigns: BudgetedCampaign[] = [];
