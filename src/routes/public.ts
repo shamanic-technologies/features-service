@@ -20,6 +20,29 @@ import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } fro
 
 const router = Router();
 
+const PUBLIC_STATS_TTL_MS = 60_000;
+
+const publicRankedCache = new Map<string, { payload: unknown; expiresAt: number }>();
+const publicBestCache = new Map<string, { payload: unknown; expiresAt: number }>();
+const publicWorkflowLatencyCache = new Map<string, { payload: unknown; expiresAt: number }>();
+
+/** Test seam — reset the in-memory public stats caches. */
+export function __resetPublicStatsCache(): void {
+  publicRankedCache.clear();
+  publicBestCache.clear();
+  publicWorkflowLatencyCache.clear();
+}
+
+function getPublicCache<T>(cache: Map<string, { payload: unknown; expiresAt: number }>, key: string): T | null {
+  const cached = cache.get(key);
+  if (!cached || cached.expiresAt <= Date.now()) return null;
+  return cached.payload as T;
+}
+
+function setPublicCache<T>(cache: Map<string, { payload: unknown; expiresAt: number }>, key: string, payload: T): void {
+  cache.set(key, { payload, expiresAt: Date.now() + PUBLIC_STATS_TTL_MS });
+}
+
 // ── GET /public/features — List active features (landing page) ──────────────
 
 router.get("/public/features", async (_req, res) => {
@@ -257,6 +280,12 @@ export async function handleRanked(
   const objective = requestedObjective ?? "costPerRecipientPositiveReplyCents";
   const objectiveDef = STATS_REGISTRY[objective];
   const sortDirection = (objectiveDef?.kind === "derived" && objectiveDef.type === "currency") ? "asc" : "desc";
+  const cacheKey = `${featureSlug}|${objective}|${groupBy}|${limit}`;
+  const cached = getPublicCache<{ objective: string; sortDirection: "asc" | "desc"; results: unknown[] }>(publicRankedCache, cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
 
   const isBrandGrouping = groupBy === "brand";
   const statsGroupBy = isBrandGrouping ? "brandId" : "workflowSlug";
@@ -333,7 +362,9 @@ export async function handleRanked(
     };
   });
 
-  res.json({ objective, sortDirection, results });
+  const payload = { objective, sortDirection, results };
+  setPublicCache(publicRankedCache, cacheKey, payload);
+  res.json(payload);
 }
 
 // ── Best handler ────────────────────────────────────────────────────────────
@@ -363,6 +394,12 @@ export async function handleBest(
   const countKeys = getAllCountKeys();
   const isBrandMode = groupBy === "brand";
   const statsGroupBy = isBrandMode ? "brandId" : "workflowSlug";
+  const cacheKey = `${featureSlug}|${groupBy}`;
+  const cached = getPublicCache<{ best: Record<string, unknown> }>(publicBestCache, cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
 
   const [workflows, costGroups, outcomeMap] = await Promise.all([
     isBrandMode ? Promise.resolve([]) : fetchPublicWorkflows(featureSlug, "all"),
@@ -413,7 +450,9 @@ export async function handleBest(
     }
   }
 
-  res.json({ best });
+  const payload = { best };
+  setPublicCache(publicBestCache, cacheKey, payload);
+  res.json(payload);
 }
 
 // ── Public revenue handler ───────────────────────────────────────────────────
@@ -633,6 +672,13 @@ export async function handlePublicWorkflowEngagementLatency(
     return;
   }
 
+  const cacheKey = `${featureSlug}|${groupBy}`;
+  const cached = getPublicCache<PublicWorkflowEngagementLatencyPayload>(publicWorkflowLatencyCache, cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
   const [workflows, latencyByWorkflow] = await Promise.all([
     fetchPublicWorkflows(featureSlug, "active"),
     fetchPublicWorkflowEngagementLatency(featureSlug),
@@ -671,6 +717,7 @@ export async function handlePublicWorkflowEngagementLatency(
   });
 
   const payload: PublicWorkflowEngagementLatencyPayload = { featureSlug, groupBy: "workflow", results };
+  setPublicCache(publicWorkflowLatencyCache, cacheKey, payload);
   res.json(payload);
 }
 

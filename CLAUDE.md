@@ -212,20 +212,24 @@ Databricks medallion Gold, Kleppmann derived-data).
   - fresh hit (age < TTL) → serve snapshot, no recompute;
   - stale hit → serve snapshot NOW + single-flight background refresh (claims `refreshing_at` via a
     conditional UPDATE, cross-replica safe);
-  - miss → compute live ONCE (fail-loud: a compute error propagates / 502s), persist, serve.
+  - too-stale hit (age ≥ hard max age) → compute live ONCE synchronously, persist, serve;
+  - miss → compute live ONCE (in-process single-flight, fail-loud: a compute error propagates / 502s),
+    persist, serve.
   The slow fan-out thus runs ~once per TTL per *viewed* cell, OFF the request path; idle cells never refresh.
 
 **It is DERIVED + rebuildable** — dropping every row is safe (next read recomputes); siblings stay SoT.
 **Eventual-consistency is the accepted CQRS tradeoff**: a served body is "as-of `computed_at`", at most
-~TTL + one-fan-out stale. The revenue engine's day-scale decay is therefore as-of `computed_at` — negligible
-drift at the 5s default TTL. The cache is an OPTIMISATION, never SoT: a snapshot-table read error logs loud
-and falls through to a live compute (correct answer, just slow) — that fall-through is legitimate degradation,
-NOT a silent swallow.
+the hard max stale window (default 60s). The revenue engine's day-scale decay is therefore as-of
+`computed_at` — negligible drift at the 5s default TTL / 60s hard max. The cache is an OPTIMISATION,
+never SoT: a snapshot-table read error logs loud and falls through to a live compute (correct answer,
+just slow) — that fall-through is legitimate degradation, NOT a silent swallow.
 
-**Env (both optional, sane defaults):** `FEATURE_VIEW_SNAPSHOT_TTL_MS` (default `5000` = the 5s freshness
-target) and `FEATURE_VIEW_CACHE_ENABLED` (default on; set `"false"` to bypass — tests that assert the pure
-live-compute path set it false). Future: event-driven invalidation (siblings publish domain events →
-incremental refresh) is the next medallion step beyond SWR if staleness ever bites. (PR #293.)
+**Env (optional, sane defaults):** `FEATURE_VIEW_SNAPSHOT_TTL_MS` (default `5000` = the 5s freshness
+target) and `FEATURE_VIEW_CACHE_ENABLED` (default on; set `"false"` to bypass — tests that assert the
+pure live-compute path set it false). The hard stale cap is fixed at 60s: a viewed cell older than
+1min recomputes synchronously rather than serving too-old decay-sensitive data. Future: event-driven
+invalidation (siblings publish domain events → incremental refresh) is the next medallion step beyond
+SWR if staleness ever bites. (PR #293, refined by features-service#304.)
 
 ## `GET /features/:slug/stats` scopes its fan-out to the feature's DECLARED sources
 
@@ -298,6 +302,9 @@ counts × per-stage-EV approximation — that loses company-dedup + decay and re
 - **CAC/ROI** = `buildCostEconomics` (exported from `revenue.ts`) — byte-identical to the dashboard.
 - Heavy (one engine pass per pair) → cache the assembled response in-memory (`__resetPublicRevenueCache`
   test seam).
+- Other heavy public stats (`/public/stats/ranked`, `/public/stats/best`,
+  `/public/stats/workflow-engagement-latency`) also use short in-memory caches (`__resetPublicStatsCache`
+  test seam) so landing/report refreshes do not re-hit workflow/runs/email/journalists on every request.
 
 **Per-workflow revenue is NOT a `createdForBrandId` proxy.** 14/46 sales workflows span multiple brands
 (a template re-run across brands), so a workflow's LTR is not one brand's. Attribute at the

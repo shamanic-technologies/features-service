@@ -55,7 +55,7 @@ vi.mock("./revenue.js", async (importOriginal) => ({
 }));
 
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache, __resetPublicCostProjectionCache } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
@@ -177,6 +177,7 @@ describe("GET /public/stats/ranked", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
+    __resetPublicStatsCache();
   });
 
   it("returns workflows ranked by objective value descending", async () => {
@@ -400,6 +401,21 @@ describe("GET /public/stats/ranked", () => {
     expect(brandCalls).toHaveLength(1);
     expect(brandCalls[0][0]).toBe("http://brand:3000/internal/brands?ids=brand-2,brand-1");
   });
+
+  it("serves the second ranked call within TTL from cache (no second upstream stats fetch)", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    mockFetchResponses();
+
+    const r1 = await request(app)
+      .get("/public/stats/ranked?featureSlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow");
+    const callsAfterFirst = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    const r2 = await request(app)
+      .get("/public/stats/ranked?featureSlug=sales-cold-email-outreach&objective=recipientsRepliesPositive&groupBy=workflow");
+
+    expect(r1.status).toBe(200);
+    expect(r2.body).toEqual(r1.body);
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterFirst);
+  });
 });
 
 // ── GET /public/stats/best ────────────────────────────────────────────────
@@ -408,6 +424,7 @@ describe("GET /public/stats/best", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
+    __resetPublicStatsCache();
   });
 
   it("returns best workflow per count-type metric", async () => {
@@ -449,6 +466,19 @@ describe("GET /public/stats/best", () => {
     expect(res.status).toBe(200);
     expect(res.body.best.recipientsRepliesPositive).toBeNull();
   });
+
+  it("serves the second best call within TTL from cache (no second upstream stats fetch)", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    mockFetchResponses();
+
+    const r1 = await request(app).get("/public/stats/best?featureSlug=sales-cold-email-outreach&groupBy=workflow");
+    const callsAfterFirst = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    const r2 = await request(app).get("/public/stats/best?featureSlug=sales-cold-email-outreach&groupBy=workflow");
+
+    expect(r1.status).toBe(200);
+    expect(r2.body).toEqual(r1.body);
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterFirst);
+  });
 });
 
 // ── GET /public/stats/workflow-engagement-latency ─────────────────────────
@@ -457,6 +487,7 @@ describe("GET /public/stats/workflow-engagement-latency", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
+    __resetPublicStatsCache();
   });
 
   it("returns public per-workflow average and median time to click and positive reply", async () => {
@@ -538,6 +569,31 @@ describe("GET /public/stats/workflow-engagement-latency", () => {
     mockFindFirst.mockResolvedValueOnce(null);
     const res = await request(app).get("/public/stats/workflow-engagement-latency?featureSlug=nonexistent&groupBy=workflow");
     expect(res.status).toBe(404);
+  });
+
+  it("serves the second workflow-latency call within TTL from cache (no second upstream stats fetch)", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    mockFetchResponses({
+      "http://email:3000/public/stats/engagement-latency": {
+        groups: [
+          {
+            key: "sales-outreach-alpha",
+            timeToFirstLinkClick: { averageMs: 10, medianMs: 10, sampleSize: 1 },
+            timeToFirstPositiveReply: { averageMs: 20, medianMs: 20, sampleSize: 1 },
+          },
+        ],
+      },
+    });
+
+    const r1 = await request(app)
+      .get("/public/stats/workflow-engagement-latency?featureSlug=sales-cold-email-outreach&groupBy=workflow");
+    const callsAfterFirst = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    const r2 = await request(app)
+      .get("/public/stats/workflow-engagement-latency?featureSlug=sales-cold-email-outreach&groupBy=workflow");
+
+    expect(r1.status).toBe(200);
+    expect(r2.body).toEqual(r1.body);
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterFirst);
   });
 });
 
