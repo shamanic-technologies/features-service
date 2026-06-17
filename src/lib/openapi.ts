@@ -372,15 +372,16 @@ const workflowProjectionItemSchema = z.object({
   replyUsd: z.number().nullable().describe("Cost per positive reply (USD). Null when the metric is absent or zero."),
   clickUsd: z.number().nullable().describe("Cost per click (USD). Null when the metric is absent or zero."),
   costPerCloseUsd: z.number().nullable().describe("Budget required per close for this workflow. Null when there is no usable cost/conversion data."),
+  costPerMeetingBookedUsd: z.number().nullable().describe("Budget required per booked meeting for this workflow. Null when there is no usable cost/conversion data."),
   projection: workflowProjectionDetailSchema.nullable().describe("Null when budgetUsd is absent/≤0 or the workflow has no usable data."),
 });
 
 const workflowProjectionResponseSchema = z.object({
   featureSlug: z.string(),
-  objective: z.enum(["meeting-booked", "self-serve"]).describe("Echo of the requested objective (defaults to meeting-booked). Deprecated — no longer affects the ranking, which is objective-agnostic."),
+  objective: z.enum(["meeting-booked", "self-serve"]).describe("Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd."),
   workflows: z.array(workflowProjectionItemSchema),
-  recommendedWorkflowDynastySlug: z.string().nullable().describe("Workflow with the lowest costPerCloseUsd. Null when none has usable data."),
-  recommendedBudgetUsd: z.number().nullable().describe("10 (target closes/month) × the best costPerCloseUsd. Null when there is no pick."),
+  recommendedWorkflowDynastySlug: z.string().nullable().describe("Workflow with the lowest cost metric for the requested objective. Null when none has usable data."),
+  recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve uses costPerCloseUsd. Null when there is no pick."),
 });
 
 registry.register("WorkflowProjectionResponse", workflowProjectionResponseSchema);
@@ -388,19 +389,19 @@ registry.register("WorkflowProjectionResponse", workflowProjectionResponseSchema
 registry.registerPath({
   method: "get",
   path: "/features/{featureSlug}/workflow-projection",
-  summary: "Rank workflows by cost-per-close and project a budget",
+  summary: "Rank workflows by cost-per-outcome and project a budget",
   description:
-    "Ranks a brand's workflows by combined cost-per-close (the reply + click engagement routes funded by one budget) and — when budgetUsd is given — projects that budget through the funnel. Objective-agnostic: every non-zero conversion path counts, so the ranking does not depend on the campaign objective. " +
+    "Ranks a brand's workflows by the requested objective's cost-per-outcome (the reply + click engagement routes funded by one budget) and — when budgetUsd is given — projects that budget through the funnel. " +
     "Per-workflow unit costs (cost per positive reply / per click) are global cross-org workflow efficiency (same source as /public/stats/best), aggregated over each workflow's upgrade chain. " +
     "Conversion rates + LTR come from the brand's EFFECTIVE sales-economics (its own saved set, or the cross-brand-average when unset — null only at cold start). " +
-    "recommendedWorkflowDynastySlug is the workflow with the lowest costPerCloseUsd; recommendedBudgetUsd = 10 × that cost.",
+    "recommendedWorkflowDynastySlug is the workflow with the lowest objective metric; recommendedBudgetUsd = 10 × that cost.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — conversion economics are brand-scoped."),
-      objective: z.enum(["meeting-booked", "self-serve"]).optional().describe("Deprecated — no longer affects the ranking (objective-agnostic: every non-zero conversion path counts). Accepted + echoed for back-compat; defaults to meeting-booked."),
+      objective: z.enum(["meeting-booked", "self-serve"]).optional().describe("Controls which cost metric sizes recommendedBudgetUsd. Defaults to meeting-booked."),
       budgetUsd: z.string().optional().describe("Optional budget (USD) to project through the funnel."),
     }),
   },
