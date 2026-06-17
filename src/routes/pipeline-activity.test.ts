@@ -141,7 +141,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
     mockFetch({
       dailyStats: [
-        { key: "2026-06-17", broadcast: { recipientStats: { contacted: 2, opened: 1, clicked: 1 } } },
+        { key: "2026-06-17", broadcast: { recipientStats: { sent: 2, opened: 1, clicked: 1 } } },
       ],
     });
 
@@ -196,7 +196,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     mockFetch({
       campaigns: [{ id: "campaign-1", workflowSlug: "wf-a", status: "ongoing", maxBudgetDailyUsd: null }],
       dailyStats: [
-        { key: "2026-06-17", broadcast: { recipientStats: { contacted: 1, opened: 1, clicked: 1 } } },
+        { key: "2026-06-17", broadcast: { recipientStats: { sent: 1, opened: 1, clicked: 1 } } },
       ],
     });
 
@@ -218,7 +218,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     vi.setSystemTime(new Date("2026-06-17T02:30:00.000Z"));
     mockFetch({
       dailyStats: [
-        { key: "2026-06-16", broadcast: { recipientStats: { contacted: 1, opened: 1, clicked: 1 } } },
+        { key: "2026-06-16", broadcast: { recipientStats: { sent: 1, opened: 1, clicked: 1 } } },
       ],
     });
 

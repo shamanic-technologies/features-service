@@ -68,9 +68,9 @@ interface CampaignBudgetPlan {
 }
 
 interface WorkflowActivityUnit {
-  contactedUsd: number | null;
+  outreachUsd: number | null;
   clickUsd: number | null;
-  openPerContacted: number | null;
+  openPerOutreach: number | null;
 }
 
 interface ExpectedActivity {
@@ -94,6 +94,7 @@ interface EmailGatewayDayGroup {
   broadcast?: {
     recipientStats?: {
       contacted?: number;
+      sent?: number;
       opened?: number;
       clicked?: number;
     };
@@ -264,7 +265,7 @@ async function fetchDailyBroadcastActivity(
       throw new Error(`email-gateway day group ${group.key} missing broadcast recipientStats`);
     }
     result.set(group.key, {
-      outreach: readStatsNumber(stats.contacted, "recipientStats.contacted"),
+      outreach: readStatsNumber(stats.sent, "recipientStats.sent"),
       opens: readStatsNumber(stats.opened, "recipientStats.opened"),
       clicks: readStatsNumber(stats.clicked, "recipientStats.clicked"),
     });
@@ -289,14 +290,14 @@ async function buildWorkflowActivityUnits(featureSlug: string): Promise<Map<stri
     if (!cost) continue;
     const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
     const costUsd = cost.totalCostInUsdCents / 100;
-    const contacted = outcomes.recipientsContacted ?? 0;
+    const outreach = outcomes.recipientsSent ?? 0;
     const opened = outcomes.recipientsOpened ?? 0;
     const clicked = outcomes.recipientsClicked ?? 0;
 
     const unit: WorkflowActivityUnit = {
-      contactedUsd: costUsd > 0 && contacted > 0 ? costUsd / contacted : null,
+      outreachUsd: costUsd > 0 && outreach > 0 ? costUsd / outreach : null,
       clickUsd: costUsd > 0 && clicked > 0 ? costUsd / clicked : null,
-      openPerContacted: contacted > 0 ? opened / contacted : null,
+      openPerOutreach: outreach > 0 ? opened / outreach : null,
     };
 
     for (const slug of chainSlugs) unitsByWorkflowSlug.set(slug, unit);
@@ -340,14 +341,14 @@ async function computeExpectedActivity(
   if (budgetPlan.dailyBudgetUsd === null) return emptyExpected(clickToSignupPct);
 
   const outreach = sumExpected(budgetPlan.campaigns, units, (campaign, unit) =>
-    unit.contactedUsd === null ? null : campaign.dailyBudgetUsd / unit.contactedUsd,
+    unit.outreachUsd === null ? null : campaign.dailyBudgetUsd / unit.outreachUsd,
   );
   const clicks = sumExpected(budgetPlan.campaigns, units, (campaign, unit) =>
     unit.clickUsd === null ? null : campaign.dailyBudgetUsd / unit.clickUsd,
   );
   const opens = sumExpected(budgetPlan.campaigns, units, (campaign, unit) => {
-    if (unit.contactedUsd === null || unit.openPerContacted === null) return null;
-    return (campaign.dailyBudgetUsd / unit.contactedUsd) * unit.openPerContacted;
+    if (unit.outreachUsd === null || unit.openPerOutreach === null) return null;
+    return (campaign.dailyBudgetUsd / unit.outreachUsd) * unit.openPerOutreach;
   });
 
   const signups = clicks !== null && clickToSignupPct !== null ? clicks * (clickToSignupPct / 100) : null;
