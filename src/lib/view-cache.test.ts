@@ -85,6 +85,23 @@ describe("servedCached", () => {
     expect(storedRow?.body).toEqual({ pipeline: 100 });
   });
 
+  it("concurrent MISS calls for the same cell share one live compute", async () => {
+    let resolveCompute!: (value: { pipeline: number }) => void;
+    const compute = vi.fn(() => new Promise<{ pipeline: number }>((resolve) => { resolveCompute = resolve; }));
+
+    const calls = [
+      servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute }),
+      servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute }),
+      servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute }),
+    ];
+    await flush();
+    expect(compute).toHaveBeenCalledTimes(1);
+
+    resolveCompute({ pipeline: 123 });
+    await expect(Promise.all(calls)).resolves.toEqual([{ pipeline: 123 }, { pipeline: 123 }, { pipeline: 123 }]);
+    expect(storedRow?.body).toEqual({ pipeline: 123 });
+  });
+
   it("FRESH hit → serves snapshot, never computes", async () => {
     storedRow = { view: "revenue", scopeKey: "k", orgId: "o", body: { pipeline: 7 }, computedAt: new Date(), refreshingAt: null };
     const compute = vi.fn().mockResolvedValue({ pipeline: 999 });
@@ -101,6 +118,15 @@ describe("servedCached", () => {
     await flush();
     expect(compute).toHaveBeenCalledTimes(1); // background revalidate ran
     expect(storedRow?.body).toEqual({ pipeline: 42 }); // snapshot updated
+  });
+
+  it("STALE beyond hard max age → recomputes synchronously instead of serving old data", async () => {
+    storedRow = { view: "revenue", scopeKey: "k", orgId: "o", body: { pipeline: 7 }, computedAt: new Date(Date.now() - 120_000), refreshingAt: null };
+    const compute = vi.fn().mockResolvedValue({ pipeline: 42 });
+    const body = await servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute });
+    expect(body).toEqual({ pipeline: 42 });
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(storedRow?.body).toEqual({ pipeline: 42 });
   });
 
   it("STALE hit but claim lost (another refresh in flight) → serves stale, does NOT recompute", async () => {
