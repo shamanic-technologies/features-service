@@ -22,12 +22,10 @@ const router = Router();
 //   "brand-goal"  = brandId × goal (drop the persona + brand-profile dimensions)
 //   "goal-global" = goal / cross-org global (workflow evidence only)
 //
-// The "persona" rung requires runs tagged with the (goal, brandProfileId, customerProfileId,
-// workflow) tuple AND brand-service persona/brand-profile entities — NEITHER exists yet (the
-// write-side blockers tracked in features-service#298). So `customerProfileId` is null on every
-// candidate today and no candidate ever resolves at "persona". The rung is wired into the shape
-// so the consumer builds against the final contract; it activates with ZERO contract change once
-// upstream lands. This is not a mocked dimension — a null persona + an honest grain label is the
+// The "persona" rung requires this endpoint to read producer evidence tagged with the
+// (goal, brandProfileId, customerProfileId, workflow) tuple. That read path is not wired here
+// yet, so `customerProfileId` is null on every candidate today and no candidate resolves at
+// "persona". This is not a mocked dimension — a null persona + an honest grain label is the
 // truthful "no persona-local data" signal the consumer asked for.
 type Grain = "persona" | "brand-goal" | "goal-global";
 
@@ -57,7 +55,7 @@ interface SampleSize {
 }
 
 interface Candidate {
-  /** Persona lever — null until brand-service ships personas + runs are tuple-tagged (see #298). */
+  /** Persona lever — null until this endpoint reads real persona-grain producer evidence. */
   customerProfileId: string | null;
   workflow: { workflowDynastySlug: string; workflowDynastyName: string | null };
   goal: Goal;
@@ -74,7 +72,7 @@ interface CandidatesResponse {
   featureSlug: string;
   brandId: string;
   goal: Goal;
-  /** Brand-profile-version context echoed back. Null until brand-service ships brand profiles. */
+  /** Brand-profile-version context echoed back. */
   brandProfileId: string | null;
   candidates: Candidate[];
 }
@@ -191,8 +189,8 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
       const costPerOutcomeUsd = econ ? costPerOutcomeForGoal(goal, econ, { clickUsd, replyUsd }) : null;
       const conversionRate = econ ? conversionRateForGoal(goal, econ) : null;
 
-      // No persona data today → never "persona". Brand-local economics → "brand-goal"; otherwise the
-      // cost evidence is still cross-org global, so the candidate resolves at "goal-global".
+      // Candidate evidence does not read persona-grain producer stats yet → never "persona".
+      // Brand-local economics → "brand-goal"; otherwise the cost evidence is still cross-org global.
       const customerProfileId: string | null = null;
       const grain: Grain = customerProfileId != null ? "persona" : conversionGrain === "brand-goal" ? "brand-goal" : "goal-global";
 
