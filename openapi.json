@@ -1265,7 +1265,7 @@
           "brandProfileId": {
             "type": "string",
             "nullable": true,
-            "description": "Brand-profile-version context echoed back. Null until brand-service ships brand profiles."
+            "description": "Brand-profile-version context echoed back."
           },
           "candidates": {
             "type": "array",
@@ -1275,7 +1275,7 @@
                 "customerProfileId": {
                   "type": "string",
                   "nullable": true,
-                  "description": "Persona lever — null until brand-service ships personas + runs are tuple-tagged (features-service#298). The persona grain is wired but inert; a null value + grain label is the truthful 'no persona-local data' signal."
+                  "description": "Persona lever — null until this endpoint reads real persona-grain producer evidence. The persona grain is wired but inert; a null value + grain label is the truthful 'no persona-local data' signal."
                 },
                 "workflow": {
                   "type": "object",
@@ -1308,7 +1308,7 @@
                     "brand-goal",
                     "goal-global"
                   ],
-                  "description": "Finest fallback grain at which this candidate's evidence resolved. Never 'persona' until the write-side tuple-tagging lands."
+                  "description": "Finest fallback grain at which this candidate's evidence resolved. Never 'persona' until real persona-grain evidence is read by this endpoint."
                 },
                 "costPerOutcomeUsd": {
                   "type": "number",
@@ -1415,6 +1415,167 @@
           "goal",
           "brandProfileId",
           "candidates"
+        ]
+      },
+      "PersonaStatsResponse": {
+        "type": "object",
+        "properties": {
+          "featureSlug": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string",
+            "enum": [
+              "signup",
+              "meetingBooked",
+              "purchase"
+            ]
+          },
+          "brandProfileId": {
+            "type": "string",
+            "nullable": true
+          },
+          "sortMetric": {
+            "type": "string",
+            "enum": [
+              "cpc",
+              "cppr"
+            ],
+            "description": "signup sorts by CPC; meetingBooked and purchase sort by CPPR."
+          },
+          "personas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "customerProfileId": {
+                  "type": "string",
+                  "description": "Stable customer persona/profile ID. Rows are emitted only for real attributed producer groups."
+                },
+                "brandProfileId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Brand-profile version used to filter producer evidence, when known."
+                },
+                "persona": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "active",
+                        "paused",
+                        "archived"
+                      ]
+                    },
+                    "filters": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "status",
+                    "filters"
+                  ]
+                },
+                "evidence": {
+                  "type": "object",
+                  "properties": {
+                    "totalCostInUsdCents": {
+                      "type": "number",
+                      "description": "Persona-scoped spend numerator from runs-service, in USD cents."
+                    },
+                    "completedRuns": {
+                      "type": "number",
+                      "description": "Completed runs behind this persona's cost evidence."
+                    },
+                    "firstRunAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "format": "date-time"
+                    },
+                    "lastRunAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "format": "date-time"
+                    },
+                    "contacted": {
+                      "type": "number",
+                      "description": "Persona-scoped contacted-recipient count from email-gateway broadcast stats."
+                    },
+                    "websiteClicks": {
+                      "type": "number",
+                      "description": "Persona-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."
+                    },
+                    "positiveReplies": {
+                      "type": "number",
+                      "description": "Persona-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."
+                    }
+                  },
+                  "required": [
+                    "totalCostInUsdCents",
+                    "completedRuns",
+                    "firstRunAt",
+                    "lastRunAt",
+                    "contacted",
+                    "websiteClicks",
+                    "positiveReplies"
+                  ]
+                },
+                "metrics": {
+                  "type": "object",
+                  "properties": {
+                    "cpcCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "totalCostInUsdCents / websiteClicks. Null when websiteClicks is zero."
+                    },
+                    "cpprCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "totalCostInUsdCents / positiveReplies. Null when positiveReplies is zero."
+                    }
+                  },
+                  "required": [
+                    "cpcCents",
+                    "cpprCents"
+                  ]
+                }
+              },
+              "required": [
+                "customerProfileId",
+                "brandProfileId",
+                "persona",
+                "evidence",
+                "metrics"
+              ]
+            },
+            "description": "Persona rows sorted ascending by sortMetric, with null metric values last."
+          }
+        },
+        "required": [
+          "featureSlug",
+          "brandId",
+          "goal",
+          "brandProfileId",
+          "sortMetric",
+          "personas"
         ]
       },
       "PublicRevenueResponse": {
@@ -3428,7 +3589,7 @@
     "/features/{featureSlug}/candidates": {
       "get": {
         "summary": "Serve the (customerProfileId, workflow) candidate set with per-candidate evidence + sample size",
-        "description": "Runtime per-lead selection evidence: returns the candidate SET — one per active workflow (and, once brand-service ships personas, per (customerProfileId, workflow) pair) — each with its OWN cost-per-outcome for the goal, the SAMPLE SIZE behind it, CONVERSION and COST evidence kept separate, and a labelled fallback GRAIN. Deliberately does NOT collapse to a single best: the consumer owns the uncertainty-aware selection policy (Thompson-style). Fallback grain ladder (finest→coarsest): persona (brandId×goal×brandProfileId×customerProfileId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The persona rung requires brand-service persona/brand-profile entities AND tuple-tagged runs (write-side blockers, features-service#298); until then customerProfileId is null and no candidate resolves at 'persona'. Reuses the workflow-projection data path: global per-workflow unit costs aggregated over the upgrade chain + the brand's EFFECTIVE sales-economics. Additive — does not change workflow-projection / stats/ranked.",
+        "description": "Runtime per-lead selection evidence: returns the candidate SET — one per active workflow — each with its OWN cost-per-outcome for the goal, the SAMPLE SIZE behind it, CONVERSION and COST evidence kept separate, and a labelled fallback GRAIN. Deliberately does NOT collapse to a single best: the consumer owns the uncertainty-aware selection policy (Thompson-style). Fallback grain ladder (finest→coarsest): persona (brandId×goal×brandProfileId×customerProfileId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The persona rung is present in the contract but this endpoint does not read persona-grain producer evidence yet; until that lands, customerProfileId is null and no candidate resolves at 'persona'. Reuses the workflow-projection data path: global per-workflow unit costs aggregated over the upgrade chain + the brand's EFFECTIVE sales-economics. Additive — does not change workflow-projection / stats/ranked.",
         "tags": [
           "Stats"
         ],
@@ -3469,10 +3630,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Brand-profile-version context (optional, echoed). Inert until brand-service ships brand profiles."
+              "description": "Brand-profile-version context (optional, echoed)."
             },
             "required": false,
-            "description": "Brand-profile-version context (optional, echoed). Inert until brand-service ships brand profiles.",
+            "description": "Brand-profile-version context (optional, echoed).",
             "name": "brandProfileId",
             "in": "query"
           },
@@ -3545,7 +3706,7 @@
                     "brandProfileId": {
                       "type": "string",
                       "nullable": true,
-                      "description": "Brand-profile-version context echoed back. Null until brand-service ships brand profiles."
+                      "description": "Brand-profile-version context echoed back."
                     },
                     "candidates": {
                       "type": "array",
@@ -3555,7 +3716,7 @@
                           "customerProfileId": {
                             "type": "string",
                             "nullable": true,
-                            "description": "Persona lever — null until brand-service ships personas + runs are tuple-tagged (features-service#298). The persona grain is wired but inert; a null value + grain label is the truthful 'no persona-local data' signal."
+                            "description": "Persona lever — null until this endpoint reads real persona-grain producer evidence. The persona grain is wired but inert; a null value + grain label is the truthful 'no persona-local data' signal."
                           },
                           "workflow": {
                             "type": "object",
@@ -3588,7 +3749,7 @@
                               "brand-goal",
                               "goal-global"
                             ],
-                            "description": "Finest fallback grain at which this candidate's evidence resolved. Never 'persona' until the write-side tuple-tagging lands."
+                            "description": "Finest fallback grain at which this candidate's evidence resolved. Never 'persona' until real persona-grain evidence is read by this endpoint."
                           },
                           "costPerOutcomeUsd": {
                             "type": "number",
@@ -3702,6 +3863,337 @@
           },
           "400": {
             "description": "Missing brandId or invalid goal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/{featureSlug}/persona-stats": {
+      "get": {
+        "summary": "Persona-level cost and outcome evidence for a brand + feature + goal",
+        "description": "Returns real customer persona/profile rows for dashboard ranking. Each row is based on producer-side attribution of runs/outcomes to customerProfileId/brandProfileId/goal/workflow, never hash assignment or equal splitting of brand totals. Rows carry raw spend and outcome evidence so the dashboard can compute CPC (spend / websiteClicks) and CPPR (spend / positiveReplies). Rows with missing customerProfileId attribution are omitted rather than assigned to a persona. If brandProfileId is omitted, features-service reads the brand's current profile from brand-service and filters producer evidence to that profile when available.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "featureSlug",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID (required)."
+            },
+            "required": true,
+            "description": "Brand UUID (required).",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "signup",
+                "meetingBooked",
+                "purchase"
+              ],
+              "description": "Active optimization goal (required). signup sorts by CPC; other goals sort by CPPR."
+            },
+            "required": true,
+            "description": "Active optimization goal (required). signup sorts by CPC; other goals sort by CPPR.",
+            "name": "goal",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted."
+            },
+            "required": false,
+            "description": "Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted.",
+            "name": "brandProfileId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Optional positive integer row limit after sorting."
+            },
+            "required": false,
+            "description": "Optional positive integer row limit after sorting.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Persona cost/outcome evidence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "goal": {
+                      "type": "string",
+                      "enum": [
+                        "signup",
+                        "meetingBooked",
+                        "purchase"
+                      ]
+                    },
+                    "brandProfileId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "sortMetric": {
+                      "type": "string",
+                      "enum": [
+                        "cpc",
+                        "cppr"
+                      ],
+                      "description": "signup sorts by CPC; meetingBooked and purchase sort by CPPR."
+                    },
+                    "personas": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "customerProfileId": {
+                            "type": "string",
+                            "description": "Stable customer persona/profile ID. Rows are emitted only for real attributed producer groups."
+                          },
+                          "brandProfileId": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Brand-profile version used to filter producer evidence, when known."
+                          },
+                          "persona": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "active",
+                                  "paused",
+                                  "archived"
+                                ]
+                              },
+                              "filters": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "status",
+                              "filters"
+                            ]
+                          },
+                          "evidence": {
+                            "type": "object",
+                            "properties": {
+                              "totalCostInUsdCents": {
+                                "type": "number",
+                                "description": "Persona-scoped spend numerator from runs-service, in USD cents."
+                              },
+                              "completedRuns": {
+                                "type": "number",
+                                "description": "Completed runs behind this persona's cost evidence."
+                              },
+                              "firstRunAt": {
+                                "type": "string",
+                                "nullable": true,
+                                "format": "date-time"
+                              },
+                              "lastRunAt": {
+                                "type": "string",
+                                "nullable": true,
+                                "format": "date-time"
+                              },
+                              "contacted": {
+                                "type": "number",
+                                "description": "Persona-scoped contacted-recipient count from email-gateway broadcast stats."
+                              },
+                              "websiteClicks": {
+                                "type": "number",
+                                "description": "Persona-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."
+                              },
+                              "positiveReplies": {
+                                "type": "number",
+                                "description": "Persona-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."
+                              }
+                            },
+                            "required": [
+                              "totalCostInUsdCents",
+                              "completedRuns",
+                              "firstRunAt",
+                              "lastRunAt",
+                              "contacted",
+                              "websiteClicks",
+                              "positiveReplies"
+                            ]
+                          },
+                          "metrics": {
+                            "type": "object",
+                            "properties": {
+                              "cpcCents": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "totalCostInUsdCents / websiteClicks. Null when websiteClicks is zero."
+                              },
+                              "cpprCents": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "totalCostInUsdCents / positiveReplies. Null when positiveReplies is zero."
+                              }
+                            },
+                            "required": [
+                              "cpcCents",
+                              "cpprCents"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "customerProfileId",
+                          "brandProfileId",
+                          "persona",
+                          "evidence",
+                          "metrics"
+                        ]
+                      },
+                      "description": "Persona rows sorted ascending by sortMetric, with null metric values last."
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "brandId",
+                    "goal",
+                    "brandProfileId",
+                    "sortMetric",
+                    "personas"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing/invalid brandId, goal, or limit",
             "content": {
               "application/json": {
                 "schema": {
