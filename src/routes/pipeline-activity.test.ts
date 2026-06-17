@@ -213,7 +213,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(res.body.summary.dailyBudgetUsd).toBeNull();
   });
 
-  it.each(["paused", "held"])("projects expected values for configured %s campaigns", async (status) => {
+  it.each(["active", "ongoing"])("projects expected values for configured %s campaigns", async (status) => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
     mockFetch({
