@@ -101,7 +101,7 @@ interface EmailGatewayDayGroup {
   };
 }
 
-const ACTIVE_CAMPAIGN_STATUSES = new Set(["active", "ongoing", "running"]);
+const ACTIVE_CAMPAIGN_STATUSES = new Set(["ongoing"]);
 
 function isActiveCampaignStatus(status: string): boolean {
   return ACTIVE_CAMPAIGN_STATUSES.has(status.toLowerCase());

@@ -213,11 +213,11 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(res.body.summary.dailyBudgetUsd).toBeNull();
   });
 
-  it.each(["active", "ongoing"])("projects expected values for configured %s campaigns", async (status) => {
+  it("projects expected values for configured ongoing campaigns", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
     mockFetch({
-      campaigns: [{ id: "campaign-1", workflowSlug: "wf-a", status, maxBudgetDailyUsd: "50" }],
+      campaigns: [{ id: "campaign-1", workflowSlug: "wf-a", status: "ongoing", maxBudgetDailyUsd: "50" }],
       dailyStats: [
         { key: "2026-06-17", broadcast: { recipientStats: { sent: 1, opened: 1, clicked: 1 } } },
       ],
