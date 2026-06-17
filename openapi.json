@@ -1216,7 +1216,7 @@
               "dailyBudgetUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "Sum of forecastable configured campaign daily budgets for this brand + feature. Null when no complete daily budget is configured."
+                "description": "Sum of active/ongoing campaign daily budgets for this brand + feature. Null when no complete daily budget is configured."
               },
               "openRatePct": {
                 "type": "number",
@@ -3270,7 +3270,7 @@
     "/features/{featureSlug}/pipeline-activity": {
       "get": {
         "summary": "Seven-day pipeline activity buckets for the brand overview",
-        "description": "Returns today plus future daily buckets for the dashboard grouped bar chart. Today includes actual-so-far from dated broadcast email events and the same daily expected values shown on future days. Expected outreach/clicks use forecastable configured campaign daily budgets and workflow unit costs; expected opens use observed broadcast open rate; signups are clicks × the brand's saved visitToSignupPct / 100. Missing producer inputs return null for the affected expected values.",
+        "description": "Returns today plus future daily buckets for the dashboard grouped bar chart. Today includes actual-so-far from dated broadcast email events and the same daily expected values shown on future days. Expected outreach/clicks use active/ongoing campaign daily budgets and workflow unit costs; expected opens use observed broadcast open rate; signups are clicks × the brand's saved visitToSignupPct / 100. Brand-level pause does not change the campaign status used for this forecast. Missing producer inputs return null for the affected expected values.",
         "tags": [
           "Stats"
         ],
@@ -3497,7 +3497,7 @@
                         "dailyBudgetUsd": {
                           "type": "number",
                           "nullable": true,
-                          "description": "Sum of forecastable configured campaign daily budgets for this brand + feature. Null when no complete daily budget is configured."
+                          "description": "Sum of active/ongoing campaign daily budgets for this brand + feature. Null when no complete daily budget is configured."
                         },
                         "openRatePct": {
                           "type": "number",
