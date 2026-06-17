@@ -412,6 +412,68 @@ registry.registerPath({
   },
 });
 
+// ── GET /features/:featureSlug/pipeline-activity ───────────────────────────
+
+const pipelineMetricSchema = z.object({
+  actual: z.number().nullable().describe("Today: actual-so-far from dated broadcast email events. Future days: null."),
+  expected: z.number().nullable().describe("Expected daily value from campaign daily budget and workflow unit evidence. Null when required producer inputs are unavailable."),
+});
+
+const pipelineSignupMetricSchema = pipelineMetricSchema.extend({
+  conversionPct: z.number().nullable().describe("visitToSignupPct used for signup projection. Null when brand economics are unavailable."),
+});
+
+const pipelineActivityDaySchema = z.object({
+  date: z.string().describe("Calendar date in the requested timezone (YYYY-MM-DD)."),
+  isToday: z.boolean(),
+  metrics: z.object({
+    outreach: pipelineMetricSchema,
+    opens: pipelineMetricSchema,
+    clicks: pipelineMetricSchema,
+    signups: pipelineSignupMetricSchema,
+  }),
+});
+
+const pipelineActivityResponseSchema = z.object({
+  featureSlug: z.string(),
+  brandId: z.string(),
+  timezone: z.string(),
+  generatedAt: z.string().datetime(),
+  days: z.array(pipelineActivityDaySchema),
+  summary: z.object({
+    dailyBudgetUsd: z.number().nullable().describe("Sum of active campaign daily budgets for this brand + feature. Null when no complete daily budget is configured."),
+    openRatePct: z.number().nullable().describe("Observed broadcast open rate used for expected opens. Null when producer evidence is unavailable."),
+    clickToSignupPct: z.number().nullable().describe("Brand visit-to-signup conversion percent. Null when brand economics are unavailable."),
+  }),
+});
+
+registry.register("PipelineActivityResponse", pipelineActivityResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/features/{featureSlug}/pipeline-activity",
+  summary: "Seven-day pipeline activity buckets for the brand overview",
+  description:
+    "Returns today plus future daily buckets for the dashboard grouped bar chart. Today includes actual-so-far from dated broadcast email events and the same daily expected values shown on future days. " +
+    "Expected outreach/clicks use active campaign daily budgets and workflow unit costs; expected opens use observed broadcast open rate; signups are clicks × the brand's saved visitToSignupPct / 100. Missing producer inputs return null for the affected expected values.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ featureSlug: z.string() }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required)."),
+      days: z.string().optional().describe("Number of days to return. Defaults to 7."),
+      timezone: z.string().describe("IANA timezone used for calendar day ordering and today's event bucket."),
+    }),
+  },
+  responses: {
+    200: { description: "Pipeline activity buckets", content: { "application/json": { schema: pipelineActivityResponseSchema } } },
+    400: { description: "Missing/invalid brandId, days, or timezone", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /features/:featureSlug/candidates ──────────────────────────────────
 
 const candidateConversionSchema = z.object({
