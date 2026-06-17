@@ -14,22 +14,26 @@ import { featureViewSnapshots } from "../db/schema.js";
  * Freshness model (per Richardson API-Composition→CQRS, Databricks Gold, Kleppmann derived-data):
  *   - fresh hit  (age < TTL)            → serve snapshot, no recompute.
  *   - stale hit  (age ≥ TTL)            → serve snapshot NOW + kick a single-flight background refresh.
+ *   - too stale  (age ≥ hard max age)   → compute live ONCE (blocking), persist, serve.
  *   - miss       (never computed)       → compute live ONCE (blocking), persist, serve. Fail-loud: a
- *                                          compute error on miss propagates (the endpoint 502s as before).
+ *                                          compute error on miss/too-stale propagates (502 as before).
  *
  * The snapshot is DERIVED + rebuildable — siblings stay source-of-truth; dropping every row is safe.
  * Eventual-consistency is the documented CQRS tradeoff: a served body is "as-of computedAt", at most
- * ~TTL + one-fan-out-duration stale. The revenue engine's decay is therefore as-of computedAt; with a
- * 5s TTL the drift is negligible against day-scale decay windows.
+ * at most hard-max-age stale. The revenue engine's decay is therefore as-of computedAt; with a 5s TTL
+ * and 60s hard max the drift is bounded and negligible against day-scale decay windows.
  *
  * The cache is an OPTIMISATION, never the source of truth: if the snapshot table is unreachable, we
  * log loudly and fall through to a live compute (correct answer, just slow) — NOT a silent swallow.
  */
 
 const DEFAULT_TTL_MS = 5_000;
+const DEFAULT_MAX_STALE_MS = 60_000;
 
 /** Max age of a refresh claim before another replica may steal it (a hung refresh must not wedge). */
 const REFRESH_CLAIM_TTL_MS = 30_000;
+
+const inFlightComputes = new Map<string, Promise<unknown>>();
 
 export function viewCacheTtlMs(): number {
   const raw = process.env.FEATURE_VIEW_SNAPSHOT_TTL_MS;
@@ -77,17 +81,44 @@ export async function servedCached<T>({ view, scopeKey, orgId, compute }: Cached
     if (ageMs < viewCacheTtlMs()) {
       return row.body as T; // fresh hit
     }
+    if (ageMs >= DEFAULT_MAX_STALE_MS) {
+      return computeAndPersistSingleFlight(view, scopeKey, orgId, compute);
+    }
     // Stale hit — serve immediately, refresh in the background (single-flight across replicas).
     void revalidate(view, scopeKey, orgId, compute);
     return row.body as T;
   }
 
   // Miss — compute live ONCE (fail-loud on error: propagate to the endpoint), then persist.
-  const body = await compute();
-  await upsertSnapshot(view, scopeKey, orgId, body).catch((err) => {
-    console.error(`[features-service] view-cache miss-persist failed view=${view}: ${(err as Error).message}`);
-  });
-  return body;
+  return computeAndPersistSingleFlight(view, scopeKey, orgId, compute);
+}
+
+async function computeAndPersistSingleFlight<T>(
+  view: string,
+  scopeKey: string,
+  orgId: string,
+  compute: () => Promise<T>,
+): Promise<T> {
+  const key = `${view}\0${scopeKey}`;
+  const existing = inFlightComputes.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  const promise = (async () => {
+    const body = await compute();
+    await upsertSnapshot(view, scopeKey, orgId, body).catch((err) => {
+      console.error(`[features-service] view-cache persist failed view=${view}: ${(err as Error).message}`);
+    });
+    return body;
+  })();
+
+  inFlightComputes.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    if (inFlightComputes.get(key) === promise) {
+      inFlightComputes.delete(key);
+    }
+  }
 }
 
 /** Background refresh of one stale cell. Single-flight via a conditional claim; never throws. */
