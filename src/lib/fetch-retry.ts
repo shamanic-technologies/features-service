@@ -3,12 +3,12 @@
  * (lead-service, brand-service, runs-service, email-gateway, instantly, campaign,
  * press-kits, journalists, workflow-service).
  *
- * Those siblings sit behind Neon scale-to-zero (DIS-153/155/157): idle compute
- * suspends, and the FIRST request after a suspend can hit a compute still
- * resuming (~1–7s). The TCP connection is reset / refused / times out before the
- * wake completes, so `fetch` rejects with `TypeError: fetch failed` whose `cause`
- * carries the transient code — `ECONNREFUSED` / `ECONNRESET` (observed),
- * `ETIMEDOUT` (Node-20 happy-eyeballs 250ms attempt window).
+ * Those siblings can be temporarily unreachable during cold starts, deploys, or
+ * Neon-backed boot windows. The TCP connection is reset / refused / times out
+ * before the service is reachable, so `fetch` rejects with `TypeError: fetch
+ * failed` whose `cause` carries the transient code — `ECONNREFUSED` /
+ * `ECONNRESET` (observed), `ETIMEDOUT` (Node-20 happy-eyeballs 250ms attempt
+ * window), or undici's `UND_ERR_CONNECT_TIMEOUT`.
  *
  * features-service's revenue path composes the pipeline total from a `Promise.all`
  * of lead/brand/runs/email-gateway calls and FAILS LOUD (502) on any rejection —
@@ -31,7 +31,7 @@ const TRANSIENT_CODES = new Set([
   "UND_ERR_SOCKET",
 ]);
 
-const BACKOFF_MS = [250, 500, 1000];
+const BACKOFF_MS = [250, 500, 1000, 2000, 4000, 8000];
 
 /**
  * A transient network error from `fetch` is wrapped in `cause` (and for
