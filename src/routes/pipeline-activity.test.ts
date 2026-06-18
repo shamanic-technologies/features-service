@@ -321,6 +321,31 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(vi.mocked(fetchWithRetry).mock.calls.some(([input]) => String(input).includes("/campaigns?"))).toBe(false);
   });
 
+  it("falls back to selected workflow rates when persona rates are unavailable", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+    mockFetch({
+      personaStats: [
+        { key: "persona-a", broadcast: { recipientStats: { contacted: 100, opened: 0, clicked: 0, repliesPositive: 0 } } },
+        { key: "persona-b", broadcast: { recipientStats: { contacted: 100, opened: 0, clicked: 0, repliesPositive: 0 } } },
+      ],
+      dailyStats: [
+        { key: "2026-06-17", broadcast: { recipientStats: { contacted: 1, sent: 1, opened: 1, clicked: 1 } } },
+      ],
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&timezone=UTC")
+      .set(AUTH)
+      .expect(200);
+
+    expect(res.body.days[0].metrics.outreach).toEqual({ actual: 1, expected: 10 });
+    expect(res.body.days[0].metrics.opens).toEqual({ actual: 1, expected: 4.5 });
+    expect(res.body.days[0].metrics.clicks).toEqual({ actual: 1, expected: 1 });
+    expect(res.body.days[0].metrics.signups).toEqual({ actual: 0.08, expected: 0.08, conversionPct: 8 });
+    expect(res.body.summary.openRatePct).toBe(45);
+  });
+
   it("orders days and buckets actuals by the requested timezone", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-17T02:30:00.000Z"));
