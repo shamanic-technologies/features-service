@@ -17,14 +17,14 @@ vi.mock("@sentry/node", () => ({
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.RUNS_SERVICE_URL = "http://runs:3000";
 process.env.RUNS_SERVICE_API_KEY = "runs-key";
+process.env.BILLING_SERVICE_URL = "http://billing:3000";
+process.env.BILLING_SERVICE_API_KEY = "billing-key";
 process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
 process.env.WORKFLOW_SERVICE_URL = "http://workflow:3000";
 process.env.WORKFLOW_SERVICE_API_KEY = "workflow-key";
 process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
-process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
-process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
@@ -75,26 +75,51 @@ const WORKFLOWS = [
 ];
 
 function mockFetch(opts: {
-  campaigns?: unknown[];
+  dailyBudgetCents?: string | number | null;
   economics?: unknown;
   emailStats?: unknown[];
   dailyStats?: unknown[];
+  personaStats?: unknown[];
+  personaWorkflowStats?: Record<string, unknown>;
+  personas?: unknown[];
+  brandProfile?: unknown;
 } = {}): void {
   vi.mocked(fetchWithRetry).mockImplementation(async (input) => {
     const rawInput = input as unknown;
     const url = typeof rawInput === "string" ? rawInput : rawInput instanceof URL ? rawInput.toString() : (rawInput as any).url;
+    const parsed = new URL(url);
 
-    if (url.includes("/campaigns?")) {
+    if (url.includes("/internal/brands/brand-1/daily-budget")) {
       return new Response(JSON.stringify({
-        campaigns: opts.campaigns ?? [
-          { id: "campaign-1", workflowSlug: "wf-a", status: "ongoing", maxBudgetDailyUsd: "50" },
+        brandId: "brand-1",
+        dailyBudgetCents: "dailyBudgetCents" in opts ? opts.dailyBudgetCents : "5000",
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    if (url.includes("/sales-economics-effective")) {
+      const economics = "economics" in opts ? opts.economics : ECONOMICS;
+      return new Response(JSON.stringify({ economics, source: economics ? "user" : null }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    if (url.includes("/orgs/brands/brand-1/personas")) {
+      return new Response(JSON.stringify({
+        personas: opts.personas ?? [
+          { id: "persona-a", brandId: "brand-1", name: "Persona A", filters: {}, status: "active", createdAt: "2026-06-01T00:00:00.000Z" },
+          { id: "persona-b", brandId: "brand-1", name: "Persona B", filters: {}, status: "active", createdAt: "2026-06-01T00:00:00.000Z" },
         ],
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
-    if (url.includes("/sales-economics")) {
-      const economics = "economics" in opts ? opts.economics : ECONOMICS;
-      return new Response(JSON.stringify({ salesEconomics: economics }), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (url.includes("/orgs/brands/brand-1/brand-profile")) {
+      return new Response(JSON.stringify({
+        current: "brandProfile" in opts ? opts.brandProfile : {
+          id: "profile-1",
+          brandId: "brand-1",
+          version: 1,
+          fields: {},
+          createdAt: "2026-06-01T00:00:00.000Z",
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
     if (url.includes("/public/workflows")) {
@@ -115,9 +140,39 @@ function mockFetch(opts: {
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
-    if (url.includes("/orgs/stats")) {
+    if (url.includes("/v1/stats/costs") && parsed.searchParams.get("groupBy") === "customerProfileId") {
       return new Response(JSON.stringify({
-        groups: opts.dailyStats ?? [],
+        groups: [
+          { dimensions: { customerProfileId: "persona-a" }, totalCostInUsdCents: "10000" },
+          { dimensions: { customerProfileId: "persona-b" }, totalCostInUsdCents: "40000" },
+        ],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    if (url.includes("/orgs/stats")) {
+      const groupBy = parsed.searchParams.get("groupBy");
+      if (groupBy === "day") {
+        return new Response(JSON.stringify({
+          groups: opts.dailyStats ?? [],
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (groupBy === "customerProfileId") {
+        return new Response(JSON.stringify({
+          groups: opts.personaStats ?? [
+            { key: "persona-a", broadcast: { recipientStats: { contacted: 100, opened: 40, clicked: 20, repliesPositive: 5 } } },
+            { key: "persona-b", broadcast: { recipientStats: { contacted: 100, opened: 90, clicked: 10, repliesPositive: 1 } } },
+          ],
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        broadcast: {
+          recipientStats: opts.personaWorkflowStats ?? {
+            contacted: 100,
+            opened: 40,
+            clicked: 20,
+            repliesPositive: 5,
+          },
+        },
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
@@ -141,7 +196,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
     mockFetch({
       dailyStats: [
-        { key: "2026-06-17", broadcast: { recipientStats: { sent: 2, opened: 1, clicked: 1 } } },
+        { key: "2026-06-17", broadcast: { recipientStats: { contacted: 2, sent: 2, opened: 1, clicked: 1 } } },
       ],
     });
 
@@ -164,23 +219,55 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     const today = res.body.days[0];
     expect(today.isToday).toBe(true);
     expect(today.metrics.outreach).toEqual({ actual: 2, expected: 10 });
-    expect(today.metrics.opens).toEqual({ actual: 1, expected: 4.5 });
-    expect(today.metrics.clicks).toEqual({ actual: 1, expected: 1 });
-    expect(today.metrics.signups).toEqual({ actual: 0.08, expected: 0.08, conversionPct: 8 });
+    expect(today.metrics.opens).toEqual({ actual: 1, expected: 4 });
+    expect(today.metrics.clicks).toEqual({ actual: 1, expected: 2 });
+    expect(today.metrics.signups).toEqual({ actual: 0.08, expected: 0.16, conversionPct: 8 });
 
     const tomorrow = res.body.days[1];
     expect(tomorrow.metrics.outreach).toEqual({ actual: null, expected: 10 });
-    expect(tomorrow.metrics.signups).toEqual({ actual: null, expected: 0.08, conversionPct: 8 });
+    expect(tomorrow.metrics.signups).toEqual({ actual: null, expected: 0.16, conversionPct: 8 });
 
     expect(res.body.summary).toEqual({
       dailyBudgetUsd: 50,
-      openRatePct: 45,
+      openRatePct: 40,
       clickToSignupPct: 8,
     });
 
-    const dailyStatsCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) =>
-      String(input).includes("/orgs/stats"),
+    const billingCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) =>
+      String(input).includes("/internal/brands/brand-1/daily-budget"),
     );
+    expect(billingCall).toBeTruthy();
+    expect((billingCall?.[1] as RequestInit | undefined)?.headers).toMatchObject({
+      "x-api-key": "billing-key",
+      "x-org-id": "org-1",
+      "x-user-id": "user-1",
+      "x-run-id": "run-1",
+      "x-brand-id": "brand-1",
+      "x-feature-slug": "sales-cold-email-outreach",
+    });
+
+    const personaStatsCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
+      const callUrl = new URL(String(input));
+      return callUrl.pathname === "/orgs/stats" && callUrl.searchParams.get("groupBy") === "customerProfileId";
+    });
+    expect(personaStatsCall).toBeTruthy();
+    const personaStatsUrl = new URL(String(personaStatsCall?.[0]));
+    expect(personaStatsUrl.searchParams.get("workflowDynastySlug")).toBeNull();
+    expect(personaStatsUrl.searchParams.get("workflowSlugs")).toBe("wf-a");
+
+    const personaWorkflowCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
+      const callUrl = new URL(String(input));
+      return callUrl.pathname === "/orgs/stats" && callUrl.searchParams.get("customerProfileId") === "persona-a";
+    });
+    expect(personaWorkflowCall).toBeTruthy();
+    const personaWorkflowUrl = new URL(String(personaWorkflowCall?.[0]));
+    expect(personaWorkflowUrl.searchParams.get("workflowDynastySlug")).toBeNull();
+    expect(personaWorkflowUrl.searchParams.get("workflowSlugs")).toBe("wf-a");
+
+    const dailyStatsCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
+      const callUrl = new URL(String(input));
+      return callUrl.pathname === "/orgs/stats" && callUrl.searchParams.get("groupBy") === "day";
+    });
     expect(dailyStatsCall).toBeTruthy();
     const dailyStatsUrl = new URL(String(dailyStatsCall?.[0]));
     expect(dailyStatsUrl.searchParams.get("type")).toBe("broadcast");
@@ -190,13 +277,13 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(dailyStatsUrl.searchParams.get("featureSlugs")).toBe("sales-cold-email-outreach");
   });
 
-  it("returns null expected values when active campaign daily budget is unavailable", async () => {
+  it("returns null expected values when brand daily budget is unavailable", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
     mockFetch({
-      campaigns: [{ id: "campaign-1", workflowSlug: "wf-a", status: "ongoing", maxBudgetDailyUsd: null }],
+      dailyBudgetCents: null,
       dailyStats: [
-        { key: "2026-06-17", broadcast: { recipientStats: { sent: 1, opened: 1, clicked: 1 } } },
+        { key: "2026-06-17", broadcast: { recipientStats: { contacted: 1, sent: 1, opened: 1, clicked: 1 } } },
       ],
     });
 
@@ -213,13 +300,13 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(res.body.summary.dailyBudgetUsd).toBeNull();
   });
 
-  it("projects expected values for configured ongoing campaigns", async () => {
+  it("projects expected values from brand daily budget, not campaign status", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
     mockFetch({
-      campaigns: [{ id: "campaign-1", workflowSlug: "wf-a", status: "ongoing", maxBudgetDailyUsd: "50" }],
+      dailyBudgetCents: "7500",
       dailyStats: [
-        { key: "2026-06-17", broadcast: { recipientStats: { sent: 1, opened: 1, clicked: 1 } } },
+        { key: "2026-06-17", broadcast: { recipientStats: { contacted: 1, sent: 1, opened: 1, clicked: 1 } } },
       ],
     });
 
@@ -228,40 +315,18 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
       .set(AUTH)
       .expect(200);
 
-    expect(res.body.days[0].metrics.outreach).toEqual({ actual: 1, expected: 10 });
-    expect(res.body.days[1].metrics.outreach).toEqual({ actual: null, expected: 10 });
-    expect(res.body.summary.dailyBudgetUsd).toBe(50);
+    expect(res.body.days[0].metrics.outreach).toEqual({ actual: 1, expected: 15 });
+    expect(res.body.days[1].metrics.outreach).toEqual({ actual: null, expected: 15 });
+    expect(res.body.summary.dailyBudgetUsd).toBe(75);
+    expect(vi.mocked(fetchWithRetry).mock.calls.some(([input]) => String(input).includes("/campaigns?"))).toBe(false);
   });
-
-  it.each(["stopped", "draft", "cancelled", "canceled", "completed", "failed"])(
-    "does not project expected values from %s campaigns",
-    async (status) => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
-      mockFetch({
-        campaigns: [{ id: "campaign-1", workflowSlug: "wf-a", status, maxBudgetDailyUsd: "50" }],
-        dailyStats: [
-          { key: "2026-06-17", broadcast: { recipientStats: { sent: 1, opened: 1, clicked: 1 } } },
-        ],
-      });
-
-      const res = await request(app)
-        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&timezone=UTC")
-        .set(AUTH)
-        .expect(200);
-
-      expect(res.body.days[0].metrics.outreach).toEqual({ actual: 1, expected: null });
-      expect(res.body.days[1].metrics.outreach).toEqual({ actual: null, expected: null });
-      expect(res.body.summary.dailyBudgetUsd).toBeNull();
-    },
-  );
 
   it("orders days and buckets actuals by the requested timezone", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-17T02:30:00.000Z"));
     mockFetch({
       dailyStats: [
-        { key: "2026-06-16", broadcast: { recipientStats: { sent: 1, opened: 1, clicked: 1 } } },
+        { key: "2026-06-16", broadcast: { recipientStats: { contacted: 1, sent: 1, opened: 1, clicked: 1 } } },
       ],
     });
 

@@ -4,12 +4,14 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
+import { fetchBrandPersonas, fetchCurrentBrandProfile } from "../lib/brand-client.js";
 import {
   fetchPublicCosts,
   fetchPublicEmailStats,
   fetchPublicWorkflows,
 } from "../lib/public-stats-clients.js";
-import { fetchSalesEconomics } from "../lib/sales-economics-client.js";
+import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
+import { projectOutcomeCosts, type SalesEconomics } from "../lib/funnel-registry.js";
 import { aggregateAcrossChains, buildUpgradeChains } from "./public.js";
 
 const router = Router();
@@ -49,28 +51,12 @@ interface PipelineActivityResponse {
   };
 }
 
-interface CampaignRow {
-  id: string;
-  workflowSlug: string;
-  status: string;
-  maxBudgetDailyUsd: string | null;
-}
-
-interface BudgetedCampaign {
-  id: string;
-  workflowSlug: string;
-  dailyBudgetUsd: number;
-}
-
-interface CampaignBudgetPlan {
-  dailyBudgetUsd: number | null;
-  campaigns: BudgetedCampaign[];
-}
-
 interface WorkflowActivityUnit {
+  workflowDynastySlug: string;
+  workflowSlugs: string[];
   outreachUsd: number | null;
   clickUsd: number | null;
-  openPerOutreach: number | null;
+  costPerSignupUsd: number | null;
 }
 
 interface ExpectedActivity {
@@ -81,6 +67,12 @@ interface ExpectedActivity {
   dailyBudgetUsd: number | null;
   openRatePct: number | null;
   clickToSignupPct: number | null;
+}
+
+interface ForecastRates {
+  openPerOutreach: number | null;
+  clickPerOutreach: number | null;
+  positiveReplyPerOutreach: number | null;
 }
 
 interface ActualActivity {
@@ -97,15 +89,13 @@ interface EmailGatewayDayGroup {
       sent?: number;
       opened?: number;
       clicked?: number;
+      repliesPositive?: number;
     };
   };
 }
 
-const ACTIVE_CAMPAIGN_STATUSES = new Set(["ongoing"]);
-
-function isActiveCampaignStatus(status: string): boolean {
-  return ACTIVE_CAMPAIGN_STATUSES.has(status.toLowerCase());
-}
+type Goal = "signup" | "meetingBooked" | "purchase";
+const FORECAST_GOAL: Goal = "signup";
 
 function isValidTimeZone(timezone: string): boolean {
   try {
@@ -140,10 +130,20 @@ function parseDays(raw: unknown): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-function parsePositiveUsd(raw: string | null | undefined): number | null {
+function parsePositiveNumber(raw: string | number | null | undefined): number | null {
   if (raw == null || raw === "") return null;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function parseNonNegativeNumber(raw: string | number | null | undefined): number | null {
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function ratio(num: number, den: number): number | null {
+  return den > 0 ? num / den : null;
 }
 
 function emptyExpected(clickToSignupPct: number | null = null): ExpectedActivity {
@@ -172,7 +172,7 @@ function getEmailGatewayHeaders(
   };
 }
 
-function getCampaignServiceHeaders(
+function getBillingServiceHeaders(
   apiKey: string,
   headers: { orgId: string; userId: string; runId: string; brandId: string; featureSlug: string },
 ): Record<string, string> {
@@ -186,42 +186,43 @@ function getCampaignServiceHeaders(
   };
 }
 
-async function fetchCampaignBudgetPlan(
+function getRunsServiceHeaders(
+  apiKey: string,
+  headers: { orgId: string; userId: string; runId: string; brandId: string; featureSlug: string },
+): Record<string, string> {
+  return {
+    "x-api-key": apiKey,
+    "x-org-id": headers.orgId,
+    "x-user-id": headers.userId,
+    "x-run-id": headers.runId,
+    "x-brand-id": headers.brandId,
+    "x-feature-slug": headers.featureSlug,
+  };
+}
+
+async function fetchBrandDailyBudgetUsd(
   brandId: string,
   featureSlug: string,
   headers: { orgId: string; userId: string; runId: string },
-): Promise<CampaignBudgetPlan> {
-  const url = process.env.CAMPAIGN_SERVICE_URL;
-  const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
+): Promise<number | null> {
+  const url = process.env.BILLING_SERVICE_URL;
+  const apiKey = process.env.BILLING_SERVICE_API_KEY;
   if (!url || !apiKey) {
-    throw new Error("CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
+    throw new Error("BILLING_SERVICE_URL or BILLING_SERVICE_API_KEY not configured");
   }
 
-  const params = new URLSearchParams({ brandId, featureSlug });
-  const response = await fetchWithRetry(`${url}/campaigns?${params}`, {
-    headers: getCampaignServiceHeaders(apiKey, { ...headers, brandId, featureSlug }),
+  const response = await fetchWithRetry(`${url}/internal/brands/${encodeURIComponent(brandId)}/daily-budget`, {
+    headers: getBillingServiceHeaders(apiKey, { ...headers, brandId, featureSlug }),
   });
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`campaign-service /campaigns failed (${response.status}): ${body}`);
+    throw new Error(`billing-service /internal/brands/:brandId/daily-budget failed (${response.status}): ${body}`);
   }
 
-  const data = (await response.json()) as { campaigns: CampaignRow[] };
-  const forecastable = data.campaigns.filter((campaign) => isActiveCampaignStatus(campaign.status));
-  if (forecastable.length === 0) return { dailyBudgetUsd: null, campaigns: [] };
-
-  const campaigns: BudgetedCampaign[] = [];
-  for (const campaign of forecastable) {
-    const dailyBudgetUsd = parsePositiveUsd(campaign.maxBudgetDailyUsd);
-    if (dailyBudgetUsd === null) return { dailyBudgetUsd: null, campaigns: [] };
-    campaigns.push({ id: campaign.id, workflowSlug: campaign.workflowSlug, dailyBudgetUsd });
-  }
-
-  return {
-    dailyBudgetUsd: campaigns.reduce((sum, campaign) => sum + campaign.dailyBudgetUsd, 0),
-    campaigns,
-  };
+  const data = (await response.json()) as { dailyBudgetCents: string | number | null };
+  const cents = parseNonNegativeNumber(data.dailyBudgetCents);
+  return cents === null ? null : cents / 100;
 }
 
 function readStatsNumber(value: unknown, label: string): number {
@@ -269,7 +270,7 @@ async function fetchDailyBroadcastActivity(
       throw new Error(`email-gateway day group ${group.key} missing broadcast recipientStats`);
     }
     result.set(group.key, {
-      outreach: readStatsNumber(stats.sent, "recipientStats.sent"),
+      outreach: readStatsNumber(stats.contacted, "recipientStats.contacted"),
       opens: readStatsNumber(stats.opened, "recipientStats.opened"),
       clicks: readStatsNumber(stats.clicked, "recipientStats.clicked"),
     });
@@ -278,7 +279,26 @@ async function fetchDailyBroadcastActivity(
   return result;
 }
 
-async function buildWorkflowActivityUnits(featureSlug: string): Promise<Map<string, WorkflowActivityUnit>> {
+function economicsToProjectionInputs(economics: SalesEconomics): {
+  r2m: number;
+  v2m: number;
+  m2c: number;
+  v2c: number;
+  v2s: number;
+} {
+  return {
+    r2m: economics.replyToMeetingPct / 100,
+    v2m: economics.visitToMeetingPct / 100,
+    m2c: economics.meetingToClosePct / 100,
+    v2c: economics.visitToClosePct / 100,
+    v2s: economics.visitToSignupPct / 100,
+  };
+}
+
+async function buildWorkflowActivityUnits(
+  featureSlug: string,
+  economics: SalesEconomics,
+): Promise<Map<string, WorkflowActivityUnit>> {
   const [workflows, costGroups, emailStats] = await Promise.all([
     fetchPublicWorkflows(featureSlug, "all"),
     fetchPublicCosts(featureSlug, "workflowSlug"),
@@ -287,21 +307,25 @@ async function buildWorkflowActivityUnits(featureSlug: string): Promise<Map<stri
 
   const chains = buildUpgradeChains(workflows);
   const { costMap, aggregatedOutcomes } = aggregateAcrossChains(chains, costGroups, emailStats, "workflowSlug");
+  const workflowBySlug = new Map(workflows.map((workflow) => [workflow.workflowSlug, workflow]));
   const unitsByWorkflowSlug = new Map<string, WorkflowActivityUnit>();
+  const projectionInputs = economicsToProjectionInputs(economics);
 
   for (const [activeSlug, chainSlugs] of chains) {
     const cost = costMap.get(activeSlug);
     if (!cost) continue;
     const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
     const costUsd = cost.totalCostInUsdCents / 100;
-    const outreach = outcomes.recipientsSent ?? 0;
-    const opened = outcomes.recipientsOpened ?? 0;
+    const contacted = outcomes.recipientsContacted ?? 0;
     const clicked = outcomes.recipientsClicked ?? 0;
+    const clickUsd = costUsd > 0 && clicked > 0 ? costUsd / clicked : null;
 
     const unit: WorkflowActivityUnit = {
-      outreachUsd: costUsd > 0 && outreach > 0 ? costUsd / outreach : null,
-      clickUsd: costUsd > 0 && clicked > 0 ? costUsd / clicked : null,
-      openPerOutreach: outreach > 0 ? opened / outreach : null,
+      workflowDynastySlug: workflowBySlug.get(activeSlug)?.workflowDynastySlug ?? activeSlug,
+      workflowSlugs: Array.from(new Set([...chainSlugs, activeSlug])),
+      outreachUsd: costUsd > 0 && contacted > 0 ? costUsd / contacted : null,
+      clickUsd,
+      costPerSignupUsd: projectOutcomeCosts(projectionInputs, { clickUsd, replyUsd: null }).costPerSignupUsd,
     };
 
     for (const slug of chainSlugs) unitsByWorkflowSlug.set(slug, unit);
@@ -311,23 +335,154 @@ async function buildWorkflowActivityUnits(featureSlug: string): Promise<Map<stri
   return unitsByWorkflowSlug;
 }
 
-function sumExpected(
-  campaigns: BudgetedCampaign[],
-  units: Map<string, WorkflowActivityUnit>,
-  project: (campaign: BudgetedCampaign, unit: WorkflowActivityUnit) => number | null,
-): number | null {
-  if (campaigns.length === 0) return null;
+function chooseBestSignupWorkflow(units: Map<string, WorkflowActivityUnit>): WorkflowActivityUnit | null {
+  let best: WorkflowActivityUnit | null = null;
+  for (const unit of units.values()) {
+    if (unit.costPerSignupUsd === null) continue;
+    if (best === null || best.costPerSignupUsd === null || unit.costPerSignupUsd < best.costPerSignupUsd) {
+      best = unit;
+    }
+  }
+  return best;
+}
 
-  let total = 0;
-  for (const campaign of campaigns) {
-    const unit = units.get(campaign.workflowSlug);
-    if (!unit) return null;
-    const projected = project(campaign, unit);
-    if (projected === null || !Number.isFinite(projected)) return null;
-    total += projected;
+async function fetchBestPersonaId(
+  brandId: string,
+  featureSlug: string,
+  workflowDynastySlug: string,
+  workflowSlugs: string[],
+  headers: { orgId: string; userId: string; runId: string },
+): Promise<{ customerProfileId: string; brandProfileId: string | null } | null> {
+  const runsUrl = process.env.RUNS_SERVICE_URL;
+  const runsApiKey = process.env.RUNS_SERVICE_API_KEY;
+  const emailUrl = process.env.EMAIL_GATEWAY_SERVICE_URL;
+  const emailApiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
+  if (!runsUrl || !runsApiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
+  if (!emailUrl || !emailApiKey) throw new Error("EMAIL_GATEWAY_SERVICE_URL or EMAIL_GATEWAY_SERVICE_API_KEY not configured");
+
+  const [personas, currentProfile] = await Promise.all([
+    fetchBrandPersonas(brandId, { ...headers, featureSlug }),
+    fetchCurrentBrandProfile(brandId, { ...headers, featureSlug }),
+  ]);
+  const activePersonaIds = new Set(personas.filter((persona) => persona.status === "active").map((persona) => persona.id));
+  if (activePersonaIds.size === 0) return null;
+
+  const brandProfileId = currentProfile?.id ?? null;
+  const costParams = new URLSearchParams({
+    groupBy: "customerProfileId",
+    brandId,
+    featureSlugs: featureSlug,
+    workflowDynastySlug,
+    goal: FORECAST_GOAL,
+  });
+  const outcomeParams = new URLSearchParams({
+    type: "broadcast",
+    groupBy: "customerProfileId",
+    brandId,
+    featureSlugs: featureSlug,
+    workflowSlugs: workflowSlugs.join(","),
+    goal: FORECAST_GOAL,
+  });
+  if (brandProfileId) {
+    costParams.set("brandProfileId", brandProfileId);
+    outcomeParams.set("brandProfileId", brandProfileId);
   }
 
-  return total;
+  const [costResponse, outcomeResponse] = await Promise.all([
+    fetchWithRetry(`${runsUrl}/v1/stats/costs?${costParams}`, {
+      headers: getRunsServiceHeaders(runsApiKey, { ...headers, brandId, featureSlug }),
+    }),
+    fetchWithRetry(`${emailUrl}/orgs/stats?${outcomeParams}`, {
+      headers: getEmailGatewayHeaders(emailApiKey, { ...headers, brandId, featureSlug }),
+    }),
+  ]);
+
+  if (!costResponse.ok) {
+    const body = await costResponse.text();
+    throw new Error(`runs-service persona costs failed (${costResponse.status}): ${body}`);
+  }
+  if (!outcomeResponse.ok) {
+    const body = await outcomeResponse.text();
+    throw new Error(`email-gateway persona stats failed (${outcomeResponse.status}): ${body}`);
+  }
+
+  const costData = (await costResponse.json()) as {
+    groups?: Array<{ dimensions?: Record<string, string | null>; totalCostInUsdCents: string | number }>;
+  };
+  const outcomeData = (await outcomeResponse.json()) as {
+    groups?: Array<{ key?: string | null; broadcast?: { recipientStats?: Record<string, number> } }>;
+  };
+  if (!Array.isArray(costData.groups)) throw new Error("runs-service persona costs returned no groups array");
+  if (!Array.isArray(outcomeData.groups)) throw new Error("email-gateway persona stats returned no groups array");
+
+  const costs = new Map<string, number>();
+  for (const group of costData.groups) {
+    const id = group.dimensions?.customerProfileId;
+    if (!id || id === "__total__" || !activePersonaIds.has(id)) continue;
+    const cents = parsePositiveNumber(group.totalCostInUsdCents);
+    if (cents !== null) costs.set(id, cents);
+  }
+
+  let best: { customerProfileId: string; cpcCents: number } | null = null;
+  for (const group of outcomeData.groups) {
+    const id = group.key;
+    if (!id || id === "__total__" || !activePersonaIds.has(id)) continue;
+    const stats = group.broadcast?.recipientStats;
+    if (!stats) throw new Error(`email-gateway persona stats missing recipientStats for customerProfileId=${id}`);
+    const costCents = costs.get(id);
+    const clicks = readStatsNumber(stats.clicked, "recipientStats.clicked");
+    if (costCents === undefined || clicks <= 0) continue;
+    const cpcCents = costCents / clicks;
+    if (best === null || cpcCents < best.cpcCents) best = { customerProfileId: id, cpcCents };
+  }
+
+  return best ? { customerProfileId: best.customerProfileId, brandProfileId } : null;
+}
+
+async function fetchPersonaWorkflowRates(
+  brandId: string,
+  featureSlug: string,
+  workflowSlugs: string[],
+  persona: { customerProfileId: string; brandProfileId: string | null },
+  headers: { orgId: string; userId: string; runId: string },
+): Promise<ForecastRates> {
+  const url = process.env.EMAIL_GATEWAY_SERVICE_URL;
+  const apiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
+  if (!url || !apiKey) {
+    throw new Error("EMAIL_GATEWAY_SERVICE_URL or EMAIL_GATEWAY_SERVICE_API_KEY not configured");
+  }
+
+  const params = new URLSearchParams({
+    type: "broadcast",
+    brandId,
+    featureSlugs: featureSlug,
+    workflowSlugs: workflowSlugs.join(","),
+    customerProfileId: persona.customerProfileId,
+    goal: FORECAST_GOAL,
+  });
+  if (persona.brandProfileId) params.set("brandProfileId", persona.brandProfileId);
+
+  const response = await fetchWithRetry(`${url}/orgs/stats?${params}`, {
+    headers: getEmailGatewayHeaders(apiKey, { ...headers, brandId, featureSlug }),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`email-gateway persona/workflow stats failed (${response.status}): ${body}`);
+  }
+
+  const data = (await response.json()) as { broadcast?: { recipientStats?: Record<string, number> } };
+  const stats = data.broadcast?.recipientStats;
+  if (!stats) return { openPerOutreach: null, clickPerOutreach: null, positiveReplyPerOutreach: null };
+
+  const contacted = readStatsNumber(stats.contacted, "recipientStats.contacted");
+  const opened = readStatsNumber(stats.opened, "recipientStats.opened");
+  const clicked = readStatsNumber(stats.clicked, "recipientStats.clicked");
+  const repliesPositive = readStatsNumber(stats.repliesPositive, "recipientStats.repliesPositive");
+  return {
+    openPerOutreach: ratio(opened, contacted),
+    clickPerOutreach: ratio(clicked, contacted),
+    positiveReplyPerOutreach: ratio(repliesPositive, contacted),
+  };
 }
 
 async function computeExpectedActivity(
@@ -335,35 +490,42 @@ async function computeExpectedActivity(
   brandId: string,
   headers: { orgId: string; userId: string; runId: string },
 ): Promise<ExpectedActivity> {
-  const [budgetPlan, units, economics] = await Promise.all([
-    fetchCampaignBudgetPlan(brandId, featureSlug, headers),
-    buildWorkflowActivityUnits(featureSlug),
-    fetchSalesEconomics(brandId, { ...headers, featureSlug }),
+  const [dailyBudgetUsd, effective] = await Promise.all([
+    fetchBrandDailyBudgetUsd(brandId, featureSlug, headers),
+    fetchEffectiveEconomics(brandId, { ...headers, featureSlug }),
   ]);
 
+  const economics = effective.economics;
   const clickToSignupPct = economics?.visitToSignupPct ?? null;
-  if (budgetPlan.dailyBudgetUsd === null) return emptyExpected(clickToSignupPct);
+  if (dailyBudgetUsd === null || !economics) return emptyExpected(clickToSignupPct);
 
-  const outreach = sumExpected(budgetPlan.campaigns, units, (campaign, unit) =>
-    unit.outreachUsd === null ? null : campaign.dailyBudgetUsd / unit.outreachUsd,
-  );
-  const clicks = sumExpected(budgetPlan.campaigns, units, (campaign, unit) =>
-    unit.clickUsd === null ? null : campaign.dailyBudgetUsd / unit.clickUsd,
-  );
-  const opens = sumExpected(budgetPlan.campaigns, units, (campaign, unit) => {
-    if (unit.outreachUsd === null || unit.openPerOutreach === null) return null;
-    return (campaign.dailyBudgetUsd / unit.outreachUsd) * unit.openPerOutreach;
-  });
+  const units = await buildWorkflowActivityUnits(featureSlug, economics);
+  const bestWorkflow = chooseBestSignupWorkflow(units);
+  if (!bestWorkflow || bestWorkflow.outreachUsd === null) return emptyExpected(clickToSignupPct);
 
+  const persona = await fetchBestPersonaId(
+    brandId,
+    featureSlug,
+    bestWorkflow.workflowDynastySlug,
+    bestWorkflow.workflowSlugs,
+    headers,
+  );
+  const rates = persona
+    ? await fetchPersonaWorkflowRates(brandId, featureSlug, bestWorkflow.workflowSlugs, persona, headers)
+    : { openPerOutreach: null, clickPerOutreach: null, positiveReplyPerOutreach: null };
+
+  const outreach = dailyBudgetUsd / bestWorkflow.outreachUsd;
+  const opens = rates.openPerOutreach !== null ? outreach * rates.openPerOutreach : null;
+  const clicks = rates.clickPerOutreach !== null ? outreach * rates.clickPerOutreach : null;
   const signups = clicks !== null && clickToSignupPct !== null ? clicks * (clickToSignupPct / 100) : null;
-  const openRatePct = outreach !== null && outreach > 0 && opens !== null ? (opens / outreach) * 100 : null;
+  const openRatePct = rates.openPerOutreach !== null ? rates.openPerOutreach * 100 : null;
 
   return {
     outreach,
     opens,
     clicks,
     signups,
-    dailyBudgetUsd: budgetPlan.dailyBudgetUsd,
+    dailyBudgetUsd,
     openRatePct,
     clickToSignupPct,
   };
