@@ -43,6 +43,8 @@ const ECONOMICS = {
   visitToMeetingPct: 5,  // v2m 0.05
   meetingToClosePct: 30, // m2c 0.3
   visitToClosePct: 2,    // v2c 0.02
+  visitToSignupPct: 4,   // v2s 0.04
+  signupToPaidClientPct: 50,
 };
 
 // Two dynasties. wf-a: $1000 cost / 200 contacted / 100 clicks / 50 replies
@@ -128,6 +130,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(a.contactedUsd).toBeCloseTo(5, 6); // $1000 / 200 contacted leads
     expect(a.replyUsd).toBeCloseTo(20, 6);  // $1000 / 50 replies
     expect(a.clickUsd).toBeCloseTo(10, 6);  // $1000 / 100 clicks
+    expect(a.costPerSignupUsd).toBeCloseTo(250, 3); // 1 / ((1/10)·0.04)
     // pCloseClick=orP(0.02,0.05·0.30)=0.0347, pCloseReply=0.40·0.30=0.12
     // closesPerBudget = (1/10)·0.0347 + (1/20)·0.12 = 0.00347 + 0.006 = 0.00947 → cpc = 105.5966
     expect(a.costPerCloseUsd).toBeCloseTo(105.5966, 3);
@@ -137,6 +140,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
 
     const b = byDynasty(res.body, "dyn-b");
     // closesPerBudget = (1/20)·0.0347 + (1/100)·0.12 = 0.001735 + 0.0012 = 0.002935 → cpc = 340.7155
+    expect(b.costPerSignupUsd).toBeCloseTo(500, 3);
     expect(b.costPerCloseUsd).toBeCloseTo(340.7155, 3);
     expect(b.costPerMeetingBookedUsd).toBeCloseTo(153.846, 3);
 
@@ -152,6 +156,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(a.projection.contactedLeads).toBeCloseTo(200, 6); // 1000/5
     expect(a.projection.replies).toBeCloseTo(50, 6);    // 1000/20
     expect(a.projection.visits).toBeCloseTo(100, 6);    // 1000/10
+    expect(a.projection.signups).toBeCloseTo(4, 6);      // 100·0.04
     expect(a.projection.meetings).toBeCloseTo(25, 6);   // 50·0.4 + 100·0.05 (both routes)
     expect(a.projection.closes).toBeCloseTo(9.47, 6);   // 1000·0.00947
     expect(a.projection.revenue).toBeCloseTo(9470, 4);  // 9.47·1000
@@ -171,12 +176,13 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(none.body.workflows).toEqual(meeting.body.workflows);
     expect(self.body.workflows).toEqual(meeting.body.workflows);
     // The recommended budget uses the objective's cost: meeting-booked → costPerMeetingBookedUsd,
-    // self-serve → costPerCloseUsd (legacy meaning of this endpoint's self-serve objective).
+    // self-serve → costPerSignupUsd.
     expect(meeting.body.recommendedBudgetUsd).toBeCloseTo(400, 2);
     expect(none.body.recommendedBudgetUsd).toBeCloseTo(400, 2);
-    expect(self.body.recommendedBudgetUsd).toBeCloseTo(1055.966, 2);
+    expect(self.body.recommendedBudgetUsd).toBeCloseTo(2500, 2);
     // both routes (click + reply) feed meetings now — non-null even under the former "self-serve"
     const selfA = byDynasty(self.body, "dyn-a");
+    expect(selfA.projection.signups).toBeCloseTo(4, 6);
     expect(selfA.projection.replies).toBeCloseTo(50, 6);
     expect(selfA.projection.meetings).toBeCloseTo(25, 6);
     // objective is still echoed for back-compat: default meeting-booked when absent/invalid
@@ -191,6 +197,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     const a = byDynasty(res.body, "dyn-a");
     expect(a.replyUsd).toBeCloseTo(20, 6);   // unit costs still computed
     expect(a.clickUsd).toBeCloseTo(10, 6);
+    expect(a.costPerSignupUsd).toBeNull();
     expect(a.costPerCloseUsd).toBeNull();
     expect(a.projection).toBeNull();
     expect(res.body.recommendedWorkflowDynastySlug).toBeNull();
@@ -204,6 +211,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
     expect(res.status).toBe(200);
     const a = byDynasty(res.body, "dyn-a");
+    expect(a.costPerSignupUsd).toBeCloseTo(250, 3);
     expect(a.costPerCloseUsd).toBeCloseTo(105.5966, 3); // same math as a saved set
     expect(a.costPerMeetingBookedUsd).toBeCloseTo(40, 3);
     expect(a.projection.closes).toBeCloseTo(9.47, 6);
@@ -218,6 +226,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     const a = byDynasty(res.body, "dyn-a");
     expect(a.replyUsd).toBeNull();
     expect(a.clickUsd).toBeCloseTo(10, 6);
+    expect(a.costPerSignupUsd).toBeCloseTo(250, 3);
     // closesPerBudget = (1/10)·0.0347 = 0.00347 → cpc ≈ 288.18 (reply route contributes 0)
     expect(a.costPerCloseUsd).toBeCloseTo(288.1844, 3);
     expect(a.costPerMeetingBookedUsd).toBeCloseTo(200, 3);
@@ -245,6 +254,46 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(res.body.recommendedBudgetUsd).toBeCloseTo(2333.333, 2); // 10 × costPerMeetingBookedUsd
   });
 
+  it("self-serve recommendation uses signup cost, not paid-close cost", async () => {
+    mockFetch({
+      emailGroups: [emailGroup("wf-a", 100, 0, 100)],
+      costGroups: [costGroup("wf-a", 30000)],
+      economics: {
+        ...ECONOMICS,
+        visitToSignupPct: 3,
+        signupToPaidClientPct: 10,
+        visitToClosePct: 0.3,
+        visitToMeetingPct: 0,
+        meetingToClosePct: 0,
+      },
+    });
+
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=self-serve`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.objective).toBe("self-serve");
+    const a = byDynasty(res.body, "dyn-a");
+    expect(a.clickUsd).toBeCloseTo(3, 6);
+    expect(a.costPerSignupUsd).toBeCloseTo(100, 3); // $3 / 0.03
+    expect(a.costPerCloseUsd).toBeCloseTo(1000, 3); // $3 / 0.003
+    expect(res.body.recommendedBudgetUsd).toBeCloseTo(1000, 2); // 10 × costPerSignupUsd
+  });
+
+  it("signup objective aliases self-serve for explicit consumers", async () => {
+    mockFetch();
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=signup`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.objective).toBe("signup");
+    expect(res.body.recommendedBudgetUsd).toBeCloseTo(2500, 2);
+  });
+
+  it("purchase objective keeps the paid-close recommendation available", async () => {
+    mockFetch();
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=purchase`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.objective).toBe("purchase");
+    expect(res.body.recommendedBudgetUsd).toBeCloseTo(1055.966, 2);
+  });
+
   it("workflow with no contacted-lead denominator → projection carries explicit contactedLeads null", async () => {
     mockFetch({ emailGroups: [emailGroup("wf-a", 100, 50, 0)] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
@@ -254,6 +303,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(a.projection.contactedLeads).toBeNull();
     expect(a.projection.replies).toBeCloseTo(50, 6);
     expect(a.projection.visits).toBeCloseTo(100, 6);
+    expect(a.projection.signups).toBeCloseTo(4, 6);
   });
 
   it("502 when a downstream source fails", async () => {
