@@ -252,7 +252,8 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     });
     expect(personaStatsCall).toBeTruthy();
     const personaStatsUrl = new URL(String(personaStatsCall?.[0]));
-    expect(personaStatsUrl.searchParams.get("workflowDynastySlug")).toBe("dyn-a");
+    expect(personaStatsUrl.searchParams.get("workflowDynastySlug")).toBeNull();
+    expect(personaStatsUrl.searchParams.get("workflowSlugs")).toBe("wf-a");
 
     const personaWorkflowCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
       const callUrl = new URL(String(input));
@@ -260,7 +261,8 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     });
     expect(personaWorkflowCall).toBeTruthy();
     const personaWorkflowUrl = new URL(String(personaWorkflowCall?.[0]));
-    expect(personaWorkflowUrl.searchParams.get("workflowDynastySlug")).toBe("dyn-a");
+    expect(personaWorkflowUrl.searchParams.get("workflowDynastySlug")).toBeNull();
+    expect(personaWorkflowUrl.searchParams.get("workflowSlugs")).toBe("wf-a");
 
     const dailyStatsCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
       const callUrl = new URL(String(input));

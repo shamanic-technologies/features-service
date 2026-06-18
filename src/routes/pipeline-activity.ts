@@ -53,6 +53,7 @@ interface PipelineActivityResponse {
 
 interface WorkflowActivityUnit {
   workflowDynastySlug: string;
+  workflowSlugs: string[];
   outreachUsd: number | null;
   clickUsd: number | null;
   costPerSignupUsd: number | null;
@@ -321,6 +322,7 @@ async function buildWorkflowActivityUnits(
 
     const unit: WorkflowActivityUnit = {
       workflowDynastySlug: workflowBySlug.get(activeSlug)?.workflowDynastySlug ?? activeSlug,
+      workflowSlugs: Array.from(new Set([...chainSlugs, activeSlug])),
       outreachUsd: costUsd > 0 && contacted > 0 ? costUsd / contacted : null,
       clickUsd,
       costPerSignupUsd: projectOutcomeCosts(projectionInputs, { clickUsd, replyUsd: null }).costPerSignupUsd,
@@ -348,6 +350,7 @@ async function fetchBestPersonaId(
   brandId: string,
   featureSlug: string,
   workflowDynastySlug: string,
+  workflowSlugs: string[],
   headers: { orgId: string; userId: string; runId: string },
 ): Promise<{ customerProfileId: string; brandProfileId: string | null } | null> {
   const runsUrl = process.env.RUNS_SERVICE_URL;
@@ -377,7 +380,7 @@ async function fetchBestPersonaId(
     groupBy: "customerProfileId",
     brandId,
     featureSlugs: featureSlug,
-    workflowDynastySlug,
+    workflowSlugs: workflowSlugs.join(","),
     goal: FORECAST_GOAL,
   });
   if (brandProfileId) {
@@ -439,7 +442,7 @@ async function fetchBestPersonaId(
 async function fetchPersonaWorkflowRates(
   brandId: string,
   featureSlug: string,
-  workflowDynastySlug: string,
+  workflowSlugs: string[],
   persona: { customerProfileId: string; brandProfileId: string | null },
   headers: { orgId: string; userId: string; runId: string },
 ): Promise<ForecastRates> {
@@ -453,7 +456,7 @@ async function fetchPersonaWorkflowRates(
     type: "broadcast",
     brandId,
     featureSlugs: featureSlug,
-    workflowDynastySlug,
+    workflowSlugs: workflowSlugs.join(","),
     customerProfileId: persona.customerProfileId,
     goal: FORECAST_GOAL,
   });
@@ -500,9 +503,15 @@ async function computeExpectedActivity(
   const bestWorkflow = chooseBestSignupWorkflow(units);
   if (!bestWorkflow || bestWorkflow.outreachUsd === null) return emptyExpected(clickToSignupPct);
 
-  const persona = await fetchBestPersonaId(brandId, featureSlug, bestWorkflow.workflowDynastySlug, headers);
+  const persona = await fetchBestPersonaId(
+    brandId,
+    featureSlug,
+    bestWorkflow.workflowDynastySlug,
+    bestWorkflow.workflowSlugs,
+    headers,
+  );
   const rates = persona
-    ? await fetchPersonaWorkflowRates(brandId, featureSlug, bestWorkflow.workflowDynastySlug, persona, headers)
+    ? await fetchPersonaWorkflowRates(brandId, featureSlug, bestWorkflow.workflowSlugs, persona, headers)
     : { openPerOutreach: null, clickPerOutreach: null, positiveReplyPerOutreach: null };
 
   const outreach = dailyBudgetUsd / bestWorkflow.outreachUsd;
