@@ -57,6 +57,8 @@ interface WorkflowActivityUnit {
   outreachUsd: number | null;
   clickUsd: number | null;
   costPerSignupUsd: number | null;
+  openPerOutreach: number | null;
+  clickPerOutreach: number | null;
 }
 
 interface ExpectedActivity {
@@ -317,6 +319,7 @@ async function buildWorkflowActivityUnits(
     const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
     const costUsd = cost.totalCostInUsdCents / 100;
     const contacted = outcomes.recipientsContacted ?? 0;
+    const opened = outcomes.recipientsOpened ?? 0;
     const clicked = outcomes.recipientsClicked ?? 0;
     const clickUsd = costUsd > 0 && clicked > 0 ? costUsd / clicked : null;
 
@@ -326,6 +329,8 @@ async function buildWorkflowActivityUnits(
       outreachUsd: costUsd > 0 && contacted > 0 ? costUsd / contacted : null,
       clickUsd,
       costPerSignupUsd: projectOutcomeCosts(projectionInputs, { clickUsd, replyUsd: null }).costPerSignupUsd,
+      openPerOutreach: ratio(opened, contacted),
+      clickPerOutreach: ratio(clicked, contacted),
     };
 
     for (const slug of chainSlugs) unitsByWorkflowSlug.set(slug, unit);
@@ -515,10 +520,12 @@ async function computeExpectedActivity(
     : { openPerOutreach: null, clickPerOutreach: null, positiveReplyPerOutreach: null };
 
   const outreach = dailyBudgetUsd / bestWorkflow.outreachUsd;
-  const opens = rates.openPerOutreach !== null ? outreach * rates.openPerOutreach : null;
-  const clicks = rates.clickPerOutreach !== null ? outreach * rates.clickPerOutreach : null;
+  const openPerOutreach = rates.openPerOutreach ?? bestWorkflow.openPerOutreach;
+  const clickPerOutreach = rates.clickPerOutreach ?? bestWorkflow.clickPerOutreach;
+  const opens = openPerOutreach !== null ? outreach * openPerOutreach : null;
+  const clicks = clickPerOutreach !== null ? outreach * clickPerOutreach : null;
   const signups = clicks !== null && clickToSignupPct !== null ? clicks * (clickToSignupPct / 100) : null;
-  const openRatePct = rates.openPerOutreach !== null ? rates.openPerOutreach * 100 : null;
+  const openRatePct = openPerOutreach !== null ? openPerOutreach * 100 : null;
 
   return {
     outreach,
