@@ -564,7 +564,27 @@ const personaStatsRowSchema = z.object({
     id: z.string(),
     name: z.string(),
     status: z.enum(["active", "paused", "archived"]),
-    filters: z.record(z.string(), z.array(z.string())),
+    filters: z
+      .object({
+        titles: z.array(z.string()).optional(),
+        seniorities: z.array(z.string()).optional(),
+        functions: z.array(z.string()).optional(),
+        locationCountries: z.array(z.string()).optional(),
+        locationStates: z.array(z.string()).optional(),
+        locationCities: z.array(z.string()).optional(),
+        companyNames: z.array(z.string()).optional(),
+        companyDomains: z.array(z.string()).optional(),
+        industries: z.array(z.string()).optional(),
+        keywords: z.array(z.string()).optional(),
+        employeeMin: z.number().optional(),
+        employeeMax: z.number().optional(),
+        companySizes: z.array(z.string()).optional(),
+        revenueRanges: z.array(z.string()).optional(),
+        fundingStages: z.array(z.string()).optional(),
+        technologies: z.array(z.string()).optional(),
+      })
+      .nullable()
+      .describe("Targeting filter-set, sourced from the human-service audience (preserved persona id)."),
   }),
   evidence: personaStatsEvidenceSchema,
   metrics: z.object({

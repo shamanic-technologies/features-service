@@ -4,7 +4,8 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
-import { fetchBrandPersonas, fetchCurrentBrandProfile, type BrandPersona } from "../lib/brand-client.js";
+import { fetchCurrentBrandProfile } from "../lib/brand-client.js";
+import { fetchActiveAudiences, type Audience, type AudienceFilters } from "../lib/human-client.js";
 import { isGoal, type Goal } from "../lib/goals.js";
 
 const router = Router();
@@ -30,8 +31,8 @@ interface PersonaStatsRow {
   persona: {
     id: string;
     name: string;
-    status: BrandPersona["status"];
-    filters: Record<string, string[]>;
+    status: Audience["status"];
+    filters: AudienceFilters | null;
   };
   evidence: PersonaCostEvidence & PersonaOutcomeEvidence;
   metrics: {
@@ -241,7 +242,7 @@ router.get("/features/:featureSlug/persona-stats", apiKeyAuth, async (req, res) 
 
     const identity = { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug };
     const [personas, currentProfile] = await Promise.all([
-      fetchBrandPersonas(brandId, identity),
+      fetchActiveAudiences(brandId, identity),
       explicitBrandProfileId ? Promise.resolve(null) : fetchCurrentBrandProfile(brandId, identity),
     ]);
     const brandProfileId = explicitBrandProfileId ?? currentProfile?.id ?? null;
