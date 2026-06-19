@@ -33,6 +33,31 @@ vocabulary mirrored locally (same convention as `SalesEconomics`) — no shared 
 features-service today; the publish-vs-mirror call is brand-service's when it builds goals (#242).
 Does NOT touch `workflow-projection` / `stats/ranked` (campaign creation unchanged). (Set 2026-06-16.)
 
+## `GET /features/:slug/persona-stats` — candidates come from human-service AUDIENCES, not brand personas (Wave 2, PR #336)
+
+persona-stats (`src/routes/persona-stats.ts`) sources its ranked candidate filter-sets from
+**human-service active audiences** via `src/lib/human-client.ts` `fetchActiveAudiences` →
+`GET /orgs/audiences?brandId=<uuid>&status=active`. The Wave 2 backfill **preserved each
+persona id as the audience id**, so `customerProfileId` (= `audience.id` = old persona id) is
+UNCHANGED — runs/email-gateway evidence joins exactly as before. **Do NOT re-key evidence.**
+`persona.filters` is the structured audience filter shape (faithful passthrough); campaign-service
+`fetchBestCustomerPersona` consumes `persona`/`evidence`/`metrics` as opaque `Record<string,unknown>`
+and takes `personas[0]`, so the row shape is frozen and campaign-service needs ZERO change.
+`brandProfileId` still comes from brand-service `fetchCurrentBrandProfile` (separate entity — NOT
+part of the persona-list swap; leave it).
+
+**Org-scoped flag — settled, do NOT re-litigate.** Brand personas were brand-scoped; audiences are
+org-scoped. This is functionally equivalent for the consumer and needs NO cross-org/brand-scoped
+human-service read: the ranking evidence (`fetchPersonaCosts`/`fetchPersonaOutcomes`) is ALREADY
+org-scoped (filtered by `x-org-id`), so a cross-org candidate carries zero evidence → null metrics
+→ sorted last → never `personas[0]` (campaign-service calls with `limit=1`). Building a brand-scoped
+audiences read would only resurrect zero-evidence rows that never rank.
+
+`HUMAN_SERVICE_URL`/`HUMAN_SERVICE_API_KEY` are read at CALL time (no boot crash) and fail loud when
+the targeting read runs without them — no fallback. **`pipeline-activity.ts:369` still reads brand
+personas** (`fetchBrandPersonas`) — a separate forecasting path, out of scope until personas are
+deleted in a later wave; migrate it then. (Set 2026-06-19.)
+
 ## Migration gotcha — drizzle-kit meta snapshot is DRIFTED; strip spurious `features` drops
 
 `drizzle/meta/` is out of sync with the live `features` table (a prior schema simplify edited
