@@ -20,6 +20,8 @@ process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
 process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
+process.env.HUMAN_SERVICE_URL = "http://human:3000";
+process.env.HUMAN_SERVICE_API_KEY = "human-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
@@ -77,12 +79,15 @@ function emailGroup(customerProfileId: string | null, clicked: number, repliesPo
 function mockFetch(): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-    if (url.includes("brand:3000/orgs/brands/brand-1/personas")) {
+    if (url.includes("human:3000/orgs/audiences")) {
       return new Response(JSON.stringify({
-        personas: [
-          { id: "persona-a", brandId: "brand-1", name: "CFOs", filters: { seniority: ["executive"] }, status: "active", createdAt: "2026-01-01T00:00:00Z" },
-          { id: "persona-b", brandId: "brand-1", name: "Founders", filters: { title: ["founder"] }, status: "paused", createdAt: "2026-01-01T00:00:00Z" },
+        audiences: [
+          { id: "persona-a", brandId: "brand-1", name: "CFOs", status: "active", filters: { seniorities: ["c_suite"] } },
+          { id: "persona-b", brandId: "brand-1", name: "Founders", status: "active", filters: { titles: ["founder"] } },
         ],
+        total: 2,
+        limit: 200,
+        offset: 0,
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) {
