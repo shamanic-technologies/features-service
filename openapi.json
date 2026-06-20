@@ -1471,9 +1471,13 @@
             "items": {
               "type": "object",
               "properties": {
+                "audienceId": {
+                  "type": "string",
+                  "description": "Audience ID (human-service audience.id) the row's evidence is attributed to. Same UUID as customerProfileId."
+                },
                 "customerProfileId": {
                   "type": "string",
-                  "description": "Stable customer persona/profile ID. Rows are emitted only for real attributed producer groups."
+                  "description": "Deprecated alias for audienceId — same UUID, kept for campaign-service back-compat. Rows are emitted only for real attributed producer groups."
                 },
                 "brandProfileId": {
                   "type": "string",
@@ -1667,6 +1671,7 @@
                 }
               },
               "required": [
+                "audienceId",
                 "customerProfileId",
                 "brandProfileId",
                 "persona",
@@ -4192,9 +4197,13 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "audienceId": {
+                            "type": "string",
+                            "description": "Audience ID (human-service audience.id) the row's evidence is attributed to. Same UUID as customerProfileId."
+                          },
                           "customerProfileId": {
                             "type": "string",
-                            "description": "Stable customer persona/profile ID. Rows are emitted only for real attributed producer groups."
+                            "description": "Deprecated alias for audienceId — same UUID, kept for campaign-service back-compat. Rows are emitted only for real attributed producer groups."
                           },
                           "brandProfileId": {
                             "type": "string",
@@ -4388,6 +4397,7 @@
                           }
                         },
                         "required": [
+                          "audienceId",
                           "customerProfileId",
                           "brandProfileId",
                           "persona",
