@@ -355,12 +355,13 @@ function chooseBestSignupWorkflow(units: Map<string, WorkflowActivityUnit>): Wor
 
 interface AudienceOutcome {
   contacted: number;
+  opened: number;
   clicked: number;
   positiveReplies: number;
 }
 
 function emptyAudienceOutcome(): AudienceOutcome {
-  return { contacted: 0, clicked: 0, positiveReplies: 0 };
+  return { contacted: 0, opened: 0, clicked: 0, positiveReplies: 0 };
 }
 
 /**
@@ -443,6 +444,7 @@ async function fetchAudienceOutcomes(
       const outcome = outcomesByEmail.get(email);
       if (!outcome) continue;
       if (outcome.contacted) agg.contacted += 1;
+      if (outcome.opened) agg.opened += 1;
       if (outcome.clicked) agg.clicked += 1;
       if (outcome.positiveReply) agg.positiveReplies += 1;
     }
@@ -457,9 +459,9 @@ async function fetchAudienceOutcomes(
  * Candidates come from human-service active audiences (org-scoped). Cost is per-audience from
  * runs (groupBy=audienceId); clicks are per-audience from read-time membership outcomes. CPC =
  * cost / clicked; lowest wins. Rates are derived from the SAME outcome tally (one pass, no
- * double-fetch): clickPerOutreach = clicked/contacted, positiveReplyPerOutreach =
- * positiveReplies/contacted. openPerOutreach is null — membership outcome flags expose no
- * `opened`, so the open rate falls back to the workflow-level aggregate in the caller.
+ * double-fetch): openPerOutreach = opened/contacted, clickPerOutreach = clicked/contacted,
+ * positiveReplyPerOutreach = positiveReplies/contacted — all audience-grain from the same
+ * membership tally (the caller still falls back to workflow rates when no audience qualifies).
  */
 async function fetchBestAudienceForecast(
   brandId: string,
@@ -493,7 +495,7 @@ async function fetchBestAudienceForecast(
     audienceId: best.audienceId,
     brandProfileId,
     rates: {
-      openPerOutreach: null,
+      openPerOutreach: ratio(best.outcome.opened, best.outcome.contacted),
       clickPerOutreach: ratio(best.outcome.clicked, best.outcome.contacted),
       positiveReplyPerOutreach: ratio(best.outcome.positiveReplies, best.outcome.contacted),
     },
