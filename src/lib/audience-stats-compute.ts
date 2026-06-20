@@ -25,9 +25,8 @@ interface AudienceOutcomeEvidence {
 }
 
 /**
- * Neutral row shape shared by both the persona-stats (deprecated alias) and audience-stats
- * surfaces. The compute is identical; only the response key naming differs at the route layer
- * (`audiences`/`audience` vs the legacy `personas`/`persona`).
+ * Row shape for the audience-stats endpoint: ranked human-service audiences with their
+ * attributed cost + outcome evidence and the derived CPC/CPPR metrics.
  */
 export interface AudienceStatsRow {
   audienceId: string;
@@ -208,7 +207,7 @@ async function fetchAudienceOutcomes(
 }
 
 /**
- * Shared compute for the audience-stats endpoint and its deprecated persona-stats alias.
+ * Compute for the audience-stats endpoint.
  * Validates the request (400s as `ok:false`), looks up the feature (404 as `ok:false`), and
  * fans out to runs-service (cost) + human-service/email-gateway (outcomes) to build ranked rows.
  * Downstream failures THROW — the route maps them to 502.
