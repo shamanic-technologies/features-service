@@ -558,7 +558,8 @@ const personaStatsEvidenceSchema = z.object({
 });
 
 const personaStatsRowSchema = z.object({
-  customerProfileId: z.string().describe("Stable customer persona/profile ID. Rows are emitted only for real attributed producer groups."),
+  audienceId: z.string().describe("Audience ID (human-service audience.id) the row's evidence is attributed to. Same UUID as customerProfileId."),
+  customerProfileId: z.string().describe("Deprecated alias for audienceId — same UUID, kept for campaign-service back-compat. Rows are emitted only for real attributed producer groups."),
   brandProfileId: z.string().nullable().describe("Brand-profile version used to filter producer evidence, when known."),
   persona: z.object({
     id: z.string(),
