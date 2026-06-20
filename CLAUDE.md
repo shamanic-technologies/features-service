@@ -90,12 +90,14 @@ already reads `personas[0].audienceId` and asserts `customerProfileId` absent (c
 drizzle 0035), so the purge had zero consumer blast radius — the prior "do NOT remove until T5" note was
 stale (T5 was already done).
 
-**Behavioral nuance (by design, not a bug):** membership outcome flags expose
-`contacted`/`clicked`/`positiveReply` only — NO `opened`. So per-audience open-rate is gone;
-`openPerOutreach` is null at the audience grain and the opens forecast + `openRatePct` fall back to the
-best workflow's aggregate open rate. Click-rate + reply-rate stay audience-specific. Mirrors
-persona-stats (which never had open). Audience-grain open would need an `opened` flag on email-gateway's
-outcome scope — deferred. (Set 2026-06-20.)
+All forecast rates are AUDIENCE-GRAIN from one membership tally: `openPerOutreach = opened/contacted`,
+`clickPerOutreach = clicked/contacted`, `positiveReplyPerOutreach = positiveReplies/contacted`.
+`fetchEmailOutcomes` reads the email-gateway broadcast `brand` scope booleans
+`contacted`/`opened`/`clicked` + positive-reply (all are required fields on the
+`POST /orgs/status` contract). The caller still falls back to the chosen workflow's aggregate rates
+when NO audience qualifies (no clicks). Don't mix grains — opens/clicks/replies must all come from the
+same audience tally so the forecast stays internally coherent (a workflow-grain open rate beside an
+audience-grain click rate was a bug, fixed PR #349). (Set 2026-06-20.)
 
 ## Migration gotcha — drizzle-kit meta snapshot is DRIFTED; strip spurious `features` drops
 

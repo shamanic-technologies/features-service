@@ -89,13 +89,13 @@ const MEMBERS: Record<string, string[]> = {
 };
 
 // email -> brand-scoped broadcast outcome flags (email-gateway POST /orgs/status)
-type Outcome = { contacted?: boolean; clicked?: boolean; replied?: boolean; replyClassification?: string | null };
+type Outcome = { contacted?: boolean; opened?: boolean; clicked?: boolean; replied?: boolean; replyClassification?: string | null };
 const DEFAULT_OUTCOMES: Record<string, Outcome> = {
-  // aud-a: contacted 2, clicked 1, positiveReply 1 -> CPC = 10000/1 = 10000 (best)
-  "a1@x.com": { contacted: true, clicked: true, replied: true, replyClassification: "positive" },
+  // aud-a: contacted 2, opened 1, clicked 1, positiveReply 1 -> CPC = 10000/1 = 10000 (best)
+  "a1@x.com": { contacted: true, opened: true, clicked: true, replied: true, replyClassification: "positive" },
   "a2@x.com": { contacted: true },
   // aud-b: contacted 2, clicked 1, positiveReply 0 -> CPC = 40000/1 = 40000
-  "b1@x.com": { contacted: true, clicked: true },
+  "b1@x.com": { contacted: true, opened: true, clicked: true },
   "b2@x.com": { contacted: true },
 };
 
@@ -247,8 +247,8 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(today.isToday).toBe(true);
     // outreachUsd = (100000/100)/200 = 5; budget 50 / 5 = 10 outreach.
     expect(today.metrics.outreach).toEqual({ actual: 2, expected: 10 });
-    // open rate falls back to workflow aggregate (90/200 = 0.45) — membership outcomes carry no open flag.
-    expect(today.metrics.opens).toEqual({ actual: 1, expected: 4.5 });
+    // best audience aud-a openPerOutreach = opened 1 / contacted 2 = 0.5 (audience-grain); opens = 10 * 0.5 = 5.
+    expect(today.metrics.opens).toEqual({ actual: 1, expected: 5 });
     // best audience aud-a clickPerOutreach = clicked 1 / contacted 2 = 0.5; clicks = 10 * 0.5 = 5.
     expect(today.metrics.clicks).toEqual({ actual: 1, expected: 5 });
     // signups expected = clicks 5 * 0.08; actual = clicks 1 * 0.08.
@@ -260,7 +260,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
 
     expect(res.body.summary).toEqual({
       dailyBudgetUsd: 50,
-      openRatePct: 45,
+      openRatePct: 50,
       clickToSignupPct: 8,
     });
 

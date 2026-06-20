@@ -46,6 +46,7 @@ export interface SignalDates {
 /** Boolean/classification fields on a StatusScope (distinct from the first*At timestamps). */
 interface OutcomeScope {
   contacted?: boolean;
+  opened?: boolean;
   clicked?: boolean;
   replied?: boolean;
   replyClassification?: "positive" | "negative" | "neutral" | null;
@@ -53,16 +54,17 @@ interface OutcomeScope {
 
 export interface EmailOutcome {
   contacted: boolean;
+  opened: boolean;
   clicked: boolean;
   positiveReply: boolean;
 }
 
 /**
  * Per-email brand-scoped outcome flags from email-gateway POST /orgs/status.
- * Reads the broadcast `brand` scope booleans (contacted / clicked) + positive-reply
- * (replied AND replyClassification === "positive"). Used by persona-stats to aggregate
- * outcomes per audience after resolving email->audience membership from human-service.
- * Fails loud on transport / non-OK error.
+ * Reads the broadcast `brand` scope booleans (contacted / opened / clicked) + positive-reply
+ * (replied AND replyClassification === "positive"). Used to aggregate outcomes per audience
+ * after resolving email->audience membership from human-service. Fails loud on transport /
+ * non-OK error.
  */
 export async function fetchEmailOutcomes(
   brandId: string,
@@ -106,6 +108,7 @@ export async function fetchEmailOutcomes(
     const brand = item.broadcast?.brand ?? null;
     result.set(item.email, {
       contacted: Boolean(brand?.contacted),
+      opened: Boolean(brand?.opened),
       clicked: Boolean(brand?.clicked),
       positiveReply: Boolean(brand?.replied) && brand?.replyClassification === "positive",
     });
