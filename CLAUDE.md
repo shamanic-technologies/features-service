@@ -72,9 +72,30 @@ The per-audience economics epic tags the SERVE/RUN with the audience, then featu
   attributed; historical = unattributed, acceptable.
 
 `HUMAN_SERVICE_URL`/`HUMAN_SERVICE_API_KEY` are read at CALL time (no boot crash) and fail loud when
-the targeting read runs without them — no fallback. **`pipeline-activity.ts:369` still reads brand
-personas** (`fetchBrandPersonas`) — a separate forecasting path, out of scope until personas are
-deleted in a later wave; migrate it then. (Set 2026-06-19.)
+the targeting read runs without them — no fallback. (Set 2026-06-19.)
+
+## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #345)
+
+`pipeline-activity.ts` (the budget→forecast endpoint) was the LAST `customerProfileId` / brand-persona
+consumer. It now mirrors persona-stats exactly: candidates from human-service active audiences
+(`fetchActiveAudiences`), cost from runs `groupBy=audienceId` (`dimensions.audienceId`, no legacy id
+fallback), engagement from read-time membership (`fetchAudienceMemberEmails` → `fetchEmailOutcomes`,
+explicit provenance — no send-tagging/inference). `fetchBestAudienceForecast` picks the lowest-CPC
+active audience for the chosen workflow (CPC = runs cost / membership clicks) and derives its rates
+from the SAME outcome tally (one pass). `fetchBrandPersonas`/`BrandPersona` are DELETED from
+`brand-client.ts` (zero remaining callers); `fetchCurrentBrandProfile` stays (still feeds the cost
+`brandProfileId` filter). **`git grep -i customerprofile src` now matches ONLY the persona-stats.test
+regression guard** (asserts the field is `undefined` — enforces no-legacy, do NOT remove). campaign-service
+already reads `personas[0].audienceId` and asserts `customerProfileId` absent (campaign-service#204,
+drizzle 0035), so the purge had zero consumer blast radius — the prior "do NOT remove until T5" note was
+stale (T5 was already done).
+
+**Behavioral nuance (by design, not a bug):** membership outcome flags expose
+`contacted`/`clicked`/`positiveReply` only — NO `opened`. So per-audience open-rate is gone;
+`openPerOutreach` is null at the audience grain and the opens forecast + `openRatePct` fall back to the
+best workflow's aggregate open rate. Click-rate + reply-rate stay audience-specific. Mirrors
+persona-stats (which never had open). Audience-grain open would need an `opened` flag on email-gateway's
+outcome scope — deferred. (Set 2026-06-20.)
 
 ## Migration gotcha — drizzle-kit meta snapshot is DRIFTED; strip spurious `features` drops
 
