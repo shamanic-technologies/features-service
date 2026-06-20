@@ -13,6 +13,7 @@ import workflowProjectionRoutes from "./routes/workflow-projection.js";
 import candidatesRoutes from "./routes/candidates.js";
 import pipelineActivityRoutes from "./routes/pipeline-activity.js";
 import personaStatsRoutes from "./routes/persona-stats.js";
+import audienceStatsRoutes from "./routes/audience-stats.js";
 import publicRoutes from "./routes/public.js";
 import { registerSeedFeatures } from "./seed/register.js";
 
@@ -46,6 +47,7 @@ app.use(workflowProjectionRoutes);
 app.use(candidatesRoutes);
 app.use(pipelineActivityRoutes);
 app.use(personaStatsRoutes);
+app.use(audienceStatsRoutes);
 
 // 404 handler
 app.use((req, res) => {
