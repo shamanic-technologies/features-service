@@ -631,6 +631,93 @@ registry.registerPath({
   },
 });
 
+// ── GET /features/:featureSlug/audience-stats ───────────────────────────────
+
+const audienceStatsEvidenceSchema = z.object({
+  totalCostInUsdCents: z.number().describe("Audience-scoped spend numerator from runs-service, in USD cents."),
+  completedRuns: z.number().describe("Completed runs behind this audience's cost evidence."),
+  firstRunAt: z.string().datetime().nullable(),
+  lastRunAt: z.string().datetime().nullable(),
+  contacted: z.number().describe("Audience-scoped contacted-recipient count from email-gateway broadcast stats."),
+  websiteClicks: z.number().describe("Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."),
+  positiveReplies: z.number().describe("Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."),
+});
+
+const audienceStatsRowSchema = z.object({
+  audienceId: z.string().describe("Audience ID (human-service audience.id) the row's evidence is attributed to. Rows are emitted only for real attributed producer groups."),
+  brandProfileId: z.string().nullable().describe("Brand-profile version used to filter producer evidence, when known."),
+  audience: z.object({
+    id: z.string(),
+    name: z.string(),
+    status: z.enum(["active", "paused", "archived"]),
+    filters: z
+      .object({
+        titles: z.array(z.string()).optional(),
+        seniorities: z.array(z.string()).optional(),
+        functions: z.array(z.string()).optional(),
+        locationCountries: z.array(z.string()).optional(),
+        locationStates: z.array(z.string()).optional(),
+        locationCities: z.array(z.string()).optional(),
+        companyNames: z.array(z.string()).optional(),
+        companyDomains: z.array(z.string()).optional(),
+        industries: z.array(z.string()).optional(),
+        keywords: z.array(z.string()).optional(),
+        employeeMin: z.number().optional(),
+        employeeMax: z.number().optional(),
+        companySizes: z.array(z.string()).optional(),
+        revenueRanges: z.array(z.string()).optional(),
+        fundingStages: z.array(z.string()).optional(),
+        technologies: z.array(z.string()).optional(),
+      })
+      .nullable()
+      .describe("Targeting filter-set, sourced from the human-service audience."),
+  }),
+  evidence: audienceStatsEvidenceSchema,
+  metrics: z.object({
+    cpcCents: z.number().nullable().describe("totalCostInUsdCents / websiteClicks. Null when websiteClicks is zero."),
+    cpprCents: z.number().nullable().describe("totalCostInUsdCents / positiveReplies. Null when positiveReplies is zero."),
+  }),
+});
+
+const audienceStatsResponseSchema = z.object({
+  featureSlug: z.string(),
+  brandId: z.string(),
+  goal: z.enum(["signup", "meetingBooked", "purchase"]),
+  brandProfileId: z.string().nullable(),
+  sortMetric: z.enum(["cpc", "cppr"]).describe("signup sorts by CPC; meetingBooked and purchase sort by CPPR."),
+  audiences: z.array(audienceStatsRowSchema).describe("Audience rows sorted ascending by sortMetric, with null metric values last."),
+});
+
+registry.register("AudienceStatsResponse", audienceStatsResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/features/{featureSlug}/audience-stats",
+  summary: "Audience-level cost and outcome evidence for a brand + feature + goal",
+  description:
+    "Returns ranked human-service audience rows for dashboard ranking. Each row is based on producer-side attribution of runs/outcomes to audienceId/brandProfileId/goal/workflow, never hash assignment or equal splitting of brand totals. " +
+    "Rows carry raw spend and outcome evidence so the dashboard can compute CPC (spend / websiteClicks) and CPPR (spend / positiveReplies). " +
+    "Rows with missing audienceId attribution are omitted. If brandProfileId is omitted, features-service reads the brand's current profile from brand-service and filters producer evidence to that profile when available. " +
+    "This is the audience-named surface; GET /features/{featureSlug}/persona-stats is a deprecated alias with identical data under personas/persona keys.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ featureSlug: z.string() }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required)."),
+      goal: z.enum(["signup", "meetingBooked", "purchase"]).describe("Active optimization goal (required). signup sorts by CPC; other goals sort by CPPR."),
+      brandProfileId: z.string().optional().describe("Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted."),
+      limit: z.string().optional().describe("Optional positive integer row limit after sorting."),
+    }),
+  },
+  responses: {
+    200: { description: "Audience cost/outcome evidence", content: { "application/json": { schema: audienceStatsResponseSchema } } },
+    400: { description: "Missing/invalid brandId, goal, or limit", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /stats ──────────────────────────────────────────────────────────
 
 registry.registerPath({
