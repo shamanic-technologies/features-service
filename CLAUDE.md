@@ -74,7 +74,7 @@ The per-audience economics epic tags the SERVE/RUN with the audience, then featu
 `HUMAN_SERVICE_URL`/`HUMAN_SERVICE_API_KEY` are read at CALL time (no boot crash) and fail loud when
 the targeting read runs without them — no fallback. (Set 2026-06-19.)
 
-## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #345)
+## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #346)
 
 `pipeline-activity.ts` (the budget→forecast endpoint) was the LAST `customerProfileId` / brand-persona
 consumer. It now mirrors persona-stats exactly: candidates from human-service active audiences
