@@ -5,7 +5,8 @@ import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
 import { fetchCurrentBrandProfile } from "../lib/brand-client.js";
-import { fetchActiveAudiences, type Audience, type AudienceFilters } from "../lib/human-client.js";
+import { fetchActiveAudiences, fetchAudienceMemberEmails, type Audience, type AudienceFilters } from "../lib/human-client.js";
+import { fetchEmailOutcomes } from "../lib/email-status-client.js";
 import { isGoal, type Goal } from "../lib/goals.js";
 
 const router = Router();
@@ -27,8 +28,6 @@ interface PersonaOutcomeEvidence {
 
 interface PersonaStatsRow {
   audienceId: string;
-  /** Deprecated alias for audienceId — same UUID, kept for campaign-service back-compat. */
-  customerProfileId: string;
   brandProfileId: string | null;
   persona: {
     id: string;
@@ -60,10 +59,8 @@ function buildHeaders(
   return headers;
 }
 
-function personaIdFromDimensions(dimensions: Record<string, string | null> | undefined): string | null {
-  // runs-service groups by audienceId (the audience.id attribution). customerProfileId is its
-  // deprecated alias — accept it as a fallback during the cross-service rollout window.
-  const id = dimensions?.audienceId ?? dimensions?.customerProfileId;
+function audienceIdFromDimensions(dimensions: Record<string, string | null> | undefined): string | null {
+  const id = dimensions?.audienceId;
   return id && id !== "__total__" ? id : null;
 }
 
@@ -94,11 +91,11 @@ function sortMetricForGoal(goal: Goal): SortMetric {
 function compareByMetric(metric: SortMetric, a: PersonaStatsRow, b: PersonaStatsRow): number {
   const av = metric === "cpc" ? a.metrics.cpcCents : a.metrics.cpprCents;
   const bv = metric === "cpc" ? b.metrics.cpcCents : b.metrics.cpprCents;
-  if (av === null && bv === null) return a.customerProfileId.localeCompare(b.customerProfileId);
+  if (av === null && bv === null) return a.audienceId.localeCompare(b.audienceId);
   if (av === null) return 1;
   if (bv === null) return -1;
   if (av !== bv) return av - bv;
-  return a.customerProfileId.localeCompare(b.customerProfileId);
+  return a.audienceId.localeCompare(b.audienceId);
 }
 
 async function fetchPersonaCosts(
@@ -145,9 +142,9 @@ async function fetchPersonaCosts(
 
   const result = new Map<string, PersonaCostEvidence>();
   for (const group of data.groups) {
-    const customerProfileId = personaIdFromDimensions(group.dimensions);
-    if (!customerProfileId) continue;
-    result.set(customerProfileId, {
+    const audienceId = audienceIdFromDimensions(group.dimensions);
+    if (!audienceId) continue;
+    result.set(audienceId, {
       totalCostInUsdCents: Math.round(readFiniteNumber(group.totalCostInUsdCents, "totalCostInUsdCents")),
       completedRuns: readFiniteNumber(group.runCount, "runCount"),
       firstRunAt: group.minStartedAt ?? null,
@@ -157,59 +154,39 @@ async function fetchPersonaCosts(
   return result;
 }
 
-async function fetchPersonaOutcomes(
+/**
+ * Per-audience outcome evidence, resolved READ-TIME from explicit membership (no send-tagging).
+ *
+ * For each active audience: human-service gives its canonical member emails (people served under
+ * it — provenance, human-service#42); email-gateway gives each email's brand-scoped broadcast
+ * outcome flags. We aggregate per audience: contacted / clicked / positiveReply member counts.
+ * An email in multiple audiences contributes to each (audiences overlap; the per-audience numbers
+ * rank candidates, they do NOT partition the brand total). Outcomes are recipient engagement, so
+ * they are NOT scoped by goal / brand-profile (only the COST is — via runs attribution).
+ */
+async function fetchAudienceOutcomes(
   brandId: string,
-  featureSlug: string,
-  goal: Goal,
-  brandProfileId: string | null,
+  audiences: Audience[],
   identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
 ): Promise<Map<string, PersonaOutcomeEvidence>> {
-  const baseUrl = process.env.EMAIL_GATEWAY_SERVICE_URL;
-  const apiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
-  if (!baseUrl || !apiKey) {
-    throw new Error("EMAIL_GATEWAY_SERVICE_URL or EMAIL_GATEWAY_SERVICE_API_KEY not configured");
-  }
+  const perAudience = await Promise.all(
+    audiences.map(async (a) => ({ audienceId: a.id, emails: await fetchAudienceMemberEmails(a.id, identity) })),
+  );
 
-  const params = new URLSearchParams({
-    type: "broadcast",
-    groupBy: "customerProfileId",
-    brandId,
-    featureSlugs: featureSlug,
-    goal,
-  });
-  if (brandProfileId) params.set("brandProfileId", brandProfileId);
-
-  const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, {
-    headers: buildHeaders(apiKey, identity.orgId, { ...identity, brandId }),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`email-gateway persona stats failed (${response.status}): ${text}`);
-  }
-
-  const data = (await response.json()) as {
-    groups?: Array<{
-      key?: string | null;
-      broadcast?: { recipientStats?: Record<string, number> };
-    }>;
-  };
-  if (!Array.isArray(data.groups)) {
-    throw new Error("email-gateway persona stats returned no groups array");
-  }
+  const allEmails = [...new Set(perAudience.flatMap((p) => p.emails))];
+  const outcomesByEmail = await fetchEmailOutcomes(brandId, allEmails, identity);
 
   const result = new Map<string, PersonaOutcomeEvidence>();
-  for (const group of data.groups) {
-    const customerProfileId = group.key && group.key !== "__total__" ? group.key : null;
-    if (!customerProfileId) continue;
-    const stats = group.broadcast?.recipientStats;
-    if (!stats) {
-      throw new Error(`email-gateway persona stats missing recipientStats for customerProfileId=${customerProfileId}`);
+  for (const { audienceId, emails } of perAudience) {
+    const agg = emptyOutcomes();
+    for (const email of emails) {
+      const o = outcomesByEmail.get(email);
+      if (!o) continue;
+      if (o.contacted) agg.contacted += 1;
+      if (o.clicked) agg.websiteClicks += 1;
+      if (o.positiveReply) agg.positiveReplies += 1;
     }
-    result.set(customerProfileId, {
-      contacted: readFiniteNumber(stats.contacted, "recipientStats.contacted"),
-      websiteClicks: readFiniteNumber(stats.clicked, "recipientStats.clicked"),
-      positiveReplies: readFiniteNumber(stats.repliesPositive, "recipientStats.repliesPositive"),
-    });
+    result.set(audienceId, agg);
   }
   return result;
 }
@@ -253,25 +230,24 @@ router.get("/features/:featureSlug/persona-stats", apiKeyAuth, async (req, res) 
 
     const [costs, outcomes] = await Promise.all([
       fetchPersonaCosts(brandId, featureSlug, goalParam, brandProfileId, identity),
-      fetchPersonaOutcomes(brandId, featureSlug, goalParam, brandProfileId, identity),
+      fetchAudienceOutcomes(brandId, personas, identity),
     ]);
 
     const personaMap = new Map(personas.map((persona) => [persona.id, persona]));
     const ids = new Set([...costs.keys(), ...outcomes.keys()]);
     const rows: PersonaStatsRow[] = [];
 
-    for (const customerProfileId of ids) {
-      const persona = personaMap.get(customerProfileId);
+    for (const audienceId of ids) {
+      const persona = personaMap.get(audienceId);
       if (!persona) continue;
 
-      const cost = costs.get(customerProfileId) ?? emptyCost();
-      const outcome = outcomes.get(customerProfileId) ?? emptyOutcomes();
+      const cost = costs.get(audienceId) ?? emptyCost();
+      const outcome = outcomes.get(audienceId) ?? emptyOutcomes();
       rows.push({
-        audienceId: customerProfileId,
-        customerProfileId,
+        audienceId,
         brandProfileId,
         persona: {
-          id: customerProfileId,
+          id: audienceId,
           name: persona.name,
           status: persona.status,
           filters: persona.filters,
