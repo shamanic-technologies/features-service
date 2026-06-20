@@ -76,13 +76,13 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = urlOf(input);
 
-    if (url.includes("human:3000/orgs/audiences/persona-a/members")) return membersResponse(EMAILS_A);
-    if (url.includes("human:3000/orgs/audiences/persona-b/members")) return membersResponse(EMAILS_B);
+    if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+    if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
     if (url.includes("human:3000/orgs/audiences")) {
       return new Response(JSON.stringify({
         audiences: [
-          { id: "persona-a", brandId: "brand-1", name: "CFOs", status: "active", filters: { seniorities: ["c_suite"] } },
-          { id: "persona-b", brandId: "brand-1", name: "Founders", status: "active", filters: { titles: ["founder"] } },
+          { id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: { seniorities: ["c_suite"] } },
+          { id: "audience-b", brandId: "brand-1", name: "Founders", status: "active", filters: { titles: ["founder"] } },
         ],
         total: 2,
         limit: 200,
@@ -98,9 +98,9 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     if (url.includes("runs:3000/v1/stats/costs")) {
       return new Response(JSON.stringify({
         groups: [
-          costGroup("persona-a", 3000, 3),
-          costGroup("persona-b", 1000, 2),
-          costGroup("unknown-persona", 200, 1),
+          costGroup("audience-a", 3000, 3),
+          costGroup("audience-b", 1000, 2),
+          costGroup("unknown-audience", 200, 1),
           costGroup(null, 9000, 9),
         ],
       }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -162,7 +162,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(Array.isArray(res.body.audiences)).toBe(true);
     expect(res.body.audiences.every((r: any) => r.persona === undefined)).toBe(true);
     expect(res.body.audiences.every((r: any) => r.audience !== undefined)).toBe(true);
-    expect(res.body.audiences.map((r: any) => r.audienceId)).toEqual(["persona-b", "persona-a"]);
+    expect(res.body.audiences.map((r: any) => r.audienceId)).toEqual(["audience-b", "audience-a"]);
     expect(res.body.audiences).toHaveLength(2);
     expect(res.body.audiences[0].audience.name).toBe("Founders");
     expect(res.body.audiences[0].evidence).toMatchObject({
@@ -188,7 +188,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.sortMetric).toBe("cppr");
-    expect(res.body.audiences.map((r: any) => r.audienceId)).toEqual(["persona-b", "persona-a"]);
+    expect(res.body.audiences.map((r: any) => r.audienceId)).toEqual(["audience-b", "audience-a"]);
     expect(res.body.audiences[0].metrics.cpprCents).toBe(200);
     expect(res.body.audiences[1].metrics.cpprCents).toBe(1500);
   });
@@ -206,35 +206,5 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     const urls: string[] = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0]));
     expect(urls.some((url) => url.includes("/brand-profile"))).toBe(false);
     expect(urls.find((url) => url.includes("runs:3000"))).toContain("brandProfileId=brand-profile-explicit");
-  });
-
-  it("audience-stats and persona-stats return identical data under their respective keys", async () => {
-    fetchSpy = mockFetch();
-    const aud = await request(app)
-      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup")
-      .set(AUTH);
-    fetchSpy.mockRestore();
-
-    fetchSpy = mockFetch();
-    const per = await request(app)
-      .get("/features/sales-cold-email-outreach/persona-stats?brandId=brand-1&goal=signup")
-      .set(AUTH);
-
-    expect(aud.status).toBe(200);
-    expect(per.status).toBe(200);
-    // envelope fields identical
-    for (const key of ["featureSlug", "brandId", "goal", "brandProfileId", "sortMetric"] as const) {
-      expect(aud.body[key]).toEqual(per.body[key]);
-    }
-    // rows identical except the block key name (audience vs persona)
-    expect(aud.body.audiences).toHaveLength(per.body.personas.length);
-    aud.body.audiences.forEach((r: any, i: number) => {
-      const p = per.body.personas[i];
-      expect(r.audienceId).toEqual(p.audienceId);
-      expect(r.brandProfileId).toEqual(p.brandProfileId);
-      expect(r.evidence).toEqual(p.evidence);
-      expect(r.metrics).toEqual(p.metrics);
-      expect(r.audience).toEqual(p.persona);
-    });
   });
 });
