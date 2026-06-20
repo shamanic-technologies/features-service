@@ -4,7 +4,9 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
-import { fetchBrandPersonas, fetchCurrentBrandProfile } from "../lib/brand-client.js";
+import { fetchCurrentBrandProfile } from "../lib/brand-client.js";
+import { fetchActiveAudiences, fetchAudienceMemberEmails, type Audience } from "../lib/human-client.js";
+import { fetchEmailOutcomes } from "../lib/email-status-client.js";
 import {
   fetchPublicCosts,
   fetchPublicEmailStats,
@@ -351,142 +353,150 @@ function chooseBestSignupWorkflow(units: Map<string, WorkflowActivityUnit>): Wor
   return best;
 }
 
-async function fetchBestPersonaId(
+interface AudienceOutcome {
+  contacted: number;
+  clicked: number;
+  positiveReplies: number;
+}
+
+function emptyAudienceOutcome(): AudienceOutcome {
+  return { contacted: 0, clicked: 0, positiveReplies: 0 };
+}
+
+/**
+ * Per-audience cost (USD cents), grouped by the human-service audience.id attribution
+ * (runs-service #154 `x-audience-id` write-tag, read back via groupBy=audienceId). Scoped
+ * to the chosen workflow dynasty + goal (+ brand profile when known) so the CPC ranking is
+ * per-workflow. Reads `dimensions.audienceId` only — no legacy id fallback.
+ */
+async function fetchAudienceCosts(
   brandId: string,
   featureSlug: string,
   workflowDynastySlug: string,
-  workflowSlugs: string[],
+  brandProfileId: string | null,
   headers: { orgId: string; userId: string; runId: string },
-): Promise<{ customerProfileId: string; brandProfileId: string | null } | null> {
+): Promise<Map<string, number>> {
   const runsUrl = process.env.RUNS_SERVICE_URL;
   const runsApiKey = process.env.RUNS_SERVICE_API_KEY;
-  const emailUrl = process.env.EMAIL_GATEWAY_SERVICE_URL;
-  const emailApiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
   if (!runsUrl || !runsApiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
-  if (!emailUrl || !emailApiKey) throw new Error("EMAIL_GATEWAY_SERVICE_URL or EMAIL_GATEWAY_SERVICE_API_KEY not configured");
 
-  const [personas, currentProfile] = await Promise.all([
-    fetchBrandPersonas(brandId, { ...headers, featureSlug }),
-    fetchCurrentBrandProfile(brandId, { ...headers, featureSlug }),
-  ]);
-  const activePersonaIds = new Set(personas.filter((persona) => persona.status === "active").map((persona) => persona.id));
-  if (activePersonaIds.size === 0) return null;
-
-  const brandProfileId = currentProfile?.id ?? null;
-  const costParams = new URLSearchParams({
-    groupBy: "customerProfileId",
+  const params = new URLSearchParams({
+    groupBy: "audienceId",
     brandId,
     featureSlugs: featureSlug,
     workflowDynastySlug,
     goal: FORECAST_GOAL,
   });
-  const outcomeParams = new URLSearchParams({
-    type: "broadcast",
-    groupBy: "customerProfileId",
-    brandId,
-    featureSlugs: featureSlug,
-    workflowSlugs: workflowSlugs.join(","),
-    goal: FORECAST_GOAL,
-  });
-  if (brandProfileId) {
-    costParams.set("brandProfileId", brandProfileId);
-    outcomeParams.set("brandProfileId", brandProfileId);
-  }
+  if (brandProfileId) params.set("brandProfileId", brandProfileId);
 
-  const [costResponse, outcomeResponse] = await Promise.all([
-    fetchWithRetry(`${runsUrl}/v1/stats/costs?${costParams}`, {
-      headers: getRunsServiceHeaders(runsApiKey, { ...headers, brandId, featureSlug }),
-    }),
-    fetchWithRetry(`${emailUrl}/orgs/stats?${outcomeParams}`, {
-      headers: getEmailGatewayHeaders(emailApiKey, { ...headers, brandId, featureSlug }),
-    }),
-  ]);
-
-  if (!costResponse.ok) {
-    const body = await costResponse.text();
-    throw new Error(`runs-service persona costs failed (${costResponse.status}): ${body}`);
-  }
-  if (!outcomeResponse.ok) {
-    const body = await outcomeResponse.text();
-    throw new Error(`email-gateway persona stats failed (${outcomeResponse.status}): ${body}`);
-  }
-
-  const costData = (await costResponse.json()) as {
-    groups?: Array<{ dimensions?: Record<string, string | null>; totalCostInUsdCents: string | number }>;
-  };
-  const outcomeData = (await outcomeResponse.json()) as {
-    groups?: Array<{ key?: string | null; broadcast?: { recipientStats?: Record<string, number> } }>;
-  };
-  if (!Array.isArray(costData.groups)) throw new Error("runs-service persona costs returned no groups array");
-  if (!Array.isArray(outcomeData.groups)) throw new Error("email-gateway persona stats returned no groups array");
-
-  const costs = new Map<string, number>();
-  for (const group of costData.groups) {
-    const id = group.dimensions?.customerProfileId;
-    if (!id || id === "__total__" || !activePersonaIds.has(id)) continue;
-    const cents = parsePositiveNumber(group.totalCostInUsdCents);
-    if (cents !== null) costs.set(id, cents);
-  }
-
-  let best: { customerProfileId: string; cpcCents: number } | null = null;
-  for (const group of outcomeData.groups) {
-    const id = group.key;
-    if (!id || id === "__total__" || !activePersonaIds.has(id)) continue;
-    const stats = group.broadcast?.recipientStats;
-    if (!stats) throw new Error(`email-gateway persona stats missing recipientStats for customerProfileId=${id}`);
-    const costCents = costs.get(id);
-    const clicks = readStatsNumber(stats.clicked, "recipientStats.clicked");
-    if (costCents === undefined || clicks <= 0) continue;
-    const cpcCents = costCents / clicks;
-    if (best === null || cpcCents < best.cpcCents) best = { customerProfileId: id, cpcCents };
-  }
-
-  return best ? { customerProfileId: best.customerProfileId, brandProfileId } : null;
-}
-
-async function fetchPersonaWorkflowRates(
-  brandId: string,
-  featureSlug: string,
-  workflowSlugs: string[],
-  persona: { customerProfileId: string; brandProfileId: string | null },
-  headers: { orgId: string; userId: string; runId: string },
-): Promise<ForecastRates> {
-  const url = process.env.EMAIL_GATEWAY_SERVICE_URL;
-  const apiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
-  if (!url || !apiKey) {
-    throw new Error("EMAIL_GATEWAY_SERVICE_URL or EMAIL_GATEWAY_SERVICE_API_KEY not configured");
-  }
-
-  const params = new URLSearchParams({
-    type: "broadcast",
-    brandId,
-    featureSlugs: featureSlug,
-    workflowSlugs: workflowSlugs.join(","),
-    customerProfileId: persona.customerProfileId,
-    goal: FORECAST_GOAL,
-  });
-  if (persona.brandProfileId) params.set("brandProfileId", persona.brandProfileId);
-
-  const response = await fetchWithRetry(`${url}/orgs/stats?${params}`, {
-    headers: getEmailGatewayHeaders(apiKey, { ...headers, brandId, featureSlug }),
+  const response = await fetchWithRetry(`${runsUrl}/v1/stats/costs?${params}`, {
+    headers: getRunsServiceHeaders(runsApiKey, { ...headers, brandId, featureSlug }),
   });
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`email-gateway persona/workflow stats failed (${response.status}): ${body}`);
+    throw new Error(`runs-service audience costs failed (${response.status}): ${body}`);
   }
 
-  const data = (await response.json()) as { broadcast?: { recipientStats?: Record<string, number> } };
-  const stats = data.broadcast?.recipientStats;
-  if (!stats) return { openPerOutreach: null, clickPerOutreach: null, positiveReplyPerOutreach: null };
+  const data = (await response.json()) as {
+    groups?: Array<{ dimensions?: Record<string, string | null>; totalCostInUsdCents: string | number }>;
+  };
+  if (!Array.isArray(data.groups)) throw new Error("runs-service audience costs returned no groups array");
 
-  const contacted = readStatsNumber(stats.contacted, "recipientStats.contacted");
-  const opened = readStatsNumber(stats.opened, "recipientStats.opened");
-  const clicked = readStatsNumber(stats.clicked, "recipientStats.clicked");
-  const repliesPositive = readStatsNumber(stats.repliesPositive, "recipientStats.repliesPositive");
+  const costs = new Map<string, number>();
+  for (const group of data.groups) {
+    const id = group.dimensions?.audienceId;
+    if (!id || id === "__total__") continue;
+    const cents = parsePositiveNumber(group.totalCostInUsdCents);
+    if (cents !== null) costs.set(id, cents);
+  }
+  return costs;
+}
+
+/**
+ * Per-audience engagement, resolved READ-TIME from explicit membership (no send-tagging).
+ *
+ * For each active audience: human-service gives its canonical member emails (provenance,
+ * human-service#42); email-gateway gives each email's brand-scoped broadcast outcome flags
+ * (contacted / clicked / positiveReply). We tally per audience. Outcomes are recipient
+ * engagement, so they are brand-scoped — NOT scoped by workflow / goal / brand-profile
+ * (only the COST is, via runs attribution). Mirrors persona-stats fetchAudienceOutcomes.
+ */
+async function fetchAudienceOutcomes(
+  brandId: string,
+  audiences: Audience[],
+  headers: { orgId: string; userId: string; runId: string; featureSlug: string },
+): Promise<Map<string, AudienceOutcome>> {
+  const perAudience = await Promise.all(
+    audiences.map(async (audience) => ({
+      audienceId: audience.id,
+      emails: await fetchAudienceMemberEmails(audience.id, headers),
+    })),
+  );
+
+  const allEmails = [...new Set(perAudience.flatMap((entry) => entry.emails))];
+  const outcomesByEmail = await fetchEmailOutcomes(brandId, allEmails, headers);
+
+  const result = new Map<string, AudienceOutcome>();
+  for (const { audienceId, emails } of perAudience) {
+    const agg = emptyAudienceOutcome();
+    for (const email of emails) {
+      const outcome = outcomesByEmail.get(email);
+      if (!outcome) continue;
+      if (outcome.contacted) agg.contacted += 1;
+      if (outcome.clicked) agg.clicked += 1;
+      if (outcome.positiveReply) agg.positiveReplies += 1;
+    }
+    result.set(audienceId, agg);
+  }
+  return result;
+}
+
+/**
+ * Pick the lowest-CPC active audience for the chosen workflow and derive its forecast rates.
+ *
+ * Candidates come from human-service active audiences (org-scoped). Cost is per-audience from
+ * runs (groupBy=audienceId); clicks are per-audience from read-time membership outcomes. CPC =
+ * cost / clicked; lowest wins. Rates are derived from the SAME outcome tally (one pass, no
+ * double-fetch): clickPerOutreach = clicked/contacted, positiveReplyPerOutreach =
+ * positiveReplies/contacted. openPerOutreach is null — membership outcome flags expose no
+ * `opened`, so the open rate falls back to the workflow-level aggregate in the caller.
+ */
+async function fetchBestAudienceForecast(
+  brandId: string,
+  featureSlug: string,
+  workflowDynastySlug: string,
+  headers: { orgId: string; userId: string; runId: string },
+): Promise<{ audienceId: string; brandProfileId: string | null; rates: ForecastRates } | null> {
+  const [audiences, currentProfile] = await Promise.all([
+    fetchActiveAudiences(brandId, { ...headers, featureSlug }),
+    fetchCurrentBrandProfile(brandId, { ...headers, featureSlug }),
+  ]);
+  if (audiences.length === 0) return null;
+
+  const brandProfileId = currentProfile?.id ?? null;
+  const [costs, outcomes] = await Promise.all([
+    fetchAudienceCosts(brandId, featureSlug, workflowDynastySlug, brandProfileId, headers),
+    fetchAudienceOutcomes(brandId, audiences, { ...headers, featureSlug }),
+  ]);
+
+  let best: { audienceId: string; cpcCents: number; outcome: AudienceOutcome } | null = null;
+  for (const audience of audiences) {
+    const costCents = costs.get(audience.id);
+    const outcome = outcomes.get(audience.id) ?? emptyAudienceOutcome();
+    if (costCents === undefined || outcome.clicked <= 0) continue;
+    const cpcCents = costCents / outcome.clicked;
+    if (best === null || cpcCents < best.cpcCents) best = { audienceId: audience.id, cpcCents, outcome };
+  }
+  if (!best) return null;
+
   return {
-    openPerOutreach: ratio(opened, contacted),
-    clickPerOutreach: ratio(clicked, contacted),
-    positiveReplyPerOutreach: ratio(repliesPositive, contacted),
+    audienceId: best.audienceId,
+    brandProfileId,
+    rates: {
+      openPerOutreach: null,
+      clickPerOutreach: ratio(best.outcome.clicked, best.outcome.contacted),
+      positiveReplyPerOutreach: ratio(best.outcome.positiveReplies, best.outcome.contacted),
+    },
   };
 }
 
@@ -508,16 +518,13 @@ async function computeExpectedActivity(
   const bestWorkflow = chooseBestSignupWorkflow(units);
   if (!bestWorkflow || bestWorkflow.outreachUsd === null) return emptyExpected(clickToSignupPct);
 
-  const persona = await fetchBestPersonaId(
+  const forecast = await fetchBestAudienceForecast(
     brandId,
     featureSlug,
     bestWorkflow.workflowDynastySlug,
-    bestWorkflow.workflowSlugs,
     headers,
   );
-  const rates = persona
-    ? await fetchPersonaWorkflowRates(brandId, featureSlug, bestWorkflow.workflowSlugs, persona, headers)
-    : { openPerOutreach: null, clickPerOutreach: null, positiveReplyPerOutreach: null };
+  const rates = forecast?.rates ?? { openPerOutreach: null, clickPerOutreach: null, positiveReplyPerOutreach: null };
 
   const outreach = dailyBudgetUsd / bestWorkflow.outreachUsd;
   const openPerOutreach = rates.openPerOutreach ?? bestWorkflow.openPerOutreach;
