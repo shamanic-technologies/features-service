@@ -25,6 +25,8 @@ process.env.WORKFLOW_SERVICE_URL = "http://workflow:3000";
 process.env.WORKFLOW_SERVICE_API_KEY = "workflow-key";
 process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
+process.env.HUMAN_SERVICE_URL = "http://human:3000";
+process.env.HUMAN_SERVICE_API_KEY = "human-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
@@ -74,20 +76,50 @@ const WORKFLOWS = [
   },
 ];
 
+// Default audiences (active). audience.id IS the attribution key (audienceId).
+const AUDIENCES = [
+  { id: "aud-a", brandId: "brand-1", name: "Audience A", status: "active", filters: {} },
+  { id: "aud-b", brandId: "brand-1", name: "Audience B", status: "active", filters: {} },
+];
+
+// audienceId -> member emails (human-service /orgs/audiences/:id/members)
+const MEMBERS: Record<string, string[]> = {
+  "aud-a": ["a1@x.com", "a2@x.com"],
+  "aud-b": ["b1@x.com", "b2@x.com"],
+};
+
+// email -> brand-scoped broadcast outcome flags (email-gateway POST /orgs/status)
+type Outcome = { contacted?: boolean; clicked?: boolean; replied?: boolean; replyClassification?: string | null };
+const DEFAULT_OUTCOMES: Record<string, Outcome> = {
+  // aud-a: contacted 2, clicked 1, positiveReply 1 -> CPC = 10000/1 = 10000 (best)
+  "a1@x.com": { contacted: true, clicked: true, replied: true, replyClassification: "positive" },
+  "a2@x.com": { contacted: true },
+  // aud-b: contacted 2, clicked 1, positiveReply 0 -> CPC = 40000/1 = 40000
+  "b1@x.com": { contacted: true, clicked: true },
+  "b2@x.com": { contacted: true },
+};
+
+// audienceId -> cost cents (runs /v1/stats/costs groupBy=audienceId)
+const DEFAULT_AUDIENCE_COSTS: Record<string, string> = { "aud-a": "10000", "aud-b": "40000" };
+
 function mockFetch(opts: {
   dailyBudgetCents?: string | number | null;
   economics?: unknown;
   emailStats?: unknown[];
   dailyStats?: unknown[];
-  personaStats?: unknown[];
-  personaWorkflowStats?: Record<string, unknown>;
-  personas?: unknown[];
+  audiences?: unknown[];
+  members?: Record<string, string[]>;
+  outcomes?: Record<string, Outcome>;
+  audienceCosts?: Record<string, string>;
   brandProfile?: unknown;
 } = {}): void {
-  vi.mocked(fetchWithRetry).mockImplementation(async (input) => {
+  vi.mocked(fetchWithRetry).mockImplementation(async (input, init) => {
     const rawInput = input as unknown;
     const url = typeof rawInput === "string" ? rawInput : rawInput instanceof URL ? rawInput.toString() : (rawInput as any).url;
     const parsed = new URL(url);
+    const members = opts.members ?? MEMBERS;
+    const outcomes = opts.outcomes ?? DEFAULT_OUTCOMES;
+    const audienceCosts = opts.audienceCosts ?? DEFAULT_AUDIENCE_COSTS;
 
     if (url.includes("/internal/brands/brand-1/daily-budget")) {
       return new Response(JSON.stringify({
@@ -101,13 +133,19 @@ function mockFetch(opts: {
       return new Response(JSON.stringify({ economics, source: economics ? "user" : null }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
-    if (url.includes("/orgs/brands/brand-1/personas")) {
+    // human-service: audience members (check BEFORE the audiences list — superstring path).
+    if (parsed.pathname.endsWith("/members")) {
+      const audienceId = parsed.pathname.split("/").slice(-2)[0];
+      const emails = members[audienceId] ?? [];
       return new Response(JSON.stringify({
-        personas: opts.personas ?? [
-          { id: "persona-a", brandId: "brand-1", name: "Persona A", filters: {}, status: "active", createdAt: "2026-06-01T00:00:00.000Z" },
-          { id: "persona-b", brandId: "brand-1", name: "Persona B", filters: {}, status: "active", createdAt: "2026-06-01T00:00:00.000Z" },
-        ],
+        members: emails.map((emailNorm) => ({ emailNorm })),
+        total: emails.length,
       }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    // human-service: active audiences list
+    if (parsed.pathname === "/orgs/audiences") {
+      return new Response(JSON.stringify({ audiences: opts.audiences ?? AUDIENCES }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
     if (url.includes("/orgs/brands/brand-1/brand-profile")) {
@@ -140,40 +178,29 @@ function mockFetch(opts: {
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
-    if (url.includes("/v1/stats/costs") && parsed.searchParams.get("groupBy") === "customerProfileId") {
+    // runs-service per-audience cost (groupBy=audienceId)
+    if (url.includes("/v1/stats/costs") && parsed.searchParams.get("groupBy") === "audienceId") {
       return new Response(JSON.stringify({
-        groups: [
-          { dimensions: { customerProfileId: "persona-a" }, totalCostInUsdCents: "10000" },
-          { dimensions: { customerProfileId: "persona-b" }, totalCostInUsdCents: "40000" },
-        ],
+        groups: Object.entries(audienceCosts).map(([audienceId, totalCostInUsdCents]) => ({
+          dimensions: { audienceId },
+          totalCostInUsdCents,
+        })),
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
-    if (url.includes("/orgs/stats")) {
-      const groupBy = parsed.searchParams.get("groupBy");
-      if (groupBy === "day") {
-        return new Response(JSON.stringify({
-          groups: opts.dailyStats ?? [],
-        }), { status: 200, headers: { "Content-Type": "application/json" } });
-      }
-      if (groupBy === "customerProfileId") {
-        return new Response(JSON.stringify({
-          groups: opts.personaStats ?? [
-            { key: "persona-a", broadcast: { recipientStats: { contacted: 100, opened: 40, clicked: 20, repliesPositive: 5 } } },
-            { key: "persona-b", broadcast: { recipientStats: { contacted: 100, opened: 90, clicked: 10, repliesPositive: 1 } } },
-          ],
-        }), { status: 200, headers: { "Content-Type": "application/json" } });
-      }
-      return new Response(JSON.stringify({
-        broadcast: {
-          recipientStats: opts.personaWorkflowStats ?? {
-            contacted: 100,
-            opened: 40,
-            clicked: 20,
-            repliesPositive: 5,
-          },
-        },
-      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    // email-gateway: per-email brand-scoped outcome flags (POST /orgs/status)
+    if (parsed.pathname === "/orgs/status") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { items?: Array<{ email: string }> };
+      const results = (body.items ?? []).map(({ email }) => ({
+        email,
+        broadcast: { brand: outcomes[email] ?? {} },
+      }));
+      return new Response(JSON.stringify({ results }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    // email-gateway: daily broadcast actuals (GET /orgs/stats?groupBy=day)
+    if (parsed.pathname === "/orgs/stats") {
+      return new Response(JSON.stringify({ groups: opts.dailyStats ?? [] }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
     return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
@@ -218,51 +245,51 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
 
     const today = res.body.days[0];
     expect(today.isToday).toBe(true);
+    // outreachUsd = (100000/100)/200 = 5; budget 50 / 5 = 10 outreach.
     expect(today.metrics.outreach).toEqual({ actual: 2, expected: 10 });
-    expect(today.metrics.opens).toEqual({ actual: 1, expected: 4 });
-    expect(today.metrics.clicks).toEqual({ actual: 1, expected: 2 });
-    expect(today.metrics.signups).toEqual({ actual: 0.08, expected: 0.16, conversionPct: 8 });
+    // open rate falls back to workflow aggregate (90/200 = 0.45) — membership outcomes carry no open flag.
+    expect(today.metrics.opens).toEqual({ actual: 1, expected: 4.5 });
+    // best audience aud-a clickPerOutreach = clicked 1 / contacted 2 = 0.5; clicks = 10 * 0.5 = 5.
+    expect(today.metrics.clicks).toEqual({ actual: 1, expected: 5 });
+    // signups expected = clicks 5 * 0.08; actual = clicks 1 * 0.08.
+    expect(today.metrics.signups).toEqual({ actual: 0.08, expected: 0.4, conversionPct: 8 });
 
     const tomorrow = res.body.days[1];
     expect(tomorrow.metrics.outreach).toEqual({ actual: null, expected: 10 });
-    expect(tomorrow.metrics.signups).toEqual({ actual: null, expected: 0.16, conversionPct: 8 });
+    expect(tomorrow.metrics.signups).toEqual({ actual: null, expected: 0.4, conversionPct: 8 });
 
     expect(res.body.summary).toEqual({
       dailyBudgetUsd: 50,
-      openRatePct: 40,
+      openRatePct: 45,
       clickToSignupPct: 8,
     });
 
-    const billingCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) =>
-      String(input).includes("/internal/brands/brand-1/daily-budget"),
+    // candidate set sourced from human-service active audiences (not brand personas).
+    const audiencesCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
+      const callUrl = new URL(String(input));
+      return callUrl.pathname === "/orgs/audiences" && callUrl.searchParams.get("status") === "active";
+    });
+    expect(audiencesCall).toBeTruthy();
+
+    // cost attributed via runs groupBy=audienceId, scoped to the chosen workflow dynasty + goal.
+    const audienceCostCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
+      const callUrl = new URL(String(input));
+      return callUrl.pathname === "/v1/stats/costs" && callUrl.searchParams.get("groupBy") === "audienceId";
+    });
+    expect(audienceCostCall).toBeTruthy();
+    const audienceCostUrl = new URL(String(audienceCostCall?.[0]));
+    expect(audienceCostUrl.searchParams.get("workflowDynastySlug")).toBe("dyn-a");
+    expect(audienceCostUrl.searchParams.get("goal")).toBe("signup");
+
+    // outcomes resolved read-time: member emails per audience + per-email outcome flags.
+    const memberCalls = vi.mocked(fetchWithRetry).mock.calls.filter(([input]) =>
+      new URL(String(input)).pathname.endsWith("/members"),
     );
-    expect(billingCall).toBeTruthy();
-    expect((billingCall?.[1] as RequestInit | undefined)?.headers).toMatchObject({
-      "x-api-key": "billing-key",
-      "x-org-id": "org-1",
-      "x-user-id": "user-1",
-      "x-run-id": "run-1",
-      "x-brand-id": "brand-1",
-      "x-feature-slug": "sales-cold-email-outreach",
-    });
-
-    const personaStatsCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
-      const callUrl = new URL(String(input));
-      return callUrl.pathname === "/orgs/stats" && callUrl.searchParams.get("groupBy") === "customerProfileId";
-    });
-    expect(personaStatsCall).toBeTruthy();
-    const personaStatsUrl = new URL(String(personaStatsCall?.[0]));
-    expect(personaStatsUrl.searchParams.get("workflowDynastySlug")).toBeNull();
-    expect(personaStatsUrl.searchParams.get("workflowSlugs")).toBe("wf-a");
-
-    const personaWorkflowCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
-      const callUrl = new URL(String(input));
-      return callUrl.pathname === "/orgs/stats" && callUrl.searchParams.get("customerProfileId") === "persona-a";
-    });
-    expect(personaWorkflowCall).toBeTruthy();
-    const personaWorkflowUrl = new URL(String(personaWorkflowCall?.[0]));
-    expect(personaWorkflowUrl.searchParams.get("workflowDynastySlug")).toBeNull();
-    expect(personaWorkflowUrl.searchParams.get("workflowSlugs")).toBe("wf-a");
+    expect(memberCalls).toHaveLength(2);
+    const statusCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) =>
+      new URL(String(input)).pathname === "/orgs/status",
+    );
+    expect(statusCall).toBeTruthy();
 
     const dailyStatsCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
       const callUrl = new URL(String(input));
@@ -321,14 +348,17 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(vi.mocked(fetchWithRetry).mock.calls.some(([input]) => String(input).includes("/campaigns?"))).toBe(false);
   });
 
-  it("falls back to selected workflow rates when persona rates are unavailable", async () => {
+  it("falls back to selected workflow rates when no audience has click outcomes", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
     mockFetch({
-      personaStats: [
-        { key: "persona-a", broadcast: { recipientStats: { contacted: 100, opened: 0, clicked: 0, repliesPositive: 0 } } },
-        { key: "persona-b", broadcast: { recipientStats: { contacted: 100, opened: 0, clicked: 0, repliesPositive: 0 } } },
-      ],
+      // no audience member clicked -> no audience qualifies -> all rates fall back to workflow aggregate.
+      outcomes: {
+        "a1@x.com": { contacted: true },
+        "a2@x.com": { contacted: true },
+        "b1@x.com": { contacted: true },
+        "b2@x.com": { contacted: true },
+      },
       dailyStats: [
         { key: "2026-06-17", broadcast: { recipientStats: { contacted: 1, sent: 1, opened: 1, clicked: 1 } } },
       ],
@@ -340,7 +370,9 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
       .expect(200);
 
     expect(res.body.days[0].metrics.outreach).toEqual({ actual: 1, expected: 10 });
+    // workflow open rate 90/200 = 0.45 -> 10 * 0.45 = 4.5.
     expect(res.body.days[0].metrics.opens).toEqual({ actual: 1, expected: 4.5 });
+    // workflow click rate 20/200 = 0.1 -> 10 * 0.1 = 1.
     expect(res.body.days[0].metrics.clicks).toEqual({ actual: 1, expected: 1 });
     expect(res.body.days[0].metrics.signups).toEqual({ actual: 0.08, expected: 0.08, conversionPct: 8 });
     expect(res.body.summary.openRatePct).toBe(45);
