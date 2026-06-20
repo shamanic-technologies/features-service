@@ -45,6 +45,7 @@ const FEATURE = {
   updatedAt: new Date(),
 };
 
+// Cost groups are keyed on the audienceId dimension (runs-service groupBy=audienceId).
 function costGroup(audienceId: string | null, cents: number, runCount = 1): Record<string, unknown> {
   return {
     dimensions: { audienceId },
@@ -55,30 +56,31 @@ function costGroup(audienceId: string | null, cents: number, runCount = 1): Reco
   };
 }
 
-function emailGroup(customerProfileId: string | null, clicked: number, repliesPositive: number): Record<string, unknown> {
-  return {
-    key: customerProfileId,
-    broadcast: {
-      recipientStats: {
-        contacted: clicked + repliesPositive,
-        sent: clicked + repliesPositive,
-        delivered: clicked + repliesPositive,
-        opened: clicked + repliesPositive,
-        clicked,
-        bounced: 0,
-        unsubscribed: 0,
-        repliesPositive,
-        repliesNegative: 0,
-        repliesNeutral: 0,
-        repliesAutoReply: 0,
-      },
-    },
-  };
+const mkEmails = (prefix: string, n: number): string[] => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
+
+// persona-a: 10 members, all clicked, 2 positive replies. persona-b: 20 members, all clicked, 5 positive.
+const EMAILS_A = mkEmails("a", 10);
+const EMAILS_B = mkEmails("b", 20);
+const POSITIVE = new Set([...EMAILS_A.slice(0, 2), ...EMAILS_B.slice(0, 5)]);
+
+function membersResponse(emails: string[]): Response {
+  return new Response(
+    JSON.stringify({ members: emails.map((e) => ({ emailNorm: e })), total: emails.length, limit: 500, offset: 0 }),
+    { status: 200, headers: { "Content-Type": "application/json" } },
+  );
+}
+
+function urlOf(input: unknown): string {
+  return typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as { url: string }).url;
 }
 
 function mockFetch(): ReturnType<typeof vi.spyOn> {
-  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = urlOf(input);
+
+    // Specific member paths BEFORE the audience-list prefix (substring routing).
+    if (url.includes("human:3000/orgs/audiences/persona-a/members")) return membersResponse(EMAILS_A);
+    if (url.includes("human:3000/orgs/audiences/persona-b/members")) return membersResponse(EMAILS_B);
     if (url.includes("human:3000/orgs/audiences")) {
       return new Response(JSON.stringify({
         audiences: [
@@ -106,15 +108,20 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
         ],
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    if (url.includes("email:3000/orgs/stats")) {
-      return new Response(JSON.stringify({
-        groups: [
-          emailGroup("persona-a", 10, 2),
-          emailGroup("persona-b", 20, 5),
-          emailGroup("unknown-persona", 50, 50),
-          emailGroup(null, 99, 99),
-        ],
-      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (url.includes("email:3000/orgs/status")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { items: Array<{ email: string }> };
+      const results = body.items.map(({ email }) => ({
+        email,
+        broadcast: {
+          brand: {
+            contacted: true,
+            clicked: true,
+            replied: POSITIVE.has(email),
+            replyClassification: POSITIVE.has(email) ? "positive" : null,
+          },
+        },
+      }));
+      return new Response(JSON.stringify({ results }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
   });
@@ -143,7 +150,7 @@ describe("GET /features/:featureSlug/persona-stats", () => {
     expect(res.status).toBe(400);
   });
 
-  it("sorts signup personas by CPC and omits unattributed or unknown groups", async () => {
+  it("sorts signup audiences by CPC and omits unattributed or unknown groups", async () => {
     fetchSpy = mockFetch();
 
     const res = await request(app)
@@ -153,19 +160,18 @@ describe("GET /features/:featureSlug/persona-stats", () => {
     expect(res.status).toBe(200);
     expect(res.body.sortMetric).toBe("cpc");
     expect(res.body.brandProfileId).toBe("brand-profile-1");
-    expect(res.body.personas.map((p: any) => p.customerProfileId)).toEqual(["persona-b", "persona-a"]);
-    // additive audience rename: audienceId mirrors customerProfileId (same UUID) for campaign-service back-compat
     expect(res.body.personas.map((p: any) => p.audienceId)).toEqual(["persona-b", "persona-a"]);
-    // cost fetch groups by audienceId (runs-service attribution), not the deprecated customerProfileId
-    const costUrl = fetchSpy.mock.calls
-      .map((c: any[]) => (typeof c[0] === "string" ? c[0] : c[0] instanceof URL ? c[0].toString() : c[0].url))
-      .find((u: string) => u.includes("runs:3000"));
+    // customerProfileId is fully removed — audienceId is the only attribution key.
+    expect(res.body.personas.every((p: any) => p.customerProfileId === undefined)).toBe(true);
+    // cost fetch groups by audienceId.
+    const costUrl = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).find((u: string) => u.includes("runs:3000"));
     expect(costUrl).toContain("groupBy=audienceId");
     expect(res.body.personas).toHaveLength(2);
     expect(res.body.personas[0].persona.name).toBe("Founders");
     expect(res.body.personas[0].evidence).toMatchObject({
       totalCostInUsdCents: 1000,
       completedRuns: 2,
+      contacted: 20,
       websiteClicks: 20,
       positiveReplies: 5,
     });
@@ -173,7 +179,7 @@ describe("GET /features/:featureSlug/persona-stats", () => {
     expect(res.body.personas[1].metrics.cpcCents).toBe(300);
   });
 
-  it("sorts sales-meeting personas by CPPR using the same real evidence", async () => {
+  it("sorts sales-meeting audiences by CPPR using read-time membership evidence", async () => {
     fetchSpy = mockFetch();
 
     const res = await request(app)
@@ -182,9 +188,25 @@ describe("GET /features/:featureSlug/persona-stats", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.sortMetric).toBe("cppr");
-    expect(res.body.personas.map((p: any) => p.customerProfileId)).toEqual(["persona-b", "persona-a"]);
+    expect(res.body.personas.map((p: any) => p.audienceId)).toEqual(["persona-b", "persona-a"]);
     expect(res.body.personas[0].metrics.cpprCents).toBe(200);
     expect(res.body.personas[1].metrics.cpprCents).toBe(1500);
+  });
+
+  it("resolves outcomes via human-service members + email-gateway /orgs/status (no email groupBy)", async () => {
+    fetchSpy = mockFetch();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/persona-stats?brandId=brand-1&goal=signup")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const urls: string[] = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0]));
+    expect(urls.some((u) => u.includes("/orgs/audiences/persona-a/members"))).toBe(true);
+    expect(urls.some((u) => u.includes("/orgs/audiences/persona-b/members"))).toBe(true);
+    expect(urls.some((u) => u.includes("email:3000/orgs/status"))).toBe(true);
+    // the deprecated per-audience email groupBy path is gone.
+    expect(urls.some((u) => u.includes("email:3000/orgs/stats"))).toBe(false);
   });
 
   it("uses explicit brandProfileId and does not fetch the current profile", async () => {
@@ -197,12 +219,9 @@ describe("GET /features/:featureSlug/persona-stats", () => {
     expect(res.status).toBe(200);
     expect(res.body.brandProfileId).toBe("brand-profile-explicit");
     expect(res.body.personas).toHaveLength(1);
-    const urls: string[] = fetchSpy.mock.calls.map((call: any[]) => {
-      const input = call[0];
-      return typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    });
-    expect(urls.some((url: string) => url.includes("/brand-profile"))).toBe(false);
-    expect(urls.find((url: string) => url.includes("runs:3000"))).toContain("brandProfileId=brand-profile-explicit");
-    expect(urls.find((url: string) => url.includes("email:3000"))).toContain("brandProfileId=brand-profile-explicit");
+    const urls: string[] = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0]));
+    expect(urls.some((url) => url.includes("/brand-profile"))).toBe(false);
+    // cost stays brand-profile-scoped; outcomes are recipient engagement (not profile-scoped).
+    expect(urls.find((url) => url.includes("runs:3000"))).toContain("brandProfileId=brand-profile-explicit");
   });
 });

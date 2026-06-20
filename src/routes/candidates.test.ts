@@ -128,10 +128,10 @@ describe("GET /features/:featureSlug/candidates", () => {
     expect(res.body.best).toBeUndefined();
   });
 
-  it("persona dimension is inert — every candidate carries customerProfileId null", async () => {
+  it("audience dimension is inert — every candidate carries audienceId null", async () => {
     mockFetch();
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
-    expect(res.body.candidates.every((c: any) => c.customerProfileId === null)).toBe(true);
+    expect(res.body.candidates.every((c: any) => c.audienceId === null)).toBe(true);
   });
 
   it("each candidate exposes its sample size (runs + outcome counts)", async () => {

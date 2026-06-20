@@ -18,13 +18,13 @@ const router = Router();
 // ── Fallback grain ladder ────────────────────────────────────────────────────
 //
 // Finest → coarsest evidence grain (per features-service#298):
-//   "persona"     = brandId × goal × brandProfileId × customerProfileId
+//   "persona"     = brandId × goal × brandProfileId × audienceId
 //   "brand-goal"  = brandId × goal (drop the persona + brand-profile dimensions)
 //   "goal-global" = goal / cross-org global (workflow evidence only)
 //
 // The "persona" rung requires this endpoint to read producer evidence tagged with the
-// (goal, brandProfileId, customerProfileId, workflow) tuple. That read path is not wired here
-// yet, so `customerProfileId` is null on every candidate today and no candidate resolves at
+// (goal, brandProfileId, audienceId, workflow) tuple. That read path is not wired here
+// yet, so `audienceId` is null on every candidate today and no candidate resolves at
 // "persona". This is not a mocked dimension — a null persona + an honest grain label is the
 // truthful "no persona-local data" signal the consumer asked for.
 type Grain = "persona" | "brand-goal" | "goal-global";
@@ -55,8 +55,8 @@ interface SampleSize {
 }
 
 interface Candidate {
-  /** Persona lever — null until this endpoint reads real persona-grain producer evidence. */
-  customerProfileId: string | null;
+  /** Audience lever — null until this endpoint reads real audience-grain producer evidence. */
+  audienceId: string | null;
   workflow: { workflowDynastySlug: string; workflowDynastyName: string | null };
   goal: Goal;
   /** Finest grain at which this candidate's evidence resolved. */
@@ -112,7 +112,7 @@ function costPerOutcomeForGoal(
 
 // ── GET /features/:featureSlug/candidates ────────────────────────────────────
 //
-// Serves the (customerProfileId, workflow) CANDIDATE SET for runtime per-lead selection — each
+// Serves the (audienceId, workflow) CANDIDATE SET for runtime per-lead selection — each
 // candidate with its OWN cost-per-outcome evidence, the SAMPLE SIZE behind it, CONVERSION and COST
 // evidence kept separate, and a labelled fallback GRAIN. Deliberately does NOT collapse to a single
 // "best": the consumer (campaign-service) owns the uncertainty-aware selection policy (Thompson-style
@@ -191,11 +191,11 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
 
       // Candidate evidence does not read persona-grain producer stats yet → never "persona".
       // Brand-local economics → "brand-goal"; otherwise the cost evidence is still cross-org global.
-      const customerProfileId: string | null = null;
-      const grain: Grain = customerProfileId != null ? "persona" : conversionGrain === "brand-goal" ? "brand-goal" : "goal-global";
+      const audienceId: string | null = null;
+      const grain: Grain = audienceId != null ? "persona" : conversionGrain === "brand-goal" ? "brand-goal" : "goal-global";
 
       candidates.push({
-        customerProfileId,
+        audienceId,
         workflow: {
           workflowDynastySlug: wf?.workflowDynastySlug ?? activeSlug,
           workflowDynastyName: wf?.workflowDynastyName ?? null,

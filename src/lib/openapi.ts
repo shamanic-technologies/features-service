@@ -499,7 +499,7 @@ const candidateSampleSizeSchema = z.object({
 });
 
 const candidateSchema = z.object({
-  customerProfileId: z.string().nullable().describe("Persona lever — null until this endpoint reads real persona-grain producer evidence. The persona grain is wired but inert; a null value + grain label is the truthful 'no persona-local data' signal."),
+  audienceId: z.string().nullable().describe("Audience lever — null until this endpoint reads real audience-grain producer evidence. The audience grain is wired but inert; a null value + grain label is the truthful 'no audience-local data' signal."),
   workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() }),
   goal: z.enum(["signup", "meetingBooked", "purchase"]),
   grain: z.enum(["persona", "brand-goal", "goal-global"]).describe("Finest fallback grain at which this candidate's evidence resolved. Never 'persona' until real persona-grain evidence is read by this endpoint."),
@@ -522,10 +522,10 @@ registry.register("CandidatesResponse", candidatesResponseSchema);
 registry.registerPath({
   method: "get",
   path: "/features/{featureSlug}/candidates",
-  summary: "Serve the (customerProfileId, workflow) candidate set with per-candidate evidence + sample size",
+  summary: "Serve the (audienceId, workflow) candidate set with per-candidate evidence + sample size",
   description:
     "Runtime per-lead selection evidence: returns the candidate SET — one per active workflow — each with its OWN cost-per-outcome for the goal, the SAMPLE SIZE behind it, CONVERSION and COST evidence kept separate, and a labelled fallback GRAIN. Deliberately does NOT collapse to a single best: the consumer owns the uncertainty-aware selection policy (Thompson-style). " +
-    "Fallback grain ladder (finest→coarsest): persona (brandId×goal×brandProfileId×customerProfileId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The persona rung is present in the contract but this endpoint does not read persona-grain producer evidence yet; until that lands, customerProfileId is null and no candidate resolves at 'persona'. " +
+    "Fallback grain ladder (finest→coarsest): persona (brandId×goal×brandProfileId×audienceId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The persona rung is present in the contract but this endpoint does not read persona-grain producer evidence yet; until that lands, audienceId is null and no candidate resolves at 'persona'. " +
     "Reuses the workflow-projection data path: global per-workflow unit costs aggregated over the upgrade chain + the brand's EFFECTIVE sales-economics. Additive — does not change workflow-projection / stats/ranked.",
   tags: ["Stats"],
   request: {
@@ -558,8 +558,7 @@ const personaStatsEvidenceSchema = z.object({
 });
 
 const personaStatsRowSchema = z.object({
-  audienceId: z.string().describe("Audience ID (human-service audience.id) the row's evidence is attributed to. Same UUID as customerProfileId."),
-  customerProfileId: z.string().describe("Deprecated alias for audienceId — same UUID, kept for campaign-service back-compat. Rows are emitted only for real attributed producer groups."),
+  audienceId: z.string().describe("Audience ID (human-service audience.id) the row's evidence is attributed to. Rows are emitted only for real attributed producer groups."),
   brandProfileId: z.string().nullable().describe("Brand-profile version used to filter producer evidence, when known."),
   persona: z.object({
     id: z.string(),
@@ -610,9 +609,9 @@ registry.registerPath({
   path: "/features/{featureSlug}/persona-stats",
   summary: "Persona-level cost and outcome evidence for a brand + feature + goal",
   description:
-    "Returns real customer persona/profile rows for dashboard ranking. Each row is based on producer-side attribution of runs/outcomes to customerProfileId/brandProfileId/goal/workflow, never hash assignment or equal splitting of brand totals. " +
+    "Returns real customer persona/profile rows for dashboard ranking. Each row is based on producer-side attribution of runs/outcomes to audienceId/brandProfileId/goal/workflow, never hash assignment or equal splitting of brand totals. " +
     "Rows carry raw spend and outcome evidence so the dashboard can compute CPC (spend / websiteClicks) and CPPR (spend / positiveReplies). " +
-    "Rows with missing customerProfileId attribution are omitted rather than assigned to a persona. If brandProfileId is omitted, features-service reads the brand's current profile from brand-service and filters producer evidence to that profile when available.",
+    "Rows with missing audienceId attribution are omitted rather than assigned to a persona. If brandProfileId is omitted, features-service reads the brand's current profile from brand-service and filters producer evidence to that profile when available.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,

@@ -43,6 +43,76 @@ export interface SignalDates {
   positiveReply: string | null;
 }
 
+/** Boolean/classification fields on a StatusScope (distinct from the first*At timestamps). */
+interface OutcomeScope {
+  contacted?: boolean;
+  clicked?: boolean;
+  replied?: boolean;
+  replyClassification?: "positive" | "negative" | "neutral" | null;
+}
+
+export interface EmailOutcome {
+  contacted: boolean;
+  clicked: boolean;
+  positiveReply: boolean;
+}
+
+/**
+ * Per-email brand-scoped outcome flags from email-gateway POST /orgs/status.
+ * Reads the broadcast `brand` scope booleans (contacted / clicked) + positive-reply
+ * (replied AND replyClassification === "positive"). Used by persona-stats to aggregate
+ * outcomes per audience after resolving email->audience membership from human-service.
+ * Fails loud on transport / non-OK error.
+ */
+export async function fetchEmailOutcomes(
+  brandId: string,
+  emails: string[],
+  headers: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
+): Promise<Map<string, EmailOutcome>> {
+  const result = new Map<string, EmailOutcome>();
+  if (emails.length === 0) return result;
+
+  const url = process.env.EMAIL_GATEWAY_SERVICE_URL;
+  const apiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
+  if (!url || !apiKey) {
+    throw new Error("EMAIL_GATEWAY_SERVICE_URL or EMAIL_GATEWAY_SERVICE_API_KEY not configured");
+  }
+
+  const reqHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-api-key": apiKey,
+    "x-org-id": headers.orgId,
+    "x-brand-id": brandId,
+  };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+  if (headers.campaignId) reqHeaders["x-campaign-id"] = headers.campaignId;
+  if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
+
+  const response = await fetchWithRetry(`${url}/orgs/status`, {
+    method: "POST",
+    headers: reqHeaders,
+    body: JSON.stringify({ brandId, items: emails.map((email) => ({ email })) }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`email-gateway /orgs/status failed (${response.status}): ${text}`);
+  }
+
+  const data = (await response.json()) as {
+    results: Array<{ email: string; broadcast?: { brand?: OutcomeScope | null } }>;
+  };
+  for (const item of data.results) {
+    const brand = item.broadcast?.brand ?? null;
+    result.set(item.email, {
+      contacted: Boolean(brand?.contacted),
+      clicked: Boolean(brand?.clicked),
+      positiveReply: Boolean(brand?.replied) && brand?.replyClassification === "positive",
+    });
+  }
+  return result;
+}
+
 const minDate = (a: string | null, b: string | null): string | null => {
   if (!a) return b;
   if (!b) return a;
