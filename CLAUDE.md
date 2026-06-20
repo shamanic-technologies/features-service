@@ -53,6 +53,24 @@ org-scoped (filtered by `x-org-id`), so a cross-org candidate carries zero evide
 → sorted last → never `personas[0]` (campaign-service calls with `limit=1`). Building a brand-scoped
 audiences read would only resurrect zero-evidence rows that never rank.
 
+**Wave 3 — cost is attributed via `audienceId` write-tag, NOT read-time inference (PR #340, additive).**
+The per-audience economics epic tags the SERVE/RUN with the audience, then features-service reads it back:
+- **Cost (done, T4a/#340):** `fetchPersonaCosts` now reads runs-service `groupBy=audienceId` (the
+  `x-audience-id` attribution shipped in runs-service #154 — campaign-service #204 sets it on the
+  workflow root run, runs inherits it down the run tree). `personaIdFromDimensions` reads
+  `dimensions.audienceId` (falls back to the deprecated `customerProfileId` alias during rollout). Each
+  persona-stats row now carries BOTH `audienceId` (canonical) and `customerProfileId` (= same UUID, kept
+  as a deprecated alias so campaign-service's `personas[0].customerProfileId` selection keeps working).
+  **Do NOT remove `customerProfileId` from the row until campaign-service + id-service migrate to
+  `audienceId` (T5).** Cost is EXACT (one workflow execution = one priority audience → its run tree maps
+  to one audience; no allocation).
+- **Outcomes (follow-up, T4b — NOT done):** the email-gateway `groupBy=customerProfileId` path is empty
+  (sends are NOT tagged with the audience — by design). The rebuild resolves email→audience READ-TIME:
+  recipient emails → human-service `POST /orgs/audiences/stats` (provenance membership populated by
+  serve-next + lead-service#295). **No inference / no send-tagging / no enrichment** — explicit
+  provenance only (human-service#42). Forward-only: only campaigns served via audiences after #295 get
+  attributed; historical = unattributed, acceptable.
+
 `HUMAN_SERVICE_URL`/`HUMAN_SERVICE_API_KEY` are read at CALL time (no boot crash) and fail loud when
 the targeting read runs without them — no fallback. **`pipeline-activity.ts:369` still reads brand
 personas** (`fetchBrandPersonas`) — a separate forecasting path, out of scope until personas are

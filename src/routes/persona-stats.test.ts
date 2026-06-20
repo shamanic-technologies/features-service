@@ -45,9 +45,9 @@ const FEATURE = {
   updatedAt: new Date(),
 };
 
-function costGroup(customerProfileId: string | null, cents: number, runCount = 1): Record<string, unknown> {
+function costGroup(audienceId: string | null, cents: number, runCount = 1): Record<string, unknown> {
   return {
-    dimensions: { customerProfileId },
+    dimensions: { audienceId },
     totalCostInUsdCents: String(cents),
     runCount,
     minStartedAt: "2026-01-01T00:00:00Z",
@@ -154,6 +154,13 @@ describe("GET /features/:featureSlug/persona-stats", () => {
     expect(res.body.sortMetric).toBe("cpc");
     expect(res.body.brandProfileId).toBe("brand-profile-1");
     expect(res.body.personas.map((p: any) => p.customerProfileId)).toEqual(["persona-b", "persona-a"]);
+    // additive audience rename: audienceId mirrors customerProfileId (same UUID) for campaign-service back-compat
+    expect(res.body.personas.map((p: any) => p.audienceId)).toEqual(["persona-b", "persona-a"]);
+    // cost fetch groups by audienceId (runs-service attribution), not the deprecated customerProfileId
+    const costUrl = fetchSpy.mock.calls
+      .map((c: any[]) => (typeof c[0] === "string" ? c[0] : c[0] instanceof URL ? c[0].toString() : c[0].url))
+      .find((u: string) => u.includes("runs:3000"));
+    expect(costUrl).toContain("groupBy=audienceId");
     expect(res.body.personas).toHaveLength(2);
     expect(res.body.personas[0].persona.name).toBe("Founders");
     expect(res.body.personas[0].evidence).toMatchObject({

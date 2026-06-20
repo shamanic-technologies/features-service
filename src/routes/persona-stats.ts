@@ -26,6 +26,8 @@ interface PersonaOutcomeEvidence {
 }
 
 interface PersonaStatsRow {
+  audienceId: string;
+  /** Deprecated alias for audienceId — same UUID, kept for campaign-service back-compat. */
   customerProfileId: string;
   brandProfileId: string | null;
   persona: {
@@ -59,7 +61,9 @@ function buildHeaders(
 }
 
 function personaIdFromDimensions(dimensions: Record<string, string | null> | undefined): string | null {
-  const id = dimensions?.customerProfileId;
+  // runs-service groups by audienceId (the audience.id attribution). customerProfileId is its
+  // deprecated alias — accept it as a fallback during the cross-service rollout window.
+  const id = dimensions?.audienceId ?? dimensions?.customerProfileId;
   return id && id !== "__total__" ? id : null;
 }
 
@@ -111,7 +115,7 @@ async function fetchPersonaCosts(
   }
 
   const params = new URLSearchParams({
-    groupBy: "customerProfileId",
+    groupBy: "audienceId",
     brandId,
     featureSlugs: featureSlug,
     goal,
@@ -263,6 +267,7 @@ router.get("/features/:featureSlug/persona-stats", apiKeyAuth, async (req, res) 
       const cost = costs.get(customerProfileId) ?? emptyCost();
       const outcome = outcomes.get(customerProfileId) ?? emptyOutcomes();
       rows.push({
+        audienceId: customerProfileId,
         customerProfileId,
         brandProfileId,
         persona: {
