@@ -9,7 +9,7 @@
  *
  * When brand-service ships goals, swap this for the brand-service-owned type. Whether that means
  * publishing a shared npm package or mirroring (as with SalesEconomics) is a fleet-wide infra
- * decision tracked alongside the persona/brand-profile write-side blockers in features-service#298.
+ * decision tracked alongside the audience/brand-profile write-side blockers in features-service#298.
  *
  * Each goal maps to ONE projected cost-per-outcome the funnel can already compute from a brand's
  * effective sales-economics:

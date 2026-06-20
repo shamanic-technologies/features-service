@@ -33,59 +33,54 @@ vocabulary mirrored locally (same convention as `SalesEconomics`) — no shared 
 features-service today; the publish-vs-mirror call is brand-service's when it builds goals (#242).
 Does NOT touch `workflow-projection` / `stats/ranked` (campaign creation unchanged). (Set 2026-06-16.)
 
-## `GET /features/:slug/persona-stats` — candidates come from human-service AUDIENCES, not brand personas (Wave 2, PR #336)
+## `GET /features/:slug/audience-stats` — ranked human-service AUDIENCES (persona-stats alias DELETED, PR #351→ removal)
 
-persona-stats (`src/routes/persona-stats.ts`) sources its ranked candidate filter-sets from
-**human-service active audiences** via `src/lib/human-client.ts` `fetchActiveAudiences` →
-`GET /orgs/audiences?brandId=<uuid>&status=active`. The Wave 2 backfill **preserved each
-persona id as the audience id**, so `customerProfileId` (= `audience.id` = old persona id) is
-UNCHANGED — runs/email-gateway evidence joins exactly as before. **Do NOT re-key evidence.**
-`persona.filters` is the structured audience filter shape (faithful passthrough); campaign-service
-`fetchBestCustomerPersona` consumes `persona`/`evidence`/`metrics` as opaque `Record<string,unknown>`
-and takes `personas[0]`, so the row shape is frozen and campaign-service needs ZERO change.
-`brandProfileId` still comes from brand-service `fetchCurrentBrandProfile` (separate entity — NOT
-part of the persona-list swap; leave it).
+The ranking endpoint is `audience-stats` (`src/routes/audience-stats.ts` → shared compute
+`src/lib/audience-stats-compute.ts`). The legacy `persona-stats` alias (old `personas`/`persona`
+response shape) was **DELETED** — there is NO persona-named surface anymore, no legacy, no fallback.
+Consumers (campaign-service, api-service proxy, distribute.you) read `audiences`/`audience`.
 
-**Org-scoped flag — settled, do NOT re-litigate.** Brand personas were brand-scoped; audiences are
-org-scoped. This is functionally equivalent for the consumer and needs NO cross-org/brand-scoped
-human-service read: the ranking evidence (`fetchPersonaCosts`/`fetchPersonaOutcomes`) is ALREADY
-org-scoped (filtered by `x-org-id`), so a cross-org candidate carries zero evidence → null metrics
-→ sorted last → never `personas[0]` (campaign-service calls with `limit=1`). Building a brand-scoped
-audiences read would only resurrect zero-evidence rows that never rank.
+It sources ranked candidate filter-sets from **human-service active audiences** via
+`src/lib/human-client.ts` `fetchActiveAudiences` → `GET /orgs/audiences?brandId=<uuid>&status=active`.
+Each row keys on `audienceId` (= `audience.id`); `audience.filters` is the structured audience filter
+shape (faithful passthrough). `brandProfileId` comes from brand-service `fetchCurrentBrandProfile`
+(separate entity — leave it). Response: top-level `audiences` array, each row `{ audienceId,
+brandProfileId, audience:{id,name,status,filters}, evidence, metrics }`. **No `customerProfileId` —
+fully purged, no deprecated alias on the row.**
 
-**Wave 3 — cost is attributed via `audienceId` write-tag, NOT read-time inference (PR #340, additive).**
-The per-audience economics epic tags the SERVE/RUN with the audience, then features-service reads it back:
-- **Cost (done, T4a/#340):** `fetchPersonaCosts` now reads runs-service `groupBy=audienceId` (the
-  `x-audience-id` attribution shipped in runs-service #154 — campaign-service #204 sets it on the
-  workflow root run, runs inherits it down the run tree). `personaIdFromDimensions` reads
-  `dimensions.audienceId` (falls back to the deprecated `customerProfileId` alias during rollout). Each
-  persona-stats row now carries BOTH `audienceId` (canonical) and `customerProfileId` (= same UUID, kept
-  as a deprecated alias so campaign-service's `personas[0].customerProfileId` selection keeps working).
-  **Do NOT remove `customerProfileId` from the row until campaign-service + id-service migrate to
-  `audienceId` (T5).** Cost is EXACT (one workflow execution = one priority audience → its run tree maps
-  to one audience; no allocation).
-- **Outcomes (follow-up, T4b — NOT done):** the email-gateway `groupBy=customerProfileId` path is empty
-  (sends are NOT tagged with the audience — by design). The rebuild resolves email→audience READ-TIME:
-  recipient emails → human-service `POST /orgs/audiences/stats` (provenance membership populated by
-  serve-next + lead-service#295). **No inference / no send-tagging / no enrichment** — explicit
-  provenance only (human-service#42). Forward-only: only campaigns served via audiences after #295 get
-  attributed; historical = unattributed, acceptable.
+**Org-scoped — settled, do NOT re-litigate.** Audiences are org-scoped. The ranking evidence
+(`fetchAudienceCosts`/`fetchAudienceOutcomes`) is ALREADY org-scoped (filtered by `x-org-id`), so a
+cross-org candidate carries zero evidence → null metrics → sorted last → never `audiences[0]`
+(campaign-service calls with `limit=1`). Building a brand-scoped audiences read would only resurrect
+zero-evidence rows that never rank.
+
+**Cost attributed via `audienceId` write-tag, NOT read-time inference.** `fetchAudienceCosts` reads
+runs-service `groupBy=audienceId` (`x-audience-id` attribution from runs-service #154; campaign-service
+#204 sets it on the workflow root run, runs inherits it down the tree). `audienceIdFromDimensions`
+reads `dimensions.audienceId` ONLY — no `customerProfileId` fallback. Cost is EXACT (one workflow
+execution = one priority audience → its run tree maps to one audience; no allocation).
+
+**Outcomes resolved READ-TIME from explicit membership.** `fetchAudienceOutcomes`: recipient emails →
+human-service membership (`fetchAudienceMemberEmails`, provenance populated by serve-next +
+lead-service#295) → per-email broadcast flags from email-gateway. **No inference / no send-tagging /
+no enrichment** — explicit provenance only (human-service#42). Forward-only: only campaigns served via
+audiences after #295 get attributed; historical = unattributed, acceptable.
 
 `HUMAN_SERVICE_URL`/`HUMAN_SERVICE_API_KEY` are read at CALL time (no boot crash) and fail loud when
-the targeting read runs without them — no fallback. (Set 2026-06-19.)
+the targeting read runs without them — no fallback. (Set 2026-06-19; persona-stats alias removed 2026-06-20.)
 
 ## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #346)
 
 `pipeline-activity.ts` (the budget→forecast endpoint) was the LAST `customerProfileId` / brand-persona
-consumer. It now mirrors persona-stats exactly: candidates from human-service active audiences
+consumer. It now mirrors audience-stats exactly: candidates from human-service active audiences
 (`fetchActiveAudiences`), cost from runs `groupBy=audienceId` (`dimensions.audienceId`, no legacy id
 fallback), engagement from read-time membership (`fetchAudienceMemberEmails` → `fetchEmailOutcomes`,
 explicit provenance — no send-tagging/inference). `fetchBestAudienceForecast` picks the lowest-CPC
 active audience for the chosen workflow (CPC = runs cost / membership clicks) and derives its rates
 from the SAME outcome tally (one pass). `fetchBrandPersonas`/`BrandPersona` are DELETED from
 `brand-client.ts` (zero remaining callers); `fetchCurrentBrandProfile` stays (still feeds the cost
-`brandProfileId` filter). **`git grep -i customerprofile src` now matches ONLY the persona-stats.test
-regression guard** (asserts the field is `undefined` — enforces no-legacy, do NOT remove). campaign-service
+`brandProfileId` filter). **`git grep -i customerprofile src` now returns ZERO matches** — the field is
+fully purged (the `audience-stats.test` no-legacy guard asserts `r.persona`/`personas` absent instead). campaign-service
 already reads `personas[0].audienceId` and asserts `customerProfileId` absent (campaign-service#204,
 drizzle 0035), so the purge had zero consumer blast radius — the prior "do NOT remove until T5" note was
 stale (T5 was already done).

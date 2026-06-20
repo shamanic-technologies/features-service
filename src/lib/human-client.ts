@@ -14,7 +14,7 @@ import { fetchWithRetry } from "./fetch-retry.js";
  * Targeting filter-set shape, mirrored from the human-service `GET /orgs/audiences`
  * contract (same convention as the locally-mirrored `Goal`/`SalesEconomics` types).
  * Faithful passthrough: features-service does not interpret these fields, it
- * forwards them to the persona-stats consumer (campaign-service → lead-finding).
+ * forwards them to the audience-stats consumer (campaign-service → lead-finding).
  */
 export interface AudienceFilters {
   titles?: string[];
@@ -48,7 +48,7 @@ export interface Audience {
  * caller's x-org-id). The ranking signal (cost/outcome evidence) is already
  * org-scoped, so a cross-org audience would carry zero evidence and never rank —
  * org-scoping the candidate list is functionally equivalent to the old
- * brand-scoped persona read for the actual consumer.
+ * brand-scoped audience read for the actual consumer.
  */
 export async function fetchActiveAudiences(
   brandId: string,
@@ -94,7 +94,7 @@ export async function fetchActiveAudiences(
  * Fetch the canonical member emails of one audience (people served under it —
  * provenance membership, human-service#42). Paginates to `limit` (max 500/page).
  * These are the recipients whose outcomes are attributed to this audience: the
- * persona-stats outcomes path resolves audience membership READ-TIME from here
+ * audience-stats outcomes path resolves audience membership READ-TIME from here
  * (NOT from send-time tagging), then reads per-email outcomes from email-gateway.
  */
 export async function fetchAudienceMemberEmails(

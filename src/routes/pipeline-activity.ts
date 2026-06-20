@@ -420,7 +420,7 @@ async function fetchAudienceCosts(
  * human-service#42); email-gateway gives each email's brand-scoped broadcast outcome flags
  * (contacted / clicked / positiveReply). We tally per audience. Outcomes are recipient
  * engagement, so they are brand-scoped — NOT scoped by workflow / goal / brand-profile
- * (only the COST is, via runs attribution). Mirrors persona-stats fetchAudienceOutcomes.
+ * (only the COST is, via runs attribution). Mirrors audience-stats fetchAudienceOutcomes.
  */
 async function fetchAudienceOutcomes(
   brandId: string,
