@@ -60,6 +60,18 @@ runs-service `groupBy=audienceId` (`x-audience-id` attribution from runs-service
 reads `dimensions.audienceId` ONLY — no `customerProfileId` fallback. Cost is EXACT (one workflow
 execution = one priority audience → its run tree maps to one audience; no allocation).
 
+**The cost NUMERATOR must NOT be filtered by `goal`/`brandProfileId` — only `brandId` +
+`featureSlugs` (+ `workflowDynastySlug` in `pipeline-activity`).** runs/cost rows are tagged with
+`audienceId` but NOT `goal`/`brandProfileId` (both NULL in prod — 0 of ~42k cost rows carry a
+non-null `goal`), so adding either as a runs `/v1/stats/costs` filter drops EVERY real cost row →
+`totalCostInUsdCents=0` → `ratioCents(0, clicks)` returned a false **$0.00** CPC (and broke
+campaign-service's `limit=1` pick — a false-$0 sorts first). Conceptually a campaign's spend to reach
+an audience is not partitioned by goal: `goal` selects the METRIC/DENOMINATOR (cpc vs cppr,
+`sortMetricForGoal`), never which spend counts. `ratioCents` returns **null** (renders "-") when cost
+is 0 — never a false $0.00, even for an audience with clicks whose runs were never `audienceId`-tagged.
+Do NOT "re-add goal scoping" thinking it's missing; it's deliberately absent until the writer tags
+goal AND it's proven correct for the numerator. (Set 2026-06-21, hotfix v0.59.1.)
+
 **Outcomes resolved READ-TIME from explicit membership.** `fetchAudienceOutcomes`: recipient emails →
 human-service membership (`fetchAudienceMemberEmails`, provenance populated by serve-next +
 lead-service#295) → per-email broadcast flags from email-gateway. **No inference / no send-tagging /
