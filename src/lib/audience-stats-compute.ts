@@ -20,6 +20,7 @@ interface AudienceCostEvidence {
 
 interface AudienceOutcomeEvidence {
   contacted: number;
+  opened: number;
   websiteClicks: number;
   positiveReplies: number;
 }
@@ -84,7 +85,7 @@ function emptyCost(): AudienceCostEvidence {
 }
 
 function emptyOutcomes(): AudienceOutcomeEvidence {
-  return { contacted: 0, websiteClicks: 0, positiveReplies: 0 };
+  return { contacted: 0, opened: 0, websiteClicks: 0, positiveReplies: 0 };
 }
 
 function ratioCents(costCents: number, denominator: number): number | null {
@@ -174,7 +175,7 @@ async function fetchAudienceCosts(
  *
  * For each active audience: human-service gives its canonical member emails (people served under
  * it — provenance, human-service#42); email-gateway gives each email's brand-scoped broadcast
- * outcome flags. We aggregate per audience: contacted / clicked / positiveReply member counts.
+ * outcome flags. We aggregate per audience: contacted / opened / clicked / positiveReply member counts.
  * An email in multiple audiences contributes to each (audiences overlap; the per-audience numbers
  * rank candidates, they do NOT partition the brand total). Outcomes are recipient engagement, so
  * they are NOT scoped by goal / brand-profile (only the COST is — via runs attribution).
@@ -198,6 +199,7 @@ async function fetchAudienceOutcomes(
       const o = outcomesByEmail.get(email);
       if (!o) continue;
       if (o.contacted) agg.contacted += 1;
+      if (o.opened) agg.opened += 1;
       if (o.clicked) agg.websiteClicks += 1;
       if (o.positiveReply) agg.positiveReplies += 1;
     }

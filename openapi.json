@@ -1627,6 +1627,10 @@
                       "type": "number",
                       "description": "Audience-scoped contacted-recipient count from email-gateway broadcast stats."
                     },
+                    "opened": {
+                      "type": "number",
+                      "description": "Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."
+                    },
                     "websiteClicks": {
                       "type": "number",
                       "description": "Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."
@@ -1642,6 +1646,7 @@
                     "firstRunAt",
                     "lastRunAt",
                     "contacted",
+                    "opened",
                     "websiteClicks",
                     "positiveReplies"
                   ]
@@ -4348,6 +4353,10 @@
                                 "type": "number",
                                 "description": "Audience-scoped contacted-recipient count from email-gateway broadcast stats."
                               },
+                              "opened": {
+                                "type": "number",
+                                "description": "Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."
+                              },
                               "websiteClicks": {
                                 "type": "number",
                                 "description": "Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."
@@ -4363,6 +4372,7 @@
                               "firstRunAt",
                               "lastRunAt",
                               "contacted",
+                              "opened",
                               "websiteClicks",
                               "positiveReplies"
                             ]
