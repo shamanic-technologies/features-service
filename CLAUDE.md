@@ -60,6 +60,19 @@ runs-service `groupBy=audienceId` (`x-audience-id` attribution from runs-service
 reads `dimensions.audienceId` ONLY — no `customerProfileId` fallback. Cost is EXACT (one workflow
 execution = one priority audience → its run tree maps to one audience; no allocation).
 
+**KNOWN UPSTREAM GAP — per-audience cost is currently UNDER-stated (~20-30x), and the fix is NOT
+here.** The `audienceId` write-tag only reaches the LEAD-DISCOVERY runs (`lead-serve`,
+`apollo people-search`, `apify search`, lead-enrichment). The dominant cost — `instantly-service`
+email-SEND runs (`email-send-step-1/2/3`) + `chat-service complete` LLM message-GEN — sits in a
+SEPARATE run subtree whose `run.audience_id` is NULL (the workflow ROOT `api-service GET
+/v1/campaigns/:id` carries no `audience_id`, so the documented "inherit down the tree" never fires).
+Measured prod (brand `f4d73dab…`, this feature): only **$10.59 of $346.26 actual cost (3%)** carries
+an `audienceId` → CPC reads $0.24 where ~$5 is real. **Do NOT "fix" this in features-service by
+reverse-joining lead→audience→send cost** — that is working around another service's gap (forbidden).
+The send/gen step runs must be tagged with the emailed lead's audience UPSTREAM
+(**campaign-service#218** — it owns send orchestration + already tags lead-finding per #204). features-service
+sums what is tagged; it stays correct as coverage improves. (Set 2026-06-21.)
+
 **The cost NUMERATOR must NOT be filtered by `goal`/`brandProfileId` — only `brandId` +
 `featureSlugs` (+ `workflowDynastySlug` in `pipeline-activity`).** runs/cost rows are tagged with
 `audienceId` but NOT `goal`/`brandProfileId` (both NULL in prod — 0 of ~42k cost rows carry a
