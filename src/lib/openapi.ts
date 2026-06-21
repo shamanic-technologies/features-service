@@ -553,6 +553,7 @@ const audienceStatsEvidenceSchema = z.object({
   firstRunAt: z.string().datetime().nullable(),
   lastRunAt: z.string().datetime().nullable(),
   contacted: z.number().describe("Audience-scoped contacted-recipient count from email-gateway broadcast stats."),
+  opened: z.number().describe("Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."),
   websiteClicks: z.number().describe("Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."),
   positiveReplies: z.number().describe("Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."),
 });

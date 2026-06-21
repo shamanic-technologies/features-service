@@ -112,6 +112,7 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
         broadcast: {
           brand: {
             contacted: true,
+            opened: true,
             clicked: true,
             replied: POSITIVE.has(email),
             replyClassification: POSITIVE.has(email) ? "positive" : null,
@@ -169,6 +170,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
       totalCostInUsdCents: 1000,
       completedRuns: 2,
       contacted: 20,
+      opened: 20,
       websiteClicks: 20,
       positiveReplies: 5,
     });
