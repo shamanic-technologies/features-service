@@ -11,6 +11,7 @@ import {
   fetchPublicCosts,
   fetchPublicEmailStats,
 } from "../lib/public-stats-clients.js";
+import { fetchAudienceCandidateEvidence } from "../lib/candidates-audience.js";
 import { buildUpgradeChains, aggregateAcrossChains } from "./public.js";
 
 const router = Router();
@@ -18,15 +19,15 @@ const router = Router();
 // ── Fallback grain ladder ────────────────────────────────────────────────────
 //
 // Finest → coarsest evidence grain (per features-service#298):
-//   "persona"     = brandId × goal × brandProfileId × audienceId
-//   "brand-goal"  = brandId × goal (drop the persona + brand-profile dimensions)
+//   "persona"     = brandId × goal × audienceId (audience-grain attributed evidence)
+//   "brand-goal"  = brandId × goal (drop the audience dimension)
 //   "goal-global" = goal / cross-org global (workflow evidence only)
 //
-// The "persona" rung requires this endpoint to read producer evidence tagged with the
-// (goal, brandProfileId, audienceId, workflow) tuple. That read path is not wired here
-// yet, so `audienceId` is null on every candidate today and no candidate resolves at
-// "persona". This is not a mocked dimension — a null persona + an honest grain label is the
-// truthful "no persona-local data" signal the consumer asked for.
+// The "persona" rung is LIVE: for each ACTIVE human-service audience that has runs-attributed
+// (audienceId × workflowDynastySlug) couples, this endpoint emits one persona-grain candidate
+// per couple — `audienceId` populated, cost + sampleSize scoped to the audience slice (same
+// source as /audience-stats). Couples with no audience-level evidence still resolve through the
+// coarser ladder below (audienceId stays null), so existing per-workflow consumers see no change.
 type Grain = "persona" | "brand-goal" | "goal-global";
 
 interface ConversionEvidence {
@@ -42,8 +43,9 @@ interface CostEvidence {
   costPerLeadUsd: number | null;
   clickUsd: number | null;
   replyUsd: number | null;
-  /** Workflow unit costs are cross-org global efficiency (same source as /public/stats/best). */
-  grain: "goal-global";
+  /** Cost-evidence grain: "goal-global" = cross-org workflow unit costs (same source as
+   *  /public/stats/best); "persona" = audience-attributed cost (same source as /audience-stats). */
+  grain: "goal-global" | "persona";
 }
 
 interface SampleSize {
@@ -118,9 +120,10 @@ function costPerOutcomeForGoal(
 // "best": the consumer (campaign-service) owns the uncertainty-aware selection policy (Thompson-style
 // draw). features-service owns stats + counts + fallback resolution only (features-service#298).
 //
-// Reuses the exact workflow-projection data path (global per-workflow unit costs aggregated over the
-// upgrade chain + brand-scoped effective economics); the persona dimension is wired but inert until
-// brand-service personas + tuple-tagged runs land.
+// Reuses the workflow-projection data path (global per-workflow unit costs aggregated over the
+// upgrade chain + brand-scoped effective economics) for the coarse "brand-goal"/"goal-global" rungs,
+// AND reads audience-attributed evidence (active human-service audiences × runs-service
+// groupBy=audienceId couples + read-time membership outcomes) to emit the finest "persona" rung.
 router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
@@ -144,11 +147,12 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
 
     // Global per-workflow unit costs (cross-org) + outcomes + brand-scoped EFFECTIVE economics.
     // brand-service OWNS the null→cross-brand-average defaulting; features-service consumes it.
-    const [workflows, costGroups, emailStats, effective] = await Promise.all([
+    const [workflows, costGroups, emailStats, effective, audienceEvidence] = await Promise.all([
       fetchPublicWorkflows(featureSlug, "all"),
       fetchPublicCosts(featureSlug, "workflowSlug"),
       fetchPublicEmailStats(featureSlug, "workflowSlug"),
       fetchEffectiveEconomics(brandId, { orgId, userId, runId, featureSlug: headerFeatureSlug }),
+      fetchAudienceCandidateEvidence(brandId, featureSlug, { orgId, userId, runId, featureSlug: headerFeatureSlug }),
     ]);
     const economics = effective.economics;
 
@@ -189,10 +193,11 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
       const costPerOutcomeUsd = econ ? costPerOutcomeForGoal(goal, econ, { clickUsd, replyUsd }) : null;
       const conversionRate = econ ? conversionRateForGoal(goal, econ) : null;
 
-      // Candidate evidence does not read persona-grain producer stats yet → never "persona".
-      // Brand-local economics → "brand-goal"; otherwise the cost evidence is still cross-org global.
+      // Coarse rung — workflow evidence is cross-org (no audience attribution on this row), so
+      // audienceId stays null. Brand-local economics → "brand-goal"; otherwise "goal-global".
+      // The audience-attributed "persona" rows are appended after this loop.
       const audienceId: string | null = null;
-      const grain: Grain = audienceId != null ? "persona" : conversionGrain === "brand-goal" ? "brand-goal" : "goal-global";
+      const grain: Grain = conversionGrain === "brand-goal" ? "brand-goal" : "goal-global";
 
       candidates.push({
         audienceId,
@@ -207,6 +212,39 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
         cost: { costPerLeadUsd: contactedUsd, clickUsd, replyUsd, grain: "goal-global" },
         sampleSize: { runs: cost.completedRuns, contacted, clicks, replies },
       });
+    }
+
+    // ── "persona" rung — one candidate per (audienceId, workflowDynastySlug) couple that ran ──
+    //
+    // Cost + sampleSize are AUDIENCE-grain (coherent single grain: cost from runs
+    // groupBy=audienceId, outcomes from read-time membership — same source as /audience-stats),
+    // so cost-per-click / cost-per-reply stay self-consistent. Conversion is still the brand's
+    // economics ladder (brand-service has no per-audience economics), so conversion.grain stays
+    // brand-goal/goal-global; the audience's empirical tally rides in sampleSize for the consumer.
+    const dynastyNameBySlug = new Map(workflows.map((w) => [w.workflowDynastySlug, w.workflowDynastyName]));
+    for (const ev of audienceEvidence) {
+      const costUsd = ev.totalCostInUsdCents / 100;
+      const aContactedUsd = ev.contacted > 0 && costUsd > 0 ? costUsd / ev.contacted : null;
+      const aClickUsd = ev.clicks > 0 && costUsd > 0 ? costUsd / ev.clicks : null;
+      const aReplyUsd = ev.replies > 0 && costUsd > 0 ? costUsd / ev.replies : null;
+      const aCostPerOutcomeUsd = econ ? costPerOutcomeForGoal(goal, econ, { clickUsd: aClickUsd, replyUsd: aReplyUsd }) : null;
+      const aConversionRate = econ ? conversionRateForGoal(goal, econ) : null;
+
+      for (const dynastySlug of ev.workflowDynastySlugs) {
+        candidates.push({
+          audienceId: ev.audienceId,
+          workflow: {
+            workflowDynastySlug: dynastySlug,
+            workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null,
+          },
+          goal,
+          grain: "persona",
+          costPerOutcomeUsd: aCostPerOutcomeUsd,
+          conversion: { rate: aConversionRate, grain: conversionGrain },
+          cost: { costPerLeadUsd: aContactedUsd, clickUsd: aClickUsd, replyUsd: aReplyUsd, grain: "persona" },
+          sampleSize: { runs: ev.completedRuns, contacted: ev.contacted, clicks: ev.clicks, replies: ev.replies },
+        });
+      }
     }
 
     const response: CandidatesResponse = { featureSlug, brandId, goal, brandProfileId, candidates };
