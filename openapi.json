@@ -1657,12 +1657,12 @@
                     "cpcCents": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalCostInUsdCents / websiteClicks. Null when websiteClicks is zero."
+                      "description": "totalCostInUsdCents / websiteClicks. Null when websiteClicks is zero OR no spend is attributed (totalCostInUsdCents is zero) — never a false $0.00."
                     },
                     "cpprCents": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalCostInUsdCents / positiveReplies. Null when positiveReplies is zero."
+                      "description": "totalCostInUsdCents / positiveReplies. Null when positiveReplies is zero OR no spend is attributed (totalCostInUsdCents is zero) — never a false $0.00."
                     }
                   },
                   "required": [
@@ -4383,12 +4383,12 @@
                               "cpcCents": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "totalCostInUsdCents / websiteClicks. Null when websiteClicks is zero."
+                                "description": "totalCostInUsdCents / websiteClicks. Null when websiteClicks is zero OR no spend is attributed (totalCostInUsdCents is zero) — never a false $0.00."
                               },
                               "cpprCents": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "totalCostInUsdCents / positiveReplies. Null when positiveReplies is zero."
+                                "description": "totalCostInUsdCents / positiveReplies. Null when positiveReplies is zero OR no spend is attributed (totalCostInUsdCents is zero) — never a false $0.00."
                               }
                             },
                             "required": [
