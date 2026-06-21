@@ -89,7 +89,9 @@ function emptyOutcomes(): AudienceOutcomeEvidence {
 }
 
 function ratioCents(costCents: number, denominator: number): number | null {
-  return denominator > 0 ? costCents / denominator : null;
+  // Null (renders "-") when there is no attributed spend OR no denominator — never a false $0.00.
+  // A click with zero attributed spend is "no cost evidence", not "$0 cost".
+  return costCents > 0 && denominator > 0 ? costCents / denominator : null;
 }
 
 function readFiniteNumber(value: unknown, field: string): number {
@@ -117,8 +119,6 @@ function compareByMetric(metric: SortMetric, a: AudienceStatsRow, b: AudienceSta
 async function fetchAudienceCosts(
   brandId: string,
   featureSlug: string,
-  goal: Goal,
-  brandProfileId: string | null,
   identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
 ): Promise<Map<string, AudienceCostEvidence>> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
@@ -127,13 +127,16 @@ async function fetchAudienceCosts(
     throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   }
 
+  // Cost is EXACT via the audienceId write-tag (one workflow execution = one priority audience).
+  // We do NOT filter the cost NUMERATOR by goal/brandProfileId: a campaign's spend to reach an
+  // audience is not partitioned by goal (goal only selects the DENOMINATOR/sort-metric — clicks vs
+  // replies), and runs/cost rows are not tagged with goal/brandProfileId today, so filtering on
+  // them would drop every real cost row → false $0.00 CPC.
   const params = new URLSearchParams({
     groupBy: "audienceId",
     brandId,
     featureSlugs: featureSlug,
-    goal,
   });
-  if (brandProfileId) params.set("brandProfileId", brandProfileId);
 
   const response = await fetchWithRetry(`${baseUrl}/v1/stats/costs?${params}`, {
     headers: buildHeaders(apiKey, identity.orgId, { ...identity, brandId }),
@@ -251,7 +254,7 @@ export async function computeAudienceStats(req: Request): Promise<ComputeResult>
   const brandProfileId = explicitBrandProfileId ?? currentProfile?.id ?? null;
 
   const [costs, outcomes] = await Promise.all([
-    fetchAudienceCosts(brandId, featureSlug, goalParam, brandProfileId, identity),
+    fetchAudienceCosts(brandId, featureSlug, identity),
     fetchAudienceOutcomes(brandId, audiences, identity),
   ]);
 

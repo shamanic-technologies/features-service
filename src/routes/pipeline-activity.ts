@@ -98,9 +98,6 @@ interface EmailGatewayDayGroup {
   };
 }
 
-type Goal = "signup" | "meetingBooked" | "purchase";
-const FORECAST_GOAL: Goal = "signup";
-
 function isValidTimeZone(timezone: string): boolean {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date());
@@ -367,14 +364,15 @@ function emptyAudienceOutcome(): AudienceOutcome {
 /**
  * Per-audience cost (USD cents), grouped by the human-service audience.id attribution
  * (runs-service #154 `x-audience-id` write-tag, read back via groupBy=audienceId). Scoped
- * to the chosen workflow dynasty + goal (+ brand profile when known) so the CPC ranking is
- * per-workflow. Reads `dimensions.audienceId` only — no legacy id fallback.
+ * to the chosen workflow dynasty so the CPC ranking is per-workflow. We do NOT filter the cost
+ * NUMERATOR by goal/brandProfileId — those dimensions are not tagged on runs/cost rows today, so
+ * filtering on them drops every real cost row (goal only selects the metric, not which spend
+ * counts). Reads `dimensions.audienceId` only — no legacy id fallback.
  */
 async function fetchAudienceCosts(
   brandId: string,
   featureSlug: string,
   workflowDynastySlug: string,
-  brandProfileId: string | null,
   headers: { orgId: string; userId: string; runId: string },
 ): Promise<Map<string, number>> {
   const runsUrl = process.env.RUNS_SERVICE_URL;
@@ -386,9 +384,7 @@ async function fetchAudienceCosts(
     brandId,
     featureSlugs: featureSlug,
     workflowDynastySlug,
-    goal: FORECAST_GOAL,
   });
-  if (brandProfileId) params.set("brandProfileId", brandProfileId);
 
   const response = await fetchWithRetry(`${runsUrl}/v1/stats/costs?${params}`, {
     headers: getRunsServiceHeaders(runsApiKey, { ...headers, brandId, featureSlug }),
@@ -477,7 +473,7 @@ async function fetchBestAudienceForecast(
 
   const brandProfileId = currentProfile?.id ?? null;
   const [costs, outcomes] = await Promise.all([
-    fetchAudienceCosts(brandId, featureSlug, workflowDynastySlug, brandProfileId, headers),
+    fetchAudienceCosts(brandId, featureSlug, workflowDynastySlug, headers),
     fetchAudienceOutcomes(brandId, audiences, { ...headers, featureSlug }),
   ]);
 

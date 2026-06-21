@@ -271,7 +271,9 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     });
     expect(audiencesCall).toBeTruthy();
 
-    // cost attributed via runs groupBy=audienceId, scoped to the chosen workflow dynasty + goal.
+    // cost attributed via runs groupBy=audienceId, scoped to the chosen workflow dynasty.
+    // The cost NUMERATOR is NOT filtered by goal/brandProfileId (untagged on runs rows → would
+    // drop every real cost row).
     const audienceCostCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
       const callUrl = new URL(String(input));
       return callUrl.pathname === "/v1/stats/costs" && callUrl.searchParams.get("groupBy") === "audienceId";
@@ -279,7 +281,8 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(audienceCostCall).toBeTruthy();
     const audienceCostUrl = new URL(String(audienceCostCall?.[0]));
     expect(audienceCostUrl.searchParams.get("workflowDynastySlug")).toBe("dyn-a");
-    expect(audienceCostUrl.searchParams.get("goal")).toBe("signup");
+    expect(audienceCostUrl.searchParams.get("goal")).toBeNull();
+    expect(audienceCostUrl.searchParams.get("brandProfileId")).toBeNull();
 
     // outcomes resolved read-time: member emails per audience + per-email outcome flags.
     const memberCalls = vi.mocked(fetchWithRetry).mock.calls.filter(([input]) =>
