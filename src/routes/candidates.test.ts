@@ -22,6 +22,8 @@ process.env.WORKFLOW_SERVICE_URL = "http://workflow:3000";
 process.env.WORKFLOW_SERVICE_API_KEY = "workflow-key";
 process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
+process.env.HUMAN_SERVICE_URL = "http://human:3000";
+process.env.HUMAN_SERVICE_API_KEY = "human-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
@@ -64,7 +66,26 @@ function emailGroup(slug: string, clicked: number, repliesPositive: number, cont
 }
 const EMAIL_GROUPS = [emailGroup("wf-a", 100, 50), emailGroup("wf-b", 50, 10)];
 
-function mockFetch(opts: { workflows?: unknown[]; costGroups?: unknown[]; emailGroups?: unknown[]; economics?: unknown; source?: unknown } = {}): void {
+interface AudienceFixture {
+  id: string;
+  name?: string;
+  dynastySlugs?: string[]; // runs-attributed (audienceId × workflowDynastySlug) couples
+  costCents?: number; // audience-grain total cost (groupBy=audienceId)
+  runs?: number;
+  emails?: Array<{ email: string; contacted?: boolean; clicked?: boolean; positiveReply?: boolean }>;
+}
+
+interface MockOpts {
+  workflows?: unknown[];
+  costGroups?: unknown[];
+  emailGroups?: unknown[];
+  economics?: unknown;
+  source?: unknown;
+  audiences?: AudienceFixture[]; // default [] → no persona rows
+}
+
+function mockFetch(opts: MockOpts = {}): void {
+  const audiences = opts.audiences ?? [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     if (url.includes("stats/public/costs")) {
@@ -80,6 +101,35 @@ function mockFetch(opts: { workflows?: unknown[]; costGroups?: unknown[]; emailG
       const economics = "economics" in opts ? opts.economics : ECONOMICS;
       const source = "source" in opts ? opts.source : economics == null ? null : "user";
       return new Response(JSON.stringify({ economics, source }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    // ── audience-grain (persona) sources ──
+    if (url.includes("/orgs/audiences/") && url.includes("/members")) {
+      const id = url.split("/orgs/audiences/")[1].split("/members")[0];
+      const aud = audiences.find((a) => a.id === id);
+      const members = (aud?.emails ?? []).map((e) => ({ emailNorm: e.email }));
+      return new Response(JSON.stringify({ members, total: members.length }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/orgs/audiences")) {
+      const rows = audiences.map((a) => ({ id: a.id, brandId: "b1", name: a.name ?? a.id, status: "active", filters: null }));
+      return new Response(JSON.stringify({ audiences: rows }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/v1/stats/costs")) {
+      const couples = url.includes("workflowDynastySlug");
+      const groups = couples
+        ? audiences.flatMap((a) => (a.dynastySlugs ?? []).map((slug) => ({ dimensions: { audienceId: a.id, workflowDynastySlug: slug }, totalCostInUsdCents: "0", runCount: 0, minStartedAt: null, maxStartedAt: null })))
+        : audiences.map((a) => ({ dimensions: { audienceId: a.id }, totalCostInUsdCents: String(a.costCents ?? 0), runCount: a.runs ?? 0, minStartedAt: null, maxStartedAt: null }));
+      return new Response(JSON.stringify({ groups }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/orgs/status")) {
+      const all = audiences.flatMap((a) => a.emails ?? []);
+      const seen = new Set<string>();
+      const results = [] as unknown[];
+      for (const e of all) {
+        if (seen.has(e.email)) continue;
+        seen.add(e.email);
+        results.push({ email: e.email, broadcast: { brand: { contacted: !!e.contacted, opened: false, clicked: !!e.clicked, replied: !!e.positiveReply, replyClassification: e.positiveReply ? "positive" : null } } });
+      }
+      return new Response(JSON.stringify({ results }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
   });
@@ -128,10 +178,92 @@ describe("GET /features/:featureSlug/candidates", () => {
     expect(res.body.best).toBeUndefined();
   });
 
-  it("audience dimension is inert — every candidate carries audienceId null", async () => {
+  it("no active audiences → every candidate falls back to the coarse ladder (audienceId null)", async () => {
     mockFetch();
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
     expect(res.body.candidates.every((c: any) => c.audienceId === null)).toBe(true);
+    expect(res.body.candidates.every((c: any) => c.grain !== "persona")).toBe(true);
+  });
+
+  it("active audience with runs-attributed couples → emits persona rows (non-null audienceId, grain persona)", async () => {
+    mockFetch({
+      audiences: [
+        {
+          id: "aud-1",
+          name: "Founders",
+          dynastySlugs: ["dyn-a", "dyn-b"],
+          costCents: 50000, // $500
+          runs: 5,
+          emails: [
+            { email: "a@x.com", contacted: true, clicked: true },
+            { email: "b@x.com", contacted: true, clicked: true, positiveReply: true },
+            { email: "c@x.com", contacted: true },
+            { email: "d@x.com" },
+          ],
+        },
+      ],
+    });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
+    expect(res.status).toBe(200);
+    const persona = res.body.candidates.filter((c: any) => c.grain === "persona");
+    // one row per (audienceId, workflowDynastySlug) couple
+    expect(persona).toHaveLength(2);
+    expect(persona.every((c: any) => c.audienceId === "aud-1")).toBe(true);
+    expect(persona.map((c: any) => c.workflow.workflowDynastySlug).sort()).toEqual(["dyn-a", "dyn-b"]);
+    // coarse fallback rows still present (audienceId null) — no shape change for existing consumers
+    const coarse = res.body.candidates.filter((c: any) => c.audienceId === null);
+    expect(coarse.length).toBe(2);
+  });
+
+  it("persona row evidence is the audience-scoped slice (cost + sampleSize), not the whole-workflow aggregate", async () => {
+    mockFetch({
+      audiences: [
+        {
+          id: "aud-1",
+          dynastySlugs: ["dyn-a"],
+          costCents: 50000, // $500
+          runs: 5,
+          emails: [
+            { email: "a@x.com", contacted: true, clicked: true },
+            { email: "b@x.com", contacted: true, clicked: true, positiveReply: true },
+            { email: "c@x.com", contacted: true },
+            { email: "d@x.com" },
+          ],
+        },
+      ],
+    });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
+    const p = res.body.candidates.find((c: any) => c.grain === "persona");
+    // audience-grain: contacted 3, clicks 2, replies 1
+    expect(p.sampleSize).toEqual({ runs: 5, contacted: 3, clicks: 2, replies: 1 });
+    expect(p.cost.grain).toBe("persona");
+    expect(p.cost.clickUsd).toBeCloseTo(250, 6); // $500 / 2 clicks
+    expect(p.cost.replyUsd).toBeCloseTo(500, 6); // $500 / 1 reply
+    expect(p.cost.costPerLeadUsd).toBeCloseTo(166.6667, 3); // $500 / 3 contacted
+    // distinct from the coarse dyn-a row (whole-workflow aggregate: 100 clicks, 50 replies)
+    const coarseA = res.body.candidates.find((c: any) => c.audienceId === null && c.workflow.workflowDynastySlug === "dyn-a");
+    expect(coarseA.cost.clickUsd).toBeCloseTo(10, 6);
+  });
+
+  it("active audience with NO runs-attributed couples → no persona row, coarse ladder only", async () => {
+    mockFetch({ audiences: [{ id: "aud-cold", dynastySlugs: [], costCents: 0, runs: 0, emails: [] }] });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.candidates.every((c: any) => c.audienceId === null)).toBe(true);
+  });
+
+  it("502 when the audience (human-service) source fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("stats/public/costs")) return new Response(JSON.stringify({ groups: COST_GROUPS }), { status: 200 });
+      if (url.includes("/public/workflows")) return new Response(JSON.stringify({ workflows: WORKFLOWS }), { status: 200 });
+      if (url.includes("/public/stats")) return new Response(JSON.stringify({ groups: EMAIL_GROUPS }), { status: 200 });
+      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
+      if (url.includes("/orgs/audiences")) return new Response("boom", { status: 500 });
+      return new Response("{}", { status: 200 });
+    });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
+    expect(res.status).toBe(502);
   });
 
   it("each candidate exposes its sample size (runs + outcome counts)", async () => {

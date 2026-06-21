@@ -1295,7 +1295,7 @@
                 "audienceId": {
                   "type": "string",
                   "nullable": true,
-                  "description": "Audience lever — null until this endpoint reads real audience-grain producer evidence. The audience grain is wired but inert; a null value + grain label is the truthful 'no audience-local data' signal."
+                  "description": "Audience lever — non-null with grain='persona' for couples that have audience-attributed runs/outcomes (active human-service audience × runs-attributed workflow). Null on the coarser brand-goal/goal-global fallback rows when there is no audience-level evidence."
                 },
                 "workflow": {
                   "type": "object",
@@ -1328,7 +1328,7 @@
                     "brand-goal",
                     "goal-global"
                   ],
-                  "description": "Finest fallback grain at which this candidate's evidence resolved. Never 'persona' until real persona-grain evidence is read by this endpoint."
+                  "description": "Finest grain at which this candidate's evidence resolved: 'persona' = audience-attributed (audienceId non-null); 'brand-goal' = the brand's own economics; 'goal-global' = cross-org fallback."
                 },
                 "costPerOutcomeUsd": {
                   "type": "number",
@@ -1379,9 +1379,10 @@
                     "grain": {
                       "type": "string",
                       "enum": [
-                        "goal-global"
+                        "goal-global",
+                        "persona"
                       ],
-                      "description": "Workflow unit costs are cross-org global efficiency (same source as /public/stats/best)."
+                      "description": "Cost-evidence grain: 'goal-global' = cross-org workflow unit costs (same source as /public/stats/best); 'persona' = audience-attributed cost (same source as /audience-stats)."
                     }
                   },
                   "required": [
@@ -3851,7 +3852,7 @@
                           "audienceId": {
                             "type": "string",
                             "nullable": true,
-                            "description": "Audience lever — null until this endpoint reads real audience-grain producer evidence. The audience grain is wired but inert; a null value + grain label is the truthful 'no audience-local data' signal."
+                            "description": "Audience lever — non-null with grain='persona' for couples that have audience-attributed runs/outcomes (active human-service audience × runs-attributed workflow). Null on the coarser brand-goal/goal-global fallback rows when there is no audience-level evidence."
                           },
                           "workflow": {
                             "type": "object",
@@ -3884,7 +3885,7 @@
                               "brand-goal",
                               "goal-global"
                             ],
-                            "description": "Finest fallback grain at which this candidate's evidence resolved. Never 'persona' until real persona-grain evidence is read by this endpoint."
+                            "description": "Finest grain at which this candidate's evidence resolved: 'persona' = audience-attributed (audienceId non-null); 'brand-goal' = the brand's own economics; 'goal-global' = cross-org fallback."
                           },
                           "costPerOutcomeUsd": {
                             "type": "number",
@@ -3935,9 +3936,10 @@
                               "grain": {
                                 "type": "string",
                                 "enum": [
-                                  "goal-global"
+                                  "goal-global",
+                                  "persona"
                                 ],
-                                "description": "Workflow unit costs are cross-org global efficiency (same source as /public/stats/best)."
+                                "description": "Cost-evidence grain: 'goal-global' = cross-org workflow unit costs (same source as /public/stats/best); 'persona' = audience-attributed cost (same source as /audience-stats)."
                               }
                             },
                             "required": [

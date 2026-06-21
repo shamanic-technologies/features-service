@@ -12,26 +12,36 @@ npm run db:migrate:prod  # Run migrations on prod (tsx scripts/migrate-prod.ts)
 npm run generate:openapi # Regenerate openapi.json from Zod schemas
 ```
 
-## `GET /features/:slug/candidates` — persona + brand-profile dims are INTENTIONALLY inert (don't "fix" by mocking)
+## `GET /features/:slug/candidates` — audience grain is LIVE (persona rung emits real per-audience evidence)
 
-The candidate-evidence endpoint (`src/routes/candidates.ts`, PR #299, issue #298) serves the
-`(customerProfileId, workflow)` candidate SET for campaign-service's runtime per-lead selection —
-each candidate with its own `costPerOutcomeUsd`, a `sampleSize` block, separate `conversion`/`cost`
-evidence, and a labelled fallback `grain` (`persona` → `brand-goal` → `goal-global`). It reuses the
-workflow-projection data path (`buildUpgradeChains`/`aggregateAcrossChains` + `fetchEffectiveEconomics`)
-and `projectOutcomeCosts` (extended with `costPerSignupUsd`, click-route self-serve).
+The candidate-evidence endpoint (`src/routes/candidates.ts`, PR #299/#298; audience grain wired in)
+serves the `(audienceId, workflow)` candidate SET for campaign-service's runtime per-couple selection
+(uncertainty-aware / Thompson). Each candidate carries its own `costPerOutcomeUsd`, a `sampleSize`
+block, separate `conversion`/`cost` evidence, and a labelled `grain` ladder (`persona` → `brand-goal`
+→ `goal-global`). The coarse rungs reuse the workflow-projection data path
+(`buildUpgradeChains`/`aggregateAcrossChains` + `fetchEffectiveEconomics` + `projectOutcomeCosts`).
 
-**`customerProfileId` is null on every candidate and no candidate resolves at the `persona` grain —
-BY DESIGN, until upstream lands.** brand-service has no persona/brand-profile entities
-(**brand-service#242**) and runs are not tagged with the `(goal, brandProfileId, customerProfileId,
-workflow)` tuple, nor can runs-service `/v1/stats/public/costs` `groupBy` it (**#300**). A null persona
-+ honest `grain` label is the truthful "no persona-local data" signal — it is NOT a bug to patch by
-synthesizing personas or reaching into another service's gaps (that's the cross-brand-average revert
-trap, #236/#244). The contract is locked so the consumer builds once; the persona rung activates with
-ZERO contract change when #242 + #300 ship. The `Goal` type (`src/lib/goals.ts`) is brand-service-owned
-vocabulary mirrored locally (same convention as `SalesEconomics`) — no shared package is wired into
-features-service today; the publish-vs-mirror call is brand-service's when it builds goals (#242).
-Does NOT touch `workflow-projection` / `stats/ranked` (campaign creation unchanged). (Set 2026-06-16.)
+**The `persona` rung is LIVE.** For each ACTIVE human-service audience that has runs-attributed
+`(audienceId × workflowDynastySlug)` couples, the endpoint emits one persona candidate per couple via
+`src/lib/candidates-audience.ts` `fetchAudienceCandidateEvidence` — `audienceId` non-null,
+`grain:"persona"`, `cost.grain:"persona"`. Evidence is **audience-grain (single coherent grain per
+row)**: cost from runs `groupBy=audienceId` (byte-identical numerator to `/audience-stats`), outcomes
+from read-time membership (`fetchAudienceMemberEmails` → `fetchEmailOutcomes`, explicit provenance, no
+send-tagging). A second runs call `groupBy=audienceId,workflowDynastySlug` enumerates WHICH workflows
+ran for the audience (the couple keys; runs `GET /v1/stats/costs` does `groupBy.split(",")` +
+dynasty-rollup). **Per-workflow OUTCOME splitting does NOT exist in the fleet** (send/engagement is not
+workflow-tagged — staging gap notes #366/#367, workflow-service#321), so each of an audience's couple
+rows carries the SAME audience slice; per-workflow cost discrimination stays on the coarse
+`audienceId:null` rows. `conversion.rate` stays brand-goal/goal-global on persona rows too —
+brand-service has no per-audience economics (**brand-service#242**) — so the audience's empirical tally
+rides in `sampleSize` for the consumer.
+
+**Do NOT mix grains within a persona row** (option-A trap, rejected): couple-exact cost ÷ audience-grain
+clicks is arithmetically incoherent when an audience ran >1 workflow. Cost ratios + sampleSize are all
+audience-grain. Couples with no audience-level evidence keep `audienceId:null` and fall through the
+coarse ladder unchanged — additive, no shape change for existing per-workflow consumers (campaign-service
+already handles `audienceId:null`). `customerProfileId` is fully purged from this endpoint (audience
+grain replaced it). Does NOT touch `workflow-projection` / `stats/ranked`. (Set 2026-06-21.)
 
 ## `GET /features/:slug/audience-stats` — ranked human-service AUDIENCES (persona-stats alias DELETED, PR #351→ removal)
 
@@ -59,6 +69,33 @@ runs-service `groupBy=audienceId` (`x-audience-id` attribution from runs-service
 #204 sets it on the workflow root run, runs inherits it down the tree). `audienceIdFromDimensions`
 reads `dimensions.audienceId` ONLY — no `customerProfileId` fallback. Cost is EXACT (one workflow
 execution = one priority audience → its run tree maps to one audience; no allocation).
+
+**KNOWN UPSTREAM GAP — per-audience cost is currently UNDER-stated (~20-30x), and the fix is NOT
+here.** The `audienceId` write-tag only reaches the LEAD-DISCOVERY runs (`lead-serve`,
+`apollo people-search`, `apify search`). The dominant cost — `instantly-service` email-SEND runs
+(`email-send-step-1/2/3`) + `chat-service complete` / `content-generation single-generation` LLM
+message-GEN — runs INSIDE the per-lead `forloopflow` body of the SAME `execute-workflow` DAG, but
+those body nodes never receive `x-audience-id` so `run.audience_id` is NULL. Root cause is in
+**workflow-service** (`dag-to-openflow.ts`): it threads `audienceId` from campaign `/start-run`'s
+result into descendant nodes as `results.<start_run>?.audienceId`, which resolves for top-level
+lead-finding nodes but NOT inside the nested for-each-lead loop → gen/send body nodes untagged.
+Measured prod (brand `f4d73dab…`, this feature): only **$10.59 of $346.26 actual cost (3%)** carries
+an `audienceId` → CPC reads $0.24 where ~$5 is real. **Do NOT "fix" this in features-service by
+reverse-joining lead→audience→send cost** — that is working around another service's gap (forbidden).
+Tracked in **workflow-service#321**; features-service sums what is tagged and stays correct with ZERO
+change as coverage improves. (Set 2026-06-21.)
+
+**The cost NUMERATOR must NOT be filtered by `goal`/`brandProfileId` — only `brandId` +
+`featureSlugs` (+ `workflowDynastySlug` in `pipeline-activity`).** runs/cost rows are tagged with
+`audienceId` but NOT `goal`/`brandProfileId` (both NULL in prod — 0 of ~42k cost rows carry a
+non-null `goal`), so adding either as a runs `/v1/stats/costs` filter drops EVERY real cost row →
+`totalCostInUsdCents=0` → `ratioCents(0, clicks)` returned a false **$0.00** CPC (and broke
+campaign-service's `limit=1` pick — a false-$0 sorts first). Conceptually a campaign's spend to reach
+an audience is not partitioned by goal: `goal` selects the METRIC/DENOMINATOR (cpc vs cppr,
+`sortMetricForGoal`), never which spend counts. `ratioCents` returns **null** (renders "-") when cost
+is 0 — never a false $0.00, even for an audience with clicks whose runs were never `audienceId`-tagged.
+Do NOT "re-add goal scoping" thinking it's missing; it's deliberately absent until the writer tags
+goal AND it's proven correct for the numerator. (Set 2026-06-21, hotfix v0.59.1.)
 
 **Outcomes resolved READ-TIME from explicit membership.** `fetchAudienceOutcomes`: recipient emails →
 human-service membership (`fetchAudienceMemberEmails`, provenance populated by serve-next +
