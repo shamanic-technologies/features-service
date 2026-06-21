@@ -488,7 +488,7 @@ const candidateCostSchema = z.object({
   costPerLeadUsd: z.number().nullable().describe("Cost per contacted lead (USD). Null when there is no contacted-lead denominator."),
   clickUsd: z.number().nullable().describe("Cost per click (USD). Null when absent/zero."),
   replyUsd: z.number().nullable().describe("Cost per positive reply (USD). Null when absent/zero."),
-  grain: z.literal("goal-global").describe("Workflow unit costs are cross-org global efficiency (same source as /public/stats/best)."),
+  grain: z.enum(["goal-global", "persona"]).describe("Cost-evidence grain: 'goal-global' = cross-org workflow unit costs (same source as /public/stats/best); 'persona' = audience-attributed cost (same source as /audience-stats)."),
 });
 
 const candidateSampleSizeSchema = z.object({
@@ -499,10 +499,10 @@ const candidateSampleSizeSchema = z.object({
 });
 
 const candidateSchema = z.object({
-  audienceId: z.string().nullable().describe("Audience lever — null until this endpoint reads real audience-grain producer evidence. The audience grain is wired but inert; a null value + grain label is the truthful 'no audience-local data' signal."),
+  audienceId: z.string().nullable().describe("Audience lever — non-null with grain='persona' for couples that have audience-attributed runs/outcomes (active human-service audience × runs-attributed workflow). Null on the coarser brand-goal/goal-global fallback rows when there is no audience-level evidence."),
   workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() }),
   goal: z.enum(["signup", "meetingBooked", "purchase"]),
-  grain: z.enum(["persona", "brand-goal", "goal-global"]).describe("Finest fallback grain at which this candidate's evidence resolved. Never 'persona' until real persona-grain evidence is read by this endpoint."),
+  grain: z.enum(["persona", "brand-goal", "goal-global"]).describe("Finest grain at which this candidate's evidence resolved: 'persona' = audience-attributed (audienceId non-null); 'brand-goal' = the brand's own economics; 'goal-global' = cross-org fallback."),
   costPerOutcomeUsd: z.number().nullable().describe("The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."),
   conversion: candidateConversionSchema,
   cost: candidateCostSchema,
