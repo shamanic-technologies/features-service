@@ -179,6 +179,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     // cost fetch groups by audienceId.
     const costUrl = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).find((u: string) => u.includes("runs:3000"));
     expect(costUrl).toContain("groupBy=audienceId");
+    expect(costUrl).not.toContain("goal=");
   });
 
   it("sorts sales-meeting audiences by CPPR using read-time membership evidence", async () => {
@@ -207,6 +208,59 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(res.body.audiences).toHaveLength(1);
     const urls: string[] = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0]));
     expect(urls.some((url) => url.includes("/brand-profile"))).toBe(false);
-    expect(urls.find((url) => url.includes("runs:3000"))).toContain("brandProfileId=brand-profile-explicit");
+    // Cost NUMERATOR is attributed by audienceId only — never filtered by goal/brandProfileId
+    // (those dims are untagged on runs/cost rows, so filtering would drop every real cost row).
+    const costUrl = urls.find((url) => url.includes("runs:3000")) ?? "";
+    expect(costUrl).toContain("groupBy=audienceId");
+    expect(costUrl).not.toContain("brandProfileId");
+    expect(costUrl).not.toContain("goal=");
+  });
+
+  it("returns null CPC (not a false $0.00) when an audience has clicks but no attributed spend", async () => {
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = urlOf(input);
+      if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+      if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
+      if (url.includes("human:3000/orgs/audiences")) {
+        return new Response(JSON.stringify({
+          audiences: [
+            { id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: null },
+            { id: "audience-b", brandId: "brand-1", name: "Founders", status: "active", filters: null },
+          ],
+          total: 2, limit: 200, offset: 0,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) {
+        return new Response(JSON.stringify({ current: null, versions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("runs:3000/v1/stats/costs")) {
+        // audience-a has NO cost row (no attributed spend); audience-b has real spend.
+        return new Response(JSON.stringify({ groups: [costGroup("audience-b", 1000, 2)] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("email:3000/orgs/status")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { items: Array<{ email: string }> };
+        // Everyone clicked — so audience-a has clicks but zero attributed cost.
+        const results = body.items.map(({ email }) => ({
+          email,
+          broadcast: { brand: { contacted: true, opened: true, clicked: true, replied: false, replyClassification: null } },
+        }));
+        return new Response(JSON.stringify({ results }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
+    // audience-a: clicks > 0 but no attributed spend → CPC null (renders "-"), NOT $0.00.
+    expect(byId["audience-a"].evidence.websiteClicks).toBeGreaterThan(0);
+    expect(byId["audience-a"].evidence.totalCostInUsdCents).toBe(0);
+    expect(byId["audience-a"].metrics.cpcCents).toBeNull();
+    // audience-b: real spend → real CPC, and sorts ahead of the null-CPC audience.
+    expect(byId["audience-b"].metrics.cpcCents).toBe(50);
+    expect(res.body.audiences[0].audienceId).toBe("audience-b");
   });
 });
