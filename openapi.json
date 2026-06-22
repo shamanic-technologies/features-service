@@ -789,6 +789,15 @@
                   "nullable": true,
                   "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."
                 },
+                "contacted": {
+                  "type": "boolean",
+                  "description": "True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."
+                },
+                "contactedAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
+                },
                 "conversionProbabilityPct": {
                   "type": "number",
                   "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
@@ -804,7 +813,9 @@
                 "orgDomain",
                 "tags",
                 "expectedRevenueUsd",
-                "date"
+                "date",
+                "contacted",
+                "contactedAt"
               ]
             }
           },
