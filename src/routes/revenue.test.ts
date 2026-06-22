@@ -218,6 +218,25 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.events.find((e: any) => e.eventType === "reply").eventDate).toBe(replyAt);
   });
 
+  it("leads carry contacted + contactedAt — single source for the Outreach card + daily graph (#371)", async () => {
+    const contactedAt = daysAgo(2);
+    mockFetch({
+      economics: ECONOMICS,
+      leads: HAPPY_LEADS, // both rows overlay contacted:true
+      timestamps: {
+        "click@x.com": { firstContactedAt: contactedAt, firstClickedAt: daysAgo(1) },
+        "reply@y.com": { firstContactedAt: contactedAt, firstRepliedAt: daysAgo(1) },
+      },
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    // Outreach stat card = count of contacted leads on THIS payload (no separate email-gateway aggregate).
+    expect(res.body.leads.every((l: any) => l.contacted === true)).toBe(true);
+    expect(res.body.leads.filter((l: any) => l.contacted).length).toBe(2);
+    // Daily graph buckets by the real firstContactedAt — present on every contacted lead (no synthesis).
+    for (const l of res.body.leads) expect(l.contactedAt).toBe(contactedAt);
+  });
+
   it("cross-brand-average fallback — no saved economics but average exists → computed + tagged estimate", async () => {
     // brand-service returns the cross-brand average (source "cross-brand-average") → same math as the
     // happy path, now tagged provenance so the dashboard can badge it estimated.

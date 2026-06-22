@@ -258,6 +258,8 @@ const revenueLeadSchema = z.object({
   tags: z.array(z.string()),
   expectedRevenueUsd: z.number().describe("Expected revenue for this lead. On a lensed (?lens=) response this is the lens's expected revenue = (conversionProbabilityPct/100) × LTR; otherwise the engine's furthest-stage EV."),
   date: z.string().nullable().describe("Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."),
+  contacted: z.boolean().describe("True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."),
+  contactedAt: z.string().nullable().describe("ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."),
   conversionProbabilityPct: z.number().optional().describe("LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."),
 });
 
