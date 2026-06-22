@@ -160,6 +160,68 @@ export interface RevenueResult {
   events: EventRow[];
 }
 
+/** One day's contacted-lead count for the Outreach actual series. `date` is a UTC calendar day (YYYY-MM-DD). */
+export interface ContactedDailyPoint {
+  date: string;
+  count: number;
+}
+
+/**
+ * Server-computed "contacted" aggregates for the brand Overview's Outreach surfaces — derived from
+ * the SAME `leads[]` snapshot the table renders, so the stat card, the daily graph and the table all
+ * move together from one payload (features-service#371/#372). Convention: metric surfaces compute
+ * server-side, the dashboard renders only.
+ *
+ * Invariant (coherent by construction): `total === sum(daily[].count) + undatedCount ===` the number
+ * of leads in this payload with `contacted === true`. When every contacted lead has a known date,
+ * `undatedCount === 0` and `total === sum(daily[].count)` — the card count equals the graph sum.
+ */
+export interface OutreachContactedSeries {
+  /** Total contacted leads in scope — the Outreach stat-card count. */
+  total: number;
+  /**
+   * Per-day contacted buckets, keyed by the UTC calendar day (YYYY-MM-DD) of each lead's `contactedAt`,
+   * ascending by date, one entry per day that has ≥1 dated contacted lead. The Outreach ACTUAL series
+   * the 7-day graph renders (the dashboard slices its window from this complete series). Sums to
+   * `total - undatedCount`. No `now` dependence — buckets come only from the per-lead timestamps, so
+   * the series is wall-clock-independent.
+   */
+  daily: ContactedDailyPoint[];
+  /**
+   * Contacted leads with a null `contactedAt` (cannot be bucketed — no synthesis, the date stays
+   * unknown). These count toward `total` but not toward any `daily` bucket, so the card and graph
+   * stay reconcilable: `total = sum(daily[].count) + undatedCount`.
+   */
+  undatedCount: number;
+}
+
+/**
+ * Build the Outreach contacted aggregates from the payload's final lead rows. PURE function of
+ * `leads[]` — the same array the response returns — so the card count, the daily buckets and the
+ * table are guaranteed mutually coherent (they cannot disagree about "contacted"). A contacted lead
+ * with a known `contactedAt` lands in its UTC-day bucket; a contacted lead with a null `contactedAt`
+ * is counted in `total` + `undatedCount` only (never synthesized into a date).
+ */
+export function buildContactedSeries(leads: LeadRow[]): OutreachContactedSeries {
+  let total = 0;
+  let undatedCount = 0;
+  const byDay = new Map<string, number>();
+  for (const lead of leads) {
+    if (!lead.contacted) continue;
+    total += 1;
+    if (lead.contactedAt) {
+      const day = lead.contactedAt.slice(0, 10); // YYYY-MM-DD (UTC) from the ISO timestamp
+      byDay.set(day, (byDay.get(day) ?? 0) + 1);
+    } else {
+      undatedCount += 1;
+    }
+  }
+  const daily = [...byDay.entries()]
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return { total, daily, undatedCount };
+}
+
 interface FiredEvent {
   tag: string;
   eventDate: string | null;
