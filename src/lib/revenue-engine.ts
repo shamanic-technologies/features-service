@@ -118,6 +118,19 @@ export interface LeadRow {
   /** Most-advanced (max) event date for the lead. Null when no event date is known. */
   date: string | null;
   /**
+   * True when the lead has been contacted — email-gateway delivery evidence (`signals.contacted`,
+   * OR'd across the lead's campaign rows). This is the SAME signal the Outreach stat card and the
+   * pipeline-activity daily graph should count, so all three Overview surfaces agree on "contacted"
+   * from one snapshot (features-service#371). Engine never re-derives it; it mirrors the overlay.
+   */
+  contacted: boolean;
+  /**
+   * ISO timestamp of FIRST contact (email-gateway `firstContactedAt`, MIN'd across campaign rows);
+   * null when contacted but the date is unknown, or not yet contacted. The real per-lead timestamp
+   * the daily graph buckets by — no synthesis (features-service#371).
+   */
+  contactedAt: string | null;
+  /**
    * Lens-only: the lead's conversion probability (0–100) for the requested outcome lens. Present
    * ONLY on a lensed `?lens=` response; ABSENT on the default/grouped responses (keeps them
    * byte-identical). Set by the lens path in `revenue.ts`, never by the engine.
@@ -338,6 +351,8 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     tags,
     expectedRevenueUsd: ev,
     date,
+    contacted: Boolean(person.signals.contacted),
+    contactedAt: person.signalDates?.contacted ?? null,
   }));
   // Default sort: most-advanced status first, then most-recent conversion date, then EV (deterministic).
   leads.sort((a, b) => {

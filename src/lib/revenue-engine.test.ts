@@ -537,3 +537,70 @@ describe("computeRevenue — engagement-route combine (independent-probability S
     expect(r.leads[0].expectedRevenueUsd).toBe(1000);
   });
 });
+
+// features-service#371 — the leads payload carries the per-lead `contacted` flag + `contactedAt`
+// date so the Outreach stat card (a count) and the pipeline-activity daily graph (per-day buckets)
+// can render from this ONE snapshot, agreeing with the leads table they share. Single source.
+describe("computeRevenue — contacted flag + contactedAt (features-service#371)", () => {
+  const STAGE_PATHS: ResolvedPath[] = [
+    { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery" },
+    { tag: "visit", signal: "clicked", expectedRevenueUsd: 20 },
+  ];
+
+  it("exposes contacted=true + the firstContactedAt date from the overlay", () => {
+    const r = computeRevenue(STAGE_PATHS, [
+      person({
+        leadId: "l1",
+        signals: { contacted: true, clicked: false },
+        signalDates: { contacted: "2026-06-20T10:00:00.000Z" },
+      }),
+    ]);
+    expect(r.leads[0].contacted).toBe(true);
+    expect(r.leads[0].contactedAt).toBe("2026-06-20T10:00:00.000Z");
+  });
+
+  it("a clicked (engaged) lead is still contacted=true — count never undercounts past contacted", () => {
+    const r = computeRevenue(STAGE_PATHS, [
+      person({
+        leadId: "l1",
+        signals: { contacted: true, clicked: true },
+        signalDates: { contacted: "2026-06-20T10:00:00.000Z" },
+      }),
+    ]);
+    // The lead's furthest tag is "visit", NOT "contacted" — counting tags would miss it. The
+    // explicit `contacted` flag does not.
+    expect(r.leads[0].tags).toEqual(["visit"]);
+    expect(r.leads[0].contacted).toBe(true);
+  });
+
+  it("contactedAt null when contacted but no date known (no synthesis)", () => {
+    const r = computeRevenue(STAGE_PATHS, [
+      person({ leadId: "l1", signals: { contacted: true, clicked: false } }),
+    ]);
+    expect(r.leads[0].contacted).toBe(true);
+    expect(r.leads[0].contactedAt).toBeNull();
+  });
+
+  it("the card count + daily buckets are both derivable from one snapshot (three surfaces agree)", () => {
+    const r = computeRevenue(STAGE_PATHS, [
+      person({ leadId: "l1", signals: { contacted: true, clicked: true }, signalDates: { contacted: "2026-06-20T09:00:00.000Z" } }),
+      person({ leadId: "l2", signals: { contacted: true, clicked: false }, signalDates: { contacted: "2026-06-20T23:00:00.000Z" } }),
+      person({ leadId: "l3", signals: { contacted: true, clicked: false }, signalDates: { contacted: "2026-06-21T08:00:00.000Z" } }),
+    ]);
+    // Outreach stat card = count of contacted leads (the leads table is the single source).
+    const cardCount = r.leads.filter((l) => l.contacted).length;
+    expect(cardCount).toBe(3);
+    // Daily graph = bucket the SAME leads by contactedAt's UTC calendar day.
+    const byDay = new Map<string, number>();
+    for (const l of r.leads) {
+      if (!l.contactedAt) continue;
+      const day = l.contactedAt.slice(0, 10);
+      byDay.set(day, (byDay.get(day) ?? 0) + 1);
+    }
+    expect(byDay.get("2026-06-20")).toBe(2);
+    expect(byDay.get("2026-06-21")).toBe(1);
+    // Coherence: the per-day buckets sum to the card count — same snapshot, same population.
+    const bucketSum = [...byDay.values()].reduce((a, b) => a + b, 0);
+    expect(bucketSum).toBe(cardCount);
+  });
+});

@@ -160,6 +160,8 @@ function buildLensBody(
       tags: lensTags(person.signals),
       expectedRevenueUsd: p * ltr,
       date: null,
+      contacted: Boolean(person.signals.contacted),
+      contactedAt: person.signalDates?.contacted ?? null,
       conversionProbabilityPct: p * 100,
     });
   }
