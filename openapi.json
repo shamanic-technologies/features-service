@@ -594,6 +594,46 @@
           "featureSlug": {
             "type": "string"
           },
+          "outreachContacted": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total contacted leads in scope — the Outreach stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day contacted buckets (the Outreach ACTUAL series the daily graph renders), keyed by the UTC day of each lead's contactedAt, ascending. Complete series — one entry per day with ≥1 dated contacted lead; the dashboard slices its 7-day window from it. Sums to total - undatedCount. No wall-clock dependence (buckets come only from per-lead timestamps)."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Contacted leads with a null contactedAt (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."
+          },
           "headline": {
             "type": "object",
             "properties": {
@@ -859,6 +899,7 @@
         },
         "required": [
           "featureSlug",
+          "outreachContacted",
           "headline",
           "costEconomics",
           "timeSeries",

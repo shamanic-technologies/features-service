@@ -285,8 +285,23 @@ const revenueCostEconomicsSchema = z.object({
   costPerConversionUsd: z.number().nullable().optional().describe("LENS ONLY — totalCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
 });
 
+// Server-computed "contacted" aggregates for the Overview's Outreach surfaces (stat card + 7-day
+// graph), derived from the SAME leads[] this response returns. Coherent by construction:
+// total === sum(daily[].count) + undatedCount === count(leads with contacted === true).
+const outreachContactedDailySchema = z.object({
+  date: z.string().describe("UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."),
+  count: z.number().int().describe("Number of leads first contacted on this UTC day."),
+});
+
+const outreachContactedSchema = z.object({
+  total: z.number().int().describe("Total contacted leads in scope — the Outreach stat-card count. Equals sum(daily[].count) + undatedCount."),
+  daily: z.array(outreachContactedDailySchema).describe("Per-day contacted buckets (the Outreach ACTUAL series the daily graph renders), keyed by the UTC day of each lead's contactedAt, ascending. Complete series — one entry per day with ≥1 dated contacted lead; the dashboard slices its 7-day window from it. Sums to total - undatedCount. No wall-clock dependence (buckets come only from per-lead timestamps)."),
+  undatedCount: z.number().int().describe("Contacted leads with a null contactedAt (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."),
+});
+
 const featureRevenueResponseSchema = z.object({
   featureSlug: z.string(),
+  outreachContacted: outreachContactedSchema.describe("Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."),
   headline: z.object({
     totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."),
     economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no funnel wired or no economics applied)."),

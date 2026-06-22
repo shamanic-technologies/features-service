@@ -13,11 +13,13 @@ import { fetchPlatformEmailRates } from "../lib/platform-rates-client.js";
 import {
   computeRevenue,
   dedupPersonsByLead,
+  buildContactedSeries,
   type EnginePerson,
   type OrganizationRow,
   type LeadRow,
   type TimeSeriesPoint,
   type EventRow,
+  type OutreachContactedSeries,
 } from "../lib/revenue-engine.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
@@ -65,6 +67,13 @@ interface RevenueResponse {
   organizations: OrganizationRow[];
   leads: LeadRow[];
   events: EventRow[];
+  /**
+   * Server-computed "contacted" aggregates for the Overview's Outreach surfaces — the stat-card
+   * total + the daily-graph actual series, both derived from the SAME `leads[]` above so all three
+   * Outreach surfaces (card, graph, table) agree from one snapshot (features-service#371/#372).
+   * Coherent by construction: total === sum(daily counts) + undatedCount === count(leads contacted).
+   */
+  outreachContacted: OutreachContactedSeries;
 }
 
 /** The revenue response body for one (brand, campaign?) scope — everything but the featureSlug. */
@@ -80,6 +89,7 @@ function emptyBody(totalPipelineUsd: number | null, totalCostInUsdCents: number)
     organizations: [],
     leads: [],
     events: [],
+    outreachContacted: buildContactedSeries([]),
   };
 }
 
@@ -187,6 +197,7 @@ function buildLensBody(
     organizations: [],
     leads,
     events: [],
+    outreachContacted: buildContactedSeries(leads),
   };
 }
 
@@ -320,6 +331,7 @@ export async function computeFeatureRevenue(
     organizations: result.organizations,
     leads: result.leads,
     events: result.events,
+    outreachContacted: buildContactedSeries(result.leads),
   };
 }
 

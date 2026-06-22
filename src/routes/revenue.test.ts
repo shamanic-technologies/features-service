@@ -237,6 +237,32 @@ describe("GET /features/:featureSlug/revenue", () => {
     for (const l of res.body.leads) expect(l.contactedAt).toBe(contactedAt);
   });
 
+  it("outreachContacted — server-computed card count + daily buckets, coherent with leads[] (#372)", async () => {
+    // Two contacted leads, both dated to the SAME UTC day → one daily bucket of 2, card total 2.
+    const day = "2026-05-10";
+    mockFetch({
+      economics: ECONOMICS,
+      leads: HAPPY_LEADS, // both rows overlay contacted:true
+      timestamps: {
+        "click@x.com": { firstContactedAt: `${day}T09:00:00.000Z`, firstClickedAt: `${day}T10:00:00.000Z` },
+        "reply@y.com": { firstContactedAt: `${day}T23:30:00.000Z`, firstRepliedAt: `${day}T23:45:00.000Z` },
+      },
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    const oc = res.body.outreachContacted;
+    // Stat card.
+    expect(oc.total).toBe(2);
+    // Daily graph actuals — bucketed by the per-lead contactedAt UTC day, server-side.
+    expect(oc.daily).toEqual([{ date: day, count: 2 }]);
+    expect(oc.undatedCount).toBe(0);
+    // COHERENCE in one payload: card == sum(buckets) == count(leads contacted).
+    const sumDaily = oc.daily.reduce((a: number, b: any) => a + b.count, 0);
+    const contactedLeads = res.body.leads.filter((l: any) => l.contacted).length;
+    expect(oc.total).toBe(contactedLeads);
+    expect(sumDaily + oc.undatedCount).toBe(oc.total);
+  });
+
   it("cross-brand-average fallback — no saved economics but average exists → computed + tagged estimate", async () => {
     // brand-service returns the cross-brand average (source "cross-brand-average") → same math as the
     // happy path, now tagged provenance so the dashboard can badge it estimated.
