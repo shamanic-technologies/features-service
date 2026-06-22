@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeRevenue, type ResolvedPath, type EnginePerson } from "./revenue-engine.js";
+import { computeRevenue, buildContactedSeries, type ResolvedPath, type EnginePerson, type LeadRow } from "./revenue-engine.js";
 
 // Engine is funnel-agnostic — these are arbitrary fixture EVs (NOT the live funnel formula, which
 // now combines the click's two routes via orP). visit_EV=20, reply_EV=120 keep the engine assertions
@@ -602,5 +602,78 @@ describe("computeRevenue — contacted flag + contactedAt (features-service#371)
     // Coherence: the per-day buckets sum to the card count — same snapshot, same population.
     const bucketSum = [...byDay.values()].reduce((a, b) => a + b, 0);
     expect(bucketSum).toBe(cardCount);
+  });
+});
+
+// features-service follow-up (#372 → server-side aggregates): the Outreach stat-card COUNT and the
+// 7-day graph's daily ACTUALS are computed server-side from the SAME leads[] snapshot the table
+// renders, so the dashboard renders only. buildContactedSeries is that pure aggregator.
+describe("buildContactedSeries — server-computed Outreach aggregates (features-service#372)", () => {
+  function lead(over: Partial<LeadRow> & { leadId: string }): LeadRow {
+    return {
+      firstName: null, lastName: null, photoUrl: null,
+      orgName: null, orgLogoUrl: null, orgDomain: null,
+      tags: [], expectedRevenueUsd: 0, date: null,
+      contacted: false, contactedAt: null,
+      ...over,
+    };
+  }
+
+  it("total = stat-card count = number of contacted leads in the payload", () => {
+    const s = buildContactedSeries([
+      lead({ leadId: "l1", contacted: true, contactedAt: "2026-06-20T09:00:00.000Z" }),
+      lead({ leadId: "l2", contacted: true, contactedAt: "2026-06-21T08:00:00.000Z" }),
+      lead({ leadId: "l3", contacted: false }), // not contacted → excluded
+    ]);
+    expect(s.total).toBe(2);
+  });
+
+  it("daily buckets group by the UTC calendar day of contactedAt, ascending", () => {
+    const s = buildContactedSeries([
+      lead({ leadId: "l1", contacted: true, contactedAt: "2026-06-21T08:00:00.000Z" }),
+      lead({ leadId: "l2", contacted: true, contactedAt: "2026-06-20T09:00:00.000Z" }),
+      lead({ leadId: "l3", contacted: true, contactedAt: "2026-06-20T23:30:00.000Z" }),
+    ]);
+    expect(s.daily).toEqual([
+      { date: "2026-06-20", count: 2 },
+      { date: "2026-06-21", count: 1 },
+    ]);
+  });
+
+  it("contacted lead with null contactedAt → undatedCount, never a synthesized bucket", () => {
+    const s = buildContactedSeries([
+      lead({ leadId: "l1", contacted: true, contactedAt: "2026-06-20T09:00:00.000Z" }),
+      lead({ leadId: "l2", contacted: true, contactedAt: null }),
+    ]);
+    expect(s.undatedCount).toBe(1);
+    expect(s.daily).toEqual([{ date: "2026-06-20", count: 1 }]);
+  });
+
+  it("COHERENCE: total === sum(daily counts) + undatedCount === count(leads contacted)", () => {
+    const leads = [
+      lead({ leadId: "l1", contacted: true, contactedAt: "2026-06-20T09:00:00.000Z" }),
+      lead({ leadId: "l2", contacted: true, contactedAt: "2026-06-20T22:00:00.000Z" }),
+      lead({ leadId: "l3", contacted: true, contactedAt: "2026-06-21T08:00:00.000Z" }),
+      lead({ leadId: "l4", contacted: true, contactedAt: null }), // dated-unknown
+      lead({ leadId: "l5", contacted: false }),                    // not contacted
+    ];
+    const s = buildContactedSeries(leads);
+    const sumDaily = s.daily.reduce((a, b) => a + b.count, 0);
+    const contactedLeads = leads.filter((l) => l.contacted).length;
+    expect(s.total).toBe(contactedLeads);
+    expect(sumDaily + s.undatedCount).toBe(s.total);
+  });
+
+  it("card count == sum(daily buckets) exactly when every contacted lead is dated (undatedCount 0)", () => {
+    const s = buildContactedSeries([
+      lead({ leadId: "l1", contacted: true, contactedAt: "2026-06-20T09:00:00.000Z" }),
+      lead({ leadId: "l2", contacted: true, contactedAt: "2026-06-21T08:00:00.000Z" }),
+    ]);
+    expect(s.undatedCount).toBe(0);
+    expect(s.daily.reduce((a, b) => a + b.count, 0)).toBe(s.total);
+  });
+
+  it("empty leads → zeroed series (cold-start / no-funnel body)", () => {
+    expect(buildContactedSeries([])).toEqual({ total: 0, daily: [], undatedCount: 0 });
   });
 });
