@@ -12,19 +12,19 @@ npm run db:migrate:prod  # Run migrations on prod (tsx scripts/migrate-prod.ts)
 npm run generate:openapi # Regenerate openapi.json from Zod schemas
 ```
 
-## `GET /features/:slug/candidates` — audience grain is LIVE (persona rung emits real per-audience evidence)
+## `GET /features/:slug/candidates` — audience grain is LIVE (audience rung emits real per-audience evidence)
 
 The candidate-evidence endpoint (`src/routes/candidates.ts`, PR #299/#298; audience grain wired in)
 serves the `(audienceId, workflow)` candidate SET for campaign-service's runtime per-couple selection
 (uncertainty-aware / Thompson). Each candidate carries its own `costPerOutcomeUsd`, a `sampleSize`
-block, separate `conversion`/`cost` evidence, and a labelled `grain` ladder (`persona` → `brand-goal`
+block, separate `conversion`/`cost` evidence, and a labelled `grain` ladder (`audience` → `brand-goal`
 → `goal-global`). The coarse rungs reuse the workflow-projection data path
 (`buildUpgradeChains`/`aggregateAcrossChains` + `fetchEffectiveEconomics` + `projectOutcomeCosts`).
 
-**The `persona` rung is LIVE.** For each ACTIVE human-service audience that has runs-attributed
-`(audienceId × workflowDynastySlug)` couples, the endpoint emits one persona candidate per couple via
+**The `audience` rung is LIVE.** For each ACTIVE human-service audience that has runs-attributed
+`(audienceId × workflowDynastySlug)` couples, the endpoint emits one audience candidate per couple via
 `src/lib/candidates-audience.ts` `fetchAudienceCandidateEvidence` — `audienceId` non-null,
-`grain:"persona"`, `cost.grain:"persona"`. Evidence is **audience-grain (single coherent grain per
+`grain:"audience"`, `cost.grain:"audience"`. Evidence is **audience-grain (single coherent grain per
 row)**: cost from runs `groupBy=audienceId` (byte-identical numerator to `/audience-stats`), outcomes
 from read-time membership (`fetchAudienceMemberEmails` → `fetchEmailOutcomes`, explicit provenance, no
 send-tagging). A second runs call `groupBy=audienceId,workflowDynastySlug` enumerates WHICH workflows
@@ -32,11 +32,11 @@ ran for the audience (the couple keys; runs `GET /v1/stats/costs` does `groupBy.
 dynasty-rollup). **Per-workflow OUTCOME splitting does NOT exist in the fleet** (send/engagement is not
 workflow-tagged — staging gap notes #366/#367, workflow-service#321), so each of an audience's couple
 rows carries the SAME audience slice; per-workflow cost discrimination stays on the coarse
-`audienceId:null` rows. `conversion.rate` stays brand-goal/goal-global on persona rows too —
+`audienceId:null` rows. `conversion.rate` stays brand-goal/goal-global on audience rows too —
 brand-service has no per-audience economics (**brand-service#242**) — so the audience's empirical tally
 rides in `sampleSize` for the consumer.
 
-**Do NOT mix grains within a persona row** (option-A trap, rejected): couple-exact cost ÷ audience-grain
+**Do NOT mix grains within an audience row** (option-A trap, rejected): couple-exact cost ÷ audience-grain
 clicks is arithmetically incoherent when an audience ran >1 workflow. Cost ratios + sampleSize are all
 audience-grain. Couples with no audience-level evidence keep `audienceId:null` and fall through the
 coarse ladder unchanged — additive, no shape change for existing per-workflow consumers (campaign-service

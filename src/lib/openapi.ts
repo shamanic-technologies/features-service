@@ -505,7 +505,7 @@ const candidateCostSchema = z.object({
   costPerLeadUsd: z.number().nullable().describe("Cost per contacted lead (USD). Null when there is no contacted-lead denominator."),
   clickUsd: z.number().nullable().describe("Cost per click (USD). Null when absent/zero."),
   replyUsd: z.number().nullable().describe("Cost per positive reply (USD). Null when absent/zero."),
-  grain: z.enum(["goal-global", "persona"]).describe("Cost-evidence grain: 'goal-global' = cross-org workflow unit costs (same source as /public/stats/best); 'persona' = audience-attributed cost (same source as /audience-stats)."),
+  grain: z.enum(["goal-global", "audience"]).describe("Cost-evidence grain: 'goal-global' = cross-org workflow unit costs (same source as /public/stats/best); 'audience' = audience-attributed cost (same source as /audience-stats)."),
 });
 
 const candidateSampleSizeSchema = z.object({
@@ -516,10 +516,10 @@ const candidateSampleSizeSchema = z.object({
 });
 
 const candidateSchema = z.object({
-  audienceId: z.string().nullable().describe("Audience lever — non-null with grain='persona' for couples that have audience-attributed runs/outcomes (active human-service audience × runs-attributed workflow). Null on the coarser brand-goal/goal-global fallback rows when there is no audience-level evidence."),
+  audienceId: z.string().nullable().describe("Audience lever — non-null with grain='audience' for couples that have audience-attributed runs/outcomes (active human-service audience × runs-attributed workflow). Null on the coarser brand-goal/goal-global fallback rows when there is no audience-level evidence."),
   workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() }),
   goal: z.enum(["signup", "meetingBooked", "purchase"]),
-  grain: z.enum(["persona", "brand-goal", "goal-global"]).describe("Finest grain at which this candidate's evidence resolved: 'persona' = audience-attributed (audienceId non-null); 'brand-goal' = the brand's own economics; 'goal-global' = cross-org fallback."),
+  grain: z.enum(["audience", "brand-goal", "goal-global"]).describe("Finest grain at which this candidate's evidence resolved: 'audience' = audience-attributed (audienceId non-null); 'brand-goal' = the brand's own economics; 'goal-global' = cross-org fallback."),
   costPerOutcomeUsd: z.number().nullable().describe("The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."),
   conversion: candidateConversionSchema,
   cost: candidateCostSchema,
@@ -542,7 +542,7 @@ registry.registerPath({
   summary: "Serve the (audienceId, workflow) candidate set with per-candidate evidence + sample size",
   description:
     "Runtime per-lead selection evidence: returns the candidate SET — one per active workflow — each with its OWN cost-per-outcome for the goal, the SAMPLE SIZE behind it, CONVERSION and COST evidence kept separate, and a labelled fallback GRAIN. Deliberately does NOT collapse to a single best: the consumer owns the uncertainty-aware selection policy (Thompson-style). " +
-    "Fallback grain ladder (finest→coarsest): persona (brandId×goal×brandProfileId×audienceId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The persona rung is present in the contract but this endpoint does not read persona-grain producer evidence yet; until that lands, audienceId is null and no candidate resolves at 'persona'. " +
+    "Fallback grain ladder (finest→coarsest): audience (brandId×goal×audienceId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The audience rung is LIVE: for active human-service audiences with runs-attributed couples this endpoint emits one audience-grain candidate per couple (audienceId non-null, grain='audience'); couples with no audience-level evidence fall through to the coarser rungs with audienceId null. " +
     "Reuses the workflow-projection data path: global per-workflow unit costs aggregated over the upgrade chain + the brand's EFFECTIVE sales-economics. Additive — does not change workflow-projection / stats/ranked.",
   tags: ["Stats"],
   request: {
