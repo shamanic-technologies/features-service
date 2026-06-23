@@ -81,7 +81,7 @@ interface MockOpts {
   emailGroups?: unknown[];
   economics?: unknown;
   source?: unknown;
-  audiences?: AudienceFixture[]; // default [] → no persona rows
+  audiences?: AudienceFixture[]; // default [] → no audience rows
 }
 
 function mockFetch(opts: MockOpts = {}): void {
@@ -102,7 +102,7 @@ function mockFetch(opts: MockOpts = {}): void {
       const source = "source" in opts ? opts.source : economics == null ? null : "user";
       return new Response(JSON.stringify({ economics, source }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    // ── audience-grain (persona) sources ──
+    // ── audience-grain sources ──
     if (url.includes("/orgs/audiences/") && url.includes("/members")) {
       const id = url.split("/orgs/audiences/")[1].split("/members")[0];
       const aud = audiences.find((a) => a.id === id);
@@ -182,10 +182,10 @@ describe("GET /features/:featureSlug/candidates", () => {
     mockFetch();
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
     expect(res.body.candidates.every((c: any) => c.audienceId === null)).toBe(true);
-    expect(res.body.candidates.every((c: any) => c.grain !== "persona")).toBe(true);
+    expect(res.body.candidates.every((c: any) => c.grain !== "audience")).toBe(true);
   });
 
-  it("active audience with runs-attributed couples → emits persona rows (non-null audienceId, grain persona)", async () => {
+  it("active audience with runs-attributed couples → emits audience rows (non-null audienceId, grain audience)", async () => {
     mockFetch({
       audiences: [
         {
@@ -205,17 +205,17 @@ describe("GET /features/:featureSlug/candidates", () => {
     });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
     expect(res.status).toBe(200);
-    const persona = res.body.candidates.filter((c: any) => c.grain === "persona");
+    const audienceRows = res.body.candidates.filter((c: any) => c.grain === "audience");
     // one row per (audienceId, workflowDynastySlug) couple
-    expect(persona).toHaveLength(2);
-    expect(persona.every((c: any) => c.audienceId === "aud-1")).toBe(true);
-    expect(persona.map((c: any) => c.workflow.workflowDynastySlug).sort()).toEqual(["dyn-a", "dyn-b"]);
+    expect(audienceRows).toHaveLength(2);
+    expect(audienceRows.every((c: any) => c.audienceId === "aud-1")).toBe(true);
+    expect(audienceRows.map((c: any) => c.workflow.workflowDynastySlug).sort()).toEqual(["dyn-a", "dyn-b"]);
     // coarse fallback rows still present (audienceId null) — no shape change for existing consumers
     const coarse = res.body.candidates.filter((c: any) => c.audienceId === null);
     expect(coarse.length).toBe(2);
   });
 
-  it("persona row evidence is the audience-scoped slice (cost + sampleSize), not the whole-workflow aggregate", async () => {
+  it("audience row evidence is the audience-scoped slice (cost + sampleSize), not the whole-workflow aggregate", async () => {
     mockFetch({
       audiences: [
         {
@@ -233,10 +233,10 @@ describe("GET /features/:featureSlug/candidates", () => {
       ],
     });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
-    const p = res.body.candidates.find((c: any) => c.grain === "persona");
+    const p = res.body.candidates.find((c: any) => c.grain === "audience");
     // audience-grain: contacted 3, clicks 2, replies 1
     expect(p.sampleSize).toEqual({ runs: 5, contacted: 3, clicks: 2, replies: 1 });
-    expect(p.cost.grain).toBe("persona");
+    expect(p.cost.grain).toBe("audience");
     expect(p.cost.clickUsd).toBeCloseTo(250, 6); // $500 / 2 clicks
     expect(p.cost.replyUsd).toBeCloseTo(500, 6); // $500 / 1 reply
     expect(p.cost.costPerLeadUsd).toBeCloseTo(166.6667, 3); // $500 / 3 contacted
@@ -245,7 +245,7 @@ describe("GET /features/:featureSlug/candidates", () => {
     expect(coarseA.cost.clickUsd).toBeCloseTo(10, 6);
   });
 
-  it("active audience with NO runs-attributed couples → no persona row, coarse ladder only", async () => {
+  it("active audience with NO runs-attributed couples → no audience row, coarse ladder only", async () => {
     mockFetch({ audiences: [{ id: "aud-cold", dynastySlugs: [], costCents: 0, runs: 0, emails: [] }] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
     expect(res.status).toBe(200);

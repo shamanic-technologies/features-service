@@ -19,23 +19,23 @@ const router = Router();
 // ── Fallback grain ladder ────────────────────────────────────────────────────
 //
 // Finest → coarsest evidence grain (per features-service#298):
-//   "persona"     = brandId × goal × audienceId (audience-grain attributed evidence)
+//   "audience"     = brandId × goal × audienceId (audience-grain attributed evidence)
 //   "brand-goal"  = brandId × goal (drop the audience dimension)
 //   "goal-global" = goal / cross-org global (workflow evidence only)
 //
-// The "persona" rung is LIVE: for each ACTIVE human-service audience that has runs-attributed
-// (audienceId × workflowDynastySlug) couples, this endpoint emits one persona-grain candidate
+// The "audience" rung is LIVE: for each ACTIVE human-service audience that has runs-attributed
+// (audienceId × workflowDynastySlug) couples, this endpoint emits one audience-grain candidate
 // per couple — `audienceId` populated, cost + sampleSize scoped to the audience slice (same
 // source as /audience-stats). Couples with no audience-level evidence still resolve through the
 // coarser ladder below (audienceId stays null), so existing per-workflow consumers see no change.
-type Grain = "persona" | "brand-goal" | "goal-global";
+type Grain = "audience" | "brand-goal" | "goal-global";
 
 interface ConversionEvidence {
   /** P(goal-outcome | engaged click), from the brand's effective sales-economics. Null at cold start. */
   rate: number | null;
   /** Provenance of the conversion rate: "brand-goal" = the brand's own saved economics; "goal-global"
    *  = the cross-org average fallback; null when no economics exist yet (cold start). */
-  grain: Exclude<Grain, "persona"> | null;
+  grain: Exclude<Grain, "audience"> | null;
 }
 
 interface CostEvidence {
@@ -44,8 +44,8 @@ interface CostEvidence {
   clickUsd: number | null;
   replyUsd: number | null;
   /** Cost-evidence grain: "goal-global" = cross-org workflow unit costs (same source as
-   *  /public/stats/best); "persona" = audience-attributed cost (same source as /audience-stats). */
-  grain: "goal-global" | "persona";
+   *  /public/stats/best); "audience" = audience-attributed cost (same source as /audience-stats). */
+  grain: "goal-global" | "audience";
 }
 
 interface SampleSize {
@@ -123,7 +123,7 @@ function costPerOutcomeForGoal(
 // Reuses the workflow-projection data path (global per-workflow unit costs aggregated over the
 // upgrade chain + brand-scoped effective economics) for the coarse "brand-goal"/"goal-global" rungs,
 // AND reads audience-attributed evidence (active human-service audiences × runs-service
-// groupBy=audienceId couples + read-time membership outcomes) to emit the finest "persona" rung.
+// groupBy=audienceId couples + read-time membership outcomes) to emit the finest "audience" rung.
 router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
@@ -195,7 +195,7 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
 
       // Coarse rung — workflow evidence is cross-org (no audience attribution on this row), so
       // audienceId stays null. Brand-local economics → "brand-goal"; otherwise "goal-global".
-      // The audience-attributed "persona" rows are appended after this loop.
+      // The audience-attributed "audience" rows are appended after this loop.
       const audienceId: string | null = null;
       const grain: Grain = conversionGrain === "brand-goal" ? "brand-goal" : "goal-global";
 
@@ -214,7 +214,7 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
       });
     }
 
-    // ── "persona" rung — one candidate per (audienceId, workflowDynastySlug) couple that ran ──
+    // ── "audience" rung — one candidate per (audienceId, workflowDynastySlug) couple that ran ──
     //
     // Cost + sampleSize are AUDIENCE-grain (coherent single grain: cost from runs
     // groupBy=audienceId, outcomes from read-time membership — same source as /audience-stats),
@@ -238,10 +238,10 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
             workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null,
           },
           goal,
-          grain: "persona",
+          grain: "audience",
           costPerOutcomeUsd: aCostPerOutcomeUsd,
           conversion: { rate: aConversionRate, grain: conversionGrain },
-          cost: { costPerLeadUsd: aContactedUsd, clickUsd: aClickUsd, replyUsd: aReplyUsd, grain: "persona" },
+          cost: { costPerLeadUsd: aContactedUsd, clickUsd: aClickUsd, replyUsd: aReplyUsd, grain: "audience" },
           sampleSize: { runs: ev.completedRuns, contacted: ev.contacted, clicks: ev.clicks, replies: ev.replies },
         });
       }

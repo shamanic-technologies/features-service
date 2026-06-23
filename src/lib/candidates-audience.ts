@@ -3,8 +3,8 @@
  *
  * Resolves, per ACTIVE human-service audience that has runs-attributed history, the
  * (audienceId, workflowDynastySlug) COUPLES that actually ran plus the audience's
- * attributed cost + outcome evidence. The /candidates handler emits one "persona"-grain
- * candidate row per couple, keyed on `audienceId` with `grain:"persona"`.
+ * attributed cost + outcome evidence. The /candidates handler emits one "audience"-grain
+ * candidate row per couple, keyed on `audienceId` with `grain:"audience"`.
  *
  * Grain policy (option B — coherent single grain per row):
  *   - COST + runs are AUDIENCE-grain (runs-service groupBy=audienceId — byte-identical to
