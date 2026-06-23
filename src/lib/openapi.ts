@@ -436,7 +436,7 @@ registry.registerPath({
 
 const pipelineMetricSchema = z.object({
   actual: z.number().nullable().describe("Today: actual-so-far from dated broadcast email events. Future days: null."),
-  expected: z.number().nullable().describe("Expected daily value from brand daily budget, recommended workflow cost/contact, and persona/workflow evidence. Null when required producer inputs are unavailable."),
+  expected: z.number().nullable().describe("Expected daily value from brand daily budget, recommended workflow cost/contact, and audience/workflow evidence. Null when required producer inputs are unavailable."),
 });
 
 const pipelineSignupMetricSchema = pipelineMetricSchema.extend({
@@ -462,7 +462,7 @@ const pipelineActivityResponseSchema = z.object({
   days: z.array(pipelineActivityDaySchema),
   summary: z.object({
     dailyBudgetUsd: z.number().nullable().describe("Brand daily budget from billing-service. Null when no daily budget is configured for this org + brand."),
-    openRatePct: z.number().nullable().describe("Observed persona + workflow broadcast open rate used for expected opens. Null when producer evidence is unavailable."),
+    openRatePct: z.number().nullable().describe("Observed audience + workflow broadcast open rate used for expected opens. Null when producer evidence is unavailable."),
     clickToSignupPct: z.number().nullable().describe("Brand effective visit-to-signup conversion percent. Null when brand economics are unavailable."),
   }),
 });
@@ -475,7 +475,7 @@ registry.registerPath({
   summary: "Seven-day pipeline activity buckets for the brand overview",
   description:
     "Returns today plus future daily buckets for the dashboard grouped bar chart. Today includes actual-so-far from dated broadcast email events and the same daily expected values shown on future days. " +
-    "Expected outreach uses the org-scoped brand daily budget divided by the recommended workflow's global cost per contacted recipient. Opens and clicks use observed rates for the selected active persona + workflow; signups are clicks × the brand's effective visitToSignupPct / 100. Campaign status and campaign budget do not control this forecast. Missing producer inputs return null for the affected expected values.",
+    "Expected outreach uses the org-scoped brand daily budget divided by the recommended workflow's global cost per contacted recipient. Opens and clicks use observed rates for the selected active audience + workflow; signups are clicks × the brand's effective visitToSignupPct / 100. Campaign status and campaign budget do not control this forecast. Missing producer inputs return null for the affected expected values.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
