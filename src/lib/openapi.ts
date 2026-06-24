@@ -499,6 +499,14 @@ registry.registerPath({
 const candidateConversionSchema = z.object({
   rate: z.number().nullable().describe("P(goal-outcome | engaged click) from the brand's effective sales-economics. Null at cold start (no economics)."),
   grain: z.enum(["brand-goal", "goal-global"]).nullable().describe("Provenance of the conversion rate: brand-goal = the brand's own saved economics; goal-global = the cross-org average fallback; null = cold start."),
+  sampleSize: z.null().describe("Always null: the conversion rate comes from the brand's saved sales-economics, which carry no per-grain observation count (brand-service#242). The empirical sample behind a candidate lives ENTIRELY on the cost side (cost.sampleSize, at cost.grain) — do NOT read the cost sample as the conversion sample."),
+});
+
+const candidateCostSampleSizeSchema = z.object({
+  runs: z.number().describe("Completed runs behind the cost evidence (chain-aggregated for goal-global, audience-scoped for audience)."),
+  contacted: z.number(),
+  clicks: z.number(),
+  replies: z.number(),
 });
 
 const candidateCostSchema = z.object({
@@ -506,24 +514,17 @@ const candidateCostSchema = z.object({
   clickUsd: z.number().nullable().describe("Cost per click (USD). Null when absent/zero."),
   replyUsd: z.number().nullable().describe("Cost per positive reply (USD). Null when absent/zero."),
   grain: z.enum(["goal-global", "audience"]).describe("Cost-evidence grain: 'goal-global' = cross-org workflow unit costs (same source as /public/stats/best); 'audience' = audience-attributed cost (same source as /audience-stats)."),
-});
-
-const candidateSampleSizeSchema = z.object({
-  runs: z.number().describe("Completed runs behind this candidate's cost evidence (chain-aggregated)."),
-  contacted: z.number(),
-  clicks: z.number(),
-  replies: z.number(),
+  sampleSize: candidateCostSampleSizeSchema.describe("The sample behind THIS cost evidence, at the cost grain above. On coarse rows grain='goal-global' → this is the CROSS-ORG cost population (NOT the brand's own activity); on audience rows grain='audience' → the audience's own attributed slice. Lives here (not at the candidate top level) so a fresh brand's cross-org cost sample is never mis-read as that brand's own evidence."),
 });
 
 const candidateSchema = z.object({
   audienceId: z.string().nullable().describe("Audience lever — non-null with grain='audience' for couples that have audience-attributed runs/outcomes (active human-service audience × runs-attributed workflow). Null on the coarser brand-goal/goal-global fallback rows when there is no audience-level evidence."),
   workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() }),
   goal: z.enum(["signup", "meetingBooked", "purchase"]),
-  grain: z.enum(["audience", "brand-goal", "goal-global"]).describe("Finest grain at which this candidate's evidence resolved: 'audience' = audience-attributed (audienceId non-null); 'brand-goal' = the brand's own economics; 'goal-global' = cross-org fallback."),
+  grain: z.enum(["audience", "brand-goal", "goal-global"]).describe("SUMMARY label: the finest grain reached ACROSS this candidate's evidence components (audience > brand-goal > goal-global). Does NOT describe the sample, and the components can resolve at different grains — read conversion.grain for the conversion rate's provenance and cost.grain + cost.sampleSize for the cost evidence's provenance and size. On a coarse row this can read 'brand-goal' (brand-own economics) while cost.grain is 'goal-global' (cross-org cost sample)."),
   costPerOutcomeUsd: z.number().nullable().describe("The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."),
   conversion: candidateConversionSchema,
   cost: candidateCostSchema,
-  sampleSize: candidateSampleSizeSchema,
 });
 
 const candidatesResponseSchema = z.object({
@@ -541,7 +542,7 @@ registry.registerPath({
   path: "/features/{featureSlug}/candidates",
   summary: "Serve the (audienceId, workflow) candidate set with per-candidate evidence + sample size",
   description:
-    "Runtime per-lead selection evidence: returns the candidate SET — one per active workflow — each with its OWN cost-per-outcome for the goal, the SAMPLE SIZE behind it, CONVERSION and COST evidence kept separate, and a labelled fallback GRAIN. Deliberately does NOT collapse to a single best: the consumer owns the uncertainty-aware selection policy (Thompson-style). " +
+    "Runtime per-lead selection evidence: returns the candidate SET — one per active workflow — each with its OWN cost-per-outcome for the goal, CONVERSION and COST evidence kept separate (each labelled with its own grain), and the SAMPLE SIZE living WITH the cost evidence it describes (cost.sampleSize at cost.grain) so a coarse row's cross-org cost sample is never mis-read as the brand's own activity (the conversion rate carries provenance but no count). The top-level grain is a summary label = the finest grain across components. Deliberately does NOT collapse to a single best: the consumer owns the uncertainty-aware selection policy (Thompson-style). " +
     "Fallback grain ladder (finest→coarsest): audience (brandId×goal×audienceId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The audience rung is LIVE: for active human-service audiences with runs-attributed couples this endpoint emits one audience-grain candidate per couple (audienceId non-null, grain='audience'); couples with no audience-level evidence fall through to the coarser rungs with audienceId null. " +
     "Reuses the workflow-projection data path: global per-workflow unit costs aggregated over the upgrade chain + the brand's EFFECTIVE sales-economics. Additive — does not change workflow-projection / stats/ranked.",
   tags: ["Stats"],
