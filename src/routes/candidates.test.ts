@@ -234,8 +234,9 @@ describe("GET /features/:featureSlug/candidates", () => {
     });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
     const p = res.body.candidates.find((c: any) => c.grain === "audience");
-    // audience-grain: contacted 3, clicks 2, replies 1
-    expect(p.sampleSize).toEqual({ runs: 5, contacted: 3, clicks: 2, replies: 1 });
+    // audience-grain: contacted 3, clicks 2, replies 1 — sample lives WITH the cost evidence
+    expect(p.cost.sampleSize).toEqual({ runs: 5, contacted: 3, clicks: 2, replies: 1 });
+    expect(p.sampleSize).toBeUndefined(); // no ambiguous top-level sample
     expect(p.cost.grain).toBe("audience");
     expect(p.cost.clickUsd).toBeCloseTo(250, 6); // $500 / 2 clicks
     expect(p.cost.replyUsd).toBeCloseTo(500, 6); // $500 / 1 reply
@@ -266,14 +267,17 @@ describe("GET /features/:featureSlug/candidates", () => {
     expect(res.status).toBe(502);
   });
 
-  it("each candidate exposes its sample size (runs + outcome counts)", async () => {
+  it("each candidate exposes its cost-side sample size (runs + outcome counts) under cost", async () => {
     mockFetch();
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
     const a = byDynasty(res.body, "dyn-a");
-    expect(a.sampleSize).toEqual({ runs: 10, contacted: 200, clicks: 100, replies: 50 });
+    expect(a.cost.sampleSize).toEqual({ runs: 10, contacted: 200, clicks: 100, replies: 50 });
+    // the sample is the COST evidence's, labelled by cost.grain — no ambiguous top-level field
+    expect(a.cost.grain).toBe("goal-global");
+    expect(a.sampleSize).toBeUndefined();
   });
 
-  it("conversion and cost evidence are separate blocks", async () => {
+  it("conversion and cost evidence are separate blocks with separate provenance", async () => {
     mockFetch();
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
     const a = byDynasty(res.body, "dyn-a");
@@ -283,6 +287,9 @@ describe("GET /features/:featureSlug/candidates", () => {
     expect(a.cost.costPerLeadUsd).toBeCloseTo(5, 6); // $1000 / 200 contacted
     expect(a.cost.grain).toBe("goal-global");
     expect(typeof a.conversion.rate).toBe("number");
+    // conversion carries provenance (grain) but no numeric sample; the cost sample is legibly cost-side
+    expect(a.conversion.sampleSize).toBeNull();
+    expect(a.cost.sampleSize.contacted).toBe(200);
   });
 
   it("goal=signup → cost per signup from the click route; conversion.rate = v2s", async () => {
@@ -317,6 +324,26 @@ describe("GET /features/:featureSlug/candidates", () => {
     expect(a.conversion.grain).toBe("brand-goal");
   });
 
+  it("fresh brand with own economics: top-level grain brand-goal, but cost provenance + sample are legibly cross-org", async () => {
+    // Reproduces the Pocket-CMO bug: brand saved its own economics (source 'user' → conversion
+    // brand-goal) but has no own runs, so cost evidence is the cross-org workflow population. The
+    // huge cost sample must be unambiguously attributed to the cost side (goal-global), not read as
+    // the brand's own activity.
+    mockFetch({ economics: ECONOMICS, source: "user" });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=signup`).set(AUTH);
+    const a = byDynasty(res.body, "dyn-a");
+    // conversion resolved at brand level (the brand's own saved 8%-style rate)
+    expect(a.conversion.grain).toBe("brand-goal");
+    expect(a.conversion.sampleSize).toBeNull(); // no count on the conversion side
+    // cost half is borrowed from the cross-org population — provenance + sample say so
+    expect(a.cost.grain).toBe("goal-global");
+    expect(a.cost.sampleSize).toEqual({ runs: 10, contacted: 200, clicks: 100, replies: 50 });
+    // the top-level grain is a SUMMARY label (finest = brand-goal) and does NOT carry the sample;
+    // there is no ambiguous top-level sampleSize to mis-read as brand-own
+    expect(a.grain).toBe("brand-goal");
+    expect(a.sampleSize).toBeUndefined();
+  });
+
   it("economics source 'cross-brand-average' → grain goal-global", async () => {
     mockFetch({ economics: ECONOMICS, source: "cross-brand-average" });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
@@ -336,7 +363,7 @@ describe("GET /features/:featureSlug/candidates", () => {
     expect(a.grain).toBe("goal-global");
     // measured cost evidence + sample size still present (no economics needed for those)
     expect(a.cost.clickUsd).toBeCloseTo(10, 6);
-    expect(a.sampleSize.runs).toBe(10);
+    expect(a.cost.sampleSize.runs).toBe(10);
   });
 
   it("502 when a downstream source fails", async () => {

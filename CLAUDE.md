@@ -16,10 +16,31 @@ npm run generate:openapi # Regenerate openapi.json from Zod schemas
 
 The candidate-evidence endpoint (`src/routes/candidates.ts`, PR #299/#298; audience grain wired in)
 serves the `(audienceId, workflow)` candidate SET for campaign-service's runtime per-couple selection
-(uncertainty-aware / Thompson). Each candidate carries its own `costPerOutcomeUsd`, a `sampleSize`
-block, separate `conversion`/`cost` evidence, and a labelled `grain` ladder (`audience` → `brand-goal`
-→ `goal-global`). The coarse rungs reuse the workflow-projection data path
+(uncertainty-aware / Thompson). Each candidate carries its own `costPerOutcomeUsd`, separate
+`conversion`/`cost` evidence, and a labelled `grain` ladder (`audience` → `brand-goal` →
+`goal-global`). The coarse rungs reuse the workflow-projection data path
 (`buildUpgradeChains`/`aggregateAcrossChains` + `fetchEffectiveEconomics` + `projectOutcomeCosts`).
+
+**Sample size lives WITH the cost evidence, NOT at the candidate top level (data-honesty fix).** A
+coarse row resolves its CONVERSION at brand level (`conversion.grain:"brand-goal"`, the brand's own
+saved economics) but its COST from the cross-org workflow population (`cost.grain:"goal-global"`). The
+sample (runs/contacted/clicks/replies) is ENTIRELY a cost-side artifact, so it lives at
+`cost.sampleSize` labelled by `cost.grain` — there is NO top-level `sampleSize`. This prevents the
+Pocket-CMO trap: a brand that signed up today (saved 8% signup economics, sent 4 emails, 0 clicks)
+returned coarse rows whose single top-level `grain:"brand-goal"` sat next to a single `sampleSize`
+showing `contacted` in the thousands / `runs` ~80k — the cross-org cost sample mis-read as the brand's
+own. Now `cost.sampleSize` + `cost.grain:"goal-global"` make the cost provenance/size legible
+SEPARATELY from `conversion.grain`. The top-level `grain` is a SUMMARY label only (finest grain across
+components); it does not describe the sample, and the two components can resolve at different grains.
+`conversion.sampleSize` is ALWAYS null — the rate comes from brand-service saved economics, which
+carry no per-grain observation count (brand-service#242). campaign-service (the only consumer) ranks
+on `costPerOutcomeUsd` and never read top-level `sampleSize`, so the move is zero-blast.
+
+**Null `costPerOutcomeUsd` on a thin cross-org sample is INTENDED — it's a zero-denominator gate, not
+a thinness threshold.** `costPerOutcomeUsd` needs a `clickUsd` (and/or `replyUsd`) denominator; a
+workflow with `contacted>0` but 0 clicks/replies yields `cost.costPerLeadUsd` present (contacted
+denominator) yet `clickUsd`/`replyUsd` null → `projectOutcomeCosts` returns null. Can't project
+cost-per-signup without a per-click cost. Do NOT add a smoothing/floor to force a number.
 
 **The `audience` rung is LIVE.** For each ACTIVE human-service audience that has runs-attributed
 `(audienceId × workflowDynastySlug)` couples, the endpoint emits one audience candidate per couple via

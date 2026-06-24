@@ -36,6 +36,21 @@ interface ConversionEvidence {
   /** Provenance of the conversion rate: "brand-goal" = the brand's own saved economics; "goal-global"
    *  = the cross-org average fallback; null when no economics exist yet (cold start). */
   grain: Exclude<Grain, "audience"> | null;
+  /** The conversion rate carries provenance (grain) but NO numeric sample: it comes from the brand's
+   *  saved sales-economics (brand-service), which expose no per-grain observation count
+   *  (brand-service#242). Always null here. The empirical sample behind a candidate lives ENTIRELY on
+   *  the COST side (`cost.sampleSize`, at `cost.grain`) — do NOT read the cost sample as the
+   *  conversion sample. */
+  sampleSize: null;
+}
+
+/** The sample behind a candidate's COST evidence, AT `cost.grain`. */
+interface CostSampleSize {
+  /** Completed runs behind the cost evidence (chain-aggregated for goal-global, audience-scoped for audience). */
+  runs: number;
+  contacted: number;
+  clicks: number;
+  replies: number;
 }
 
 interface CostEvidence {
@@ -46,14 +61,12 @@ interface CostEvidence {
   /** Cost-evidence grain: "goal-global" = cross-org workflow unit costs (same source as
    *  /public/stats/best); "audience" = audience-attributed cost (same source as /audience-stats). */
   grain: "goal-global" | "audience";
-}
-
-interface SampleSize {
-  /** Completed runs behind this candidate's cost evidence (chain-aggregated). */
-  runs: number;
-  contacted: number;
-  clicks: number;
-  replies: number;
+  /** The sample behind THIS cost evidence, at `grain` above. On coarse rows `grain` is "goal-global"
+   *  → this is the CROSS-ORG cost population (thousands of contacted, tens of thousands of runs), NOT
+   *  the brand's own activity. On audience rows `grain` is "audience" → the audience's own attributed
+   *  slice. The sample lives here (not at the candidate top level) precisely so a fresh brand's
+   *  cross-org cost sample is never mis-read as that brand's own evidence. */
+  sampleSize: CostSampleSize;
 }
 
 interface Candidate {
@@ -61,13 +74,17 @@ interface Candidate {
   audienceId: string | null;
   workflow: { workflowDynastySlug: string; workflowDynastyName: string | null };
   goal: Goal;
-  /** Finest grain at which this candidate's evidence resolved. */
+  /** SUMMARY label: the FINEST grain reached across this candidate's evidence components
+   *  (audience > brand-goal > goal-global). It does NOT describe the sample, and the two evidence
+   *  components can resolve at DIFFERENT grains — read `conversion.grain` for the conversion rate's
+   *  provenance and `cost.grain` + `cost.sampleSize` for the cost evidence's provenance and size.
+   *  On a coarse row this can read "brand-goal" (the brand's own economics) while `cost.grain` is
+   *  "goal-global" (cross-org cost sample). */
   grain: Grain;
   /** The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start). */
   costPerOutcomeUsd: number | null;
   conversion: ConversionEvidence;
   cost: CostEvidence;
-  sampleSize: SampleSize;
 }
 
 interface CandidatesResponse {
@@ -115,8 +132,10 @@ function costPerOutcomeForGoal(
 // ── GET /features/:featureSlug/candidates ────────────────────────────────────
 //
 // Serves the (audienceId, workflow) CANDIDATE SET for runtime per-lead selection — each
-// candidate with its OWN cost-per-outcome evidence, the SAMPLE SIZE behind it, CONVERSION and COST
-// evidence kept separate, and a labelled fallback GRAIN. Deliberately does NOT collapse to a single
+// candidate with its OWN cost-per-outcome evidence, CONVERSION and COST evidence kept separate (each
+// labelled with its own grain), and the SAMPLE SIZE living WITH the cost evidence it describes
+// (`cost.sampleSize` at `cost.grain`) so a coarse row's cross-org cost sample is never mis-read as the
+// brand's own activity. The conversion rate carries provenance but no count. Deliberately does NOT collapse to a single
 // "best": the consumer (campaign-service) owns the uncertainty-aware selection policy (Thompson-style
 // draw). features-service owns stats + counts + fallback resolution only (features-service#298).
 //
@@ -208,9 +227,14 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
         goal,
         grain,
         costPerOutcomeUsd,
-        conversion: { rate: conversionRate, grain: conversionGrain },
-        cost: { costPerLeadUsd: contactedUsd, clickUsd, replyUsd, grain: "goal-global" },
-        sampleSize: { runs: cost.completedRuns, contacted, clicks, replies },
+        conversion: { rate: conversionRate, grain: conversionGrain, sampleSize: null },
+        cost: {
+          costPerLeadUsd: contactedUsd,
+          clickUsd,
+          replyUsd,
+          grain: "goal-global",
+          sampleSize: { runs: cost.completedRuns, contacted, clicks, replies },
+        },
       });
     }
 
@@ -240,9 +264,14 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
           goal,
           grain: "audience",
           costPerOutcomeUsd: aCostPerOutcomeUsd,
-          conversion: { rate: aConversionRate, grain: conversionGrain },
-          cost: { costPerLeadUsd: aContactedUsd, clickUsd: aClickUsd, replyUsd: aReplyUsd, grain: "audience" },
-          sampleSize: { runs: ev.completedRuns, contacted: ev.contacted, clicks: ev.clicks, replies: ev.replies },
+          conversion: { rate: aConversionRate, grain: conversionGrain, sampleSize: null },
+          cost: {
+            costPerLeadUsd: aContactedUsd,
+            clickUsd: aClickUsd,
+            replyUsd: aReplyUsd,
+            grain: "audience",
+            sampleSize: { runs: ev.completedRuns, contacted: ev.contacted, clicks: ev.clicks, replies: ev.replies },
+          },
         });
       }
     }
