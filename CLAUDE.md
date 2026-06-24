@@ -315,6 +315,39 @@ The DOD is "succeeding families never zeroed by a sibling's failure", NOT "failu
 Keep the cost/runs path (`fetchPublicCosts`, the outer `Promise.all` in `handleRanked`) untouched —
 cost is essential, not an optional outcome family. (Set 2026-06-08, PR #248 stat-families resilience.)
 
+## `/revenue` Overview actual series — ALL four graph actuals come from ONE `leads[]` snapshot (PR #384, #385)
+
+The brand Overview graph renders four ACTUAL series (Outreach, Opens, Clicks, goal-outcome) + a
+conversions table that MUST all describe the SAME leads. `/revenue` server-computes each series from
+the SAME `leads[]` snapshot, via `buildSignalSeries(leads, has, dateOf)` in `revenue-engine.ts`
+(`buildContactedSeries` delegates to it). Response fields, each a `{total, daily, undatedCount}`:
+`outreachContacted` (contacted, #371/#372), **`opened`** (signal `open`), **`clicked`** (signal
+`clicked`), **`meetingsBooked`** (signal `meeting`), **`purchased`** (signal `closeWin`). Built in
+all three sites (`computeFeatureRevenue`, `buildLensBody`, `emptyBody`) via `buildOutcomeSeries`.
+
+**Coherent BY CONSTRUCTION — do NOT re-source any actual from pipeline-activity/instantly.** The
+prior bug: Outreach read the snapshot aggregate but Opens/Clicks/Signups still came from
+`pipeline-activity` (instantly broadcast stats bucketed by event-day — re-opens by already-advanced
+leads), decoupled from the contacted snapshot → impossible states ("3 opens today while 0 outreach
+today"; "3 opens today" while the table showed opens only on the prior day). Because every series
+now buckets the SAME `leads[]` by each lead's real per-signal first-occurrence date, the invariant
+`sum(daily)+undatedCount === total === count(leads with the signal)` holds and no series can exceed
+contacted (opened ⊆ contacted, clicked ⊆ contacted). **No date synthesis** — an undated signal lead
+is counted in `total`+`undatedCount`, never bucketed (mirror `outreachContacted`).
+
+**Signup-goal outcome = the observed CLICK (website visit), NOT a tracked signup event — settled, do
+NOT "fix" by inventing a signup signal.** A downstream account signup happens on the client's own
+site and is not tracked in the fleet; the funnel anchors "signup" to the click everywhere
+(`visitToSignupPct`, the signups lens filters on `clicked`). So the coherent signup-funnel ACTUAL is
+the `clicked` series; the dashboard scales it by `visitToSignupPct` for the PROJECTED signups line
+(that projection stays a forecast — this change is ACTUAL-only). `meetingsBooked`/`purchased` are the
+meeting/purchase-goal observed outcomes (instantly manual-qualification dates).
+
+**Fully additive / zero blast.** campaign-service reads `headline`/`costEconomics`/`leads` only. The
+dashboard (distribute.you) consumes the new series exactly as `outreachContacted.daily` today
+(non-strict Zod parse ignores them until wired) — separate distribute.you follow-up to repoint the
+Opens/Clicks/Signups actuals off pipeline-activity. (Set 2026-06-24.)
+
 ## Data layering — features-service owns a GOLD serving layer (CQRS read model)
 
 features-service is otherwise a **derive-on-read aggregator** (the API-Composition pattern, Richardson):
