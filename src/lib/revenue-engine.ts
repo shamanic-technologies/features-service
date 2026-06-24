@@ -131,6 +131,25 @@ export interface LeadRow {
    */
   contactedAt: string | null;
   /**
+   * Per-lead OUTCOME signals + their first-occurrence ISO dates, OR'd / MIN'd across the lead's
+   * campaign rows (same provenance as `contacted`/`contactedAt`). These drive the Overview graph's
+   * Opens / Clicks / goal-outcome ACTUAL series, server-computed from THIS `leads[]` snapshot so
+   * they are coherent-by-construction with Outreach + the table (features-service#377). Each flag's
+   * date is real (no synthesis): null when the signal fired but the date is unknown, or not fired.
+   *   - opened        ← email-gateway `firstOpenedAt`   (a known open timestamp IS the signal)
+   *   - clicked       ← email-gateway `firstClickedAt`  (website-visit; the signup-goal's observed outcome)
+   *   - meetingBooked ← instantly manual-qualification `meetingBookedAt` (the meeting-goal outcome)
+   *   - purchased     ← instantly manual-qualification `closedAt`        (the purchase-goal outcome)
+   */
+  opened: boolean;
+  openedAt: string | null;
+  clicked: boolean;
+  clickedAt: string | null;
+  meetingBooked: boolean;
+  meetingBookedAt: string | null;
+  purchased: boolean;
+  purchasedAt: string | null;
+  /**
    * Lens-only: the lead's conversion probability (0–100) for the requested outcome lens. Present
    * ONLY on a lensed `?lens=` response; ABSENT on the default/grouped responses (keeps them
    * byte-identical). Set by the lens path in `revenue.ts`, never by the engine.
@@ -160,57 +179,72 @@ export interface RevenueResult {
   events: EventRow[];
 }
 
-/** One day's contacted-lead count for the Outreach actual series. `date` is a UTC calendar day (YYYY-MM-DD). */
-export interface ContactedDailyPoint {
+/** One day's signal-lead count for an actual series. `date` is a UTC calendar day (YYYY-MM-DD). */
+export interface SignalDailyPoint {
   date: string;
   count: number;
 }
+/** @deprecated name kept for back-compat — identical shape. Use {@link SignalDailyPoint}. */
+export type ContactedDailyPoint = SignalDailyPoint;
 
 /**
- * Server-computed "contacted" aggregates for the brand Overview's Outreach surfaces — derived from
- * the SAME `leads[]` snapshot the table renders, so the stat card, the daily graph and the table all
- * move together from one payload (features-service#371/#372). Convention: metric surfaces compute
- * server-side, the dashboard renders only.
+ * Server-computed per-signal actual aggregates for the brand Overview's daily graph + stat cards —
+ * derived from the SAME `leads[]` snapshot the table renders, so the stat card, the daily graph and
+ * the table all move together from one payload (features-service#371/#372/#377). One of these is
+ * emitted per ACTUAL series the graph renders (Outreach=contacted, Opens=opened, Clicks=clicked,
+ * goal outcome=meetingBooked/purchased). Convention: metric surfaces compute server-side, the
+ * dashboard renders only.
  *
  * Invariant (coherent by construction): `total === sum(daily[].count) + undatedCount ===` the number
- * of leads in this payload with `contacted === true`. When every contacted lead has a known date,
+ * of leads in this payload that carry the signal. When every such lead has a known date,
  * `undatedCount === 0` and `total === sum(daily[].count)` — the card count equals the graph sum.
+ * Because every series is built from the SAME `leads[]`, a downstream signal can never exceed its
+ * upstream one beyond what the data allows (opened ⊆ contacted, clicked ⊆ contacted, …) — no
+ * "open with nothing contacted".
  */
-export interface OutreachContactedSeries {
-  /** Total contacted leads in scope — the Outreach stat-card count. */
+export interface SignalSeries {
+  /** Total leads in scope carrying the signal — the matching stat-card count. */
   total: number;
   /**
-   * Per-day contacted buckets, keyed by the UTC calendar day (YYYY-MM-DD) of each lead's `contactedAt`,
-   * ascending by date, one entry per day that has ≥1 dated contacted lead. The Outreach ACTUAL series
-   * the 7-day graph renders (the dashboard slices its window from this complete series). Sums to
-   * `total - undatedCount`. No `now` dependence — buckets come only from the per-lead timestamps, so
-   * the series is wall-clock-independent.
+   * Per-day buckets, keyed by the UTC calendar day (YYYY-MM-DD) of each lead's signal date,
+   * ascending by date, one entry per day that has ≥1 dated lead. The ACTUAL series the 7-day graph
+   * renders (the dashboard slices its window from this complete series). Sums to `total -
+   * undatedCount`. No `now` dependence — buckets come only from the per-lead timestamps, so the
+   * series is wall-clock-independent.
    */
-  daily: ContactedDailyPoint[];
+  daily: SignalDailyPoint[];
   /**
-   * Contacted leads with a null `contactedAt` (cannot be bucketed — no synthesis, the date stays
-   * unknown). These count toward `total` but not toward any `daily` bucket, so the card and graph
-   * stay reconcilable: `total = sum(daily[].count) + undatedCount`.
+   * Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis, the date
+   * stays unknown). Counted toward `total` but in no `daily` bucket, so the card and graph stay
+   * reconcilable: `total = sum(daily[].count) + undatedCount`.
    */
   undatedCount: number;
 }
+/** @deprecated name kept for back-compat — identical shape. Use {@link SignalSeries}. */
+export type OutreachContactedSeries = SignalSeries;
 
 /**
- * Build the Outreach contacted aggregates from the payload's final lead rows. PURE function of
+ * Build a per-signal daily actual series from the payload's final lead rows. PURE function of
  * `leads[]` — the same array the response returns — so the card count, the daily buckets and the
- * table are guaranteed mutually coherent (they cannot disagree about "contacted"). A contacted lead
- * with a known `contactedAt` lands in its UTC-day bucket; a contacted lead with a null `contactedAt`
- * is counted in `total` + `undatedCount` only (never synthesized into a date).
+ * table are guaranteed mutually coherent (they cannot disagree about the signal). A matching lead
+ * with a known date lands in its UTC-day bucket; a matching lead with a null date is counted in
+ * `total` + `undatedCount` only (never synthesized into a date). `has`/`dateOf` select the signal
+ * (e.g. `l => l.opened` / `l => l.openedAt`).
  */
-export function buildContactedSeries(leads: LeadRow[]): OutreachContactedSeries {
+export function buildSignalSeries(
+  leads: LeadRow[],
+  has: (lead: LeadRow) => boolean,
+  dateOf: (lead: LeadRow) => string | null,
+): SignalSeries {
   let total = 0;
   let undatedCount = 0;
   const byDay = new Map<string, number>();
   for (const lead of leads) {
-    if (!lead.contacted) continue;
+    if (!has(lead)) continue;
     total += 1;
-    if (lead.contactedAt) {
-      const day = lead.contactedAt.slice(0, 10); // YYYY-MM-DD (UTC) from the ISO timestamp
+    const date = dateOf(lead);
+    if (date) {
+      const day = date.slice(0, 10); // YYYY-MM-DD (UTC) from the ISO timestamp
       byDay.set(day, (byDay.get(day) ?? 0) + 1);
     } else {
       undatedCount += 1;
@@ -220,6 +254,14 @@ export function buildContactedSeries(leads: LeadRow[]): OutreachContactedSeries 
     .map(([date, count]) => ({ date, count }))
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   return { total, daily, undatedCount };
+}
+
+/**
+ * The Outreach contacted aggregates — `buildSignalSeries` specialised to the `contacted` signal.
+ * Kept as a named helper for the existing call sites (features-service#371/#372).
+ */
+export function buildContactedSeries(leads: LeadRow[]): SignalSeries {
+  return buildSignalSeries(leads, (l) => l.contacted, (l) => l.contactedAt);
 }
 
 interface FiredEvent {
@@ -415,6 +457,14 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     date,
     contacted: Boolean(person.signals.contacted),
     contactedAt: person.signalDates?.contacted ?? null,
+    opened: Boolean(person.signals.open),
+    openedAt: person.signalDates?.open ?? null,
+    clicked: Boolean(person.signals.clicked),
+    clickedAt: person.signalDates?.clicked ?? null,
+    meetingBooked: Boolean(person.signals.meeting),
+    meetingBookedAt: person.signalDates?.meeting ?? null,
+    purchased: Boolean(person.signals.closeWin),
+    purchasedAt: person.signalDates?.closeWin ?? null,
   }));
   // Default sort: most-advanced status first, then most-recent conversion date, then EV (deterministic).
   leads.sort((a, b) => {

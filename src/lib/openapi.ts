@@ -260,6 +260,14 @@ const revenueLeadSchema = z.object({
   date: z.string().nullable().describe("Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."),
   contacted: z.boolean().describe("True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."),
   contactedAt: z.string().nullable().describe("ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."),
+  opened: z.boolean().describe("True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."),
+  openedAt: z.string().nullable().describe("ISO timestamp of first open (email-gateway firstOpenedAt). Null when not opened, or opened with no known date. No synthesis."),
+  clicked: z.boolean().describe("True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."),
+  clickedAt: z.string().nullable().describe("ISO timestamp of first click (email-gateway firstClickedAt). Null when not clicked, or clicked with no known date. No synthesis."),
+  meetingBooked: z.boolean().describe("True when a meeting was booked (instantly manual qualification). The meeting-goal outcome the goal daily-graph actual buckets (features-service#377)."),
+  meetingBookedAt: z.string().nullable().describe("ISO timestamp the meeting was booked (instantly manual-qualification meetingBookedAt). Null when no meeting, or no known date. No synthesis."),
+  purchased: z.boolean().describe("True when the lead became a paying client / closed (instantly manual qualification). The purchase-goal outcome (features-service#377)."),
+  purchasedAt: z.string().nullable().describe("ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."),
   conversionProbabilityPct: z.number().optional().describe("LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."),
 });
 
@@ -299,9 +307,22 @@ const outreachContactedSchema = z.object({
   undatedCount: z.number().int().describe("Contacted leads with a null contactedAt (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."),
 });
 
+// Generic per-signal ACTUAL series (Opens / Clicks / goal outcome) — same shape + coherence
+// guarantee as outreachContacted, built from the SAME leads[] (features-service#377). Reuses the
+// daily-point schema. total === sum(daily[].count) + undatedCount === count(leads with the signal).
+const signalSeriesSchema = z.object({
+  total: z.number().int().describe("Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."),
+  daily: z.array(outreachContactedDailySchema).describe("Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."),
+  undatedCount: z.number().int().describe("Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."),
+});
+
 const featureRevenueResponseSchema = z.object({
   featureSlug: z.string(),
   outreachContacted: outreachContactedSchema.describe("Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."),
+  opened: signalSeriesSchema.describe("Opens ACTUAL series for the Overview daily graph, server-computed from the SAME leads[] snapshot — coherent with outreachContacted + the table (features-service#377). Replaces the pipeline-activity/instantly event-day source."),
+  clicked: signalSeriesSchema.describe("Clicks ACTUAL series (website visits), server-computed from the SAME leads[] snapshot. ALSO the signup-goal's observed outcome — a downstream account signup is not tracked here, so the visit is the coherent signup-funnel actual; the dashboard scales it by visitToSignupPct for the projected signups line (forecast). features-service#377."),
+  meetingsBooked: signalSeriesSchema.describe("Meeting-goal outcome ACTUAL series (instantly manual-qualification meetingBookedAt), server-computed from the SAME leads[] snapshot. features-service#377."),
+  purchased: signalSeriesSchema.describe("Purchase-goal outcome ACTUAL series (instantly manual-qualification closedAt), server-computed from the SAME leads[] snapshot. features-service#377."),
   headline: z.object({
     totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."),
     economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no funnel wired or no economics applied)."),

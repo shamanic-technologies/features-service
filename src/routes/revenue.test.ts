@@ -263,6 +263,39 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(sumDaily + oc.undatedCount).toBe(oc.total);
   });
 
+  it("opened/clicked/goal-outcome series — server-computed from the SAME leads[], coherent with outreachContacted (#377)", async () => {
+    const day = "2026-05-10";
+    mockFetch({
+      economics: ECONOMICS,
+      leads: HAPPY_LEADS, // click@x.com + reply@y.com, both contacted
+      timestamps: {
+        "click@x.com": { firstContactedAt: `${day}T09:00:00.000Z`, firstOpenedAt: `${day}T09:30:00.000Z`, firstClickedAt: `${day}T10:00:00.000Z` },
+        "reply@y.com": { firstContactedAt: `${day}T23:30:00.000Z`, firstOpenedAt: `${day}T23:40:00.000Z`, firstRepliedAt: `${day}T23:45:00.000Z` },
+      },
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    const { outreachContacted: oc, opened, clicked, meetingsBooked, purchased } = res.body;
+    // Each series carries the same shape as outreachContacted.
+    expect(opened.total).toBe(2); // both opened
+    expect(opened.daily).toEqual([{ date: day, count: 2 }]);
+    expect(clicked.total).toBe(1); // only click@x.com clicked
+    expect(clicked.daily).toEqual([{ date: day, count: 1 }]);
+    // No meeting/close qualifications in this payload → empty goal-outcome series (no synthesis).
+    expect(meetingsBooked).toEqual({ total: 0, daily: [], undatedCount: 0 });
+    expect(purchased).toEqual({ total: 0, daily: [], undatedCount: 0 });
+    // COHERENCE: no actual series exceeds the contacted snapshot; each reconciles to its own total.
+    expect(opened.total).toBeLessThanOrEqual(oc.total);
+    expect(clicked.total).toBeLessThanOrEqual(opened.total);
+    for (const s of [oc, opened, clicked, meetingsBooked, purchased]) {
+      const sumDaily = s.daily.reduce((a: number, b: any) => a + b.count, 0);
+      expect(sumDaily + s.undatedCount).toBe(s.total);
+    }
+    // Reconciles with the table the same way Outreach does: count(leads with signal) === series total.
+    expect(res.body.leads.filter((l: any) => l.opened).length).toBe(opened.total);
+    expect(res.body.leads.filter((l: any) => l.clicked).length).toBe(clicked.total);
+  });
+
   it("cross-brand-average fallback — no saved economics but average exists → computed + tagged estimate", async () => {
     // brand-service returns the cross-brand average (source "cross-brand-average") → same math as the
     // happy path, now tagged provenance so the dashboard can badge it estimated.
