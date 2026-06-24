@@ -1380,7 +1380,7 @@
                     "brand-goal",
                     "goal-global"
                   ],
-                  "description": "Finest grain at which this candidate's evidence resolved: 'audience' = audience-attributed (audienceId non-null); 'brand-goal' = the brand's own economics; 'goal-global' = cross-org fallback."
+                  "description": "SUMMARY label: the finest grain reached ACROSS this candidate's evidence components (audience > brand-goal > goal-global). Does NOT describe the sample, and the components can resolve at different grains — read conversion.grain for the conversion rate's provenance and cost.grain + cost.sampleSize for the cost evidence's provenance and size. On a coarse row this can read 'brand-goal' (brand-own economics) while cost.grain is 'goal-global' (cross-org cost sample)."
                 },
                 "costPerOutcomeUsd": {
                   "type": "number",
@@ -1403,11 +1403,16 @@
                         "goal-global"
                       ],
                       "description": "Provenance of the conversion rate: brand-goal = the brand's own saved economics; goal-global = the cross-org average fallback; null = cold start."
+                    },
+                    "sampleSize": {
+                      "nullable": true,
+                      "description": "Always null: the conversion rate comes from the brand's saved sales-economics, which carry no per-grain observation count (brand-service#242). The empirical sample behind a candidate lives ENTIRELY on the cost side (cost.sampleSize, at cost.grain) — do NOT read the cost sample as the conversion sample."
                     }
                   },
                   "required": [
                     "rate",
-                    "grain"
+                    "grain",
+                    "sampleSize"
                   ]
                 },
                 "cost": {
@@ -1435,37 +1440,39 @@
                         "audience"
                       ],
                       "description": "Cost-evidence grain: 'goal-global' = cross-org workflow unit costs (same source as /public/stats/best); 'audience' = audience-attributed cost (same source as /audience-stats)."
+                    },
+                    "sampleSize": {
+                      "type": "object",
+                      "properties": {
+                        "runs": {
+                          "type": "number",
+                          "description": "Completed runs behind the cost evidence (chain-aggregated for goal-global, audience-scoped for audience)."
+                        },
+                        "contacted": {
+                          "type": "number"
+                        },
+                        "clicks": {
+                          "type": "number"
+                        },
+                        "replies": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "runs",
+                        "contacted",
+                        "clicks",
+                        "replies"
+                      ],
+                      "description": "The sample behind THIS cost evidence, at the cost grain above. On coarse rows grain='goal-global' → this is the CROSS-ORG cost population (NOT the brand's own activity); on audience rows grain='audience' → the audience's own attributed slice. Lives here (not at the candidate top level) so a fresh brand's cross-org cost sample is never mis-read as that brand's own evidence."
                     }
                   },
                   "required": [
                     "costPerLeadUsd",
                     "clickUsd",
                     "replyUsd",
-                    "grain"
-                  ]
-                },
-                "sampleSize": {
-                  "type": "object",
-                  "properties": {
-                    "runs": {
-                      "type": "number",
-                      "description": "Completed runs behind this candidate's cost evidence (chain-aggregated)."
-                    },
-                    "contacted": {
-                      "type": "number"
-                    },
-                    "clicks": {
-                      "type": "number"
-                    },
-                    "replies": {
-                      "type": "number"
-                    }
-                  },
-                  "required": [
-                    "runs",
-                    "contacted",
-                    "clicks",
-                    "replies"
+                    "grain",
+                    "sampleSize"
                   ]
                 }
               },
@@ -1476,8 +1483,7 @@
                 "grain",
                 "costPerOutcomeUsd",
                 "conversion",
-                "cost",
-                "sampleSize"
+                "cost"
               ]
             }
           }
@@ -3777,7 +3783,7 @@
     "/features/{featureSlug}/candidates": {
       "get": {
         "summary": "Serve the (audienceId, workflow) candidate set with per-candidate evidence + sample size",
-        "description": "Runtime per-lead selection evidence: returns the candidate SET — one per active workflow — each with its OWN cost-per-outcome for the goal, the SAMPLE SIZE behind it, CONVERSION and COST evidence kept separate, and a labelled fallback GRAIN. Deliberately does NOT collapse to a single best: the consumer owns the uncertainty-aware selection policy (Thompson-style). Fallback grain ladder (finest→coarsest): audience (brandId×goal×audienceId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The audience rung is LIVE: for active human-service audiences with runs-attributed couples this endpoint emits one audience-grain candidate per couple (audienceId non-null, grain='audience'); couples with no audience-level evidence fall through to the coarser rungs with audienceId null. Reuses the workflow-projection data path: global per-workflow unit costs aggregated over the upgrade chain + the brand's EFFECTIVE sales-economics. Additive — does not change workflow-projection / stats/ranked.",
+        "description": "Runtime per-lead selection evidence: returns the candidate SET — one per active workflow — each with its OWN cost-per-outcome for the goal, CONVERSION and COST evidence kept separate (each labelled with its own grain), and the SAMPLE SIZE living WITH the cost evidence it describes (cost.sampleSize at cost.grain) so a coarse row's cross-org cost sample is never mis-read as the brand's own activity (the conversion rate carries provenance but no count). The top-level grain is a summary label = the finest grain across components. Deliberately does NOT collapse to a single best: the consumer owns the uncertainty-aware selection policy (Thompson-style). Fallback grain ladder (finest→coarsest): audience (brandId×goal×audienceId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The audience rung is LIVE: for active human-service audiences with runs-attributed couples this endpoint emits one audience-grain candidate per couple (audienceId non-null, grain='audience'); couples with no audience-level evidence fall through to the coarser rungs with audienceId null. Reuses the workflow-projection data path: global per-workflow unit costs aggregated over the upgrade chain + the brand's EFFECTIVE sales-economics. Additive — does not change workflow-projection / stats/ranked.",
         "tags": [
           "Stats"
         ],
@@ -3937,7 +3943,7 @@
                               "brand-goal",
                               "goal-global"
                             ],
-                            "description": "Finest grain at which this candidate's evidence resolved: 'audience' = audience-attributed (audienceId non-null); 'brand-goal' = the brand's own economics; 'goal-global' = cross-org fallback."
+                            "description": "SUMMARY label: the finest grain reached ACROSS this candidate's evidence components (audience > brand-goal > goal-global). Does NOT describe the sample, and the components can resolve at different grains — read conversion.grain for the conversion rate's provenance and cost.grain + cost.sampleSize for the cost evidence's provenance and size. On a coarse row this can read 'brand-goal' (brand-own economics) while cost.grain is 'goal-global' (cross-org cost sample)."
                           },
                           "costPerOutcomeUsd": {
                             "type": "number",
@@ -3960,11 +3966,16 @@
                                   "goal-global"
                                 ],
                                 "description": "Provenance of the conversion rate: brand-goal = the brand's own saved economics; goal-global = the cross-org average fallback; null = cold start."
+                              },
+                              "sampleSize": {
+                                "nullable": true,
+                                "description": "Always null: the conversion rate comes from the brand's saved sales-economics, which carry no per-grain observation count (brand-service#242). The empirical sample behind a candidate lives ENTIRELY on the cost side (cost.sampleSize, at cost.grain) — do NOT read the cost sample as the conversion sample."
                               }
                             },
                             "required": [
                               "rate",
-                              "grain"
+                              "grain",
+                              "sampleSize"
                             ]
                           },
                           "cost": {
@@ -3992,37 +4003,39 @@
                                   "audience"
                                 ],
                                 "description": "Cost-evidence grain: 'goal-global' = cross-org workflow unit costs (same source as /public/stats/best); 'audience' = audience-attributed cost (same source as /audience-stats)."
+                              },
+                              "sampleSize": {
+                                "type": "object",
+                                "properties": {
+                                  "runs": {
+                                    "type": "number",
+                                    "description": "Completed runs behind the cost evidence (chain-aggregated for goal-global, audience-scoped for audience)."
+                                  },
+                                  "contacted": {
+                                    "type": "number"
+                                  },
+                                  "clicks": {
+                                    "type": "number"
+                                  },
+                                  "replies": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "runs",
+                                  "contacted",
+                                  "clicks",
+                                  "replies"
+                                ],
+                                "description": "The sample behind THIS cost evidence, at the cost grain above. On coarse rows grain='goal-global' → this is the CROSS-ORG cost population (NOT the brand's own activity); on audience rows grain='audience' → the audience's own attributed slice. Lives here (not at the candidate top level) so a fresh brand's cross-org cost sample is never mis-read as that brand's own evidence."
                               }
                             },
                             "required": [
                               "costPerLeadUsd",
                               "clickUsd",
                               "replyUsd",
-                              "grain"
-                            ]
-                          },
-                          "sampleSize": {
-                            "type": "object",
-                            "properties": {
-                              "runs": {
-                                "type": "number",
-                                "description": "Completed runs behind this candidate's cost evidence (chain-aggregated)."
-                              },
-                              "contacted": {
-                                "type": "number"
-                              },
-                              "clicks": {
-                                "type": "number"
-                              },
-                              "replies": {
-                                "type": "number"
-                              }
-                            },
-                            "required": [
-                              "runs",
-                              "contacted",
-                              "clicks",
-                              "replies"
+                              "grain",
+                              "sampleSize"
                             ]
                           }
                         },
@@ -4033,8 +4046,7 @@
                           "grain",
                           "costPerOutcomeUsd",
                           "conversion",
-                          "cost",
-                          "sampleSize"
+                          "cost"
                         ]
                       }
                     }
