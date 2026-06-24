@@ -14,12 +14,13 @@ import {
   computeRevenue,
   dedupPersonsByLead,
   buildContactedSeries,
+  buildSignalSeries,
   type EnginePerson,
   type OrganizationRow,
   type LeadRow,
   type TimeSeriesPoint,
   type EventRow,
-  type OutreachContactedSeries,
+  type SignalSeries,
 } from "../lib/revenue-engine.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
@@ -73,7 +74,41 @@ interface RevenueResponse {
    * Outreach surfaces (card, graph, table) agree from one snapshot (features-service#371/#372).
    * Coherent by construction: total === sum(daily counts) + undatedCount === count(leads contacted).
    */
-  outreachContacted: OutreachContactedSeries;
+  outreachContacted: SignalSeries;
+  /**
+   * The Opens / Clicks / goal-outcome ACTUAL series for the Overview daily graph, each
+   * server-computed from the SAME `leads[]` above — exactly like `outreachContacted` — so all four
+   * actual series and the conversions table move together from one snapshot (features-service#377).
+   * This replaces the old pipeline-activity / instantly event-day source, which bucketed raw events
+   * (re-opens by already-advanced leads) decoupled from the contacted snapshot and produced
+   * impossible states ("3 opens today while 0 outreach today"). Coherent by construction with
+   * `outreachContacted` + the table: each series' total = sum(daily counts) + undatedCount =
+   * count(leads carrying the signal), and no series can exceed the contacted snapshot.
+   *   - opened         → Opens series   (email-gateway firstOpenedAt).
+   *   - clicked        → Clicks series  (website-visit; ALSO the signup-goal outcome — a self-serve
+   *     signup is downstream of the visit on the client's own site and is NOT tracked here, so the
+   *     observed website visit is the coherent signup-funnel actual; the dashboard scales it by
+   *     visitToSignupPct for the projected signups line, which stays a forecast).
+   *   - meetingsBooked → the meeting-goal outcome (instantly manual-qualification meetingBookedAt).
+   *   - purchased      → the purchase-goal outcome (instantly manual-qualification closedAt).
+   */
+  opened: SignalSeries;
+  clicked: SignalSeries;
+  meetingsBooked: SignalSeries;
+  purchased: SignalSeries;
+}
+
+/**
+ * The Opens / Clicks / meeting / purchase ACTUAL series, each built from the SAME `leads[]` snapshot
+ * (mirrors `buildContactedSeries`). Coherent-by-construction with `outreachContacted` + the table.
+ */
+function buildOutcomeSeries(leads: LeadRow[]): Pick<RevenueBody, "opened" | "clicked" | "meetingsBooked" | "purchased"> {
+  return {
+    opened: buildSignalSeries(leads, (l) => l.opened, (l) => l.openedAt),
+    clicked: buildSignalSeries(leads, (l) => l.clicked, (l) => l.clickedAt),
+    meetingsBooked: buildSignalSeries(leads, (l) => l.meetingBooked, (l) => l.meetingBookedAt),
+    purchased: buildSignalSeries(leads, (l) => l.purchased, (l) => l.purchasedAt),
+  };
 }
 
 /** The revenue response body for one (brand, campaign?) scope — everything but the featureSlug. */
@@ -90,6 +125,7 @@ function emptyBody(totalPipelineUsd: number | null, totalCostInUsdCents: number)
     leads: [],
     events: [],
     outreachContacted: buildContactedSeries([]),
+    ...buildOutcomeSeries([]),
   };
 }
 
@@ -172,6 +208,14 @@ function buildLensBody(
       date: null,
       contacted: Boolean(person.signals.contacted),
       contactedAt: person.signalDates?.contacted ?? null,
+      opened: Boolean(person.signals.open),
+      openedAt: person.signalDates?.open ?? null,
+      clicked: Boolean(person.signals.clicked),
+      clickedAt: person.signalDates?.clicked ?? null,
+      meetingBooked: Boolean(person.signals.meeting),
+      meetingBookedAt: person.signalDates?.meeting ?? null,
+      purchased: Boolean(person.signals.closeWin),
+      purchasedAt: person.signalDates?.closeWin ?? null,
       conversionProbabilityPct: p * 100,
     });
   }
@@ -198,6 +242,7 @@ function buildLensBody(
     leads,
     events: [],
     outreachContacted: buildContactedSeries(leads),
+    ...buildOutcomeSeries(leads),
   };
 }
 
@@ -332,6 +377,7 @@ export async function computeFeatureRevenue(
     leads: result.leads,
     events: result.events,
     outreachContacted: buildContactedSeries(result.leads),
+    ...buildOutcomeSeries(result.leads),
   };
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeRevenue, buildContactedSeries, type ResolvedPath, type EnginePerson, type LeadRow } from "./revenue-engine.js";
+import { computeRevenue, buildContactedSeries, buildSignalSeries, type ResolvedPath, type EnginePerson, type LeadRow } from "./revenue-engine.js";
 
 // Engine is funnel-agnostic — these are arbitrary fixture EVs (NOT the live funnel formula, which
 // now combines the click's two routes via orP). visit_EV=20, reply_EV=120 keep the engine assertions
@@ -615,6 +615,8 @@ describe("buildContactedSeries — server-computed Outreach aggregates (features
       orgName: null, orgLogoUrl: null, orgDomain: null,
       tags: [], expectedRevenueUsd: 0, date: null,
       contacted: false, contactedAt: null,
+      opened: false, openedAt: null, clicked: false, clickedAt: null,
+      meetingBooked: false, meetingBookedAt: null, purchased: false, purchasedAt: null,
       ...over,
     };
   }
@@ -675,5 +677,105 @@ describe("buildContactedSeries — server-computed Outreach aggregates (features
 
   it("empty leads → zeroed series (cold-start / no-funnel body)", () => {
     expect(buildContactedSeries([])).toEqual({ total: 0, daily: [], undatedCount: 0 });
+  });
+});
+
+// features-service#377 — Opens / Clicks / goal-outcome ACTUAL series come from the SAME leads[]
+// snapshot, exactly like Outreach, so the four actual series + the table cannot contradict each
+// other (no "open with nothing contacted"). The engine exposes the per-lead signal flags + dates;
+// buildSignalSeries buckets ANY of them the same coherent way as buildContactedSeries.
+describe("computeRevenue — opened/clicked/meeting/purchase flags + dates (features-service#377)", () => {
+  const PATHS: ResolvedPath[] = [
+    { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery" },
+    { tag: "opened", signal: "open", expectedRevenueUsd: 3, kind: "delivery" },
+    { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, engagementRoute: true },
+    { tag: "meeting", signal: "meeting", expectedRevenueUsd: 40 },
+    { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 100 },
+  ];
+
+  it("exposes opened/clicked/meetingBooked/purchased flags + their first-occurrence dates", () => {
+    const r = computeRevenue(PATHS, [
+      person({
+        leadId: "l1",
+        signals: { contacted: true, open: true, clicked: true, meeting: true, closeWin: true },
+        signalDates: {
+          contacted: "2026-06-20T10:00:00.000Z",
+          open: "2026-06-21T10:00:00.000Z",
+          clicked: "2026-06-22T10:00:00.000Z",
+          meeting: "2026-06-23T10:00:00.000Z",
+          closeWin: "2026-06-24T10:00:00.000Z",
+        },
+      }),
+    ]);
+    const lead = r.leads[0];
+    expect([lead.opened, lead.clicked, lead.meetingBooked, lead.purchased]).toEqual([true, true, true, true]);
+    expect(lead.openedAt).toBe("2026-06-21T10:00:00.000Z");
+    expect(lead.clickedAt).toBe("2026-06-22T10:00:00.000Z");
+    expect(lead.meetingBookedAt).toBe("2026-06-23T10:00:00.000Z");
+    expect(lead.purchasedAt).toBe("2026-06-24T10:00:00.000Z");
+  });
+
+  it("flags default false + dates null when the signal did not fire (no synthesis)", () => {
+    const r = computeRevenue(PATHS, [
+      person({ leadId: "l1", signals: { contacted: true, open: true, clicked: false }, signalDates: { contacted: "2026-06-20T10:00:00.000Z", open: "2026-06-21T10:00:00.000Z" } }),
+    ]);
+    const lead = r.leads[0];
+    expect(lead.opened).toBe(true);
+    expect(lead.clicked).toBe(false);
+    expect(lead.clickedAt).toBeNull();
+    expect(lead.meetingBooked).toBe(false);
+    expect(lead.meetingBookedAt).toBeNull();
+    expect(lead.purchased).toBe(false);
+  });
+
+  it("opened/clicked counts never exceed the contacted snapshot — all from the same leads[]", () => {
+    const r = computeRevenue(PATHS, [
+      person({ leadId: "l1", signals: { contacted: true, open: true, clicked: true }, signalDates: { contacted: "2026-06-20T09:00:00.000Z", open: "2026-06-20T10:00:00.000Z", clicked: "2026-06-20T11:00:00.000Z" } }),
+      person({ leadId: "l2", signals: { contacted: true, open: true, clicked: false }, signalDates: { contacted: "2026-06-20T09:00:00.000Z", open: "2026-06-21T10:00:00.000Z" } }),
+      person({ leadId: "l3", signals: { contacted: true, open: false, clicked: false }, signalDates: { contacted: "2026-06-21T09:00:00.000Z" } }),
+    ]);
+    const contacted = buildContactedSeries(r.leads);
+    const opened = buildSignalSeries(r.leads, (l) => l.opened, (l) => l.openedAt);
+    const clicked = buildSignalSeries(r.leads, (l) => l.clicked, (l) => l.clickedAt);
+    expect(contacted.total).toBe(3);
+    expect(opened.total).toBe(2);
+    expect(clicked.total).toBe(1);
+    // Coherence: no actual series exceeds contacted; opens supersets clicks; each reconciles.
+    expect(opened.total).toBeLessThanOrEqual(contacted.total);
+    expect(clicked.total).toBeLessThanOrEqual(opened.total);
+    for (const s of [contacted, opened, clicked]) {
+      expect(s.daily.reduce((a, b) => a + b.count, 0) + s.undatedCount).toBe(s.total);
+    }
+  });
+});
+
+describe("buildSignalSeries — generic per-signal aggregator (features-service#377)", () => {
+  function lead(over: Partial<LeadRow> & { leadId: string }): LeadRow {
+    return {
+      firstName: null, lastName: null, photoUrl: null,
+      orgName: null, orgLogoUrl: null, orgDomain: null,
+      tags: [], expectedRevenueUsd: 0, date: null,
+      contacted: false, contactedAt: null,
+      opened: false, openedAt: null, clicked: false, clickedAt: null,
+      meetingBooked: false, meetingBookedAt: null, purchased: false, purchasedAt: null,
+      ...over,
+    };
+  }
+
+  it("buckets by the selected signal's UTC day; undated counted in total only", () => {
+    const s = buildSignalSeries(
+      [
+        lead({ leadId: "l1", opened: true, openedAt: "2026-06-20T08:00:00.000Z" }),
+        lead({ leadId: "l2", opened: true, openedAt: "2026-06-20T23:30:00.000Z" }),
+        lead({ leadId: "l3", opened: true, openedAt: null }), // dated unknown → undatedCount
+        lead({ leadId: "l4", opened: false, openedAt: "2026-06-20T08:00:00.000Z" }), // not opened → excluded
+      ],
+      (l) => l.opened,
+      (l) => l.openedAt,
+    );
+    expect(s.total).toBe(3);
+    expect(s.daily).toEqual([{ date: "2026-06-20", count: 2 }]);
+    expect(s.undatedCount).toBe(1);
+    expect(s.daily.reduce((a, b) => a + b.count, 0) + s.undatedCount).toBe(s.total);
   });
 });
