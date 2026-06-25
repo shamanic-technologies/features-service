@@ -358,6 +358,40 @@ dashboard (distribute.you) consumes the new series exactly as `outreachContacted
 (non-strict Zod parse ignores them until wired) — separate distribute.you follow-up to repoint the
 Opens/Clicks/Signups actuals off pipeline-activity. (Set 2026-06-24.)
 
+## `/stats` `recipients*` engagement counts derive from the SAME lead snapshot as `/revenue` (PR #388)
+
+The brand stat card (`GET /features/:slug/stats?brandId=` → `recipientsClicked`) and the Overview
+(`GET /features/:slug/revenue?brandId=` → `clicked.total`) MUST show the same number. They used to
+drift (72 vs 71) because they counted DIFFERENT things: `/revenue` counts DISTINCT leads (deduped by
+`leadId`, bounced/unsubscribed zeroed) from the `leads[]` snapshot; `/stats` `recipientsClicked` was
+the email-gateway `broadcast.recipientStats.clicked` AGGREGATE — one recipient row PER send, so a lead
+served in two campaigns (or who clicked two emails of a sequence) double-counts. The +1 was exactly
+one such duplicate (the Sibylle Linnebo case: same lead, two click events 13 days apart).
+
+**Canonical = the lead snapshot (distinct leads).** "Link Clicks" on a lead funnel is *how many of my
+leads clicked*, not *total click events* — a count that could exceed `contacted` breaks the funnel.
+So `src/routes/stats.ts` (authed handler) re-derives the six snapshot-ownable engagement counts —
+`recipientsContacted`/`recipientsSent`/`recipientsDelivered`/`recipientsOpened`/`recipientsClicked`/
+`recipientsRepliesPositive` — via `src/lib/engagement-snapshot.ts` `fetchEngagementSnapshotCounts`,
+which composes the EXACT same primitives `/revenue` uses (`fetchLeadsForRevenue` → best-effort
+open-timestamp overlay via `fetchEventTimestamps` → `dedupPersonsByLead` → count), so the two can
+never disagree (invariant test in `engagement-snapshot.test.ts`). The counts OVERRIDE the
+email-gateway aggregate via spread order in the non-grouped `rawStats`.
+
+**Gated to non-grouped + `brandId` present** (the dashboard stat card). The grouped
+(`?groupBy=campaignId`) per-campaign breakdown KEEPS the email-gateway aggregate — the snapshot fetch
+is brand-scoped (one `fetchLeadsForRevenue` call), not per-group. Brand-scope matches `/revenue`,
+which also calls `fetchLeadsForRevenue(brandId, campaignId)` with NO feature filter on the leads — so
+matching it is correct by construction even though it counts all the brand's leads.
+
+**email-gateway is STILL fetched** for the keys the snapshot can't produce — `recipientsBounced`
+(snapshot zeroes bounced leads' signals) and replies Negative/Neutral/AutoReply (snapshot only knows
+`positiveReply` via `replyClassification`). Only the six above are overridden. Open has NO lead-row
+boolean — a known email-gateway open timestamp IS the signal (mirrors revenue.ts Wave B); the
+open-overlay is BEST-EFFORT (an email-gateway failure degrades `opened` to 0 on BOTH endpoints
+identically, while the lead fetch itself stays fail-loud). No OpenAPI change (same keys, same types).
+(Set 2026-06-25.)
+
 ## Data layering — features-service owns a GOLD serving layer (CQRS read model)
 
 features-service is otherwise a **derive-on-read aggregator** (the API-Composition pattern, Richardson):
