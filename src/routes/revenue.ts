@@ -89,11 +89,15 @@ interface RevenueResponse {
    *     signup is downstream of the visit on the client's own site and is NOT tracked here, so the
    *     observed website visit is the coherent signup-funnel actual; the dashboard scales it by
    *     visitToSignupPct for the projected signups line, which stays a forecast).
+   *   - repliedPositive→ Positive-replies series (email-gateway firstRepliedAt). The booked-meetings
+   *     lens's engagement signal (P=replyToMeeting) — the meeting-goal Outcome line on the Overview
+   *     graph; distinct from meetingsBooked (the reply is the signal, the booked meeting the outcome).
    *   - meetingsBooked → the meeting-goal outcome (instantly manual-qualification meetingBookedAt).
    *   - purchased      → the purchase-goal outcome (instantly manual-qualification closedAt).
    */
   opened: SignalSeries;
   clicked: SignalSeries;
+  repliedPositive: SignalSeries;
   meetingsBooked: SignalSeries;
   purchased: SignalSeries;
 }
@@ -102,10 +106,11 @@ interface RevenueResponse {
  * The Opens / Clicks / meeting / purchase ACTUAL series, each built from the SAME `leads[]` snapshot
  * (mirrors `buildContactedSeries`). Coherent-by-construction with `outreachContacted` + the table.
  */
-function buildOutcomeSeries(leads: LeadRow[]): Pick<RevenueBody, "opened" | "clicked" | "meetingsBooked" | "purchased"> {
+function buildOutcomeSeries(leads: LeadRow[]): Pick<RevenueBody, "opened" | "clicked" | "repliedPositive" | "meetingsBooked" | "purchased"> {
   return {
     opened: buildSignalSeries(leads, (l) => l.opened, (l) => l.openedAt),
     clicked: buildSignalSeries(leads, (l) => l.clicked, (l) => l.clickedAt),
+    repliedPositive: buildSignalSeries(leads, (l) => l.repliedPositive, (l) => l.repliedPositiveAt),
     meetingsBooked: buildSignalSeries(leads, (l) => l.meetingBooked, (l) => l.meetingBookedAt),
     purchased: buildSignalSeries(leads, (l) => l.purchased, (l) => l.purchasedAt),
   };
@@ -212,6 +217,8 @@ function buildLensBody(
       openedAt: person.signalDates?.open ?? null,
       clicked: Boolean(person.signals.clicked),
       clickedAt: person.signalDates?.clicked ?? null,
+      repliedPositive: Boolean(person.signals.positiveReply),
+      repliedPositiveAt: person.signalDates?.positiveReply ?? null,
       meetingBooked: Boolean(person.signals.meeting),
       meetingBookedAt: person.signalDates?.meeting ?? null,
       purchased: Boolean(person.signals.closeWin),

@@ -191,6 +191,16 @@ tests from `src` ONLY. Previously CI ran `pnpm build` (emits `dist/*.test.js`) b
 and removes the flake at the source. If a teardown error ever recurs despite this, confirm no
 new `include`/dist glob crept back in (`pnpm exec vitest list` must show only `src/` files).
 
+## Issue-tag in code comments — NEVER reuse the brief's *sibling* issue number for THIS work
+
+This repo tags features in code/OpenAPI describe strings with `features-service#NNN`. When a brief
+references a sibling issue (e.g. "#388 is reconciling /stats — stay out of it"), that number is NOT
+this work's tag. Do NOT bake a specific `#NNN` into comments before confirming the number belongs to
+the current change — create the work's own issue first (or use the PR number) and tag with THAT.
+Baking the sibling's number in forces a doc-fix follow-up PR. Cost 2026-06-25 (repliedPositive series,
+PR #389): tagged the new series `features-service#388` (the /stats sibling) before #390 existed →
+needed PR #391 to correct the OpenAPI describe strings #388→#390.
+
 ## Key Files
 
 | File | Purpose |
