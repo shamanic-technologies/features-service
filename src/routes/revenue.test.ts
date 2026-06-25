@@ -275,25 +275,30 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    const { outreachContacted: oc, opened, clicked, meetingsBooked, purchased } = res.body;
+    const { outreachContacted: oc, opened, clicked, repliedPositive, meetingsBooked, purchased } = res.body;
     // Each series carries the same shape as outreachContacted.
     expect(opened.total).toBe(2); // both opened
     expect(opened.daily).toEqual([{ date: day, count: 2 }]);
     expect(clicked.total).toBe(1); // only click@x.com clicked
     expect(clicked.daily).toEqual([{ date: day, count: 1 }]);
+    // Only reply@y.com sent a positive reply (firstRepliedAt on `day`) → 1, bucketed on its UTC day.
+    expect(repliedPositive.total).toBe(1);
+    expect(repliedPositive.daily).toEqual([{ date: day, count: 1 }]);
     // No meeting/close qualifications in this payload → empty goal-outcome series (no synthesis).
     expect(meetingsBooked).toEqual({ total: 0, daily: [], undatedCount: 0 });
     expect(purchased).toEqual({ total: 0, daily: [], undatedCount: 0 });
     // COHERENCE: no actual series exceeds the contacted snapshot; each reconciles to its own total.
     expect(opened.total).toBeLessThanOrEqual(oc.total);
     expect(clicked.total).toBeLessThanOrEqual(opened.total);
-    for (const s of [oc, opened, clicked, meetingsBooked, purchased]) {
+    expect(repliedPositive.total).toBeLessThanOrEqual(oc.total);
+    for (const s of [oc, opened, clicked, repliedPositive, meetingsBooked, purchased]) {
       const sumDaily = s.daily.reduce((a: number, b: any) => a + b.count, 0);
       expect(sumDaily + s.undatedCount).toBe(s.total);
     }
     // Reconciles with the table the same way Outreach does: count(leads with signal) === series total.
     expect(res.body.leads.filter((l: any) => l.opened).length).toBe(opened.total);
     expect(res.body.leads.filter((l: any) => l.clicked).length).toBe(clicked.total);
+    expect(res.body.leads.filter((l: any) => l.repliedPositive).length).toBe(repliedPositive.total);
   });
 
   it("cross-brand-average fallback — no saved economics but average exists → computed + tagged estimate", async () => {

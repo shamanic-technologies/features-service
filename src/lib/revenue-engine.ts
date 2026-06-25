@@ -136,15 +136,21 @@ export interface LeadRow {
    * Opens / Clicks / goal-outcome ACTUAL series, server-computed from THIS `leads[]` snapshot so
    * they are coherent-by-construction with Outreach + the table (features-service#377). Each flag's
    * date is real (no synthesis): null when the signal fired but the date is unknown, or not fired.
-   *   - opened        ← email-gateway `firstOpenedAt`   (a known open timestamp IS the signal)
-   *   - clicked       ← email-gateway `firstClickedAt`  (website-visit; the signup-goal's observed outcome)
-   *   - meetingBooked ← instantly manual-qualification `meetingBookedAt` (the meeting-goal outcome)
-   *   - purchased     ← instantly manual-qualification `closedAt`        (the purchase-goal outcome)
+   *   - opened         ← email-gateway `firstOpenedAt`   (a known open timestamp IS the signal)
+   *   - clicked        ← email-gateway `firstClickedAt`  (website-visit; the signup-goal's observed outcome)
+   *   - repliedPositive← `positiveReply` signal (replied && replyClassification "positive"), dated by
+   *     email-gateway `firstRepliedAt`. The SAME positive-reply classification the booked-meetings lens
+   *     (P=replyToMeeting) + audience-stats positiveReplies use — distinct from `meetingBooked` (the
+   *     reply is the meeting-goal engagement signal, the booked meeting is its downstream outcome).
+   *   - meetingBooked  ← instantly manual-qualification `meetingBookedAt` (the meeting-goal outcome)
+   *   - purchased      ← instantly manual-qualification `closedAt`        (the purchase-goal outcome)
    */
   opened: boolean;
   openedAt: string | null;
   clicked: boolean;
   clickedAt: string | null;
+  repliedPositive: boolean;
+  repliedPositiveAt: string | null;
   meetingBooked: boolean;
   meetingBookedAt: string | null;
   purchased: boolean;
@@ -461,6 +467,8 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     openedAt: person.signalDates?.open ?? null,
     clicked: Boolean(person.signals.clicked),
     clickedAt: person.signalDates?.clicked ?? null,
+    repliedPositive: Boolean(person.signals.positiveReply),
+    repliedPositiveAt: person.signalDates?.positiveReply ?? null,
     meetingBooked: Boolean(person.signals.meeting),
     meetingBookedAt: person.signalDates?.meeting ?? null,
     purchased: Boolean(person.signals.closeWin),

@@ -714,6 +714,46 @@
             ],
             "description": "Clicks ACTUAL series (website visits), server-computed from the SAME leads[] snapshot. ALSO the signup-goal's observed outcome — a downstream account signup is not tracked here, so the visit is the coherent signup-funnel actual; the dashboard scales it by visitToSignupPct for the projected signups line (forecast). features-service#377."
           },
+          "repliedPositive": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "Positive-replies ACTUAL series (email-gateway firstRepliedAt), server-computed from the SAME leads[] snapshot — coherent with the other actual series + the table. The booked-meetings lens's engagement signal (P=replyToMeeting) the meeting-goal Outcome line renders; distinct from meetingsBooked (the reply is the signal, the booked meeting its downstream outcome). features-service#388."
+          },
           "meetingsBooked": {
             "type": "object",
             "properties": {
@@ -1016,6 +1056,15 @@
                   "nullable": true,
                   "description": "ISO timestamp of first click (email-gateway firstClickedAt). Null when not clicked, or clicked with no known date. No synthesis."
                 },
+                "repliedPositive": {
+                  "type": "boolean",
+                  "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#388."
+                },
+                "repliedPositiveAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp of first positive reply (email-gateway firstRepliedAt). Null when no positive reply, or replied with no known date. No synthesis."
+                },
                 "meetingBooked": {
                   "type": "boolean",
                   "description": "True when a meeting was booked (instantly manual qualification). The meeting-goal outcome the goal daily-graph actual buckets (features-service#377)."
@@ -1056,6 +1105,8 @@
                 "openedAt",
                 "clicked",
                 "clickedAt",
+                "repliedPositive",
+                "repliedPositiveAt",
                 "meetingBooked",
                 "meetingBookedAt",
                 "purchased",
@@ -1106,6 +1157,7 @@
           "outreachContacted",
           "opened",
           "clicked",
+          "repliedPositive",
           "meetingsBooked",
           "purchased",
           "headline",
