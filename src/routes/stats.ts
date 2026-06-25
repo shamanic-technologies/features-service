@@ -7,6 +7,7 @@ import { STATS_REGISTRY, getPublicRegistry, getEntityRegistry, requiredStatsSour
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
+import { fetchEngagementSnapshotCounts, SNAPSHOT_ENGAGEMENT_KEYS } from "../lib/engagement-snapshot.js";
 
 const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL!;
 const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY!;
@@ -1044,7 +1045,16 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     const EMPTY_STATS: Map<string, Record<string, number>> = new Map();
     const skip = (): Promise<Map<string, Record<string, number>>> => Promise.resolve(EMPTY_STATS);
 
-    const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, pressKitsStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns] = await Promise.all([
+    // The recipient-engagement counts (contacted/sent/delivered/opened/clicked/repliesPositive)
+    // are reconciled onto the SAME deduped lead snapshot /revenue uses, so the brand stat card and
+    // the Overview can never disagree (features-service#388). Gated to the brand-scoped, non-grouped
+    // read the dashboard renders — the grouped (per-campaign) breakdown keeps the email-gateway
+    // aggregate. email-gateway is still fetched for the keys the snapshot can't produce (bounced,
+    // replies negative/neutral/auto-reply); the snapshot just OVERRIDES the six it owns.
+    const wantEngagementSnapshot =
+      !groupBy && Boolean(filters.brandId) && SNAPSHOT_ENGAGEMENT_KEYS.some((k) => declaredKeys.has(k));
+
+    const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, pressKitsStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns, engagementSnapshot] = await Promise.all([
       neededSources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : skip(),
       fetchRunsStats(orgId, groupBy, filters, [featureSlug], identity),
       neededSources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : skip(),
@@ -1055,6 +1065,9 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       neededSources.has("journalists-quotes") ? fetchJournalistsQuotesStats(orgId, filters, identity) : skip(),
       neededSources.has("ai-visibility") ? fetchAiVisibilityStats(orgId, filters, identity) : skip(),
       fetchActiveCampaigns(orgId, filters, identity),
+      wantEngagementSnapshot
+        ? fetchEngagementSnapshotCounts(filters.brandId, filters.campaignId, { orgId, userId, runId, featureSlug })
+        : Promise.resolve(null),
     ]);
 
     if (!groupBy) {
@@ -1067,6 +1080,10 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         ...(pressKitsStatsMap.get("__total__") ?? {}),
         ...(journalistsQuotesStatsMap.get("__total__") ?? {}),
         ...(aiVisibilityStatsMap.get("__total__") ?? {}),
+        // Snapshot-derived engagement counts OVERRIDE the email-gateway aggregate for the six keys
+        // it owns (must come AFTER the emailStatsMap spread). Null when not applicable (grouped /
+        // no brandId / feature renders none of them) → email-gateway aggregate stands. (#388)
+        ...(engagementSnapshot ?? {}),
         totalCostInUsdCents: runsStatsMap.get("__total__")?.totalCostInUsdCents ?? 0,
         completedRuns: runsStatsMap.get("__total__")?.completedRuns ?? 0,
       };

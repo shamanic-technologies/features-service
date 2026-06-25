@@ -153,10 +153,13 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
   });
 
   it("passes featureSlug to all downstream services", async () => {
-    const urls: string[] = [];
-    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-      urls.push(url);
+      const headers: Record<string, string> = {};
+      const h = (init?.headers ?? {}) as Record<string, string>;
+      for (const [k, v] of Object.entries(h)) headers[k.toLowerCase()] = String(v);
+      calls.push({ url, headers });
 
       if (url.includes("runs:3000")) {
         return new Response(JSON.stringify({
@@ -169,6 +172,14 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
           }],
         }), { status: 200 });
       }
+      // lead-service /orgs/leads (engagement snapshot, #388) — featureSlug via x-feature-slug header.
+      if (url.includes("leads:3000/orgs/leads")) {
+        return new Response(JSON.stringify({ leads: [] }), { status: 200 });
+      }
+      // email-gateway /orgs/status (engagement snapshot open-overlay) — featureSlug via header.
+      if (url.includes("email:3000/orgs/status")) {
+        return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      }
       if (url.includes("email:3000")) {
         return new Response(JSON.stringify({ broadcast: {}, transactional: {} }), { status: 200 });
       }
@@ -179,12 +190,15 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
       .get("/features/sales-cold-email-outreach/stats?brandId=brand-1")
       .set(AUTH_HEADERS);
 
-    const httpUrls = urls.filter((u) => u.startsWith("http") && !u.includes("/events"));
-    expect(httpUrls.length).toBeGreaterThan(0);
-    for (const url of httpUrls) {
+    const httpCalls = calls.filter((c) => c.url.startsWith("http") && !c.url.includes("/events"));
+    expect(httpCalls.length).toBeGreaterThan(0);
+    for (const { url, headers } of httpCalls) {
       const parsed = new URL(url);
-      if (url.includes("email:3000")) {
-        // email-gateway expects featureSlugs (plural)
+      if (url.includes("leads:3000/orgs/leads") || url.includes("email:3000/orgs/status")) {
+        // Engagement-snapshot calls propagate featureSlug as a header (mirrors /revenue), not a query.
+        expect(headers["x-feature-slug"]).toBe("sales-cold-email-outreach");
+      } else if (url.includes("email:3000")) {
+        // email-gateway /orgs/stats expects featureSlugs (plural) query param
         expect(parsed.searchParams.get("featureSlugs")).toBe("sales-cold-email-outreach");
         expect(parsed.searchParams.get("featureSlug")).toBeNull();
       } else if (url.includes("runs:3000/v1/stats/costs")) {
@@ -198,6 +212,59 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
         expect(parsed.searchParams.get("featureSlug")).toBe("sales-cold-email-outreach");
       }
     }
+  });
+
+  // ── #388: recipient-engagement counts reconciled onto the /revenue lead snapshot ──
+  it("brand-scoped non-grouped: recipientsClicked/Contacted come from the DEDUPED lead snapshot, overriding the email-gateway aggregate", async () => {
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      if (url.includes("runs:3000")) {
+        return new Response(JSON.stringify({ groups: [{ dimensions: { workflowSlug: "__total__" }, totalCostInUsdCents: "0", runCount: 0, minStartedAt: null, maxStartedAt: null }] }), { status: 200 });
+      }
+      if (url.includes("leads:3000/orgs/leads")) {
+        // L1 appears twice (clicked in both rows — the Sibylle Linnebo duplicate); dedup → ONE clicked lead.
+        return new Response(JSON.stringify({ leads: [
+          { leadId: "L1", email: "a@x.com", contacted: true, sent: true, delivered: true, clicked: true },
+          { leadId: "L1", email: "a@x.com", contacted: true, sent: true, delivered: true, clicked: true },
+          { leadId: "L2", email: "b@x.com", contacted: true, sent: true, delivered: true, clicked: true },
+        ] }), { status: 200 });
+      }
+      if (url.includes("email:3000/orgs/status")) {
+        return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      }
+      if (url.includes("email:3000")) {
+        // Legacy aggregate double-counts the L1 duplicate → clicked 72, contacted 80; bounced 5.
+        return new Response(JSON.stringify({ broadcast: { recipientStats: { contacted: 80, sent: 90, delivered: 70, opened: 50, clicked: 72, bounced: 5, repliesPositive: 10, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    const res = await request(app).get("/features/sales-cold-email-outreach/stats?brandId=brand-1").set(AUTH_HEADERS);
+    expect(res.status).toBe(200);
+    // Snapshot dedups L1 → 2 distinct clicked leads (matches /revenue), NOT the aggregate 72.
+    expect(res.body.stats.recipientsClicked).toBe(2);
+    expect(res.body.stats.recipientsContacted).toBe(2);
+    expect(res.body.stats.recipientsSent).toBe(2);
+    expect(res.body.stats.recipientsDelivered).toBe(2);
+    // bounced is NOT snapshot-owned → the email-gateway aggregate still stands.
+    expect(res.body.stats.recipientsBounced).toBe(5);
+  });
+
+  it("grouped (groupBy=campaignId): no reconciliation — the snapshot lead fetch is NOT triggered", async () => {
+    const paths: string[] = [];
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      paths.push(url);
+      if (url.includes("runs:3000")) {
+        return new Response(JSON.stringify({ groups: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    const res = await request(app).get("/features/sales-cold-email-outreach/stats?brandId=brand-1&groupBy=campaignId").set(AUTH_HEADERS);
+    expect(res.status).toBe(200);
+    // The engagement snapshot (/orgs/leads) is gated to the non-grouped path.
+    expect(paths.some((u) => u.includes("leads:3000/orgs/leads"))).toBe(false);
   });
 });
 
