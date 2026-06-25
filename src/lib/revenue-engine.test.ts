@@ -616,6 +616,7 @@ describe("buildContactedSeries — server-computed Outreach aggregates (features
       tags: [], expectedRevenueUsd: 0, date: null,
       contacted: false, contactedAt: null,
       opened: false, openedAt: null, clicked: false, clickedAt: null,
+      repliedPositive: false, repliedPositiveAt: null,
       meetingBooked: false, meetingBookedAt: null, purchased: false, purchasedAt: null,
       ...over,
     };
@@ -693,24 +694,26 @@ describe("computeRevenue — opened/clicked/meeting/purchase flags + dates (feat
     { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 100 },
   ];
 
-  it("exposes opened/clicked/meetingBooked/purchased flags + their first-occurrence dates", () => {
+  it("exposes opened/clicked/repliedPositive/meetingBooked/purchased flags + their first-occurrence dates", () => {
     const r = computeRevenue(PATHS, [
       person({
         leadId: "l1",
-        signals: { contacted: true, open: true, clicked: true, meeting: true, closeWin: true },
+        signals: { contacted: true, open: true, clicked: true, positiveReply: true, meeting: true, closeWin: true },
         signalDates: {
           contacted: "2026-06-20T10:00:00.000Z",
           open: "2026-06-21T10:00:00.000Z",
           clicked: "2026-06-22T10:00:00.000Z",
+          positiveReply: "2026-06-22T18:00:00.000Z",
           meeting: "2026-06-23T10:00:00.000Z",
           closeWin: "2026-06-24T10:00:00.000Z",
         },
       }),
     ]);
     const lead = r.leads[0];
-    expect([lead.opened, lead.clicked, lead.meetingBooked, lead.purchased]).toEqual([true, true, true, true]);
+    expect([lead.opened, lead.clicked, lead.repliedPositive, lead.meetingBooked, lead.purchased]).toEqual([true, true, true, true, true]);
     expect(lead.openedAt).toBe("2026-06-21T10:00:00.000Z");
     expect(lead.clickedAt).toBe("2026-06-22T10:00:00.000Z");
+    expect(lead.repliedPositiveAt).toBe("2026-06-22T18:00:00.000Z");
     expect(lead.meetingBookedAt).toBe("2026-06-23T10:00:00.000Z");
     expect(lead.purchasedAt).toBe("2026-06-24T10:00:00.000Z");
   });
@@ -723,6 +726,8 @@ describe("computeRevenue — opened/clicked/meeting/purchase flags + dates (feat
     expect(lead.opened).toBe(true);
     expect(lead.clicked).toBe(false);
     expect(lead.clickedAt).toBeNull();
+    expect(lead.repliedPositive).toBe(false);
+    expect(lead.repliedPositiveAt).toBeNull();
     expect(lead.meetingBooked).toBe(false);
     expect(lead.meetingBookedAt).toBeNull();
     expect(lead.purchased).toBe(false);
@@ -757,6 +762,7 @@ describe("buildSignalSeries — generic per-signal aggregator (features-service#
       tags: [], expectedRevenueUsd: 0, date: null,
       contacted: false, contactedAt: null,
       opened: false, openedAt: null, clicked: false, clickedAt: null,
+      repliedPositive: false, repliedPositiveAt: null,
       meetingBooked: false, meetingBookedAt: null, purchased: false, purchasedAt: null,
       ...over,
     };
