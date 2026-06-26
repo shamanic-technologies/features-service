@@ -85,9 +85,9 @@ type Timestamps = Record<string, { firstContactedAt?: string | null; firstSentAt
 const DAY_MS = 24 * 60 * 60 * 1000;
 const daysAgo = (n: number): string => new Date(Date.now() - n * DAY_MS).toISOString();
 
-/** runs-service /v1/stats/costs response carrying a single workflow group of `cents`. */
+/** runs-service /v1/stats/costs response carrying a single group of `cents` (actual == total in tests). */
 function costGroups(cents: number): string {
-  return JSON.stringify({ groups: [{ dimensions: {}, totalCostInUsdCents: String(cents), runCount: 0, minStartedAt: null, maxStartedAt: null }] });
+  return JSON.stringify({ groups: [{ dimensions: {}, totalCostInUsdCents: String(cents), actualCostInUsdCents: String(cents), runCount: 0, minStartedAt: null, maxStartedAt: null }] });
 }
 
 /** email → first meeting-booked / closed manual-qualification timestamps. */
@@ -714,12 +714,96 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(warnSpy.mock.calls.some(([msg]) => typeof msg === "string" && msg.includes("manual-qualifications hit 500-row cap"))).toBe(true);
   });
 
-  it("Wave A fires its four independent downstream calls concurrently, not sequentially", async () => {
-    // Gate every Wave-A URL on a barrier that only releases once ALL FOUR are in flight. Parallel
-    // code (Promise.all) drives inFlight to 4 → barrier releases → all resolve. Sequential awaits
-    // would stall the first call on the barrier forever (inFlight stuck at 1) → vitest timeout. So
-    // the test PASSING is itself proof of concurrency; a regression to sequential awaits times out.
+  // ── spend (Overview "Outreach & Conversions" cost block, features-service#396) ──
+
+  it("spend — reconciled by construction: totalSpentCents == actual, cpcCents == totalSpentCents / clicked.total", async () => {
+    // HAPPY_LEADS = 1 click + 1 reply. costCents 7000 → 1 click → CPC must be exactly 7000/1.
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000 });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.spend.totalSpentCents).toBe(7000);
+    // totalSpentCents is the ACTUAL spend == costEconomics.totalCostUsd (coherent, no divergence).
+    expect(res.body.spend.totalSpentCents).toBe(res.body.costEconomics.totalCostUsd * 100);
+    // The core reconciliation AC: CPC == that same total ÷ the displayed clicks (clicked.total).
+    expect(res.body.clicked.total).toBe(1);
+    expect(res.body.spend.cpcCents).toBe(res.body.spend.totalSpentCents / res.body.clicked.total);
+    expect(res.body.spend.cpcCents).toBe(7000);
+    // CPS / CPSM are projected via the shared EV funnel → populated when economics + a cost basis exist.
+    expect(res.body.spend.cpsCents).not.toBeNull();
+    expect(res.body.spend.cpsmCents).not.toBeNull();
+  });
+
+  it("spend — null-safe: 0 clicks → cpcCents null (never a false $0.00), 0 spend → all ratios null", async () => {
+    // Reply-only lead → 0 clicks, but spend > 0 → CPC null (no denominator), CPS null (signups are
+    // click-route only), CPSM non-null (the reply route funds meetings).
+    const replyOnly = [leadRow({ leadId: "lr", email: "reply@y.com", replied: true, replyClassification: "positive", lead: { firstName: "R", lastName: "Y", photoUrl: null, organization: { id: "o2", name: "O2", logoUrl: null } } })];
+    mockFetch({ economics: ECONOMICS, leads: replyOnly, costCents: 5000 });
+    let res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.clicked.total).toBe(0);
+    expect(res.body.spend.cpcCents).toBeNull();
+    expect(res.body.spend.cpsCents).toBeNull();
+    expect(res.body.spend.cpsmCents).not.toBeNull();
+
+    // 0 spend → CPC null even with clicks (no attributed spend, not $0.00).
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 0 });
+    res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.body.spend.totalSpentCents).toBe(0);
+    expect(res.body.spend.cpcCents).toBeNull();
+    expect(res.body.spend.cpsCents).toBeNull();
+    expect(res.body.spend.cpsmCents).toBeNull();
+  });
+
+  it("spend — per-source breakdown: actual spend by cost name + share-of-total (desc), plus today's spend", async () => {
+    // Distinct cost-name groups for the source breakdown; the today call (startedAfter set) returns a subset.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/stats/costs")) {
+        if (url.includes("startedAfter")) {
+          return json({ groups: [{ dimensions: { costName: "apollo people-search" }, totalCostInUsdCents: "1500", actualCostInUsdCents: "1500", runCount: 0, minStartedAt: null, maxStartedAt: null }] });
+        }
+        return json({ groups: [
+          { dimensions: { costName: "email-send-step-1" }, totalCostInUsdCents: "6000", actualCostInUsdCents: "6000", runCount: 0, minStartedAt: null, maxStartedAt: null },
+          { dimensions: { costName: "apollo people-search" }, totalCostInUsdCents: "2000", actualCostInUsdCents: "2000", runCount: 0, minStartedAt: null, maxStartedAt: null },
+          { dimensions: { costName: "zero-line" }, totalCostInUsdCents: "0", actualCostInUsdCents: "0", runCount: 0, minStartedAt: null, maxStartedAt: null },
+        ] });
+      }
+      if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+      if (url.includes("/public/stats")) return json(PLATFORM_STATS);
+      if (url.includes("/orgs/leads")) return json({ leads: HAPPY_LEADS });
+      if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
+      if (url.includes("/orgs/status")) return json({ results: [] });
+      return json({});
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.spend.totalSpentCents).toBe(8000); // 6000 + 2000 (zero-line filtered out)
+    expect(res.body.spend.todaySpentCents).toBe(1500);
+    // Sources: descending by spend, zero-spend rows dropped, share-of-total pre-computed.
+    expect(res.body.spend.sources).toHaveLength(2);
+    expect(res.body.spend.sources[0]).toEqual({ source: "email-send-step-1", spentCents: 6000, sharePct: 75 });
+    expect(res.body.spend.sources[1]).toEqual({ source: "apollo people-search", spentCents: 2000, sharePct: 25 });
+    // CPC derives from the SAME total → reconciles with the source list the dashboard renders.
+    expect(res.body.spend.cpcCents).toBe(8000 / res.body.clicked.total);
+  });
+
+  it("spend — null on the lensed response (brand-total concept; lens pages use costPerConversionUsd)", async () => {
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000 });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=signups").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.spend).toBeNull();
+  });
+
+  it("Wave A fires its independent downstream calls concurrently, not sequentially", async () => {
+    // Gate every Wave-A URL on a barrier that only releases once ALL are in flight. Parallel code
+    // (Promise.all) drives inFlight to the expected count → barrier releases → all resolve. Sequential
+    // awaits would stall the first call on the barrier forever → vitest timeout. So the test PASSING is
+    // itself proof of concurrency; a regression to sequential awaits times out.
+    // The Overview path fires FIVE concurrent calls: fetchSpendBreakdown makes TWO /stats/costs calls
+    // (per-source costName + today's spend), plus economics + platform rates + leads.
     const WAVE_A = ["/stats/costs", "/sales-economics-effective", "/public/stats", "/orgs/leads"];
+    const EXPECTED_CONCURRENT = 5;
     let inFlight = 0;
     let releaseAll!: () => void;
     const allInFlight = new Promise<void>((r) => { releaseAll = r; });
@@ -729,7 +813,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
       if (WAVE_A.some((p) => url.includes(p))) {
         inFlight += 1;
-        if (inFlight === WAVE_A.length) releaseAll();
+        if (inFlight === EXPECTED_CONCURRENT) releaseAll();
         await allInFlight; // sequential code deadlocks here; parallel code sails through
       }
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -743,7 +827,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(inFlight).toBe(WAVE_A.length); // all four were in flight simultaneously
+    expect(inFlight).toBe(EXPECTED_CONCURRENT); // all Wave-A calls were in flight simultaneously
   });
 });
 
@@ -766,7 +850,7 @@ function mockFetchGrouped(opts: { economics?: unknown; economicsAverage?: unknow
       // Enumeration: groupBy=campaignId, no campaign header → one group per campaign.
       if (url.includes("groupBy=campaignId")) {
         const groups = Object.entries(opts.campaigns).map(([id, c]) => ({
-          dimensions: { campaignId: id }, totalCostInUsdCents: String(c.costCents ?? 0), runCount: 0, minStartedAt: null, maxStartedAt: null,
+          dimensions: { campaignId: id }, totalCostInUsdCents: String(c.costCents ?? 0), actualCostInUsdCents: String(c.costCents ?? 0), runCount: 0, minStartedAt: null, maxStartedAt: null,
         }));
         return new Response(JSON.stringify({ groups }), { status: 200, headers: { "Content-Type": "application/json" } });
       }

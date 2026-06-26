@@ -3,10 +3,11 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { getFunnel, orP, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
+import { getFunnel, orP, projectOutcomeCosts, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
 import { fetchEffectiveEconomics, type EffectiveEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
+import { fetchSpendBreakdown, type SpendBreakdown, type SpendSource } from "../lib/spend-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
 import { fetchPlatformEmailRates } from "../lib/platform-rates-client.js";
@@ -52,6 +53,66 @@ export function buildCostEconomics(totalCostInUsdCents: number, totalPipelineUsd
   const roiMultiple =
     totalCostUsd === 0 || totalPipelineUsd === null ? null : totalPipelineUsd / totalCostUsd;
   return { totalCostUsd, costOfAcquisitionPct, roiMultiple };
+}
+
+/**
+ * Canonical spend block for the Overview "Outreach & Conversions" card — every number the card shows
+ * (Total spent, today's spend, top cost sources + %, CPC, cost-per-signup, cost-per-sales-meeting),
+ * pre-computed so the dashboard renders verbatim (no client arithmetic). RECONCILED BY CONSTRUCTION:
+ *   - totalSpentCents is the runs-service ACTUAL spend (= the displayed "Total spent"), == Σ sources.
+ *   - cpcCents = totalSpentCents / clicks — derived from the SAME total the card shows, so CPC and
+ *     "Total spent" can never disagree (the bug this fixes: CPC came off systemStats.totalCostInUsdCents
+ *     which includes provisioned holds, while "Total spent" came off the runs ACTUAL breakdown).
+ *   - cpsCents / cpsmCents are PROJECTED via the shared EV funnel (projectOutcomeCosts) from the brand's
+ *     ACTUAL CPC/CPPR + its economics — same math as workflow-projection + the public cost-projection.
+ * Null-safe (mirrors the per-audience metrics.cpcCents convention): a ratio is null (renders "-"), never
+ * a false $0.00, when its denominator OR the attributed spend is 0.
+ */
+export interface Spend {
+  totalSpentCents: number;
+  todaySpentCents: number;
+  sources: SpendSource[];
+  cpcCents: number | null;
+  cpsCents: number | null;
+  cpsmCents: number | null;
+}
+
+function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], economics: SalesEconomics | null): Spend {
+  // clicks/replies use the SAME per-lead predicates as the clicked/repliedPositive SignalSeries, so the
+  // CPC denominator equals the card's displayed "clicks" (clicked.total) — coherent by construction.
+  const clicks = leads.reduce((n, l) => n + (l.clicked ? 1 : 0), 0);
+  const replies = leads.reduce((n, l) => n + (l.repliedPositive ? 1 : 0), 0);
+  const total = breakdown.totalSpentCents;
+
+  const cpcCents = total > 0 && clicks > 0 ? total / clicks : null;
+
+  let cpsCents: number | null = null;
+  let cpsmCents: number | null = null;
+  if (economics && total > 0) {
+    const clickUsd = clicks > 0 ? total / 100 / clicks : null;
+    const replyUsd = replies > 0 ? total / 100 / replies : null;
+    const { costPerSignupUsd, costPerMeetingBookedUsd } = projectOutcomeCosts(
+      {
+        r2m: economics.replyToMeetingPct / 100,
+        v2m: economics.visitToMeetingPct / 100,
+        m2c: economics.meetingToClosePct / 100,
+        v2c: economics.visitToClosePct / 100,
+        v2s: economics.visitToSignupPct / 100,
+      },
+      { clickUsd, replyUsd },
+    );
+    cpsCents = costPerSignupUsd != null ? costPerSignupUsd * 100 : null;
+    cpsmCents = costPerMeetingBookedUsd != null ? costPerMeetingBookedUsd * 100 : null;
+  }
+
+  return {
+    totalSpentCents: total,
+    todaySpentCents: breakdown.todaySpentCents,
+    sources: breakdown.sources,
+    cpcCents,
+    cpsCents,
+    cpsmCents,
+  };
 }
 
 interface RevenueResponse {
@@ -100,6 +161,14 @@ interface RevenueResponse {
   repliedPositive: SignalSeries;
   meetingsBooked: SignalSeries;
   purchased: SignalSeries;
+  /**
+   * Canonical spend block for the Overview card — Total spent / today's spend / top cost sources /
+   * CPC / cost-per-signup / cost-per-sales-meeting, all server-computed and reconciled to the
+   * runs-service ACTUAL spend (see {@link Spend}). Present on the OVERVIEW response only; null on the
+   * lensed (?lens=) response (the lens pages render their own costPerConversionUsd), and absent on the
+   * grouped (?groupBy=campaignId) per-campaign groups.
+   */
+  spend: Spend | null;
 }
 
 /**
@@ -121,7 +190,7 @@ export type RevenueBody = Omit<RevenueResponse, "featureSlug">;
 
 export type DownstreamHeaders = { orgId: string; userId?: string; runId?: string; featureSlug?: string };
 
-function emptyBody(totalPipelineUsd: number | null, totalCostInUsdCents: number): RevenueBody {
+function emptyBody(totalPipelineUsd: number | null, totalCostInUsdCents: number, spend: Spend | null): RevenueBody {
   return {
     headline: { totalPipelineUsd, economicsSource: null },
     costEconomics: buildCostEconomics(totalCostInUsdCents, totalPipelineUsd),
@@ -131,6 +200,7 @@ function emptyBody(totalPipelineUsd: number | null, totalCostInUsdCents: number)
     events: [],
     outreachContacted: buildContactedSeries([]),
     ...buildOutcomeSeries([]),
+    spend,
   };
 }
 
@@ -250,6 +320,9 @@ function buildLensBody(
     events: [],
     outreachContacted: buildContactedSeries(leads),
     ...buildOutcomeSeries(leads),
+    // The lens response omits the brand-total spend block (it would describe the brand, not the lensed
+    // subset). The dashboard reads spend from the unlensed Overview call; lens pages use costPerConversionUsd.
+    spend: null,
   };
 }
 
@@ -276,14 +349,23 @@ export async function computeFeatureRevenue(
   // per brand, not per campaign). The grouped path fetches them ONCE and passes the result here
   // so N campaigns don't each re-hit brand-service. Omitted → fetched in Wave A as before.
   economicsOverride?: EffectiveEconomics,
+  // When true (the unlensed Overview path), fetch the canonical spend breakdown (per-source actual +
+  // today) and emit the `spend` block. The grouped per-campaign path and the lens path pass false:
+  // groups discard spend, and lens omits it (a brand-total concept). When false we use the cheaper
+  // single-total fetchRunsCostCents; both read the SAME runs ACTUAL spend, so costEconomics agrees.
+  includeSpend = false,
 ): Promise<RevenueBody> {
   // No funnel wired for this feature yet → null pipeline (not an error). `funnel` is known up
   // front (caller param), so short-circuit BEFORE Wave A and fetch ONLY the cost the empty body
   // needs — never over-fetching economics/rates/leads on the no-funnel path. Fail-loud: a
   // swallowed cost error must not fake $0 cost / infinite ROI.
   if (!funnel) {
+    if (includeSpend) {
+      const breakdown = await fetchSpendBreakdown(brandId, campaignId, featureSlug, headers);
+      return emptyBody(null, breakdown.totalSpentCents, buildSpend(breakdown, [], null));
+    }
     const totalCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers);
-    return emptyBody(null, totalCostInUsdCents);
+    return emptyBody(null, totalCostInUsdCents, null);
   }
 
   // ── Wave A: the four downstream reads with NO data dependency on each other, in parallel.
@@ -297,15 +379,19 @@ export async function computeFeatureRevenue(
   // All four are fail-loud (Promise.all rejects → the endpoint 502s): each is a core input to the
   // pipeline total / cost / ROI; a swallowed error would fake a number. The economics===null
   // cold-start path below over-fetches rates+leads — accepted for the common-path win.
-  const [totalCostInUsdCents, { economics, source }, platformRates, persons] = await Promise.all([
-    fetchRunsCostCents(brandId, campaignId, featureSlug, headers),
+  const [costResult, { economics, source }, platformRates, persons] = await Promise.all([
+    includeSpend
+      ? fetchSpendBreakdown(brandId, campaignId, featureSlug, headers)
+      : fetchRunsCostCents(brandId, campaignId, featureSlug, headers),
     economicsOverride ?? fetchEffectiveEconomics(brandId, { ...headers, campaignId }),
     fetchPlatformEmailRates(),
     fetchLeadsForRevenue(brandId, campaignId, headers),
   ]);
+  const breakdown: SpendBreakdown | null = typeof costResult === "number" ? null : costResult;
+  const totalCostInUsdCents = typeof costResult === "number" ? costResult : costResult.totalSpentCents;
 
   if (economics === null) {
-    return emptyBody(null, totalCostInUsdCents);
+    return emptyBody(null, totalCostInUsdCents, breakdown ? buildSpend(breakdown, [], null) : null);
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
 
@@ -385,6 +471,7 @@ export async function computeFeatureRevenue(
     events: result.events,
     outreachContacted: buildContactedSeries(result.leads),
     ...buildOutcomeSeries(result.leads),
+    spend: breakdown ? buildSpend(breakdown, result.leads, economics) : null,
   };
 }
 
@@ -467,7 +554,8 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       compute: async () => {
         traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
 
-        const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, funnel, headers, lens);
+        // Overview (no lens) emits the canonical spend block; the lens path omits it (brand-total concept).
+        const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, funnel, headers, lens, undefined, !lens);
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 

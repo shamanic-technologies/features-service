@@ -136,6 +136,8 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(a.costPerCloseUsd).toBeCloseTo(105.5966, 3);
     // meetingsPerBudget = (1/10)·0.05 + (1/20)·0.40 = 0.005 + 0.02 = 0.025 → cpm = 40
     expect(a.costPerMeetingBookedUsd).toBeCloseTo(40, 3);
+    // ROI multiple = LTR / costPerClose = 1000 / 105.5966 (budget-independent, = 100/cacPct).
+    expect(a.roiMultiple).toBeCloseTo(1000 / 105.5966, 3);
     expect(a.projection).toBeNull(); // no budget
 
     const b = byDynasty(res.body, "dyn-b");
@@ -143,6 +145,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(b.costPerSignupUsd).toBeCloseTo(500, 3);
     expect(b.costPerCloseUsd).toBeCloseTo(340.7155, 3);
     expect(b.costPerMeetingBookedUsd).toBeCloseTo(153.846, 3);
+    expect(b.roiMultiple).toBeCloseTo(1000 / 340.7155, 3);
 
     expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a"); // lower cost per meeting
     expect(res.body.recommendedBudgetUsd).toBeCloseTo(400, 2); // 10 × $40/meeting
@@ -199,6 +202,7 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(a.clickUsd).toBeCloseTo(10, 6);
     expect(a.costPerSignupUsd).toBeNull();
     expect(a.costPerCloseUsd).toBeNull();
+    expect(a.roiMultiple).toBeNull(); // no economics → no costPerClose → no ROI
     expect(a.projection).toBeNull();
     expect(res.body.recommendedWorkflowDynastySlug).toBeNull();
     expect(res.body.recommendedBudgetUsd).toBeNull();

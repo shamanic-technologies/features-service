@@ -1,8 +1,10 @@
 /**
- * Total run cost (USD cents) for a brand (+ optional campaign), scoped to one feature's
- * workflow lineage. SAME runs-service source as GET /features/:slug/stats
- * systemStats.totalCostInUsdCents — runs-service resolves `featureSlugs` → the feature's
- * workflow lineage server-side, then we sum across the workflow groups.
+ * ACTUAL run spend (USD cents) for a brand (+ optional campaign), scoped to one feature's
+ * workflow lineage. Sums `actualCostInUsdCents` (only `actual` counts as billable spend —
+ * provisioned holds + cancelled reservations are NOT spend), NOT `totalCostInUsdCents`, so this
+ * matches the dashboard's "Total spent" and the per-source breakdown (see spend-client.ts).
+ * runs-service resolves `featureSlugs` → the feature's workflow lineage server-side; we sum across
+ * the workflow groups.
  *
  * Fail-loud: a swallowed runs error would fake $0 cost → fake "0% cost-of-acquisition /
  * null ROI" business numbers. So any transport / non-OK / malformed response throws and the
@@ -44,14 +46,14 @@ export async function fetchRunsCostCents(
     throw new Error(`runs-service /v1/stats/costs failed (${response.status}): ${text}`);
   }
 
-  const data = (await response.json()) as { groups?: Array<{ totalCostInUsdCents: string }> };
+  const data = (await response.json()) as { groups?: Array<{ actualCostInUsdCents: string }> };
   if (!Array.isArray(data.groups)) {
     throw new Error("runs-service /v1/stats/costs returned no groups array");
   }
 
   let totalCents = 0;
   for (const group of data.groups) {
-    totalCents += Math.round(Number(group.totalCostInUsdCents));
+    totalCents += Math.round(Number(group.actualCostInUsdCents));
   }
   return totalCents;
 }
