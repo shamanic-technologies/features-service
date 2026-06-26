@@ -11,7 +11,8 @@ registry.register("Feature", featureResponseSchema);
 // ── Stats response schemas ───────────────────────────────────────────────
 
 const systemStatsSchema = z.object({
-  totalCostInUsdCents: z.number(),
+  totalCostInUsdCents: z.number().describe("Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."),
+  actualCostInUsdCents: z.number().describe("ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"),
   completedRuns: z.number(),
   activeCampaigns: z.number(),
   firstRunAt: z.string().datetime().nullable(),
@@ -288,7 +289,7 @@ const revenueEventSchema = z.object({
 });
 
 const revenueCostEconomicsSchema = z.object({
-  totalCostUsd: z.number().describe("Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."),
+  totalCostUsd: z.number().describe("ACTUAL run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.actualCostInUsdCents and spend.totalSpentCents (excludes provisioned holds), so ROI/CAC reconcile with the displayed Total spent. (features-service#396)"),
   costOfAcquisitionPct: z.number().nullable().describe("(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."),
   roiMultiple: z.number().nullable().describe("totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."),
   expectedConversions: z.number().optional().describe("LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
@@ -318,8 +319,27 @@ const signalSeriesSchema = z.object({
   undatedCount: z.number().int().describe("Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."),
 });
 
+// Canonical spend block for the Overview "Outreach & Conversions" card — every number rendered
+// verbatim (no client arithmetic). Reconciled by construction: totalSpentCents is the runs ACTUAL
+// spend (== Σ sources), cpcCents = totalSpentCents / clicks (clicked.total on the same response).
+const spendSourceSchema = z.object({
+  source: z.string().describe("runs-service cost name (billable line item, e.g. 'apollo people-search', 'email-send-step-1')."),
+  spentCents: z.number().int().describe("Actual spend attributed to this source, USD cents."),
+  sharePct: z.number().describe("This source's share of totalSpentCents, percent (0–100). 0 when totalSpentCents is 0."),
+});
+
+const spendSchema = z.object({
+  totalSpentCents: z.number().int().describe("Canonical 'Total spent' — runs-service ACTUAL spend (USD cents) for the brand(+campaign)+feature, == Σ sources[].spentCents. Excludes provisioned holds, so it equals the displayed Total spent and reconciles with cpcCents."),
+  todaySpentCents: z.number().int().describe("Actual spend (USD cents) for runs started since 00:00 UTC today."),
+  sources: z.array(spendSourceSchema).describe("Per cost-name actual spend + share-of-total, descending — the 'top cost sources' list pre-computed (the dashboard renders verbatim instead of summing the runs breakdown in the browser)."),
+  cpcCents: z.number().nullable().describe("Cost per website click = totalSpentCents / clicks (clicked.total). Null (renders '-'), never a false $0.00, when there are 0 clicks OR 0 attributed spend."),
+  cpsCents: z.number().nullable().describe("Cost per signup, USD cents — PROJECTED via the shared EV funnel from the brand's actual CPC/CPPR + economics (same math as workflow-projection / public cost-projection). Null when no economics or no usable click/reply cost basis."),
+  cpsmCents: z.number().nullable().describe("Cost per sales meeting booked, USD cents — PROJECTED via the shared EV funnel. Null when no economics or no usable click/reply cost basis."),
+});
+
 const featureRevenueResponseSchema = z.object({
   featureSlug: z.string(),
+  spend: spendSchema.nullable().describe("Canonical spend block for the Overview card (Total spent / today / top sources / CPC / cost-per-signup / cost-per-sales-meeting), reconciled to runs ACTUAL spend. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396)"),
   outreachContacted: outreachContactedSchema.describe("Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."),
   opened: signalSeriesSchema.describe("Opens ACTUAL series for the Overview daily graph, server-computed from the SAME leads[] snapshot — coherent with outreachContacted + the table (features-service#377). Replaces the pipeline-activity/instantly event-day source."),
   clicked: signalSeriesSchema.describe("Clicks ACTUAL series (website visits), server-computed from the SAME leads[] snapshot. ALSO the signup-goal's observed outcome — a downstream account signup is not tracked here, so the visit is the coherent signup-funnel actual; the dashboard scales it by visitToSignupPct for the projected signups line (forecast). features-service#377."),
@@ -416,6 +436,7 @@ const workflowProjectionItemSchema = z.object({
   costPerSignupUsd: z.number().nullable().describe("Budget required per signup for this workflow. Null when there is no usable click/conversion data."),
   costPerCloseUsd: z.number().nullable().describe("Budget required per close for this workflow. Null when there is no usable cost/conversion data."),
   costPerMeetingBookedUsd: z.number().nullable().describe("Budget required per booked meeting for this workflow. Null when there is no usable cost/conversion data."),
+  roiMultiple: z.number().nullable().describe("Lifetime ROI multiple = LTR / costPerCloseUsd (revenue per acquisition dollar; budget-independent, = 100 / cacPct). Rendered verbatim instead of inverting cacPct client-side. Null when economics are absent or costPerCloseUsd is null/0. (features-service#396)"),
   projection: workflowProjectionDetailSchema.nullable().describe("Null when budgetUsd is absent/≤0 or the workflow has no usable data."),
 });
 

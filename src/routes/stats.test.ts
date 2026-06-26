@@ -119,6 +119,7 @@ describe("GET /features/:featureSlug/stats — network error resilience", () => 
           groups: [{
             dimensions: { workflowSlug: "__total__" },
             totalCostInUsdCents: "1500",
+            actualCostInUsdCents: "1400",
             runCount: 10,
             minStartedAt: "2026-01-01T00:00:00Z",
             maxStartedAt: "2026-03-01T00:00:00Z",
@@ -136,6 +137,8 @@ describe("GET /features/:featureSlug/stats — network error resilience", () => 
     expect(res.status).toBe(200);
     expect(res.body.systemStats.completedRuns).toBe(10);
     expect(res.body.systemStats.totalCostInUsdCents).toBe(1500);
+    // Actual spend excludes provisioned holds → the canonical "Total spent" (features-service#396).
+    expect(res.body.systemStats.actualCostInUsdCents).toBe(1400);
   });
 });
 
@@ -166,6 +169,7 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
           groups: [{
             dimensions: { workflowSlug: "__total__" },
             totalCostInUsdCents: "0",
+            actualCostInUsdCents: "0",
             runCount: 0,
             minStartedAt: null,
             maxStartedAt: null,
@@ -219,7 +223,7 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
       if (url.includes("runs:3000")) {
-        return new Response(JSON.stringify({ groups: [{ dimensions: { workflowSlug: "__total__" }, totalCostInUsdCents: "0", runCount: 0, minStartedAt: null, maxStartedAt: null }] }), { status: 200 });
+        return new Response(JSON.stringify({ groups: [{ dimensions: { workflowSlug: "__total__" }, totalCostInUsdCents: "0", actualCostInUsdCents: "0", runCount: 0, minStartedAt: null, maxStartedAt: null }] }), { status: 200 });
       }
       if (url.includes("leads:3000/orgs/leads")) {
         // L1 appears twice (clicked in both rows — the Sibylle Linnebo duplicate); dedup → ONE clicked lead.
@@ -297,6 +301,7 @@ describe("GET /features/:featureSlug/stats — fetchLeadsStats mapping", () => {
     groups: [{
       dimensions: { workflowSlug: "__total__" },
       totalCostInUsdCents: "1000",
+      actualCostInUsdCents: "1000",
       runCount: 5,
       minStartedAt: "2026-01-01T00:00:00Z",
       maxStartedAt: "2026-03-01T00:00:00Z",
@@ -375,8 +380,8 @@ describe("GET /features/:featureSlug/stats — fetchLeadsStats mapping", () => {
       if (url.includes("runs:3000")) {
         return new Response(JSON.stringify({
           groups: [
-            { dimensions: { campaignId: "campaign-a" }, totalCostInUsdCents: "500", runCount: 2, minStartedAt: null, maxStartedAt: null },
-            { dimensions: { campaignId: "campaign-b" }, totalCostInUsdCents: "300", runCount: 1, minStartedAt: null, maxStartedAt: null },
+            { dimensions: { campaignId: "campaign-a" }, totalCostInUsdCents: "500", actualCostInUsdCents: "500", runCount: 2, minStartedAt: null, maxStartedAt: null },
+            { dimensions: { campaignId: "campaign-b" }, totalCostInUsdCents: "300", actualCostInUsdCents: "300", runCount: 1, minStartedAt: null, maxStartedAt: null },
           ],
         }), { status: 200 });
       }
@@ -551,7 +556,7 @@ describe("GET /features/:featureSlug/stats — feature-scoped fan-out", () => {
         return new Response(JSON.stringify({ broadcast: { recipientStats: { contacted: 100, sent: 90, opened: 40 } } }), { status: 200 });
       }
       if (url.includes("runs:3000")) {
-        return new Response(JSON.stringify({ groups: [{ dimensions: { workflowSlug: "__total__" }, totalCostInUsdCents: "1000", runCount: 5, minStartedAt: null, maxStartedAt: null }] }), { status: 200 });
+        return new Response(JSON.stringify({ groups: [{ dimensions: { workflowSlug: "__total__" }, totalCostInUsdCents: "1000", actualCostInUsdCents: "1000", runCount: 5, minStartedAt: null, maxStartedAt: null }] }), { status: 200 });
       }
       return new Response(JSON.stringify({}), { status: 200 });
     });
@@ -572,5 +577,43 @@ describe("GET /features/:featureSlug/stats — feature-scoped fan-out", () => {
     expect(res.body.stats.recipientsContacted).toBe(100);
     expect(res.body.stats.leadsServed).toBeNull();
     expect(res.body.systemStats.totalCostInUsdCents).toBe(1000);
+  });
+});
+
+describe("GET /features/:featureSlug/stats — actual-spend reconciliation (features-service#396)", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(MOCK_FEATURE as any);
+    vi.mocked(db.query.features.findMany).mockResolvedValue([MOCK_FEATURE as any]);
+  });
+  afterEach(() => {
+    fetchSpy?.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it("systemStats.actualCostInUsdCents + cost-per-X use ACTUAL spend (excludes provisioned holds), not totalCostInUsdCents", async () => {
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      if (url.includes("runs:3000")) {
+        // total 2000 includes provisioned holds; actual 1500 is the billable spend.
+        return new Response(JSON.stringify({ groups: [{ dimensions: { workflowSlug: "__total__" }, totalCostInUsdCents: "2000", actualCostInUsdCents: "1500", runCount: 8, minStartedAt: null, maxStartedAt: null }] }), { status: 200 });
+      }
+      if (url.includes("outlets:3000")) {
+        return new Response(JSON.stringify({ outletsDiscovered: 30, avgRelevanceScore: 0, searchQueriesUsed: 0 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    // No brandId → engagement snapshot is gated off; isolates the runs/outlets cost path.
+    const res = await request(app).get("/features/sales-cold-email-outreach/stats").set(AUTH_HEADERS);
+    expect(res.status).toBe(200);
+    // Canonical "Total spent" = actual; total stays for back-compat.
+    expect(res.body.systemStats.totalCostInUsdCents).toBe(2000);
+    expect(res.body.systemStats.actualCostInUsdCents).toBe(1500);
+    // #7 + reconciliation: $/outlet = ACTUAL 1500 / 30 = 50, NOT total 2000/30 = 66.67.
+    expect(res.body.stats.costPerOutletCents).toBe(50);
+    // Every cost-per-X derives from actual now (e.g. $/link-click uses actual too).
+    expect(res.body.stats.actualCostInUsdCents).toBe(1500);
   });
 });

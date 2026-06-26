@@ -110,7 +110,12 @@
         "type": "object",
         "properties": {
           "totalCostInUsdCents": {
-            "type": "number"
+            "type": "number",
+            "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+          },
+          "actualCostInUsdCents": {
+            "type": "number",
+            "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
           },
           "completedRuns": {
             "type": "number"
@@ -131,6 +136,7 @@
         },
         "required": [
           "totalCostInUsdCents",
+          "actualCostInUsdCents",
           "completedRuns",
           "activeCampaigns",
           "firstRunAt",
@@ -164,7 +170,12 @@
             "type": "object",
             "properties": {
               "totalCostInUsdCents": {
-                "type": "number"
+                "type": "number",
+                "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+              },
+              "actualCostInUsdCents": {
+                "type": "number",
+                "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
               },
               "completedRuns": {
                 "type": "number"
@@ -185,6 +196,7 @@
             },
             "required": [
               "totalCostInUsdCents",
+              "actualCostInUsdCents",
               "completedRuns",
               "activeCampaigns",
               "firstRunAt",
@@ -217,7 +229,12 @@
             "type": "object",
             "properties": {
               "totalCostInUsdCents": {
-                "type": "number"
+                "type": "number",
+                "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+              },
+              "actualCostInUsdCents": {
+                "type": "number",
+                "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
               },
               "completedRuns": {
                 "type": "number"
@@ -238,6 +255,7 @@
             },
             "required": [
               "totalCostInUsdCents",
+              "actualCostInUsdCents",
               "completedRuns",
               "activeCampaigns",
               "firstRunAt",
@@ -273,7 +291,12 @@
                   "type": "object",
                   "properties": {
                     "totalCostInUsdCents": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                    },
+                    "actualCostInUsdCents": {
+                      "type": "number",
+                      "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
                     },
                     "completedRuns": {
                       "type": "number"
@@ -294,6 +317,7 @@
                   },
                   "required": [
                     "totalCostInUsdCents",
+                    "actualCostInUsdCents",
                     "completedRuns",
                     "activeCampaigns",
                     "firstRunAt",
@@ -337,7 +361,12 @@
             "type": "object",
             "properties": {
               "totalCostInUsdCents": {
-                "type": "number"
+                "type": "number",
+                "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+              },
+              "actualCostInUsdCents": {
+                "type": "number",
+                "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
               },
               "completedRuns": {
                 "type": "number"
@@ -358,6 +387,7 @@
             },
             "required": [
               "totalCostInUsdCents",
+              "actualCostInUsdCents",
               "completedRuns",
               "activeCampaigns",
               "firstRunAt",
@@ -393,7 +423,12 @@
                   "type": "object",
                   "properties": {
                     "totalCostInUsdCents": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                    },
+                    "actualCostInUsdCents": {
+                      "type": "number",
+                      "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
                     },
                     "completedRuns": {
                       "type": "number"
@@ -414,6 +449,7 @@
                   },
                   "required": [
                     "totalCostInUsdCents",
+                    "actualCostInUsdCents",
                     "completedRuns",
                     "activeCampaigns",
                     "firstRunAt",
@@ -593,6 +629,70 @@
         "properties": {
           "featureSlug": {
             "type": "string"
+          },
+          "spend": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "totalSpentCents": {
+                "type": "integer",
+                "description": "Canonical 'Total spent' — runs-service ACTUAL spend (USD cents) for the brand(+campaign)+feature, == Σ sources[].spentCents. Excludes provisioned holds, so it equals the displayed Total spent and reconciles with cpcCents."
+              },
+              "todaySpentCents": {
+                "type": "integer",
+                "description": "Actual spend (USD cents) for runs started since 00:00 UTC today."
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "description": "runs-service cost name (billable line item, e.g. 'apollo people-search', 'email-send-step-1')."
+                    },
+                    "spentCents": {
+                      "type": "integer",
+                      "description": "Actual spend attributed to this source, USD cents."
+                    },
+                    "sharePct": {
+                      "type": "number",
+                      "description": "This source's share of totalSpentCents, percent (0–100). 0 when totalSpentCents is 0."
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "spentCents",
+                    "sharePct"
+                  ]
+                },
+                "description": "Per cost-name actual spend + share-of-total, descending — the 'top cost sources' list pre-computed (the dashboard renders verbatim instead of summing the runs breakdown in the browser)."
+              },
+              "cpcCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "Cost per website click = totalSpentCents / clicks (clicked.total). Null (renders '-'), never a false $0.00, when there are 0 clicks OR 0 attributed spend."
+              },
+              "cpsCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "Cost per signup, USD cents — PROJECTED via the shared EV funnel from the brand's actual CPC/CPPR + economics (same math as workflow-projection / public cost-projection). Null when no economics or no usable click/reply cost basis."
+              },
+              "cpsmCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "Cost per sales meeting booked, USD cents — PROJECTED via the shared EV funnel. Null when no economics or no usable click/reply cost basis."
+              }
+            },
+            "required": [
+              "totalSpentCents",
+              "todaySpentCents",
+              "sources",
+              "cpcCents",
+              "cpsCents",
+              "cpsmCents"
+            ],
+            "description": "Canonical spend block for the Overview card (Total spent / today / top sources / CPC / cost-per-signup / cost-per-sales-meeting), reconciled to runs ACTUAL spend. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396)"
           },
           "outreachContacted": {
             "type": "object",
@@ -862,7 +962,7 @@
             "properties": {
               "totalCostUsd": {
                 "type": "number",
-                "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
+                "description": "ACTUAL run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.actualCostInUsdCents and spend.totalSpentCents (excludes provisioned holds), so ROI/CAC reconcile with the displayed Total spent. (features-service#396)"
               },
               "costOfAcquisitionPct": {
                 "type": "number",
@@ -1154,6 +1254,7 @@
         },
         "required": [
           "featureSlug",
+          "spend",
           "outreachContacted",
           "opened",
           "clicked",
@@ -1216,7 +1317,7 @@
                   "properties": {
                     "totalCostUsd": {
                       "type": "number",
-                      "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
+                      "description": "ACTUAL run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.actualCostInUsdCents and spend.totalSpentCents (excludes provisioned holds), so ROI/CAC reconcile with the displayed Total spent. (features-service#396)"
                     },
                     "costOfAcquisitionPct": {
                       "type": "number",
@@ -1317,6 +1418,11 @@
                   "nullable": true,
                   "description": "Budget required per booked meeting for this workflow. Null when there is no usable cost/conversion data."
                 },
+                "roiMultiple": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Lifetime ROI multiple = LTR / costPerCloseUsd (revenue per acquisition dollar; budget-independent, = 100 / cacPct). Rendered verbatim instead of inverting cacPct client-side. Null when economics are absent or costPerCloseUsd is null/0. (features-service#396)"
+                },
                 "projection": {
                   "type": "object",
                   "nullable": true,
@@ -1390,6 +1496,7 @@
                 "costPerSignupUsd",
                 "costPerCloseUsd",
                 "costPerMeetingBookedUsd",
+                "roiMultiple",
                 "projection"
               ]
             }
@@ -2066,7 +2173,7 @@
                   "properties": {
                     "totalCostUsd": {
                       "type": "number",
-                      "description": "Total run cost for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.totalCostInUsdCents."
+                      "description": "ACTUAL run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.actualCostInUsdCents and spend.totalSpentCents (excludes provisioned holds), so ROI/CAC reconcile with the displayed Total spent. (features-service#396)"
                     },
                     "costOfAcquisitionPct": {
                       "type": "number",
@@ -3089,7 +3196,12 @@
                       "type": "object",
                       "properties": {
                         "totalCostInUsdCents": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                        },
+                        "actualCostInUsdCents": {
+                          "type": "number",
+                          "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
                         },
                         "completedRuns": {
                           "type": "number"
@@ -3110,6 +3222,7 @@
                       },
                       "required": [
                         "totalCostInUsdCents",
+                        "actualCostInUsdCents",
                         "completedRuns",
                         "activeCampaigns",
                         "firstRunAt",
@@ -3145,7 +3258,12 @@
                             "type": "object",
                             "properties": {
                               "totalCostInUsdCents": {
-                                "type": "number"
+                                "type": "number",
+                                "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                              },
+                              "actualCostInUsdCents": {
+                                "type": "number",
+                                "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
                               },
                               "completedRuns": {
                                 "type": "number"
@@ -3166,6 +3284,7 @@
                             },
                             "required": [
                               "totalCostInUsdCents",
+                              "actualCostInUsdCents",
                               "completedRuns",
                               "activeCampaigns",
                               "firstRunAt",
@@ -3565,6 +3684,11 @@
                             "nullable": true,
                             "description": "Budget required per booked meeting for this workflow. Null when there is no usable cost/conversion data."
                           },
+                          "roiMultiple": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Lifetime ROI multiple = LTR / costPerCloseUsd (revenue per acquisition dollar; budget-independent, = 100 / cacPct). Rendered verbatim instead of inverting cacPct client-side. Null when economics are absent or costPerCloseUsd is null/0. (features-service#396)"
+                          },
                           "projection": {
                             "type": "object",
                             "nullable": true,
@@ -3638,6 +3762,7 @@
                           "costPerSignupUsd",
                           "costPerCloseUsd",
                           "costPerMeetingBookedUsd",
+                          "roiMultiple",
                           "projection"
                         ]
                       }
@@ -4918,7 +5043,12 @@
                       "type": "object",
                       "properties": {
                         "totalCostInUsdCents": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                        },
+                        "actualCostInUsdCents": {
+                          "type": "number",
+                          "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
                         },
                         "completedRuns": {
                           "type": "number"
@@ -4939,6 +5069,7 @@
                       },
                       "required": [
                         "totalCostInUsdCents",
+                        "actualCostInUsdCents",
                         "completedRuns",
                         "activeCampaigns",
                         "firstRunAt",
@@ -4974,7 +5105,12 @@
                             "type": "object",
                             "properties": {
                               "totalCostInUsdCents": {
-                                "type": "number"
+                                "type": "number",
+                                "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                              },
+                              "actualCostInUsdCents": {
+                                "type": "number",
+                                "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
                               },
                               "completedRuns": {
                                 "type": "number"
@@ -4995,6 +5131,7 @@
                             },
                             "required": [
                               "totalCostInUsdCents",
+                              "actualCostInUsdCents",
                               "completedRuns",
                               "activeCampaigns",
                               "firstRunAt",
