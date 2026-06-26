@@ -127,6 +127,34 @@ audiences after #295 get attributed; historical = unattributed, acceptable.
 `HUMAN_SERVICE_URL`/`HUMAN_SERVICE_API_KEY` are read at CALL time (no boot crash) and fail loud when
 the targeting read runs without them — no fallback. (Set 2026-06-19; persona-stats alias removed 2026-06-20.)
 
+## Displayed spend is runs `actualCostInUsdCents`, NOT `totalCostInUsdCents` — the reconciliation invariant (PR #396)
+
+runs-service `/v1/stats/costs` returns BOTH `totalCostInUsdCents` (committed = actual + **provisioned
+holds**) and `actualCostInUsdCents` (only `actual` is billable spend). The dashboard's "Total spent" is
+the ACTUAL spend; the old CPC numerator (`systemStats.totalCostInUsdCents`) used the inflated total, so
+CPC (~$5.25 off ~$383) never reconciled with the displayed spend (~$359 → $4.92). **Every DISPLAYED cost
+number in this service reads `actualCostInUsdCents`:**
+
+- `fetchRunsCostCents` (revenue.ts) sums `actualCostInUsdCents` → `costEconomics.totalCostUsd` (ROI/CAC),
+  brand + grouped + lens + public revenue.
+- `lib/spend-client.ts` `fetchSpendBreakdown` (the `/revenue` `spend` block: `totalSpentCents`,
+  `todaySpentCents` via `startedAfter`, per-`costName` `sources[]{spentCents,sharePct}`) sums actual;
+  `total == Σ sources`, fail-loud. `spend.cpcCents = totalSpentCents / clicked.total` (the snapshot
+  clicks) → CPC reconciles with Total spent BY CONSTRUCTION. `cpsCents`/`cpsmCents` are PROJECTED via the
+  shared `projectOutcomeCosts` EV funnel from the brand's actual CPC/CPPR + economics; null-safe.
+  `spend` is on the OVERVIEW only (null on `?lens=`, absent on `?groupBy=campaignId` groups).
+- `/stats` `systemStats.actualCostInUsdCents` (added alongside `totalCostInUsdCents` for back-compat) +
+  the stats-registry `actualCostInUsdCents` raw key, to which **every `costPer*Cents` derived numerator
+  points** (incl. `costPerOutletCents` = avg cost-per-outlet). So all cost-per-X reconcile with spend.
+- `workflow-projection` `roiMultiple = LTR / costPerCloseUsd` (budget-independent, = 100/cacPct) — the
+  dashboard renders it instead of inverting `cacPct` client-side.
+
+Null-safe convention (mirrors per-audience `metrics.cpcCents`): a ratio is **null** (renders "-"), never
+a false **$0.00**, when its denominator OR the attributed spend is 0. Do NOT re-point any displayed cost
+back to `totalCostInUsdCents`, and do NOT add a smoothing/floor to force a CPC number. The per-audience
+`/audience-stats metrics.*Cents` still keys on `totalCostInUsdCents` and is INTENTIONALLY left untouched
+(its provisioned component is negligible at that grain; changing it is out of scope). (Set 2026-06-26.)
+
 ## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #346)
 
 `pipeline-activity.ts` (the budget→forecast endpoint) was the LAST `customerProfileId` / brand-persona
