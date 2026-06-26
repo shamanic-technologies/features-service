@@ -57,6 +57,13 @@ function buildDownstreamHeaders(
 
 interface SystemStats {
   totalCostInUsdCents: number;
+  /**
+   * ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds
+   * + cancelled reservations that inflate totalCostInUsdCents). This is the canonical "Total spent" the
+   * dashboard renders, and the numerator behind every cost-per-X metric (so CPC, $/outlet etc reconcile
+   * with the displayed spend). totalCostInUsdCents stays for back-compat. (features-service#396)
+   */
+  actualCostInUsdCents: number;
   completedRuns: number;
   activeCampaigns: number;
   firstRunAt: string | null;
@@ -75,6 +82,7 @@ interface StatsGroup {
 
 interface RunsStatsEntry {
   totalCostInUsdCents: number;
+  actualCostInUsdCents: number;
   completedRuns: number;
   minStartedAt: string | null;
   maxStartedAt: string | null;
@@ -231,6 +239,7 @@ async function fetchRunsStats(
       groups: Array<{
         dimensions: Record<string, string | null>;
         totalCostInUsdCents: string;
+        actualCostInUsdCents: string;
         runCount: number;
         minStartedAt: string | null;
         maxStartedAt: string | null;
@@ -241,11 +250,13 @@ async function fetchRunsStats(
 
     if (!groupBy) {
       let totalCost = 0;
+      let actualCost = 0;
       let totalRuns = 0;
       let minStartedAt: string | null = null;
       let maxStartedAt: string | null = null;
       for (const group of data.groups) {
         totalCost += Math.round(Number(group.totalCostInUsdCents));
+        actualCost += Math.round(Number(group.actualCostInUsdCents));
         totalRuns += group.runCount;
         if (group.minStartedAt && (!minStartedAt || group.minStartedAt < minStartedAt)) {
           minStartedAt = group.minStartedAt;
@@ -255,13 +266,14 @@ async function fetchRunsStats(
         }
       }
       if (data.groups.length > 0) {
-        result.set("__total__", { totalCostInUsdCents: totalCost, completedRuns: totalRuns, minStartedAt, maxStartedAt });
+        result.set("__total__", { totalCostInUsdCents: totalCost, actualCostInUsdCents: actualCost, completedRuns: totalRuns, minStartedAt, maxStartedAt });
       }
     } else {
       for (const group of data.groups) {
         const key = group.dimensions[runsGroupBy] ?? "__total__";
         result.set(key, {
           totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)),
+          actualCostInUsdCents: Math.round(Number(group.actualCostInUsdCents)),
           completedRuns: group.runCount,
           minStartedAt: group.minStartedAt ?? null,
           maxStartedAt: group.maxStartedAt ?? null,
@@ -961,6 +973,7 @@ async function fetchActiveCampaigns(orgId: string, filters: Record<string, strin
 function buildSystemStats(runsData: RunsStatsEntry | undefined, activeCampaigns = 0): SystemStats {
   return {
     totalCostInUsdCents: runsData?.totalCostInUsdCents ?? 0,
+    actualCostInUsdCents: runsData?.actualCostInUsdCents ?? 0,
     completedRuns: runsData?.completedRuns ?? 0,
     activeCampaigns,
     firstRunAt: runsData?.minStartedAt ?? null,
@@ -969,15 +982,16 @@ function buildSystemStats(runsData: RunsStatsEntry | undefined, activeCampaigns 
 }
 
 function aggregateRunsTotals(runsStatsMap: Map<string, RunsStatsEntry>): RunsStatsEntry {
-  let totalCost = 0, totalRuns = 0;
+  let totalCost = 0, actualCost = 0, totalRuns = 0;
   let minStartedAt: string | null = null, maxStartedAt: string | null = null;
   for (const entry of runsStatsMap.values()) {
     totalCost += entry.totalCostInUsdCents;
+    actualCost += entry.actualCostInUsdCents;
     totalRuns += entry.completedRuns;
     if (entry.minStartedAt && (!minStartedAt || entry.minStartedAt < minStartedAt)) minStartedAt = entry.minStartedAt;
     if (entry.maxStartedAt && (!maxStartedAt || entry.maxStartedAt > maxStartedAt)) maxStartedAt = entry.maxStartedAt;
   }
-  return { totalCostInUsdCents: totalCost, completedRuns: totalRuns, minStartedAt, maxStartedAt };
+  return { totalCostInUsdCents: totalCost, actualCostInUsdCents: actualCost, completedRuns: totalRuns, minStartedAt, maxStartedAt };
 }
 
 // ── GET /stats/registry ──────────────────────────────────────────────────────
@@ -1085,6 +1099,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         // no brandId / feature renders none of them) → email-gateway aggregate stands. (#388)
         ...(engagementSnapshot ?? {}),
         totalCostInUsdCents: runsStatsMap.get("__total__")?.totalCostInUsdCents ?? 0,
+        actualCostInUsdCents: runsStatsMap.get("__total__")?.actualCostInUsdCents ?? 0,
         completedRuns: runsStatsMap.get("__total__")?.completedRuns ?? 0,
       };
 
@@ -1112,6 +1127,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         ...(pipelineStatsMap.get(groupKey) ?? {}),
         ...(pressKitsStatsMap.get(groupKey) ?? {}),
         totalCostInUsdCents: (runsStatsMap.get(groupKey) as RunsStatsEntry | undefined)?.totalCostInUsdCents ?? 0,
+        actualCostInUsdCents: (runsStatsMap.get(groupKey) as RunsStatsEntry | undefined)?.actualCostInUsdCents ?? 0,
         completedRuns: (runsStatsMap.get(groupKey) as RunsStatsEntry | undefined)?.completedRuns ?? 0,
       };
 
@@ -1184,6 +1200,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
         ...(journalistsQuotesStatsMap.get("__total__") ?? {}),
         ...(aiVisibilityStatsMap.get("__total__") ?? {}),
         totalCostInUsdCents: runsStatsMap.get("__total__")?.totalCostInUsdCents ?? 0,
+        actualCostInUsdCents: runsStatsMap.get("__total__")?.actualCostInUsdCents ?? 0,
         completedRuns: runsStatsMap.get("__total__")?.completedRuns ?? 0,
       };
 
@@ -1209,6 +1226,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
         ...(leadsStatsMap.get(groupKey) ?? {}),
         ...(pipelineStatsMap.get(groupKey) ?? {}),
         totalCostInUsdCents: (runsStatsMap.get(groupKey) as RunsStatsEntry | undefined)?.totalCostInUsdCents ?? 0,
+        actualCostInUsdCents: (runsStatsMap.get(groupKey) as RunsStatsEntry | undefined)?.actualCostInUsdCents ?? 0,
         completedRuns: (runsStatsMap.get(groupKey) as RunsStatsEntry | undefined)?.completedRuns ?? 0,
       };
 

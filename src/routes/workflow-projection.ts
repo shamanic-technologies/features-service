@@ -50,6 +50,13 @@ interface WorkflowProjection {
   costPerSignupUsd: number | null;
   costPerCloseUsd: number | null;
   costPerMeetingBookedUsd: number | null;
+  /**
+   * Lifetime ROI multiple for this workflow = LTR / costPerCloseUsd (revenue returned per dollar spent
+   * to acquire one close). Budget-independent (= 100 / cacPct), so present even without budgetUsd. The
+   * dashboard renders this verbatim instead of inverting cacPct (100/cacPct) in the browser. Null when
+   * economics are absent or costPerCloseUsd is null/0. (features-service#396)
+   */
+  roiMultiple: number | null;
   projection: Projection | null;
 }
 
@@ -184,6 +191,11 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         ? project(contactedUsd, replyUsd, clickUsd, econ, budgetUsd)
         : { costPerSignupUsd: null, costPerCloseUsd: null, costPerMeetingBookedUsd: null, projection: null };
 
+      // ROI multiple = revenue per acquisition dollar = LTR / costPerClose. Budget-independent
+      // (= 100 / cacPct). The dashboard renders this instead of inverting cacPct client-side.
+      const roiMultiple =
+        econ && costPerCloseUsd != null && costPerCloseUsd > 0 ? econ.ltv / costPerCloseUsd : null;
+
       projections.push({
         workflowDynastySlug: wf?.workflowDynastySlug ?? activeSlug,
         workflowDynastyName: wf?.workflowDynastyName ?? null,
@@ -193,6 +205,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         costPerSignupUsd,
         costPerCloseUsd,
         costPerMeetingBookedUsd,
+        roiMultiple,
         projection,
       });
     }

@@ -132,8 +132,12 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   pressKitUniqueVisitors:  { kind: "raw", type: "count", label: "Unique Visitors",    source: "press-kits" },
 
   // ── Cost & runs: runs-service ─────────────────────────────────────────────
-  totalCostInUsdCents: { kind: "raw", type: "currency", label: "Total Cost",       source: "runs" },
-  completedRuns:       { kind: "raw", type: "count",    label: "Runs",             source: "runs" },
+  totalCostInUsdCents:  { kind: "raw", type: "currency", label: "Total Cost",        source: "runs" },
+  // ACTUAL run spend — only `actual` counts as billable spend (excludes provisioned holds that inflate
+  // totalCostInUsdCents). The canonical "Total spent" + the numerator for every cost-per-X below, so
+  // each cost-per metric reconciles with the displayed spend. (features-service#396)
+  actualCostInUsdCents: { kind: "raw", type: "currency", label: "Total Spent",       source: "runs" },
+  completedRuns:        { kind: "raw", type: "count",    label: "Runs",              source: "runs" },
 
   // ── Outlets: outlets-service ──────────────────────────────────────────────
   outletsDiscovered:   { kind: "raw", type: "count",    label: "Outlets Found",    source: "outlets" },
@@ -151,9 +155,9 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   recipientNeutralReplyRate:    { kind: "derived", type: "rate",     label: "% Neutral",     numerator: "recipientsRepliesNeutral",   denominator: "recipientsDelivered" },
 
   // ── Derived cost-per (recipient-level) ──────────────────────────────────
-  costPerRecipientOpenCents:          { kind: "derived", type: "currency", label: "$/Open",           numerator: "totalCostInUsdCents",  denominator: "recipientsOpened" },
-  costPerRecipientClickCents:         { kind: "derived", type: "currency", label: "$/Link Click",     numerator: "totalCostInUsdCents",  denominator: "recipientsClicked" },
-  costPerRecipientPositiveReplyCents: { kind: "derived", type: "currency", label: "$/Positive Reply", numerator: "totalCostInUsdCents",  denominator: "recipientsRepliesPositive" },
+  costPerRecipientOpenCents:          { kind: "derived", type: "currency", label: "$/Open",           numerator: "actualCostInUsdCents",  denominator: "recipientsOpened" },
+  costPerRecipientClickCents:         { kind: "derived", type: "currency", label: "$/Link Click",     numerator: "actualCostInUsdCents",  denominator: "recipientsClicked" },
+  costPerRecipientPositiveReplyCents: { kind: "derived", type: "currency", label: "$/Positive Reply", numerator: "actualCostInUsdCents",  denominator: "recipientsRepliesPositive" },
   // ── Derived rates (lead-scoped) ──────────────────────────────────────────
   leadOpenRate:                 { kind: "derived", type: "rate",     label: "% Lead Opens",     numerator: "leadsOpened",          denominator: "leadsDelivered" },
   leadClickRate:                { kind: "derived", type: "rate",     label: "% Lead Clicks",    numerator: "leadsClicked",         denominator: "leadsDelivered" },
@@ -162,18 +166,18 @@ export const STATS_REGISTRY: Record<string, StatsKeyDef> = {
   leadNeutralReplyRate:         { kind: "derived", type: "rate",     label: "% Lead Neutral",   numerator: "leadsRepliesNeutral",  denominator: "leadsDelivered" },
 
   // ── Derived cost-per (lead-scoped) ───────────────────────────────────────
-  costPerLeadOpenCents:           { kind: "derived", type: "currency", label: "$/Lead Open",           numerator: "totalCostInUsdCents", denominator: "leadsOpened" },
-  costPerLeadClickCents:          { kind: "derived", type: "currency", label: "$/Lead Click",          numerator: "totalCostInUsdCents", denominator: "leadsClicked" },
-  costPerLeadPositiveReplyCents:  { kind: "derived", type: "currency", label: "$/Lead Positive Reply", numerator: "totalCostInUsdCents", denominator: "leadsRepliesPositive" },
+  costPerLeadOpenCents:           { kind: "derived", type: "currency", label: "$/Lead Open",           numerator: "actualCostInUsdCents", denominator: "leadsOpened" },
+  costPerLeadClickCents:          { kind: "derived", type: "currency", label: "$/Lead Click",          numerator: "actualCostInUsdCents", denominator: "leadsClicked" },
+  costPerLeadPositiveReplyCents:  { kind: "derived", type: "currency", label: "$/Lead Positive Reply", numerator: "actualCostInUsdCents", denominator: "leadsRepliesPositive" },
 
-  costPerOutletCents:     { kind: "derived", type: "currency", label: "$/Outlet",      numerator: "totalCostInUsdCents",  denominator: "outletsDiscovered" },
-  costPerPressKitCents:   { kind: "derived", type: "currency", label: "$/Kit",         numerator: "totalCostInUsdCents",  denominator: "pressKitsGenerated" },
-  costPerPressKitViewCents: { kind: "derived", type: "currency", label: "$/View",      numerator: "totalCostInUsdCents",  denominator: "pressKitViews" },
+  costPerOutletCents:     { kind: "derived", type: "currency", label: "$/Outlet",      numerator: "actualCostInUsdCents",  denominator: "outletsDiscovered" },
+  costPerPressKitCents:   { kind: "derived", type: "currency", label: "$/Kit",         numerator: "actualCostInUsdCents",  denominator: "pressKitsGenerated" },
+  costPerPressKitViewCents: { kind: "derived", type: "currency", label: "$/View",      numerator: "actualCostInUsdCents",  denominator: "pressKitViews" },
 
   // ── Derived (quote outreach) ────────────────────────────────────────────
   pitchSelectionRate:        { kind: "derived", type: "rate",     label: "% Selected",   numerator: "quotesSelected",      denominator: "quotePitchesSubmitted" },
   pitchPublishRate:          { kind: "derived", type: "rate",     label: "% Published",  numerator: "quotesPublished",     denominator: "quotePitchesSubmitted" },
-  costPerQuotePublishedCents:{ kind: "derived", type: "currency", label: "$/Published",  numerator: "totalCostInUsdCents", denominator: "quotesPublished", sortDirection: "asc" },
+  costPerQuotePublishedCents:{ kind: "derived", type: "currency", label: "$/Published",  numerator: "actualCostInUsdCents", denominator: "quotesPublished", sortDirection: "asc" },
 };
 
 /** All valid stats key names */
@@ -229,6 +233,7 @@ export const VALID_ENTITY_TYPES = new Set(Object.keys(ENTITY_REGISTRY));
 /** System stats — always present in stats responses, not declared by features */
 export const SYSTEM_STATS_KEYS = [
   "totalCostInUsdCents",
+  "actualCostInUsdCents",
   "completedRuns",
   "activeCampaigns",
   "firstRunAt",
