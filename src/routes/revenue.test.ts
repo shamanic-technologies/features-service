@@ -735,14 +735,14 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.totalCpcCents).toBe(7000);
     expect(res.body.spend.actualCpcCents).toBe(7000);
     expect(res.body.spend.provisionedCpcCents).toBeNull(); // 0 provisioned → null, never a false $0.00
-    // CPS / CPSM are projected via the shared EV funnel → populated when economics + a cost basis exist.
-    expect(res.body.spend.cpsCents).not.toBeNull();
-    expect(res.body.spend.cpsmCents).not.toBeNull();
+    // No projected cost-per-outcome fields on the spend block (cps/cpsm removed).
+    expect(res.body.spend).not.toHaveProperty("cpsCents");
+    expect(res.body.spend).not.toHaveProperty("cpsmCents");
   });
 
   it("spend — committed = actual + provisioned: total… includes holds, ROI stays on actual", async () => {
     // runs returns committed 10000 (= 6000 billed + 4000 open holds). total… carries committed; actual…
-    // billed; provisioned… the holds. ROI/CAC + cps/cpsm ride ACTUAL only.
+    // billed; provisioned… the holds. ROI/CAC ride ACTUAL only.
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -776,8 +776,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   });
 
   it("spend — null-safe: 0 clicks → every CPC null (never a false $0.00), 0 spend → all ratios null", async () => {
-    // Reply-only lead → 0 clicks, but spend > 0 → CPC null (no denominator), CPS null (signups are
-    // click-route only), CPSM non-null (the reply route funds meetings).
+    // Reply-only lead → 0 clicks → every CPC null (no denominator).
     const replyOnly = [leadRow({ leadId: "lr", email: "reply@y.com", replied: true, replyClassification: "positive", lead: { firstName: "R", lastName: "Y", photoUrl: null, organization: { id: "o2", name: "O2", logoUrl: null } } })];
     mockFetch({ economics: ECONOMICS, leads: replyOnly, costCents: 5000 });
     let res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
@@ -786,8 +785,6 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.totalCpcCents).toBeNull();
     expect(res.body.spend.actualCpcCents).toBeNull();
     expect(res.body.spend.provisionedCpcCents).toBeNull();
-    expect(res.body.spend.cpsCents).toBeNull();
-    expect(res.body.spend.cpsmCents).not.toBeNull();
 
     // 0 spend → every CPC null even with clicks (no attributed spend, not $0.00).
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 0 });
@@ -798,8 +795,6 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.totalCpcCents).toBeNull();
     expect(res.body.spend.actualCpcCents).toBeNull();
     expect(res.body.spend.provisionedCpcCents).toBeNull();
-    expect(res.body.spend.cpsCents).toBeNull();
-    expect(res.body.spend.cpsmCents).toBeNull();
   });
 
   it("spend — per-source breakdown: committed/actual/provisioned by cost name + share-of-total (desc), plus today's spend", async () => {

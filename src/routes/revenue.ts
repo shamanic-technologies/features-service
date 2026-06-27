@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { getFunnel, orP, projectOutcomeCosts, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
+import { getFunnel, orP, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
 import { fetchEffectiveEconomics, type EffectiveEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
@@ -64,8 +64,8 @@ export function buildCostEconomics(actualCostInUsdCents: number, totalPipelineUs
 
 /**
  * Canonical spend block for the Overview "Outreach & Conversions" card — every number the card shows
- * (Total spent, today's spend, top cost sources + %, CPC, cost-per-signup, cost-per-sales-meeting),
- * pre-computed so the dashboard renders verbatim (no client arithmetic).
+ * (Total spent, today's spend, top cost sources + %, CPC), pre-computed so the dashboard renders
+ * verbatim (no client arithmetic).
  *
  * NAMING CONVENTION (product-owner mandated — total/actual/provisioned). Each spend/CPC figure ships
  * THREE variants so a name can never lie about which accounting it carries:
@@ -82,9 +82,6 @@ export function buildCostEconomics(actualCostInUsdCents: number, totalPipelineUs
  *   - {total,actual,provisioned}CpcCents = the matching spend / clicks — each CPC reconciles with its
  *     own displayed spend (the bug #396 fixed: CPC off systemStats.totalCostInUsdCents while "Total
  *     spent" was a different accounting — now every CPC is derived from the SAME total it labels).
- *   - cpsCents / cpsmCents are PROJECTED via the shared EV funnel (projectOutcomeCosts) from the brand's
- *     ACTUAL CPC/CPPR + its economics — same realized basis as ROI/CAC and workflow-projection /
- *     public cost-projection (a forecast cost-per-outcome must not inflate on reserved-but-unbilled holds).
  * Null-safe (mirrors the per-audience metrics.cpcCents convention): a ratio is null (renders "-"), never
  * a false $0.00, when its denominator OR the attributed spend is 0.
  */
@@ -99,44 +96,17 @@ export interface Spend {
   totalCpcCents: number | null;
   actualCpcCents: number | null;
   provisionedCpcCents: number | null;
-  cpsCents: number | null;
-  cpsmCents: number | null;
 }
 
-function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], economics: SalesEconomics | null): Spend {
-  // clicks/replies use the SAME per-lead predicates as the clicked/repliedPositive SignalSeries, so the
-  // CPC denominator equals the card's displayed "clicks" (clicked.total) — coherent by construction.
+function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[]): Spend {
+  // clicks use the SAME per-lead predicate as the clicked SignalSeries, so the CPC denominator equals
+  // the card's displayed "clicks" (clicked.total) — coherent by construction.
   const clicks = leads.reduce((n, l) => n + (l.clicked ? 1 : 0), 0);
-  const replies = leads.reduce((n, l) => n + (l.repliedPositive ? 1 : 0), 0);
   const committed = breakdown.totalSpentCents;
   const actual = breakdown.actualSpentCents;
   const provisioned = breakdown.provisionedSpentCents;
 
   const ratioCents = (cents: number): number | null => (cents > 0 && clicks > 0 ? cents / clicks : null);
-  const totalCpcCents = ratioCents(committed);
-  const actualCpcCents = ratioCents(actual);
-  const provisionedCpcCents = ratioCents(provisioned);
-
-  // cps/cpsm are PROJECTED forecast cost-per-outcome — derived from ACTUAL (realized) spend, the same
-  // basis as ROI/CAC. Provisioned holds are reserved-not-billed, so they must not inflate a forecast.
-  let cpsCents: number | null = null;
-  let cpsmCents: number | null = null;
-  if (economics && actual > 0) {
-    const clickUsd = clicks > 0 ? actual / 100 / clicks : null;
-    const replyUsd = replies > 0 ? actual / 100 / replies : null;
-    const { costPerSignupUsd, costPerMeetingBookedUsd } = projectOutcomeCosts(
-      {
-        r2m: economics.replyToMeetingPct / 100,
-        v2m: economics.visitToMeetingPct / 100,
-        m2c: economics.meetingToClosePct / 100,
-        v2c: economics.visitToClosePct / 100,
-        v2s: economics.visitToSignupPct / 100,
-      },
-      { clickUsd, replyUsd },
-    );
-    cpsCents = costPerSignupUsd != null ? costPerSignupUsd * 100 : null;
-    cpsmCents = costPerMeetingBookedUsd != null ? costPerMeetingBookedUsd * 100 : null;
-  }
 
   return {
     totalSpentCents: committed,
@@ -146,11 +116,9 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], economics: Sale
     actualSpentTodayCents: breakdown.actualSpentTodayCents,
     provisionedSpentTodayCents: breakdown.provisionedSpentTodayCents,
     sources: breakdown.sources,
-    totalCpcCents,
-    actualCpcCents,
-    provisionedCpcCents,
-    cpsCents,
-    cpsmCents,
+    totalCpcCents: ratioCents(committed),
+    actualCpcCents: ratioCents(actual),
+    provisionedCpcCents: ratioCents(provisioned),
   };
 }
 
@@ -202,10 +170,9 @@ interface RevenueResponse {
   purchased: SignalSeries;
   /**
    * Canonical spend block for the Overview card — Total spent / today's spend / top cost sources /
-   * CPC / cost-per-signup / cost-per-sales-meeting, all server-computed and reconciled to the
-   * runs-service ACTUAL spend (see {@link Spend}). Present on the OVERVIEW response only; null on the
-   * lensed (?lens=) response (the lens pages render their own costPerConversionUsd), and absent on the
-   * grouped (?groupBy=campaignId) per-campaign groups.
+   * CPC, each in committed/actual/provisioned variants (see {@link Spend}). Present on the OVERVIEW
+   * response only; null on the lensed (?lens=) response (the lens pages render their own
+   * costPerConversionUsd), and absent on the grouped (?groupBy=campaignId) per-campaign groups.
    */
   spend: Spend | null;
 }
@@ -402,7 +369,7 @@ export async function computeFeatureRevenue(
     if (includeSpend) {
       const breakdown = await fetchSpendBreakdown(brandId, campaignId, featureSlug, headers);
       // ROI/CAC ride ACTUAL spend; the `spend` block carries the committed total separately.
-      return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, [], null));
+      return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, []));
     }
     const actualCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers);
     return emptyBody(null, actualCostInUsdCents, null);
@@ -433,7 +400,7 @@ export async function computeFeatureRevenue(
   const actualCostInUsdCents = typeof costResult === "number" ? costResult : costResult.actualSpentCents;
 
   if (economics === null) {
-    return emptyBody(null, actualCostInUsdCents, breakdown ? buildSpend(breakdown, [], null) : null);
+    return emptyBody(null, actualCostInUsdCents, breakdown ? buildSpend(breakdown, []) : null);
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
 
@@ -513,7 +480,7 @@ export async function computeFeatureRevenue(
     events: result.events,
     outreachContacted: buildContactedSeries(result.leads),
     ...buildOutcomeSeries(result.leads),
-    spend: breakdown ? buildSpend(breakdown, result.leads, economics) : null,
+    spend: breakdown ? buildSpend(breakdown, result.leads) : null,
   };
 }
 

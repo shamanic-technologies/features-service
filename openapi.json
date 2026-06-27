@@ -708,16 +708,6 @@
                 "type": "number",
                 "nullable": true,
                 "description": "PROVISIONED cost per website click = provisionedSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 provisioned holds."
-              },
-              "cpsCents": {
-                "type": "number",
-                "nullable": true,
-                "description": "Cost per signup, USD cents — PROJECTED via the shared EV funnel from the brand's ACTUAL CPC/CPPR + economics (same realized basis as ROI/CAC + workflow-projection / public cost-projection; a forecast must not inflate on reserved-but-unbilled holds). Null when no economics or no usable click/reply cost basis."
-              },
-              "cpsmCents": {
-                "type": "number",
-                "nullable": true,
-                "description": "Cost per sales meeting booked, USD cents — PROJECTED via the shared EV funnel from ACTUAL spend. Null when no economics or no usable click/reply cost basis."
               }
             },
             "required": [
@@ -730,11 +720,9 @@
               "sources",
               "totalCpcCents",
               "actualCpcCents",
-              "provisionedCpcCents",
-              "cpsCents",
-              "cpsmCents"
+              "provisionedCpcCents"
             ],
-            "description": "Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources + projected cost-per-signup / cost-per-sales-meeting. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"
+            "description": "Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"
           },
           "outreachContacted": {
             "type": "object",
