@@ -685,11 +685,20 @@ registry.registerPath({
       goal: z.enum(["signup", "meetingBooked", "purchase"]).describe("Active optimization goal (required). signup sorts by CPC; other goals sort by CPPR."),
       brandProfileId: z.string().optional().describe("Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted."),
       limit: z.string().optional().describe("Optional positive integer row limit after sorting."),
+      statuses: z
+        .string()
+        .optional()
+        .describe(
+          "Optional comma-separated subset of audience lifecycle statuses to include: active, paused, archived. " +
+            "Absent → active only (preserves the active-only ranking used by the Top-audiences card). " +
+            "When present, returns evidence rows for audiences in any of the given statuses (e.g. statuses=active,paused,archived surfaces archived audiences' historical outreach). " +
+            "Any token outside {active, paused, archived} (e.g. suggested, deprecated) is rejected with 400.",
+        ),
     }),
   },
   responses: {
     200: { description: "Audience cost/outcome evidence", content: { "application/json": { schema: audienceStatsResponseSchema } } },
-    400: { description: "Missing/invalid brandId, goal, or limit", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing/invalid brandId, goal, limit, or statuses", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },

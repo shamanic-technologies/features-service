@@ -5,7 +5,7 @@ import { features } from "../db/schema.js";
 import { AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { fetchCurrentBrandProfile } from "./brand-client.js";
-import { fetchActiveAudiences, fetchAudienceMemberEmails, type Audience, type AudienceFilters } from "./human-client.js";
+import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, type AudienceFilters, type AudienceStatus } from "./human-client.js";
 import { fetchEmailOutcomes } from "./email-status-client.js";
 import { isGoal, type Goal } from "./goals.js";
 
@@ -104,6 +104,32 @@ function readFiniteNumber(value: unknown, field: string): number {
 
 function sortMetricForGoal(goal: Goal): SortMetric {
   return goal === "signup" ? "cpc" : "cppr";
+}
+
+const VALID_STATUSES: readonly AudienceStatus[] = ["active", "paused", "archived"];
+
+/**
+ * Parse the optional `statuses` query param (comma-separated subset of
+ * active,paused,archived). Absent → ["active"] (preserves the historical active-only
+ * behavior for every existing caller, incl. the brand-overview Top-audiences card).
+ * Any token outside the valid set (e.g. suggested/deprecated) → 400.
+ */
+function parseStatuses(raw: string | undefined): { ok: true; statuses: AudienceStatus[] } | { ok: false; error: string } {
+  if (raw === undefined) {
+    return { ok: true, statuses: ["active"] };
+  }
+  const tokens = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  if (tokens.length === 0) {
+    return { ok: false, error: "statuses query parameter must be a non-empty comma-separated subset of: active, paused, archived" };
+  }
+  const seen = new Set<AudienceStatus>();
+  for (const token of tokens) {
+    if (!VALID_STATUSES.includes(token as AudienceStatus)) {
+      return { ok: false, error: "statuses query parameter must be a comma-separated subset of: active, paused, archived" };
+    }
+    seen.add(token as AudienceStatus);
+  }
+  return { ok: true, statuses: [...seen] };
 }
 
 function compareByMetric(metric: SortMetric, a: AudienceStatsRow, b: AudienceStatsRow): number {
@@ -224,12 +250,18 @@ export async function computeAudienceStats(req: Request): Promise<ComputeResult>
   const goalParam = req.query.goal as string | undefined;
   const explicitBrandProfileId = req.query.brandProfileId as string | undefined;
   const limitParam = req.query.limit as string | undefined;
+  const statusesParam = req.query.statuses as string | undefined;
 
   if (!brandId) {
     return { ok: false, status: 400, error: "brandId query parameter is required" };
   }
   if (!isGoal(goalParam)) {
     return { ok: false, status: 400, error: "goal query parameter is required and must be one of: signup, meetingBooked, purchase" };
+  }
+
+  const parsedStatuses = parseStatuses(statusesParam);
+  if (!parsedStatuses.ok) {
+    return { ok: false, status: 400, error: parsedStatuses.error };
   }
 
   let parsedLimit: number | undefined;
@@ -248,7 +280,7 @@ export async function computeAudienceStats(req: Request): Promise<ComputeResult>
 
   const identity = { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug };
   const [audiences, currentProfile] = await Promise.all([
-    fetchActiveAudiences(brandId, identity),
+    fetchAudiencesByStatuses(brandId, parsedStatuses.statuses, identity),
     explicitBrandProfileId ? Promise.resolve(null) : fetchCurrentBrandProfile(brandId, identity),
   ]);
   const brandProfileId = explicitBrandProfileId ?? currentProfile?.id ?? null;
