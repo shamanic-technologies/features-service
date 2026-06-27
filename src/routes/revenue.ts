@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { getFunnel, orP, projectOutcomeCosts, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
+import { getFunnel, orP, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
 import { fetchEffectiveEconomics, type EffectiveEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
@@ -30,88 +30,95 @@ const router = Router();
 
 /**
  * Derived cost economics for the brand(+campaign), feature-scoped. Always present.
- *   - totalCostUsd:          total run cost in dollars (same source as /stats systemStats), >= 0.
- *   - costOfAcquisitionPct:  (totalCostUsd / totalPipelineUsd) * 100; null when pipeline is null OR 0.
- *   - roiMultiple:           totalPipelineUsd / totalCostUsd; null when cost is 0 OR pipeline is null.
+ *
+ * ROI / CAC are computed on REALIZED spend — `actualCostUsd` carries ACTUAL (billed) cost ONLY, NOT
+ * the committed total (which includes provisioned holds). Naming follows the service-wide
+ * total/actual/provisioned convention: a forward-looking "money reserved" figure (the `spend` block's
+ * total…) must never inflate ROI/CAC, so the field is named `actualCostUsd` to make the realized basis
+ * unambiguous and distinct from the committed `total…` figures. (Same source as /stats
+ * systemStats.actualCostInUsdCents and the `spend` block's actualSpentCents.)
+ *   - actualCostUsd:         ACTUAL (billed) run cost in dollars (excludes provisioned holds), >= 0.
+ *   - costOfAcquisitionPct:  (actualCostUsd / totalPipelineUsd) * 100; null when pipeline is null OR 0.
+ *   - roiMultiple:           totalPipelineUsd / actualCostUsd; null when cost is 0 OR pipeline is null.
  *   - expectedConversions:   LENS ONLY — sum of per-lead conversion probability (decimal) across the
  *                            lensed leads (totalPipelineUsd = expectedConversions × LTR). Absent off-lens.
- *   - costPerConversionUsd:  LENS ONLY — totalCostUsd / expectedConversions; null when expectedConversions
+ *   - costPerConversionUsd:  LENS ONLY — actualCostUsd / expectedConversions; null when expectedConversions
  *                            is 0. Absent off-lens.
  */
 export interface CostEconomics {
-  totalCostUsd: number;
+  actualCostUsd: number;
   costOfAcquisitionPct: number | null;
   roiMultiple: number | null;
   expectedConversions?: number;
   costPerConversionUsd?: number | null;
 }
 
-export function buildCostEconomics(totalCostInUsdCents: number, totalPipelineUsd: number | null): CostEconomics {
-  const totalCostUsd = totalCostInUsdCents / 100;
+export function buildCostEconomics(actualCostInUsdCents: number, totalPipelineUsd: number | null): CostEconomics {
+  const actualCostUsd = actualCostInUsdCents / 100;
   const costOfAcquisitionPct =
-    totalPipelineUsd === null || totalPipelineUsd === 0 ? null : (totalCostUsd / totalPipelineUsd) * 100;
+    totalPipelineUsd === null || totalPipelineUsd === 0 ? null : (actualCostUsd / totalPipelineUsd) * 100;
   const roiMultiple =
-    totalCostUsd === 0 || totalPipelineUsd === null ? null : totalPipelineUsd / totalCostUsd;
-  return { totalCostUsd, costOfAcquisitionPct, roiMultiple };
+    actualCostUsd === 0 || totalPipelineUsd === null ? null : totalPipelineUsd / actualCostUsd;
+  return { actualCostUsd, costOfAcquisitionPct, roiMultiple };
 }
 
 /**
  * Canonical spend block for the Overview "Outreach & Conversions" card — every number the card shows
- * (Total spent, today's spend, top cost sources + %, CPC, cost-per-signup, cost-per-sales-meeting),
- * pre-computed so the dashboard renders verbatim (no client arithmetic). RECONCILED BY CONSTRUCTION:
- *   - totalSpentCents is the runs-service ACTUAL spend (= the displayed "Total spent"), == Σ sources.
- *   - cpcCents = totalSpentCents / clicks — derived from the SAME total the card shows, so CPC and
- *     "Total spent" can never disagree (the bug this fixes: CPC came off systemStats.totalCostInUsdCents
- *     which includes provisioned holds, while "Total spent" came off the runs ACTUAL breakdown).
- *   - cpsCents / cpsmCents are PROJECTED via the shared EV funnel (projectOutcomeCosts) from the brand's
- *     ACTUAL CPC/CPPR + its economics — same math as workflow-projection + the public cost-projection.
+ * (Total spent, today's spend, top cost sources + %, CPC), pre-computed so the dashboard renders
+ * verbatim (no client arithmetic).
+ *
+ * NAMING CONVENTION (product-owner mandated — total/actual/provisioned). Each spend/CPC figure ships
+ * THREE variants so a name can never lie about which accounting it carries:
+ *   - total…        = COMMITTED = ACTUAL + PROVISIONED (the money already reserved). This is what the
+ *                     dashboard "Total spent" / "Budget spent today" / "CPC" now show — a customer
+ *                     sees money RESERVED (incl. open holds for scheduled follow-ups), not only billed.
+ *                     It legitimately DIPS when a hold releases (a follow-up sends → becomes actual,
+ *                     net zero; or a hold cancels because a contact replied / can't be reached → drop).
+ *   - actual…       = actualized / billed spend only (== the old single value pre-this-change).
+ *   - provisioned…  = open provisioned holds only (= total − actual).
+ *
+ * RECONCILED BY CONSTRUCTION:
+ *   - totalSpentCents (committed) == Σ sources[].totalSpentCents; same for actual / provisioned.
+ *   - {total,actual,provisioned}CpcCents = the matching spend / clicks — each CPC reconciles with its
+ *     own displayed spend (the bug #396 fixed: CPC off systemStats.totalCostInUsdCents while "Total
+ *     spent" was a different accounting — now every CPC is derived from the SAME total it labels).
  * Null-safe (mirrors the per-audience metrics.cpcCents convention): a ratio is null (renders "-"), never
  * a false $0.00, when its denominator OR the attributed spend is 0.
  */
 export interface Spend {
   totalSpentCents: number;
-  todaySpentCents: number;
+  actualSpentCents: number;
+  provisionedSpentCents: number;
+  totalSpentTodayCents: number;
+  actualSpentTodayCents: number;
+  provisionedSpentTodayCents: number;
   sources: SpendSource[];
-  cpcCents: number | null;
-  cpsCents: number | null;
-  cpsmCents: number | null;
+  totalCpcCents: number | null;
+  actualCpcCents: number | null;
+  provisionedCpcCents: number | null;
 }
 
-function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], economics: SalesEconomics | null): Spend {
-  // clicks/replies use the SAME per-lead predicates as the clicked/repliedPositive SignalSeries, so the
-  // CPC denominator equals the card's displayed "clicks" (clicked.total) — coherent by construction.
+function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[]): Spend {
+  // clicks use the SAME per-lead predicate as the clicked SignalSeries, so the CPC denominator equals
+  // the card's displayed "clicks" (clicked.total) — coherent by construction.
   const clicks = leads.reduce((n, l) => n + (l.clicked ? 1 : 0), 0);
-  const replies = leads.reduce((n, l) => n + (l.repliedPositive ? 1 : 0), 0);
-  const total = breakdown.totalSpentCents;
+  const committed = breakdown.totalSpentCents;
+  const actual = breakdown.actualSpentCents;
+  const provisioned = breakdown.provisionedSpentCents;
 
-  const cpcCents = total > 0 && clicks > 0 ? total / clicks : null;
-
-  let cpsCents: number | null = null;
-  let cpsmCents: number | null = null;
-  if (economics && total > 0) {
-    const clickUsd = clicks > 0 ? total / 100 / clicks : null;
-    const replyUsd = replies > 0 ? total / 100 / replies : null;
-    const { costPerSignupUsd, costPerMeetingBookedUsd } = projectOutcomeCosts(
-      {
-        r2m: economics.replyToMeetingPct / 100,
-        v2m: economics.visitToMeetingPct / 100,
-        m2c: economics.meetingToClosePct / 100,
-        v2c: economics.visitToClosePct / 100,
-        v2s: economics.visitToSignupPct / 100,
-      },
-      { clickUsd, replyUsd },
-    );
-    cpsCents = costPerSignupUsd != null ? costPerSignupUsd * 100 : null;
-    cpsmCents = costPerMeetingBookedUsd != null ? costPerMeetingBookedUsd * 100 : null;
-  }
+  const ratioCents = (cents: number): number | null => (cents > 0 && clicks > 0 ? cents / clicks : null);
 
   return {
-    totalSpentCents: total,
-    todaySpentCents: breakdown.todaySpentCents,
+    totalSpentCents: committed,
+    actualSpentCents: actual,
+    provisionedSpentCents: provisioned,
+    totalSpentTodayCents: breakdown.totalSpentTodayCents,
+    actualSpentTodayCents: breakdown.actualSpentTodayCents,
+    provisionedSpentTodayCents: breakdown.provisionedSpentTodayCents,
     sources: breakdown.sources,
-    cpcCents,
-    cpsCents,
-    cpsmCents,
+    totalCpcCents: ratioCents(committed),
+    actualCpcCents: ratioCents(actual),
+    provisionedCpcCents: ratioCents(provisioned),
   };
 }
 
@@ -163,10 +170,9 @@ interface RevenueResponse {
   purchased: SignalSeries;
   /**
    * Canonical spend block for the Overview card — Total spent / today's spend / top cost sources /
-   * CPC / cost-per-signup / cost-per-sales-meeting, all server-computed and reconciled to the
-   * runs-service ACTUAL spend (see {@link Spend}). Present on the OVERVIEW response only; null on the
-   * lensed (?lens=) response (the lens pages render their own costPerConversionUsd), and absent on the
-   * grouped (?groupBy=campaignId) per-campaign groups.
+   * CPC, each in committed/actual/provisioned variants (see {@link Spend}). Present on the OVERVIEW
+   * response only; null on the lensed (?lens=) response (the lens pages render their own
+   * costPerConversionUsd), and absent on the grouped (?groupBy=campaignId) per-campaign groups.
    */
   spend: Spend | null;
 }
@@ -190,10 +196,10 @@ export type RevenueBody = Omit<RevenueResponse, "featureSlug">;
 
 export type DownstreamHeaders = { orgId: string; userId?: string; runId?: string; featureSlug?: string };
 
-function emptyBody(totalPipelineUsd: number | null, totalCostInUsdCents: number, spend: Spend | null): RevenueBody {
+function emptyBody(totalPipelineUsd: number | null, actualCostInUsdCents: number, spend: Spend | null): RevenueBody {
   return {
     headline: { totalPipelineUsd, economicsSource: null },
-    costEconomics: buildCostEconomics(totalCostInUsdCents, totalPipelineUsd),
+    costEconomics: buildCostEconomics(actualCostInUsdCents, totalPipelineUsd),
     timeSeries: [],
     organizations: [],
     leads: [],
@@ -263,7 +269,7 @@ function buildLensBody(
   rawPersons: EnginePerson[],
   economics: SalesEconomics,
   economicsSource: EconomicsSource,
-  totalCostInUsdCents: number,
+  actualCostInUsdCents: number,
 ): RevenueBody {
   const ltr = economics.lifetimeRevenueUsd;
   const leads: LeadRow[] = [];
@@ -304,15 +310,15 @@ function buildLensBody(
   );
   const totalPipelineUsd = leads.reduce((sum, l) => sum + l.expectedRevenueUsd, 0);
   // LENS ONLY: expected conversion COUNT = sum of per-lead probability (decimal). totalPipelineUsd =
-  // expectedConversions × LTR. costPerConversionUsd = totalCostUsd / expectedConversions (null at 0).
+  // expectedConversions × LTR. costPerConversionUsd = actualCostUsd / expectedConversions (null at 0).
   const expectedConversions = leads.reduce((sum, l) => sum + (l.conversionProbabilityPct ?? 0) / 100, 0);
-  const costEconomics = buildCostEconomics(totalCostInUsdCents, totalPipelineUsd);
+  const costEconomics = buildCostEconomics(actualCostInUsdCents, totalPipelineUsd);
   return {
     headline: { totalPipelineUsd, economicsSource },
     costEconomics: {
       ...costEconomics,
       expectedConversions,
-      costPerConversionUsd: expectedConversions === 0 ? null : costEconomics.totalCostUsd / expectedConversions,
+      costPerConversionUsd: expectedConversions === 0 ? null : costEconomics.actualCostUsd / expectedConversions,
     },
     timeSeries: [],
     organizations: [],
@@ -362,10 +368,11 @@ export async function computeFeatureRevenue(
   if (!funnel) {
     if (includeSpend) {
       const breakdown = await fetchSpendBreakdown(brandId, campaignId, featureSlug, headers);
-      return emptyBody(null, breakdown.totalSpentCents, buildSpend(breakdown, [], null));
+      // ROI/CAC ride ACTUAL spend; the `spend` block carries the committed total separately.
+      return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, []));
     }
-    const totalCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers);
-    return emptyBody(null, totalCostInUsdCents, null);
+    const actualCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers);
+    return emptyBody(null, actualCostInUsdCents, null);
   }
 
   // ── Wave A: the four downstream reads with NO data dependency on each other, in parallel.
@@ -388,17 +395,19 @@ export async function computeFeatureRevenue(
     fetchLeadsForRevenue(brandId, campaignId, headers),
   ]);
   const breakdown: SpendBreakdown | null = typeof costResult === "number" ? null : costResult;
-  const totalCostInUsdCents = typeof costResult === "number" ? costResult : costResult.totalSpentCents;
+  // ROI/CAC + costEconomics ride ACTUAL (billed) spend; the `spend` block (buildSpend) carries the
+  // committed total + provisioned separately. fetchRunsCostCents already returns actual.
+  const actualCostInUsdCents = typeof costResult === "number" ? costResult : costResult.actualSpentCents;
 
   if (economics === null) {
-    return emptyBody(null, totalCostInUsdCents, breakdown ? buildSpend(breakdown, [], null) : null);
+    return emptyBody(null, actualCostInUsdCents, breakdown ? buildSpend(breakdown, []) : null);
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
 
   // Lensed overview: a fixed per-signal probability from sales economics. Uses ONLY Wave A
   // (economics + persons' clicked / positiveReply) — short-circuit BEFORE Wave B + the engine.
   if (lens) {
-    return buildLensBody(lens, persons, economics, economicsSource, totalCostInUsdCents);
+    return buildLensBody(lens, persons, economics, economicsSource, actualCostInUsdCents);
   }
 
   const paths = funnel.resolvePaths({ economics, platformRates });
@@ -464,14 +473,14 @@ export async function computeFeatureRevenue(
 
   return {
     headline: { ...result.headline, economicsSource },
-    costEconomics: buildCostEconomics(totalCostInUsdCents, result.headline.totalPipelineUsd),
+    costEconomics: buildCostEconomics(actualCostInUsdCents, result.headline.totalPipelineUsd),
     timeSeries: result.timeSeries,
     organizations: result.organizations,
     leads: result.leads,
     events: result.events,
     outreachContacted: buildContactedSeries(result.leads),
     ...buildOutcomeSeries(result.leads),
-    spend: breakdown ? buildSpend(breakdown, result.leads, economics) : null,
+    spend: breakdown ? buildSpend(breakdown, result.leads) : null,
   };
 }
 

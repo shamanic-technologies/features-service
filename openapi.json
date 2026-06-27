@@ -636,11 +636,27 @@
             "properties": {
               "totalSpentCents": {
                 "type": "integer",
-                "description": "Canonical 'Total spent' — runs-service ACTUAL spend (USD cents) for the brand(+campaign)+feature, == Σ sources[].spentCents. Excludes provisioned holds, so it equals the displayed Total spent and reconciles with cpcCents."
+                "description": "'Total spent' (COMMITTED, USD cents) = ACTUAL + PROVISIONED holds for the brand(+campaign)+feature, == Σ sources[].totalSpentCents. The reserved money the customer sees; dips when a hold releases. Reconciles with totalCpcCents by construction."
               },
-              "todaySpentCents": {
+              "actualSpentCents": {
                 "type": "integer",
-                "description": "Actual spend (USD cents) for runs started since 00:00 UTC today."
+                "description": "ACTUAL (billed) spend only (USD cents), == Σ sources[].actualSpentCents. Same source as systemStats.actualCostInUsdCents / costEconomics.actualCostUsd (the realized spend ROI/CAC ride)."
+              },
+              "provisionedSpentCents": {
+                "type": "integer",
+                "description": "Open PROVISIONED holds only (USD cents) = totalSpentCents − actualSpentCents, == Σ sources[].provisionedSpentCents. Money reserved for scheduled follow-up sends, not yet billed."
+              },
+              "totalSpentTodayCents": {
+                "type": "integer",
+                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'."
+              },
+              "actualSpentTodayCents": {
+                "type": "integer",
+                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today."
+              },
+              "provisionedSpentTodayCents": {
+                "type": "integer",
+                "description": "Open PROVISIONED holds (USD cents) = totalSpentTodayCents − actualSpentTodayCents, for runs started since 00:00 UTC today."
               },
               "sources": {
                 "type": "array",
@@ -651,48 +667,62 @@
                       "type": "string",
                       "description": "runs-service cost name (billable line item, e.g. 'apollo people-search', 'email-send-step-1')."
                     },
-                    "spentCents": {
+                    "totalSpentCents": {
                       "type": "integer",
-                      "description": "Actual spend attributed to this source, USD cents."
+                      "description": "COMMITTED spend attributed to this source (actual + provisioned holds), USD cents. Σ over sources == spend.totalSpentCents."
+                    },
+                    "actualSpentCents": {
+                      "type": "integer",
+                      "description": "ACTUAL (billed) spend attributed to this source, USD cents. Σ over sources == spend.actualSpentCents."
+                    },
+                    "provisionedSpentCents": {
+                      "type": "integer",
+                      "description": "Open PROVISIONED holds attributed to this source (= totalSpentCents − actualSpentCents), USD cents. Σ over sources == spend.provisionedSpentCents."
                     },
                     "sharePct": {
                       "type": "number",
-                      "description": "This source's share of totalSpentCents, percent (0–100). 0 when totalSpentCents is 0."
+                      "description": "This source's share of the COMMITTED total (spend.totalSpentCents), percent (0–100). 0 when the committed total is 0."
                     }
                   },
                   "required": [
                     "source",
-                    "spentCents",
+                    "totalSpentCents",
+                    "actualSpentCents",
+                    "provisionedSpentCents",
                     "sharePct"
                   ]
                 },
-                "description": "Per cost-name actual spend + share-of-total, descending — the 'top cost sources' list pre-computed (the dashboard renders verbatim instead of summing the runs breakdown in the browser)."
+                "description": "Per cost-name committed/actual/provisioned spend + committed share-of-total, descending — the 'top cost sources' list pre-computed (the dashboard renders verbatim instead of summing the runs breakdown in the browser)."
               },
-              "cpcCents": {
+              "totalCpcCents": {
                 "type": "number",
                 "nullable": true,
-                "description": "Cost per website click = totalSpentCents / clicks (clicked.total). Null (renders '-'), never a false $0.00, when there are 0 clicks OR 0 attributed spend."
+                "description": "COMMITTED cost per website click = totalSpentCents / clicks (clicked.total). Null (renders '-'), never a false $0.00, when there are 0 clicks OR 0 committed spend."
               },
-              "cpsCents": {
+              "actualCpcCents": {
                 "type": "number",
                 "nullable": true,
-                "description": "Cost per signup, USD cents — PROJECTED via the shared EV funnel from the brand's actual CPC/CPPR + economics (same math as workflow-projection / public cost-projection). Null when no economics or no usable click/reply cost basis."
+                "description": "ACTUAL (billed) cost per website click = actualSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 actual spend."
               },
-              "cpsmCents": {
+              "provisionedCpcCents": {
                 "type": "number",
                 "nullable": true,
-                "description": "Cost per sales meeting booked, USD cents — PROJECTED via the shared EV funnel. Null when no economics or no usable click/reply cost basis."
+                "description": "PROVISIONED cost per website click = provisionedSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 provisioned holds."
               }
             },
             "required": [
               "totalSpentCents",
-              "todaySpentCents",
+              "actualSpentCents",
+              "provisionedSpentCents",
+              "totalSpentTodayCents",
+              "actualSpentTodayCents",
+              "provisionedSpentTodayCents",
               "sources",
-              "cpcCents",
-              "cpsCents",
-              "cpsmCents"
+              "totalCpcCents",
+              "actualCpcCents",
+              "provisionedCpcCents"
             ],
-            "description": "Canonical spend block for the Overview card (Total spent / today / top sources / CPC / cost-per-signup / cost-per-sales-meeting), reconciled to runs ACTUAL spend. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396)"
+            "description": "Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"
           },
           "outreachContacted": {
             "type": "object",
@@ -960,19 +990,19 @@
           "costEconomics": {
             "type": "object",
             "properties": {
-              "totalCostUsd": {
+              "actualCostUsd": {
                 "type": "number",
-                "description": "ACTUAL run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.actualCostInUsdCents and spend.totalSpentCents (excludes provisioned holds), so ROI/CAC reconcile with the displayed Total spent. (features-service#396)"
+                "description": "ACTUAL (billed) run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). ROI/CAC ride REALIZED spend, so this is the billed amount ONLY — it EXCLUDES the provisioned holds that the `spend` block's committed total… figures include. Named `actualCostUsd` (renamed from the ambiguous `totalCostUsd`) to be unambiguously distinct from those committed total… figures. Same source as /stats systemStats.actualCostInUsdCents and spend.actualSpentCents. (features-service#396, naming features-service#402)"
               },
               "costOfAcquisitionPct": {
                 "type": "number",
                 "nullable": true,
-                "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                "description": "(actualCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
               },
               "roiMultiple": {
                 "type": "number",
                 "nullable": true,
-                "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
+                "description": "totalPipelineUsd / actualCostUsd. Null when actualCostUsd is 0 or totalPipelineUsd is null."
               },
               "expectedConversions": {
                 "type": "number",
@@ -981,11 +1011,11 @@
               "costPerConversionUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "LENS ONLY — totalCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                "description": "LENS ONLY — actualCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
               }
             },
             "required": [
-              "totalCostUsd",
+              "actualCostUsd",
               "costOfAcquisitionPct",
               "roiMultiple"
             ],
@@ -1315,19 +1345,19 @@
                 "costEconomics": {
                   "type": "object",
                   "properties": {
-                    "totalCostUsd": {
+                    "actualCostUsd": {
                       "type": "number",
-                      "description": "ACTUAL run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.actualCostInUsdCents and spend.totalSpentCents (excludes provisioned holds), so ROI/CAC reconcile with the displayed Total spent. (features-service#396)"
+                      "description": "ACTUAL (billed) run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). ROI/CAC ride REALIZED spend, so this is the billed amount ONLY — it EXCLUDES the provisioned holds that the `spend` block's committed total… figures include. Named `actualCostUsd` (renamed from the ambiguous `totalCostUsd`) to be unambiguously distinct from those committed total… figures. Same source as /stats systemStats.actualCostInUsdCents and spend.actualSpentCents. (features-service#396, naming features-service#402)"
                     },
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(actualCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "totalPipelineUsd / actualCostUsd. Null when actualCostUsd is 0 or totalPipelineUsd is null."
                     },
                     "expectedConversions": {
                       "type": "number",
@@ -1336,11 +1366,11 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — totalCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — actualCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
                     }
                   },
                   "required": [
-                    "totalCostUsd",
+                    "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple"
                   ]
@@ -2171,19 +2201,19 @@
                 "costEconomics": {
                   "type": "object",
                   "properties": {
-                    "totalCostUsd": {
+                    "actualCostUsd": {
                       "type": "number",
-                      "description": "ACTUAL run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.actualCostInUsdCents and spend.totalSpentCents (excludes provisioned holds), so ROI/CAC reconcile with the displayed Total spent. (features-service#396)"
+                      "description": "ACTUAL (billed) run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). ROI/CAC ride REALIZED spend, so this is the billed amount ONLY — it EXCLUDES the provisioned holds that the `spend` block's committed total… figures include. Named `actualCostUsd` (renamed from the ambiguous `totalCostUsd`) to be unambiguously distinct from those committed total… figures. Same source as /stats systemStats.actualCostInUsdCents and spend.actualSpentCents. (features-service#396, naming features-service#402)"
                     },
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(actualCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "totalPipelineUsd / actualCostUsd. Null when actualCostUsd is 0 or totalPipelineUsd is null."
                     },
                     "expectedConversions": {
                       "type": "number",
@@ -2192,11 +2222,11 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — totalCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — actualCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
                     }
                   },
                   "required": [
-                    "totalCostUsd",
+                    "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple"
                   ]

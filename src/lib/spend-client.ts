@@ -1,19 +1,28 @@
 /**
- * Canonical brand(+campaign)+feature ACTUAL spend, decomposed by cost source, from runs-service.
+ * Canonical brand(+campaign)+feature spend, decomposed by cost source, from runs-service.
  *
- * "Total spent" on the dashboard is the runs-service ACTUAL spend (only `actual` counts as billable
- * usage — provisioned holds + cancelled reservations are NOT spend). So this client reads
- * `actualCostInUsdCents`, NOT `totalCostInUsdCents` (which includes provisioned holds and is what the
- * old systemStats.totalCostInUsdCents over-reported — the CPC-vs-Total-spent divergence this fixes).
+ * NAMING CONVENTION (product-owner mandated — total/actual/provisioned, applied service-wide so a
+ * field name can never lie about which accounting it carries):
+ *   - total…        = COMMITTED = ACTUAL + PROVISIONED (the money already reserved — what the
+ *                     dashboard "Total spent" / CPC now show).
+ *   - actual…       = actualized / billed spend only (only `actual` counts as billable usage).
+ *   - provisioned…  = open provisioned holds only (reserved for scheduled follow-up sends, not yet
+ *                     billed; released — net drop — when a hold cancels or actualizes).
  *
- * Returns ONE coherent block:
- *   - totalSpentCents  = Σ actual across the feature-scoped run population (the canonical "Total spent").
- *   - todaySpentCents  = Σ actual for runs started since 00:00 UTC today.
- *   - sources[]        = per cost-name actual spend + share-of-total, descending — the "top cost
- *                        sources" list + percentages, pre-computed so the dashboard renders verbatim.
+ * runs-service `/v1/stats/costs` returns BOTH `totalCostInUsdCents` (committed = actual + provisioned
+ * holds) and `actualCostInUsdCents` (billable) per group, so we read both and derive provisioned =
+ * total − actual. (Earlier this client read only `actualCostInUsdCents` and mislabelled it
+ * `totalSpentCents` — features-service#396; the name now matches the value.)
  *
- * The total is derived from the SAME per-source rows the dashboard lists, so "Total spent" and the
- * source breakdown are coherent by construction, and any CPC derived from totalSpentCents reconciles
+ * Returns ONE coherent block (each {total,actual,provisioned} triple satisfies total = actual +
+ * provisioned, and the top-level totals equal Σ over `sources`):
+ *   - {total,actual,provisioned}SpentCents      = Σ over the feature-scoped run population.
+ *   - {total,actual,provisioned}SpentTodayCents  = Σ for runs started since 00:00 UTC today.
+ *   - sources[]  = per cost-name committed/actual/provisioned spend + committed share-of-total,
+ *                  descending — the "top cost sources" list + percentages, pre-computed.
+ *
+ * The totals are derived from the SAME per-source rows the dashboard lists, so "Total spent" and the
+ * source breakdown are coherent by construction, and any CPC derived from these totals reconciles
  * with the displayed spend.
  *
  * Fail-loud: a swallowed runs error would fake $0 spend → fake CPC / $0.00 cost. Any transport /
@@ -24,20 +33,37 @@ import { fetchWithRetry } from "./fetch-retry.js";
 export interface SpendSource {
   /** runs-service cost name (the billable line item, e.g. "apollo people-search", "email-send-step-1"). */
   source: string;
-  /** Actual spend attributed to this source, USD cents. */
-  spentCents: number;
-  /** This source's share of totalSpentCents, percent (0–100). 0 when totalSpentCents is 0. */
+  /** Committed spend attributed to this source (actual + provisioned), USD cents. */
+  totalSpentCents: number;
+  /** Actualized / billed spend attributed to this source, USD cents. */
+  actualSpentCents: number;
+  /** Open provisioned holds attributed to this source (= total − actual), USD cents. */
+  provisionedSpentCents: number;
+  /** This source's share of the COMMITTED total (totalSpentCents), percent (0–100). 0 when the committed total is 0. */
   sharePct: number;
 }
 
 export interface SpendBreakdown {
+  /** COMMITTED total = actual + provisioned (the displayed "Total spent"). */
   totalSpentCents: number;
-  todaySpentCents: number;
+  /** Actualized / billed spend only. */
+  actualSpentCents: number;
+  /** Open provisioned holds only (= total − actual). */
+  provisionedSpentCents: number;
+  /** COMMITTED total for runs started since 00:00 UTC today. */
+  totalSpentTodayCents: number;
+  /** Actualized / billed spend for runs started since 00:00 UTC today. */
+  actualSpentTodayCents: number;
+  /** Open provisioned holds for runs started since 00:00 UTC today (= total − actual). */
+  provisionedSpentTodayCents: number;
   sources: SpendSource[];
 }
 
 interface RunsCostGroup {
   dimensions?: Record<string, string | null>;
+  /** COMMITTED = actual + provisioned holds. */
+  totalCostInUsdCents: string;
+  /** Actualized / billed only. */
   actualCostInUsdCents: string;
   runCount: number;
 }
@@ -78,10 +104,15 @@ async function fetchCostGroups(
   return data.groups;
 }
 
-function sumActual(groups: RunsCostGroup[]): number {
-  let cents = 0;
-  for (const g of groups) cents += Math.round(Number(g.actualCostInUsdCents));
-  return cents;
+/** Σ committed (actual + provisioned holds) and Σ actual (billed) across the groups, USD cents. */
+function sumGroups(groups: RunsCostGroup[]): { totalCents: number; actualCents: number } {
+  let totalCents = 0;
+  let actualCents = 0;
+  for (const g of groups) {
+    totalCents += Math.round(Number(g.totalCostInUsdCents));
+    actualCents += Math.round(Number(g.actualCostInUsdCents));
+  }
+  return { totalCents, actualCents };
 }
 
 /** Start of the current UTC day as an ISO timestamp (for the today-spend filter). */
@@ -104,8 +135,9 @@ export async function fetchSpendBreakdown(
 
   const reqHeaders = buildHeaders(apiKey, brandId, campaignId, headers);
 
-  // By-source (groupBy=costName): the per-line-item actual spend rows. The total is Σ of these,
-  // so "Total spent" == sum of the source list the dashboard renders (coherent by construction).
+  // By-source (groupBy=costName): the per-line-item rows carrying committed + actual. The totals are
+  // Σ of these, so "Total spent" == sum of the source list the dashboard renders (coherent by
+  // construction) for each of committed / actual / provisioned.
   const sourceParams = new URLSearchParams({ groupBy: "costName", brandId, featureSlugs: featureSlug });
   if (campaignId) sourceParams.set("campaignId", campaignId);
 
@@ -118,20 +150,34 @@ export async function fetchSpendBreakdown(
     fetchCostGroups(baseUrl, apiKey, todayParams, reqHeaders),
   ]);
 
-  const totalSpentCents = sumActual(sourceGroups);
-  const todaySpentCents = sumActual(todayGroups);
+  const all = sumGroups(sourceGroups);
+  const today = sumGroups(todayGroups);
 
   const sources: SpendSource[] = sourceGroups
     .map((g) => {
-      const spentCents = Math.round(Number(g.actualCostInUsdCents));
+      const totalCents = Math.round(Number(g.totalCostInUsdCents));
+      const actualCents = Math.round(Number(g.actualCostInUsdCents));
       return {
         source: g.dimensions?.costName ?? "unknown",
-        spentCents,
-        sharePct: totalSpentCents > 0 ? (spentCents / totalSpentCents) * 100 : 0,
+        totalSpentCents: totalCents,
+        actualSpentCents: actualCents,
+        provisionedSpentCents: totalCents - actualCents,
+        // Share of the COMMITTED total — coherent with the displayed "Total spent".
+        sharePct: all.totalCents > 0 ? (totalCents / all.totalCents) * 100 : 0,
       };
     })
-    .filter((s) => s.spentCents > 0)
-    .sort((a, b) => b.spentCents - a.spentCents || a.source.localeCompare(b.source));
+    // A row with committed 0 has actual 0 too (committed ≥ actual ≥ 0), so dropping it preserves the
+    // invariant total == Σ sources for all three accountings.
+    .filter((s) => s.totalSpentCents > 0)
+    .sort((a, b) => b.totalSpentCents - a.totalSpentCents || a.source.localeCompare(b.source));
 
-  return { totalSpentCents, todaySpentCents, sources };
+  return {
+    totalSpentCents: all.totalCents,
+    actualSpentCents: all.actualCents,
+    provisionedSpentCents: all.totalCents - all.actualCents,
+    totalSpentTodayCents: today.totalCents,
+    actualSpentTodayCents: today.actualCents,
+    provisionedSpentTodayCents: today.totalCents - today.actualCents,
+    sources,
+  };
 }

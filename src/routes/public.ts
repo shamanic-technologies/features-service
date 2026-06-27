@@ -548,7 +548,7 @@ export async function handlePublicRevenue(
         return {
           brandId,
           pipeline: body.headline.totalPipelineUsd,
-          costUsd: body.costEconomics.totalCostUsd,
+          costUsd: body.costEconomics.actualCostUsd,
           timeSeries: body.timeSeries,
         };
       } catch (error) {
@@ -611,11 +611,11 @@ export async function handlePublicRevenue(
   results.sort((a, b) => {
     const ap = a.headline.totalPipelineUsd;
     const bp = b.headline.totalPipelineUsd;
-    if (ap === null && bp === null) return b.costEconomics.totalCostUsd - a.costEconomics.totalCostUsd;
+    if (ap === null && bp === null) return b.costEconomics.actualCostUsd - a.costEconomics.actualCostUsd;
     if (ap === null) return 1;
     if (bp === null) return -1;
     if (bp !== ap) return bp - ap;
-    return b.costEconomics.totalCostUsd - a.costEconomics.totalCostUsd;
+    return b.costEconomics.actualCostUsd - a.costEconomics.actualCostUsd;
   });
 
   const payload: PublicRevenuePayload = { featureSlug, groupBy: "brand", results };

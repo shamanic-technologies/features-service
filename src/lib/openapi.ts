@@ -289,11 +289,11 @@ const revenueEventSchema = z.object({
 });
 
 const revenueCostEconomicsSchema = z.object({
-  totalCostUsd: z.number().describe("ACTUAL run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). Same source as /stats systemStats.actualCostInUsdCents and spend.totalSpentCents (excludes provisioned holds), so ROI/CAC reconcile with the displayed Total spent. (features-service#396)"),
-  costOfAcquisitionPct: z.number().nullable().describe("(totalCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."),
-  roiMultiple: z.number().nullable().describe("totalPipelineUsd / totalCostUsd. Null when totalCostUsd is 0 or totalPipelineUsd is null."),
+  actualCostUsd: z.number().describe("ACTUAL (billed) run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). ROI/CAC ride REALIZED spend, so this is the billed amount ONLY — it EXCLUDES the provisioned holds that the `spend` block's committed total… figures include. Named `actualCostUsd` (renamed from the ambiguous `totalCostUsd`) to be unambiguously distinct from those committed total… figures. Same source as /stats systemStats.actualCostInUsdCents and spend.actualSpentCents. (features-service#396, naming features-service#402)"),
+  costOfAcquisitionPct: z.number().nullable().describe("(actualCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."),
+  roiMultiple: z.number().nullable().describe("totalPipelineUsd / actualCostUsd. Null when actualCostUsd is 0 or totalPipelineUsd is null."),
   expectedConversions: z.number().optional().describe("LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
-  costPerConversionUsd: z.number().nullable().optional().describe("LENS ONLY — totalCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
+  costPerConversionUsd: z.number().nullable().optional().describe("LENS ONLY — actualCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
 });
 
 // Server-computed "contacted" aggregates for the Overview's Outreach surfaces (stat card + 7-day
@@ -320,26 +320,36 @@ const signalSeriesSchema = z.object({
 });
 
 // Canonical spend block for the Overview "Outreach & Conversions" card — every number rendered
-// verbatim (no client arithmetic). Reconciled by construction: totalSpentCents is the runs ACTUAL
-// spend (== Σ sources), cpcCents = totalSpentCents / clicks (clicked.total on the same response).
+// verbatim (no client arithmetic). NAMING CONVENTION total/actual/provisioned: total… = COMMITTED
+// (actual + provisioned holds, the displayed "Total spent" / "Budget spent today" / "CPC"); actual…
+// = billed only; provisioned… = open holds only (= total − actual). Reconciled by construction:
+// each total/actual/provisioned == Σ sources of the same accounting; each …CpcCents = the matching
+// spend / clicks (clicked.total on the same response). The committed total… legitimately DIPS when a
+// hold releases (a follow-up actualizes net-zero; a cancelled hold drops it).
 const spendSourceSchema = z.object({
   source: z.string().describe("runs-service cost name (billable line item, e.g. 'apollo people-search', 'email-send-step-1')."),
-  spentCents: z.number().int().describe("Actual spend attributed to this source, USD cents."),
-  sharePct: z.number().describe("This source's share of totalSpentCents, percent (0–100). 0 when totalSpentCents is 0."),
+  totalSpentCents: z.number().int().describe("COMMITTED spend attributed to this source (actual + provisioned holds), USD cents. Σ over sources == spend.totalSpentCents."),
+  actualSpentCents: z.number().int().describe("ACTUAL (billed) spend attributed to this source, USD cents. Σ over sources == spend.actualSpentCents."),
+  provisionedSpentCents: z.number().int().describe("Open PROVISIONED holds attributed to this source (= totalSpentCents − actualSpentCents), USD cents. Σ over sources == spend.provisionedSpentCents."),
+  sharePct: z.number().describe("This source's share of the COMMITTED total (spend.totalSpentCents), percent (0–100). 0 when the committed total is 0."),
 });
 
 const spendSchema = z.object({
-  totalSpentCents: z.number().int().describe("Canonical 'Total spent' — runs-service ACTUAL spend (USD cents) for the brand(+campaign)+feature, == Σ sources[].spentCents. Excludes provisioned holds, so it equals the displayed Total spent and reconciles with cpcCents."),
-  todaySpentCents: z.number().int().describe("Actual spend (USD cents) for runs started since 00:00 UTC today."),
-  sources: z.array(spendSourceSchema).describe("Per cost-name actual spend + share-of-total, descending — the 'top cost sources' list pre-computed (the dashboard renders verbatim instead of summing the runs breakdown in the browser)."),
-  cpcCents: z.number().nullable().describe("Cost per website click = totalSpentCents / clicks (clicked.total). Null (renders '-'), never a false $0.00, when there are 0 clicks OR 0 attributed spend."),
-  cpsCents: z.number().nullable().describe("Cost per signup, USD cents — PROJECTED via the shared EV funnel from the brand's actual CPC/CPPR + economics (same math as workflow-projection / public cost-projection). Null when no economics or no usable click/reply cost basis."),
-  cpsmCents: z.number().nullable().describe("Cost per sales meeting booked, USD cents — PROJECTED via the shared EV funnel. Null when no economics or no usable click/reply cost basis."),
+  totalSpentCents: z.number().int().describe("'Total spent' (COMMITTED, USD cents) = ACTUAL + PROVISIONED holds for the brand(+campaign)+feature, == Σ sources[].totalSpentCents. The reserved money the customer sees; dips when a hold releases. Reconciles with totalCpcCents by construction."),
+  actualSpentCents: z.number().int().describe("ACTUAL (billed) spend only (USD cents), == Σ sources[].actualSpentCents. Same source as systemStats.actualCostInUsdCents / costEconomics.actualCostUsd (the realized spend ROI/CAC ride)."),
+  provisionedSpentCents: z.number().int().describe("Open PROVISIONED holds only (USD cents) = totalSpentCents − actualSpentCents, == Σ sources[].provisionedSpentCents. Money reserved for scheduled follow-up sends, not yet billed."),
+  totalSpentTodayCents: z.number().int().describe("COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'."),
+  actualSpentTodayCents: z.number().int().describe("ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today."),
+  provisionedSpentTodayCents: z.number().int().describe("Open PROVISIONED holds (USD cents) = totalSpentTodayCents − actualSpentTodayCents, for runs started since 00:00 UTC today."),
+  sources: z.array(spendSourceSchema).describe("Per cost-name committed/actual/provisioned spend + committed share-of-total, descending — the 'top cost sources' list pre-computed (the dashboard renders verbatim instead of summing the runs breakdown in the browser)."),
+  totalCpcCents: z.number().nullable().describe("COMMITTED cost per website click = totalSpentCents / clicks (clicked.total). Null (renders '-'), never a false $0.00, when there are 0 clicks OR 0 committed spend."),
+  actualCpcCents: z.number().nullable().describe("ACTUAL (billed) cost per website click = actualSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 actual spend."),
+  provisionedCpcCents: z.number().nullable().describe("PROVISIONED cost per website click = provisionedSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 provisioned holds."),
 });
 
 const featureRevenueResponseSchema = z.object({
   featureSlug: z.string(),
-  spend: spendSchema.nullable().describe("Canonical spend block for the Overview card (Total spent / today / top sources / CPC / cost-per-signup / cost-per-sales-meeting), reconciled to runs ACTUAL spend. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396)"),
+  spend: spendSchema.nullable().describe("Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"),
   outreachContacted: outreachContactedSchema.describe("Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."),
   opened: signalSeriesSchema.describe("Opens ACTUAL series for the Overview daily graph, server-computed from the SAME leads[] snapshot — coherent with outreachContacted + the table (features-service#377). Replaces the pipeline-activity/instantly event-day source."),
   clicked: signalSeriesSchema.describe("Clicks ACTUAL series (website visits), server-computed from the SAME leads[] snapshot. ALSO the signup-goal's observed outcome — a downstream account signup is not tracked here, so the visit is the coherent signup-funnel actual; the dashboard scales it by visitToSignupPct for the projected signups line (forecast). features-service#377."),
