@@ -127,33 +127,49 @@ audiences after #295 get attributed; historical = unattributed, acceptable.
 `HUMAN_SERVICE_URL`/`HUMAN_SERVICE_API_KEY` are read at CALL time (no boot crash) and fail loud when
 the targeting read runs without them — no fallback. (Set 2026-06-19; persona-stats alias removed 2026-06-20.)
 
-## Displayed spend is runs `actualCostInUsdCents`, NOT `totalCostInUsdCents` — the reconciliation invariant (PR #396)
+## Spend naming convention: `total…`=committed (actual+provisioned), `actual…`=billed, `provisioned…`=holds — `/revenue` `spend` shows COMMITTED; ROI stays ACTUAL (PR #396, committed-naming PR #403)
 
 runs-service `/v1/stats/costs` returns BOTH `totalCostInUsdCents` (committed = actual + **provisioned
-holds**) and `actualCostInUsdCents` (only `actual` is billable spend). The dashboard's "Total spent" is
-the ACTUAL spend; the old CPC numerator (`systemStats.totalCostInUsdCents`) used the inflated total, so
-CPC (~$5.25 off ~$383) never reconciled with the displayed spend (~$359 → $4.92). **Every DISPLAYED cost
-number in this service reads `actualCostInUsdCents`:**
+holds**) and `actualCostInUsdCents` (only `actual` is billable spend) per group. The service-wide naming
+convention (a field name must never lie about its accounting):
 
-- `fetchRunsCostCents` (revenue.ts) sums `actualCostInUsdCents` → `costEconomics.totalCostUsd` (ROI/CAC),
-  brand + grouped + lens + public revenue.
-- `lib/spend-client.ts` `fetchSpendBreakdown` (the `/revenue` `spend` block: `totalSpentCents`,
-  `todaySpentCents` via `startedAfter`, per-`costName` `sources[]{spentCents,sharePct}`) sums actual;
-  `total == Σ sources`, fail-loud. `spend.cpcCents = totalSpentCents / clicked.total` (the snapshot
-  clicks) → CPC reconciles with Total spent BY CONSTRUCTION. `cpsCents`/`cpsmCents` are PROJECTED via the
-  shared `projectOutcomeCosts` EV funnel from the brand's actual CPC/CPPR + economics; null-safe.
-  `spend` is on the OVERVIEW only (null on `?lens=`, absent on `?groupBy=campaignId` groups).
-- `/stats` `systemStats.actualCostInUsdCents` (added alongside `totalCostInUsdCents` for back-compat) +
-  the stats-registry `actualCostInUsdCents` raw key, to which **every `costPer*Cents` derived numerator
-  points** (incl. `costPerOutletCents` = avg cost-per-outlet). So all cost-per-X reconcile with spend.
+- **`total…`** = COMMITTED = ACTUAL + PROVISIONED (money already reserved, incl. open holds for
+  scheduled follow-up sends). The customer-facing "Total spent" / "Budget spent today" / "CPC". It
+  legitimately **DIPS** when a hold releases (a follow-up actualizes → net-zero; a cancelled hold → drop).
+- **`actual…`** = actualized / billed spend only. ROI/CAC and projected cost-per-outcome ride THIS.
+- **`provisioned…`** = open holds only (= total − actual).
+
+**The `/revenue` `spend` block displays COMMITTED** (PR #403 — product wants customers to see reserved
+money, not only billed). `lib/spend-client.ts` `fetchSpendBreakdown` reads BOTH runs fields and derives
+provisioned = total − actual. The block exposes nine fields, each `total… = actual + provisioned`:
+`{total,actual,provisioned}SpentCents`, `{total,actual,provisioned}SpentTodayCents` (via `startedAfter`),
+`{total,actual,provisioned}CpcCents`. `sources[]{totalSpentCents,actualSpentCents,provisionedSpentCents,
+sharePct}` (sharePct = share of committed). Reconciled BY CONSTRUCTION: each top-level total/actual/
+provisioned == Σ over `sources`; each `…CpcCents` = its OWN spend ÷ `clicked.total`. `cpsCents`/`cpsmCents`
+are PROJECTED via the shared `projectOutcomeCosts` EV funnel from the brand's **ACTUAL** CPC/CPPR +
+economics (a forecast must not inflate on reserved-but-unbilled holds); null-safe. `spend` is on the
+OVERVIEW only (null on `?lens=`, absent on `?groupBy=campaignId` groups). fail-loud.
+
+**ROI/CAC + `costEconomics` ride REALIZED (ACTUAL) spend, NOT committed.** `fetchRunsCostCents`
+(revenue.ts) sums `actualCostInUsdCents` → `costEconomics.actualCostUsd` (renamed from the ambiguous
+`totalCostUsd` in PR #403 so it is unmistakably distinct from the committed `total…` figures) — brand +
+grouped + lens + public revenue. ROI = `pipeline / actualCostUsd`, CAC = `actualCostUsd / pipeline`.
+Counting reserved-but-unbilled holds as cost-spent would understate ROI on money not yet billed.
+
+- `/stats` `systemStats.actualCostInUsdCents` (alongside `totalCostInUsdCents`) + the stats-registry
+  `actualCostInUsdCents` raw key, to which **every `costPer*Cents` derived numerator points** (incl.
+  `costPerOutletCents`). **Already** convention-compliant (actual = billed, total = committed) — NOT
+  renamed by #403.
 - `workflow-projection` `roiMultiple = LTR / costPerCloseUsd` (budget-independent, = 100/cacPct) — the
   dashboard renders it instead of inverting `cacPct` client-side.
 
 Null-safe convention (mirrors per-audience `metrics.cpcCents`): a ratio is **null** (renders "-"), never
-a false **$0.00**, when its denominator OR the attributed spend is 0. Do NOT re-point any displayed cost
-back to `totalCostInUsdCents`, and do NOT add a smoothing/floor to force a CPC number. The per-audience
-`/audience-stats metrics.*Cents` still keys on `totalCostInUsdCents` and is INTENTIONALLY left untouched
-(its provisioned component is negligible at that grain; changing it is out of scope). (Set 2026-06-26.)
+a false **$0.00**, when its denominator OR the attributed spend is 0. Do NOT add a smoothing/floor to
+force a CPC number. The per-audience `/audience-stats metrics.*Cents` (and `pipeline-activity` cpc) still
+key on `totalCostInUsdCents` (committed) and are INTENTIONALLY left untouched (provisioned component
+negligible at that grain; **campaign-service consumes `metrics.cpcCents` byte-equal** via
+`features-audience-client.ts`, so renaming there would break it — out of scope). (Set 2026-06-26;
+committed-spend on `/revenue` + total/actual/provisioned naming 2026-06-27, PR #403.)
 
 ## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #346)
 
