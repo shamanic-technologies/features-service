@@ -666,7 +666,7 @@ function setPairResults(pairs: Record<string, PairResult>): void {
       const v = pairs[`${headers.orgId}::${brandId}`] ?? { pipeline: 0, costUsd: 0 };
       return {
         headline: { totalPipelineUsd: v.pipeline },
-        costEconomics: { totalCostUsd: v.costUsd, costOfAcquisitionPct: null, roiMultiple: null },
+        costEconomics: { actualCostUsd: v.costUsd, costOfAcquisitionPct: null, roiMultiple: null },
         timeSeries: v.timeSeries ?? [], organizations: [], leads: [], events: [],
       };
     },
@@ -727,14 +727,14 @@ describe("GET /public/stats/revenue", () => {
     expect(b1.brand.id).toBe("brand-1");
     expect(b1.brand.name).toBe("Acme");
     expect(b1.headline.totalPipelineUsd).toBe(140);
-    expect(b1.costEconomics.totalCostUsd).toBe(15); // 10 + 5
+    expect(b1.costEconomics.actualCostUsd).toBe(15); // 10 + 5
     expect(b1.costEconomics.roiMultiple).toBeCloseTo(140 / 15, 5);
     expect(b1.costEconomics.costOfAcquisitionPct).toBeCloseTo((15 / 140) * 100, 5);
 
     const b2 = res.body.results[1];
     expect(b2.brand.id).toBe("brand-2");
     expect(b2.headline.totalPipelineUsd).toBe(30);
-    expect(b2.costEconomics.totalCostUsd).toBe(8);
+    expect(b2.costEconomics.actualCostUsd).toBe(8);
 
     // 3 distinct (org, brand) pairs → engine called exactly 3 times (not 4 — wf rows deduped)
     expect(mockComputeFeatureRevenue).toHaveBeenCalledTimes(3);
@@ -759,7 +759,7 @@ describe("GET /public/stats/revenue", () => {
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(1);
     expect(res.body.results[0].headline.totalPipelineUsd).toBeNull();
-    expect(res.body.results[0].costEconomics.totalCostUsd).toBe(12);
+    expect(res.body.results[0].costEconomics.actualCostUsd).toBe(12);
     expect(res.body.results[0].costEconomics.roiMultiple).toBeNull();
     expect(res.body.results[0].costEconomics.costOfAcquisitionPct).toBeNull();
   });
@@ -811,7 +811,7 @@ describe("GET /public/stats/revenue", () => {
       }
       return {
         headline: { totalPipelineUsd: 75 },
-        costEconomics: { totalCostUsd: 5, costOfAcquisitionPct: null, roiMultiple: null },
+        costEconomics: { actualCostUsd: 5, costOfAcquisitionPct: null, roiMultiple: null },
         timeSeries: [], organizations: [], leads: [], events: [],
       };
     });
