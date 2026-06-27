@@ -145,10 +145,11 @@ provisioned = total − actual. The block exposes nine fields, each `total… = 
 `{total,actual,provisioned}SpentCents`, `{total,actual,provisioned}SpentTodayCents` (via `startedAfter`),
 `{total,actual,provisioned}CpcCents`. `sources[]{totalSpentCents,actualSpentCents,provisionedSpentCents,
 sharePct}` (sharePct = share of committed). Reconciled BY CONSTRUCTION: each top-level total/actual/
-provisioned == Σ over `sources`; each `…CpcCents` = its OWN spend ÷ `clicked.total`. `cpsCents`/`cpsmCents`
-are PROJECTED via the shared `projectOutcomeCosts` EV funnel from the brand's **ACTUAL** CPC/CPPR +
-economics (a forecast must not inflate on reserved-but-unbilled holds); null-safe. `spend` is on the
-OVERVIEW only (null on `?lens=`, absent on `?groupBy=campaignId` groups). fail-loud.
+provisioned == Σ over `sources`; each `…CpcCents` = its OWN spend ÷ `clicked.total`; null-safe. The
+projected `cpsCents`/`cpsmCents` (cost-per-signup / -sales-meeting) were REMOVED from the block (PR #406,
+breaking) — do NOT re-add them here; cost-per-outcome projection lives in `workflow-projection` /
+`/public/stats/cost-projection`, not the `spend` block. `spend` is on the OVERVIEW only (null on
+`?lens=`, absent on `?groupBy=campaignId` groups). fail-loud.
 
 **ROI/CAC + `costEconomics` ride REALIZED (ACTUAL) spend, NOT committed.** `fetchRunsCostCents`
 (revenue.ts) sums `actualCostInUsdCents` → `costEconomics.actualCostUsd` (renamed from the ambiguous
