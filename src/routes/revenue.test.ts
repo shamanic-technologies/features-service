@@ -427,14 +427,14 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.costEconomics.costPerConversionUsd).toBeNull(); // div-by-zero guard
   });
 
-  it("lens costEconomics — expectedConversions == sum(p); costPerConversionUsd == totalCostUsd / sum(p)", async () => {
+  it("lens costEconomics — expectedConversions == sum(p); costPerConversionUsd == actualCostUsd / sum(p)", async () => {
     mockFetch({ economics: ECONOMICS, leads: LENS_LEADS, costCents: 8000 }); // $80 cost
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=sales").set(AUTH);
     expect(res.status).toBe(200);
     // sales lens: lc=0.0347 + lr=0.12 + lb=0.150536 = 0.305236 (cold excluded)
     const sumP = 0.0347 + 0.12 + 0.150536;
     expect(res.body.costEconomics.expectedConversions).toBeCloseTo(sumP, 6);
-    expect(res.body.costEconomics.totalCostUsd).toBe(80);
+    expect(res.body.costEconomics.actualCostUsd).toBe(80);
     expect(res.body.costEconomics.costPerConversionUsd).toBeCloseTo(80 / sumP, 5);
     // totalPipelineUsd == expectedConversions × LTR
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(sumP * 1000, 3);
@@ -558,17 +558,17 @@ describe("GET /features/:featureSlug/revenue", () => {
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5);
-    expect(res.body.costEconomics.totalCostUsd).toBe(70);
+    expect(res.body.costEconomics.actualCostUsd).toBe(70);
     expect(res.body.costEconomics.costOfAcquisitionPct).toBeCloseTo((70 / 154.7) * 100, 4); // 70/154.7*100
     expect(res.body.costEconomics.roiMultiple).toBeCloseTo(154.7 / 70, 4); // 154.7/70
   });
 
-  it("costEconomics — null pipeline (no economics): both ratios null, totalCostUsd real", async () => {
+  it("costEconomics — null pipeline (no economics): both ratios null, actualCostUsd real", async () => {
     mockFetch({ economics: null, costCents: 5000 });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeNull();
-    expect(res.body.costEconomics.totalCostUsd).toBe(50);
+    expect(res.body.costEconomics.actualCostUsd).toBe(50);
     expect(res.body.costEconomics.costOfAcquisitionPct).toBeNull();
     expect(res.body.costEconomics.roiMultiple).toBeNull();
   });
@@ -579,7 +579,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     const res = await request(app).get("/features/pr-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeNull();
-    expect(res.body.costEconomics.totalCostUsd).toBe(30);
+    expect(res.body.costEconomics.actualCostUsd).toBe(30);
     expect(res.body.costEconomics.costOfAcquisitionPct).toBeNull();
     expect(res.body.costEconomics.roiMultiple).toBeNull();
   });
@@ -589,7 +589,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5);
-    expect(res.body.costEconomics.totalCostUsd).toBe(0);
+    expect(res.body.costEconomics.actualCostUsd).toBe(0);
     expect(res.body.costEconomics.costOfAcquisitionPct).toBe(0);
     expect(res.body.costEconomics.roiMultiple).toBeNull();
   });
@@ -716,24 +716,66 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   // ── spend (Overview "Outreach & Conversions" cost block, features-service#396) ──
 
-  it("spend — reconciled by construction: totalSpentCents == actual, cpcCents == totalSpentCents / clicked.total", async () => {
-    // HAPPY_LEADS = 1 click + 1 reply. costCents 7000 → 1 click → CPC must be exactly 7000/1.
+  it("spend — reconciled by construction: committed/actual/provisioned + each CPC == its own spend / clicked.total", async () => {
+    // HAPPY_LEADS = 1 click + 1 reply. mock total==actual==7000 → provisioned 0. CPC = 7000/1.
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000 });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
+    // total (committed) = actual + provisioned. With total==actual in this mock, provisioned is 0.
     expect(res.body.spend.totalSpentCents).toBe(7000);
-    // totalSpentCents is the ACTUAL spend == costEconomics.totalCostUsd (coherent, no divergence).
-    expect(res.body.spend.totalSpentCents).toBe(res.body.costEconomics.totalCostUsd * 100);
-    // The core reconciliation AC: CPC == that same total ÷ the displayed clicks (clicked.total).
+    expect(res.body.spend.actualSpentCents).toBe(7000);
+    expect(res.body.spend.provisionedSpentCents).toBe(0);
+    expect(res.body.spend.totalSpentCents).toBe(res.body.spend.actualSpentCents + res.body.spend.provisionedSpentCents);
+    // ROI/CAC ride ACTUAL spend — costEconomics.actualCostUsd == actualSpentCents (coherent).
+    expect(res.body.spend.actualSpentCents).toBe(res.body.costEconomics.actualCostUsd * 100);
+    // The core reconciliation AC: each CPC == its OWN spend ÷ the displayed clicks (clicked.total).
     expect(res.body.clicked.total).toBe(1);
-    expect(res.body.spend.cpcCents).toBe(res.body.spend.totalSpentCents / res.body.clicked.total);
-    expect(res.body.spend.cpcCents).toBe(7000);
+    expect(res.body.spend.totalCpcCents).toBe(res.body.spend.totalSpentCents / res.body.clicked.total);
+    expect(res.body.spend.actualCpcCents).toBe(res.body.spend.actualSpentCents / res.body.clicked.total);
+    expect(res.body.spend.totalCpcCents).toBe(7000);
+    expect(res.body.spend.actualCpcCents).toBe(7000);
+    expect(res.body.spend.provisionedCpcCents).toBeNull(); // 0 provisioned → null, never a false $0.00
     // CPS / CPSM are projected via the shared EV funnel → populated when economics + a cost basis exist.
     expect(res.body.spend.cpsCents).not.toBeNull();
     expect(res.body.spend.cpsmCents).not.toBeNull();
   });
 
-  it("spend — null-safe: 0 clicks → cpcCents null (never a false $0.00), 0 spend → all ratios null", async () => {
+  it("spend — committed = actual + provisioned: total… includes holds, ROI stays on actual", async () => {
+    // runs returns committed 10000 (= 6000 billed + 4000 open holds). total… carries committed; actual…
+    // billed; provisioned… the holds. ROI/CAC + cps/cpsm ride ACTUAL only.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/stats/costs")) {
+        if (url.includes("startedAfter")) return json({ groups: [{ dimensions: {}, totalCostInUsdCents: "3000", actualCostInUsdCents: "2000", runCount: 0 }] });
+        return json({ groups: [{ dimensions: { costName: "email-send-step-1" }, totalCostInUsdCents: "10000", actualCostInUsdCents: "6000", runCount: 0 }] });
+      }
+      if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+      if (url.includes("/public/stats")) return json(PLATFORM_STATS);
+      if (url.includes("/orgs/leads")) return json({ leads: HAPPY_LEADS });
+      if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
+      if (url.includes("/orgs/status")) return json({ results: [] });
+      return json({});
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.spend.totalSpentCents).toBe(10000); // committed
+    expect(res.body.spend.actualSpentCents).toBe(6000); // billed
+    expect(res.body.spend.provisionedSpentCents).toBe(4000); // 10000 - 6000
+    expect(res.body.spend.totalSpentTodayCents).toBe(3000);
+    expect(res.body.spend.actualSpentTodayCents).toBe(2000);
+    expect(res.body.spend.provisionedSpentTodayCents).toBe(1000);
+    // 1 click → each CPC = its own spend / 1.
+    expect(res.body.spend.totalCpcCents).toBe(10000);
+    expect(res.body.spend.actualCpcCents).toBe(6000);
+    expect(res.body.spend.provisionedCpcCents).toBe(4000);
+    // ROI/CAC ride ACTUAL — costEconomics.actualCostUsd == actualSpentCents/100, NOT committed.
+    expect(res.body.costEconomics.actualCostUsd).toBe(60);
+    // sources carry all three accountings; sharePct is share of committed total.
+    expect(res.body.spend.sources[0]).toEqual({ source: "email-send-step-1", totalSpentCents: 10000, actualSpentCents: 6000, provisionedSpentCents: 4000, sharePct: 100 });
+  });
+
+  it("spend — null-safe: 0 clicks → every CPC null (never a false $0.00), 0 spend → all ratios null", async () => {
     // Reply-only lead → 0 clicks, but spend > 0 → CPC null (no denominator), CPS null (signups are
     // click-route only), CPSM non-null (the reply route funds meetings).
     const replyOnly = [leadRow({ leadId: "lr", email: "reply@y.com", replied: true, replyClassification: "positive", lead: { firstName: "R", lastName: "Y", photoUrl: null, organization: { id: "o2", name: "O2", logoUrl: null } } })];
@@ -741,20 +783,26 @@ describe("GET /features/:featureSlug/revenue", () => {
     let res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.clicked.total).toBe(0);
-    expect(res.body.spend.cpcCents).toBeNull();
+    expect(res.body.spend.totalCpcCents).toBeNull();
+    expect(res.body.spend.actualCpcCents).toBeNull();
+    expect(res.body.spend.provisionedCpcCents).toBeNull();
     expect(res.body.spend.cpsCents).toBeNull();
     expect(res.body.spend.cpsmCents).not.toBeNull();
 
-    // 0 spend → CPC null even with clicks (no attributed spend, not $0.00).
+    // 0 spend → every CPC null even with clicks (no attributed spend, not $0.00).
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 0 });
     res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.body.spend.totalSpentCents).toBe(0);
-    expect(res.body.spend.cpcCents).toBeNull();
+    expect(res.body.spend.actualSpentCents).toBe(0);
+    expect(res.body.spend.provisionedSpentCents).toBe(0);
+    expect(res.body.spend.totalCpcCents).toBeNull();
+    expect(res.body.spend.actualCpcCents).toBeNull();
+    expect(res.body.spend.provisionedCpcCents).toBeNull();
     expect(res.body.spend.cpsCents).toBeNull();
     expect(res.body.spend.cpsmCents).toBeNull();
   });
 
-  it("spend — per-source breakdown: actual spend by cost name + share-of-total (desc), plus today's spend", async () => {
+  it("spend — per-source breakdown: committed/actual/provisioned by cost name + share-of-total (desc), plus today's spend", async () => {
     // Distinct cost-name groups for the source breakdown; the today call (startedAfter set) returns a subset.
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
@@ -779,13 +827,13 @@ describe("GET /features/:featureSlug/revenue", () => {
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.spend.totalSpentCents).toBe(8000); // 6000 + 2000 (zero-line filtered out)
-    expect(res.body.spend.todaySpentCents).toBe(1500);
-    // Sources: descending by spend, zero-spend rows dropped, share-of-total pre-computed.
+    expect(res.body.spend.totalSpentTodayCents).toBe(1500);
+    // Sources: descending by committed spend, zero-spend rows dropped, share-of-committed-total pre-computed.
     expect(res.body.spend.sources).toHaveLength(2);
-    expect(res.body.spend.sources[0]).toEqual({ source: "email-send-step-1", spentCents: 6000, sharePct: 75 });
-    expect(res.body.spend.sources[1]).toEqual({ source: "apollo people-search", spentCents: 2000, sharePct: 25 });
+    expect(res.body.spend.sources[0]).toEqual({ source: "email-send-step-1", totalSpentCents: 6000, actualSpentCents: 6000, provisionedSpentCents: 0, sharePct: 75 });
+    expect(res.body.spend.sources[1]).toEqual({ source: "apollo people-search", totalSpentCents: 2000, actualSpentCents: 2000, provisionedSpentCents: 0, sharePct: 25 });
     // CPC derives from the SAME total → reconciles with the source list the dashboard renders.
-    expect(res.body.spend.cpcCents).toBe(8000 / res.body.clicked.total);
+    expect(res.body.spend.totalCpcCents).toBe(8000 / res.body.clicked.total);
   });
 
   it("spend — null on the lensed response (brand-total concept; lens pages use costPerConversionUsd)", async () => {
@@ -922,10 +970,10 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
       expect(g.costEconomics).not.toHaveProperty("costPerConversionUsd");
     }
     expect(byId.c1.headline.totalPipelineUsd).toBe(120);
-    expect(byId.c1.costEconomics.totalCostUsd).toBe(70);
+    expect(byId.c1.costEconomics.actualCostUsd).toBe(70);
     expect(byId.c1.costEconomics.roiMultiple).toBeCloseTo(120 / 70, 5);
     expect(byId.c2.headline.totalPipelineUsd).toBeCloseTo(15.42836, 4);
-    expect(byId.c2.costEconomics.totalCostUsd).toBe(10);
+    expect(byId.c2.costEconomics.actualCostUsd).toBe(10);
     expect(byId.c2.costEconomics.costOfAcquisitionPct).toBeCloseTo((10 / 15.42836) * 100, 4);
   });
 
