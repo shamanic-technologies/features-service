@@ -59,6 +59,7 @@ const mkEmails = (prefix: string, n: number): string[] => Array.from({ length: n
 
 const EMAILS_A = mkEmails("a", 10);
 const EMAILS_B = mkEmails("b", 20);
+const EMAILS_C = mkEmails("c", 15);
 const POSITIVE = new Set([...EMAILS_A.slice(0, 2), ...EMAILS_B.slice(0, 5)]);
 
 function membersResponse(emails: string[]): Response {
@@ -103,6 +104,58 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
           costGroup("unknown-audience", 200, 1),
           costGroup(null, 9000, 9),
         ],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("email:3000/orgs/status")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { items: Array<{ email: string }> };
+      const results = body.items.map(({ email }) => ({
+        email,
+        broadcast: {
+          brand: {
+            contacted: true,
+            opened: true,
+            clicked: true,
+            replied: POSITIVE.has(email),
+            replyClassification: POSITIVE.has(email) ? "positive" : null,
+          },
+        },
+      }));
+      return new Response(JSON.stringify({ results }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+}
+
+// Status-aware audiences mock: human-service GET /orgs/audiences?status=<s> returns
+// only that status's audiences (one audience per status: a=active, b=paused, c=archived).
+function mockFetchByStatus(): ReturnType<typeof vi.spyOn> {
+  const BY_STATUS: Record<string, Array<Record<string, unknown>>> = {
+    active: [{ id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: { seniorities: ["c_suite"] } }],
+    paused: [{ id: "audience-b", brandId: "brand-1", name: "Founders", status: "paused", filters: { titles: ["founder"] } }],
+    archived: [{ id: "audience-c", brandId: "brand-1", name: "Legacy", status: "archived", filters: null }],
+  };
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = urlOf(input);
+
+    if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+    if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
+    if (url.includes("human:3000/orgs/audiences/audience-c/members")) return membersResponse(EMAILS_C);
+    if (url.includes("human:3000/orgs/audiences?")) {
+      const status = new URL(url).searchParams.get("status") ?? "active";
+      return new Response(JSON.stringify({ audiences: BY_STATUS[status] ?? [], total: 1, limit: 200, offset: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) {
+      return new Response(JSON.stringify({
+        current: { id: "brand-profile-1", brandId: "brand-1", version: 3, fields: {}, createdAt: "2026-01-01T00:00:00Z" },
+        versions: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("runs:3000/v1/stats/costs")) {
+      return new Response(JSON.stringify({
+        groups: [costGroup("audience-a", 3000, 3), costGroup("audience-b", 1000, 2), costGroup("audience-c", 5000, 8)],
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("email:3000/orgs/status")) {
@@ -214,6 +267,65 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(costUrl).toContain("groupBy=audienceId");
     expect(costUrl).not.toContain("brandProfileId");
     expect(costUrl).not.toContain("goal=");
+  });
+
+  it("400 when statuses contains a token outside {active,paused,archived}", async () => {
+    let res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup&statuses=active,suggested")
+      .set(AUTH);
+    expect(res.status).toBe(400);
+
+    res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup&statuses=deprecated")
+      .set(AUTH);
+    expect(res.status).toBe(400);
+
+    res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup&statuses=")
+      .set(AUTH);
+    expect(res.status).toBe(400);
+  });
+
+  it("absent statuses fetches active only (one human-service call, status=active)", async () => {
+    fetchSpy = mockFetchByStatus();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    expect(res.body.audiences.map((r: any) => r.audienceId).sort()).toEqual(["audience-a"]);
+    const audienceListCalls = fetchSpy.mock.calls
+      .map((c: any[]) => urlOf(c[0]))
+      .filter((u: string) => u.includes("human:3000/orgs/audiences?"));
+    expect(audienceListCalls).toHaveLength(1);
+    expect(audienceListCalls[0]).toContain("status=active");
+  });
+
+  it("statuses=active,paused,archived returns rows for archived audiences with evidence", async () => {
+    fetchSpy = mockFetchByStatus();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup&statuses=active,paused,archived")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
+    // archived audience-c surfaces with its historical run/email evidence.
+    expect(byId["audience-c"]).toBeDefined();
+    expect(byId["audience-c"].audience.status).toBe("archived");
+    expect(byId["audience-c"].evidence.totalCostInUsdCents).toBe(5000);
+    expect(byId["audience-c"].evidence.contacted).toBeGreaterThan(0);
+    expect(byId["audience-c"].metrics.cpcCents).not.toBeNull();
+    // active + paused also present.
+    expect(byId["audience-a"]).toBeDefined();
+    expect(byId["audience-b"].audience.status).toBe("paused");
+    // one human-service audiences call per requested status.
+    const audienceListCalls = fetchSpy.mock.calls
+      .map((c: any[]) => urlOf(c[0]))
+      .filter((u: string) => u.includes("human:3000/orgs/audiences?"));
+    expect(audienceListCalls).toHaveLength(3);
+    expect(audienceListCalls.some((u: string) => u.includes("status=archived"))).toBe(true);
   });
 
   it("returns null CPC (not a false $0.00) when an audience has clicks but no attributed spend", async () => {

@@ -4568,6 +4568,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "Optional comma-separated subset of audience lifecycle statuses to include: active, paused, archived. Absent → active only (preserves the active-only ranking used by the Top-audiences card). When present, returns evidence rows for audiences in any of the given statuses (e.g. statuses=active,paused,archived surfaces archived audiences' historical outreach). Any token outside {active, paused, archived} (e.g. suggested, deprecated) is rejected with 400."
+            },
+            "required": false,
+            "description": "Optional comma-separated subset of audience lifecycle statuses to include: active, paused, archived. Absent → active only (preserves the active-only ranking used by the Top-audiences card). When present, returns evidence rows for audiences in any of the given statuses (e.g. statuses=active,paused,archived surfaces archived audiences' historical outreach). Any token outside {active, paused, archived} (e.g. suggested, deprecated) is rejected with 400.",
+            "name": "statuses",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "format": "uuid",
               "description": "Internal org UUID from client-service"
             },
@@ -4872,7 +4882,7 @@
             }
           },
           "400": {
-            "description": "Missing/invalid brandId, goal, or limit",
+            "description": "Missing/invalid brandId, goal, limit, or statuses",
             "content": {
               "application/json": {
                 "schema": {
