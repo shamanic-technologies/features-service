@@ -1794,6 +1794,11 @@
                   "nullable": true,
                   "description": "Lifetime ROI multiple = lifetime-revenue-per-client / costPerCloseUsd (= 100 / cacPct), budget-independent, at this row's grain. Same definition as workflow-projection's roiMultiple. Null when economics are absent or costPerCloseUsd is null/0."
                 },
+                "cacPct": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "CAC as a share of lifetime revenue (%) = costPerCloseUsd / lifetime-revenue-per-client × 100 (= 100 / roiMultiple), budget-independent, at this row's grain. Same definition as workflow-projection's cacPct. Null when economics are absent or costPerCloseUsd is null/0."
+                },
                 "conversion": {
                   "type": "object",
                   "properties": {
@@ -1891,6 +1896,7 @@
                 "costPerOutcomeUsd",
                 "costPerCloseUsd",
                 "roiMultiple",
+                "cacPct",
                 "conversion",
                 "cost"
               ]
@@ -4387,6 +4393,11 @@
                             "nullable": true,
                             "description": "Lifetime ROI multiple = lifetime-revenue-per-client / costPerCloseUsd (= 100 / cacPct), budget-independent, at this row's grain. Same definition as workflow-projection's roiMultiple. Null when economics are absent or costPerCloseUsd is null/0."
                           },
+                          "cacPct": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "CAC as a share of lifetime revenue (%) = costPerCloseUsd / lifetime-revenue-per-client × 100 (= 100 / roiMultiple), budget-independent, at this row's grain. Same definition as workflow-projection's cacPct. Null when economics are absent or costPerCloseUsd is null/0."
+                          },
                           "conversion": {
                             "type": "object",
                             "properties": {
@@ -4484,6 +4495,7 @@
                           "costPerOutcomeUsd",
                           "costPerCloseUsd",
                           "roiMultiple",
+                          "cacPct",
                           "conversion",
                           "cost"
                         ]
