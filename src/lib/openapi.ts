@@ -580,6 +580,7 @@ const candidateSchema = z.object({
   costPerOutcomeUsd: z.number().nullable().describe("The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."),
   costPerCloseUsd: z.number().nullable().describe("Cost to acquire one paying client (cost per close = cost per PURCHASE), at this row's grain. Same definition/source as workflow-projection's costPerCloseUsd. Null when economics are absent (cold start) or there is no usable close projection."),
   roiMultiple: z.number().nullable().describe("Lifetime ROI multiple = lifetime-revenue-per-client / costPerCloseUsd (= 100 / cacPct), budget-independent, at this row's grain. Same definition as workflow-projection's roiMultiple. Null when economics are absent or costPerCloseUsd is null/0."),
+  cacPct: z.number().nullable().describe("CAC as a share of lifetime revenue (%) = costPerCloseUsd / lifetime-revenue-per-client × 100 (= 100 / roiMultiple), budget-independent, at this row's grain. Same definition as workflow-projection's cacPct. Null when economics are absent or costPerCloseUsd is null/0."),
   conversion: candidateConversionSchema,
   cost: candidateCostSchema,
 });

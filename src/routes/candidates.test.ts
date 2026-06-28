@@ -389,19 +389,23 @@ describe("GET /features/:featureSlug/candidates", () => {
     expect(coarseA.costPerCloseUsd).toBeCloseTo(105.5966, 3);
     expect(coarseA.costPerCloseUsd).toBeCloseTo(coarseA.costPerOutcomeUsd, 6); // goal=purchase → outcome IS close
     expect(coarseA.roiMultiple).toBeCloseTo(1000 / 105.5966, 4);
+    // cacPct = 100 / roiMultiple — consistent by construction
+    expect(coarseA.cacPct).toBeCloseTo(100 / coarseA.roiMultiple, 6);
     // audience row: SAME formulas at the audience-grain unit costs (clickUsd 250, replyUsd 500)
     const aud = res.body.candidates.find((c: any) => c.grain === "audience");
     expect(typeof aud.costPerCloseUsd).toBe("number");
     expect(aud.roiMultiple).toBeCloseTo(1000 / aud.costPerCloseUsd, 6);
+    expect(aud.cacPct).toBeCloseTo(100 / aud.roiMultiple, 6);
     expect(aud.costPerCloseUsd).toBeGreaterThan(coarseA.costPerCloseUsd); // thinner/pricier audience slice
   });
 
-  it("costPerCloseUsd + roiMultiple are null at cold start (no economics)", async () => {
+  it("costPerCloseUsd + roiMultiple + cacPct are null at cold start (no economics)", async () => {
     mockFetch({ economics: null, source: null });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
     const a = byDynasty(res.body, "dyn-a");
     expect(a.costPerCloseUsd).toBeNull();
     expect(a.roiMultiple).toBeNull();
+    expect(a.cacPct).toBeNull();
   });
 
   it("502 when a downstream source fails", async () => {
