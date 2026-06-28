@@ -91,6 +91,10 @@ interface Candidate {
    *  budget-independent, at this row's grain. Same definition as workflow-projection's roiMultiple.
    *  Null when economics are absent or costPerCloseUsd is null/0. */
   roiMultiple: number | null;
+  /** CAC as a share of lifetime revenue (%) = costPerCloseUsd / lifetime-revenue-per-client × 100
+   *  (= 100 / roiMultiple), budget-independent, at this row's grain. Same definition as
+   *  workflow-projection's cacPct. Null when economics are absent or costPerCloseUsd is null/0. */
+  cacPct: number | null;
   conversion: ConversionEvidence;
   cost: CostEvidence;
 }
@@ -122,22 +126,25 @@ function conversionRateForGoal(goal: Goal, econ: ProjectionEconomics): number {
 }
 
 /**
- * Cost-per-close (cost per PURCHASE, the paying-client acquisition cost) + the lifetime ROI multiple
- * (LTR / costPerClose = 100 / cacPct), at this candidate's grain. Mirrors the workflow-projection
- * definitions EXACTLY, single-sourced through `projectOutcomeCosts` over the SAME unit costs the rest
- * of the row uses (so audience rows resolve audience-grain unit costs, coarse rows cross-org). Both
- * null when economics are absent (cold start) or there is no usable close projection.
+ * Cost-per-close (cost per PURCHASE, the paying-client acquisition cost), the lifetime ROI multiple
+ * (LTR / costPerClose = 100 / cacPct), and its inverse CAC-as-share-of-lifetime-revenue (cacPct =
+ * 100 / roiMultiple), at this candidate's grain. Mirrors the workflow-projection definitions EXACTLY,
+ * single-sourced through `projectOutcomeCosts` over the SAME unit costs the rest of the row uses (so
+ * audience rows resolve audience-grain unit costs, coarse rows cross-org). All null when economics
+ * are absent (cold start) or there is no usable close projection. cacPct is derived from roiMultiple
+ * so the two stay consistent by construction (roiMultiple === 100 / cacPct).
  */
 function closeEconomicsForCandidate(
   econ: ProjectionEconomics | null,
   ltrUsd: number | null,
   unitCosts: { clickUsd: number | null; replyUsd: number | null },
-): { costPerCloseUsd: number | null; roiMultiple: number | null } {
-  if (!econ) return { costPerCloseUsd: null, roiMultiple: null };
+): { costPerCloseUsd: number | null; roiMultiple: number | null; cacPct: number | null } {
+  if (!econ) return { costPerCloseUsd: null, roiMultiple: null, cacPct: null };
   const costPerCloseUsd = projectOutcomeCosts(econ, unitCosts).costPerPurchaseUsd;
   const roiMultiple =
     ltrUsd != null && costPerCloseUsd != null && costPerCloseUsd > 0 ? ltrUsd / costPerCloseUsd : null;
-  return { costPerCloseUsd, roiMultiple };
+  const cacPct = roiMultiple != null && roiMultiple > 0 ? 100 / roiMultiple : null;
+  return { costPerCloseUsd, roiMultiple, cacPct };
 }
 
 function costPerOutcomeForGoal(
@@ -241,7 +248,7 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
 
       const costPerOutcomeUsd = econ ? costPerOutcomeForGoal(goal, econ, { clickUsd, replyUsd }) : null;
       const conversionRate = econ ? conversionRateForGoal(goal, econ) : null;
-      const { costPerCloseUsd, roiMultiple } = closeEconomicsForCandidate(econ, ltrUsd, { clickUsd, replyUsd });
+      const { costPerCloseUsd, roiMultiple, cacPct } = closeEconomicsForCandidate(econ, ltrUsd, { clickUsd, replyUsd });
 
       // Coarse rung — workflow evidence is cross-org (no audience attribution on this row), so
       // audienceId stays null. Brand-local economics → "brand-goal"; otherwise "goal-global".
@@ -260,6 +267,7 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
         costPerOutcomeUsd,
         costPerCloseUsd,
         roiMultiple,
+        cacPct,
         conversion: { rate: conversionRate, grain: conversionGrain, sampleSize: null },
         cost: {
           costPerLeadUsd: contactedUsd,
@@ -286,7 +294,7 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
       const aReplyUsd = ev.replies > 0 && costUsd > 0 ? costUsd / ev.replies : null;
       const aCostPerOutcomeUsd = econ ? costPerOutcomeForGoal(goal, econ, { clickUsd: aClickUsd, replyUsd: aReplyUsd }) : null;
       const aConversionRate = econ ? conversionRateForGoal(goal, econ) : null;
-      const { costPerCloseUsd: aCostPerCloseUsd, roiMultiple: aRoiMultiple } = closeEconomicsForCandidate(econ, ltrUsd, { clickUsd: aClickUsd, replyUsd: aReplyUsd });
+      const { costPerCloseUsd: aCostPerCloseUsd, roiMultiple: aRoiMultiple, cacPct: aCacPct } = closeEconomicsForCandidate(econ, ltrUsd, { clickUsd: aClickUsd, replyUsd: aReplyUsd });
 
       for (const dynastySlug of ev.workflowDynastySlugs) {
         candidates.push({
@@ -300,6 +308,7 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
           costPerOutcomeUsd: aCostPerOutcomeUsd,
           costPerCloseUsd: aCostPerCloseUsd,
           roiMultiple: aRoiMultiple,
+          cacPct: aCacPct,
           conversion: { rate: aConversionRate, grain: conversionGrain, sampleSize: null },
           cost: {
             costPerLeadUsd: aContactedUsd,
