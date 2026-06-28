@@ -578,6 +578,8 @@ const candidateSchema = z.object({
   goal: z.enum(["signup", "meetingBooked", "purchase"]),
   grain: z.enum(["audience", "brand-goal", "goal-global"]).describe("SUMMARY label: the finest grain reached ACROSS this candidate's evidence components (audience > brand-goal > goal-global). Does NOT describe the sample, and the components can resolve at different grains — read conversion.grain for the conversion rate's provenance and cost.grain + cost.sampleSize for the cost evidence's provenance and size. On a coarse row this can read 'brand-goal' (brand-own economics) while cost.grain is 'goal-global' (cross-org cost sample)."),
   costPerOutcomeUsd: z.number().nullable().describe("The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."),
+  costPerCloseUsd: z.number().nullable().describe("Cost to acquire one paying client (cost per close = cost per PURCHASE), at this row's grain. Same definition/source as workflow-projection's costPerCloseUsd. Null when economics are absent (cold start) or there is no usable close projection."),
+  roiMultiple: z.number().nullable().describe("Lifetime ROI multiple = lifetime-revenue-per-client / costPerCloseUsd (= 100 / cacPct), budget-independent, at this row's grain. Same definition as workflow-projection's roiMultiple. Null when economics are absent or costPerCloseUsd is null/0."),
   conversion: candidateConversionSchema,
   cost: candidateCostSchema,
 });
