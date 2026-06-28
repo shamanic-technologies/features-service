@@ -366,6 +366,44 @@ describe("GET /features/:featureSlug/candidates", () => {
     expect(a.cost.sampleSize.runs).toBe(10);
   });
 
+  it("exposes costPerCloseUsd + roiMultiple at the candidate grain (coarse + audience rows)", async () => {
+    mockFetch({
+      audiences: [
+        {
+          id: "aud-1",
+          dynastySlugs: ["dyn-a"],
+          costCents: 50000, // $500 audience-grain slice
+          runs: 5,
+          emails: [
+            { email: "a@x.com", contacted: true, clicked: true },
+            { email: "b@x.com", contacted: true, clicked: true, positiveReply: true },
+            { email: "c@x.com", contacted: true },
+          ],
+        },
+      ],
+    });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
+    expect(res.status).toBe(200);
+    // coarse fallback (audienceId null): cost per close == cost per purchase; roi = LTR / costPerClose
+    const coarseA = res.body.candidates.find((c: any) => c.audienceId === null && c.workflow.workflowDynastySlug === "dyn-a");
+    expect(coarseA.costPerCloseUsd).toBeCloseTo(105.5966, 3);
+    expect(coarseA.costPerCloseUsd).toBeCloseTo(coarseA.costPerOutcomeUsd, 6); // goal=purchase → outcome IS close
+    expect(coarseA.roiMultiple).toBeCloseTo(1000 / 105.5966, 4);
+    // audience row: SAME formulas at the audience-grain unit costs (clickUsd 250, replyUsd 500)
+    const aud = res.body.candidates.find((c: any) => c.grain === "audience");
+    expect(typeof aud.costPerCloseUsd).toBe("number");
+    expect(aud.roiMultiple).toBeCloseTo(1000 / aud.costPerCloseUsd, 6);
+    expect(aud.costPerCloseUsd).toBeGreaterThan(coarseA.costPerCloseUsd); // thinner/pricier audience slice
+  });
+
+  it("costPerCloseUsd + roiMultiple are null at cold start (no economics)", async () => {
+    mockFetch({ economics: null, source: null });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
+    const a = byDynasty(res.body, "dyn-a");
+    expect(a.costPerCloseUsd).toBeNull();
+    expect(a.roiMultiple).toBeNull();
+  });
+
   it("502 when a downstream source fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;

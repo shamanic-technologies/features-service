@@ -1784,6 +1784,16 @@
                   "nullable": true,
                   "description": "The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."
                 },
+                "costPerCloseUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Cost to acquire one paying client (cost per close = cost per PURCHASE), at this row's grain. Same definition/source as workflow-projection's costPerCloseUsd. Null when economics are absent (cold start) or there is no usable close projection."
+                },
+                "roiMultiple": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Lifetime ROI multiple = lifetime-revenue-per-client / costPerCloseUsd (= 100 / cacPct), budget-independent, at this row's grain. Same definition as workflow-projection's roiMultiple. Null when economics are absent or costPerCloseUsd is null/0."
+                },
                 "conversion": {
                   "type": "object",
                   "properties": {
@@ -1879,6 +1889,8 @@
                 "goal",
                 "grain",
                 "costPerOutcomeUsd",
+                "costPerCloseUsd",
+                "roiMultiple",
                 "conversion",
                 "cost"
               ]
@@ -4365,6 +4377,16 @@
                             "nullable": true,
                             "description": "The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."
                           },
+                          "costPerCloseUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Cost to acquire one paying client (cost per close = cost per PURCHASE), at this row's grain. Same definition/source as workflow-projection's costPerCloseUsd. Null when economics are absent (cold start) or there is no usable close projection."
+                          },
+                          "roiMultiple": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Lifetime ROI multiple = lifetime-revenue-per-client / costPerCloseUsd (= 100 / cacPct), budget-independent, at this row's grain. Same definition as workflow-projection's roiMultiple. Null when economics are absent or costPerCloseUsd is null/0."
+                          },
                           "conversion": {
                             "type": "object",
                             "properties": {
@@ -4460,6 +4482,8 @@
                           "goal",
                           "grain",
                           "costPerOutcomeUsd",
+                          "costPerCloseUsd",
+                          "roiMultiple",
                           "conversion",
                           "cost"
                         ]
