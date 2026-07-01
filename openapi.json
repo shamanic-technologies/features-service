@@ -2472,9 +2472,10 @@
                   "type": "string",
                   "enum": [
                     "active",
+                    "paused",
                     "inactive"
                   ],
-                  "description": "active iff dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd; else inactive."
+                  "description": "Precedence paused > active > inactive: 'paused' iff campaign-service brand pause=true; else 'active' iff dailyBudgetUsd>0 && orgBalanceUsd>dailyBudgetUsd; else 'inactive'."
                 }
               },
               "required": [
@@ -2495,7 +2496,7 @@
             "properties": {
               "totalDailyBudgetUsd": {
                 "type": "number",
-                "description": "Sum of daily budget over ACTIVE rows only (USD)."
+                "description": "Sum of daily budget over ACTIVE rows only (USD; paused/inactive excluded)."
               },
               "mrrUsd": {
                 "type": "number",
@@ -2506,6 +2507,9 @@
                 "description": "totalDailyBudgetUsd × 365."
               },
               "activeCount": {
+                "type": "integer"
+              },
+              "pausedCount": {
                 "type": "integer"
               },
               "inactiveCount": {
@@ -2520,6 +2524,7 @@
               "mrrUsd",
               "arrUsd",
               "activeCount",
+              "pausedCount",
               "inactiveCount",
               "totalCount"
             ]
@@ -6077,7 +6082,7 @@
     "/internal/stats/accounts": {
       "get": {
         "summary": "Fleet-wide cold-email customer accounts audit (internal, api-key; staff-gated at api-service)",
-        "description": "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with its daily budget, the org's spendable credit balance, and whether the account is truly ACTIVE, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). A row is active iff dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd; otherwise inactive (covers $0/null/paused budget AND orgs whose balance can't cover the next day). Inactive rows are LISTED, not dropped. Stats sum ACTIVE rows only. All money + the active determination are computed here; the dashboard renders only.",
+        "description": "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with its daily budget, the org's spendable credit balance, and a 3-way status, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). Status precedence paused > active > inactive: 'paused' iff the campaign-service brand pause is set (campaigns HELD, budget kept); else 'active' iff dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd; else 'inactive'. All rows (active + paused + inactive) are LISTED, never dropped. Stats sum ACTIVE rows only (a paused brand is not spending). All money + the status determination are computed here; the dashboard renders only.",
         "tags": [
           "Internal"
         ],

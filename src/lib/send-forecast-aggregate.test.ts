@@ -16,6 +16,7 @@ function deps(fixture: {
   memberships: Record<string, Array<{ orgId: string; brandId: string }>>;
   budgetUsd: Record<string, number | null>;
   balanceUsd?: Record<string, number>;
+  paused?: Record<string, boolean>;
   spentTodayUsd?: Record<string, number>;
 }): FleetDeps {
   return {
@@ -23,6 +24,7 @@ function deps(fixture: {
     featureMemberships: async (slug) => fixture.memberships[slug] ?? [],
     brandDailyBudgetUsd: async (brandId) => fixture.budgetUsd[brandId] ?? null,
     orgBalanceUsd: async (orgId) => fixture.balanceUsd?.[orgId] ?? 1_000_000,
+    brandPaused: async (brandId) => fixture.paused?.[brandId] ?? false,
     brandSpentTodayUsd: async (brandId) => fixture.spentTodayUsd?.[brandId] ?? 0,
   };
 }
@@ -114,7 +116,20 @@ describe("aggregateFleetNewSequences", () => {
       expect(r.totalDailyBudgetUsd).toBe(100);
     });
 
-    it("excludes $0 / null budget brands (paused / unset)", async () => {
+    it("excludes a PAUSED brand even with budget>0 and sufficient balance", async () => {
+      const d = deps({
+        outreachUsd: { "sales-cold-email-outreach": 2 },
+        memberships: { "sales-cold-email-outreach": [{ orgId: "o1", brandId: "b1" }] },
+        budgetUsd: { b1: 100 },
+        balanceUsd: { o1: 500 }, // funded...
+        paused: { b1: true }, // ...but paused → excluded
+      });
+      const r = await aggregateFleetNewSequences(COLD, NOW, d);
+      expect(r.activeBrandCount).toBe(0);
+      expect(r.totalNewPerDay).toBe(0);
+    });
+
+    it("excludes $0 / null budget brands (unset / budget-paused)", async () => {
       const d = deps({
         outreachUsd: { "sales-cold-email-outreach": 2 },
         memberships: {
@@ -180,6 +195,7 @@ describe("aggregateFleetNewSequences", () => {
         balanceCalls.push(orgId);
         return 500;
       },
+      brandPaused: async () => false,
       brandSpentTodayUsd: async () => 0,
     };
     await aggregateFleetNewSequences(COLD, NOW, d);
