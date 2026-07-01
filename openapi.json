@@ -2341,6 +2341,89 @@
           "featureSlug",
           "totalPipelineUsd"
         ]
+      },
+      "SendForecastResponse": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "description": "UTC calendar day (YYYY-MM-DD)."
+                },
+                "isToday": {
+                  "type": "boolean"
+                },
+                "actualSent": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Past real emails sent that day (email-grain, follow-ups included). null on future days."
+                },
+                "inFlightSent": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Already-scheduled follow-up sends for sequences launched before today. null on past days."
+                },
+                "forecastNew": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Projected emails from NEW (today-onward) budget-driven sequences, D0/D3/D10 model. null on past days."
+                },
+                "total": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Predictive total — past: actualSent; today/future: sum of present components."
+                }
+              },
+              "required": [
+                "date",
+                "isToday",
+                "actualSent",
+                "inFlightSent",
+                "forecastNew",
+                "total"
+              ]
+            }
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "totalDailyBudgetUsd": {
+                "type": "number",
+                "description": "Sum of daily budget over active brands (USD)."
+              },
+              "remainingTodayUsd": {
+                "type": "number",
+                "description": "Sum of remaining budget today over active brands (USD)."
+              },
+              "followupModel": {
+                "type": "string",
+                "description": "The send cadence model, e.g. 'D0/D3/D10'."
+              },
+              "activeBrandCount": {
+                "type": "number"
+              },
+              "totalNewSequencesPerDay": {
+                "type": "number",
+                "description": "Fleet new sequences/day at full budget (sum over brands of budget/outreachUsd)."
+              }
+            },
+            "required": [
+              "totalDailyBudgetUsd",
+              "remainingTodayUsd",
+              "followupModel",
+              "activeBrandCount",
+              "totalNewSequencesPerDay"
+            ]
+          }
+        },
+        "required": [
+          "days",
+          "summary"
+        ]
       }
     },
     "parameters": {}
@@ -5791,6 +5874,59 @@
           },
           "404": {
             "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/stats/send-forecast": {
+      "get": {
+        "summary": "Global fleet email send forecast per day (public, no auth)",
+        "description": "Cross-org, fleet-wide projection of how many outreach emails will be SENT per calendar day over a past+future window. Stacks three EMAIL-grain series: actualSent (past real email_sent events, follow-ups included, from email-gateway groupBy=day), inFlightSent (already-scheduled follow-up sends for sequences launched before today, from the instantly sending-forecast relayed via email-gateway), and forecastNew (new sequences the active brands' daily budgets launch from today onward, each emitting on the D0/D3/D10 cadence). forecastNew covers cohorts started today-or-later; inFlightSent covers pre-today cohorts' follow-ups, so they never overlap. Today's new-sequence cohort is scaled to the remaining daily budget. Values are null (not 0) when an input is absent.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90,
+              "description": "Future horizon in days (default 14, max 90). A 7-day past tail is always included."
+            },
+            "required": false,
+            "description": "Future horizon in days (default 14, max 90). A 7-day past tail is always included.",
+            "name": "days",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-day fleet send forecast + summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendForecastResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
             "content": {
               "application/json": {
                 "schema": {
