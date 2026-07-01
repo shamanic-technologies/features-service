@@ -15,6 +15,16 @@ import {
 } from "../lib/public-stats-clients.js";
 import { getFunnel, projectOutcomeCosts } from "../lib/funnel-registry.js";
 import { fetchFeatureMemberships } from "../lib/feature-memberships-client.js";
+import { fetchFleetEmailsSentByDay, fetchFleetSendingForecast } from "../lib/send-forecast-client.js";
+import { aggregateFleetNewSequences } from "../lib/send-forecast-aggregate.js";
+import {
+  buildSendForecast,
+  coldEmailOutreachSlugs,
+  utcDateRange,
+  addUtcDays,
+  type SendForecastDay,
+  type SendForecastSummary,
+} from "../lib/send-forecast-compute.js";
 import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
 
@@ -850,6 +860,75 @@ export async function handlePublicCostProjection(
   res.json(payload);
 }
 
+// ── GET /public/stats/send-forecast ──────────────────────────────────────────
+
+const PAST_WINDOW_DAYS = 7;
+const DEFAULT_FORECAST_DAYS = 14;
+const MAX_FORECAST_DAYS = 90;
+
+interface SendForecastPayload {
+  days: SendForecastDay[];
+  summary: SendForecastSummary;
+}
+
+const sendForecastCache = new Map<string, { payload: SendForecastPayload; expiresAt: number }>();
+
+/** Test seam — reset the in-memory send-forecast cache. */
+export function __resetSendForecastCache(): void {
+  sendForecastCache.clear();
+}
+
+/**
+ * GET /public/stats/send-forecast?days=N — GLOBAL (cross-org, fleet-wide) projection of how many
+ * outreach emails the fleet will send per calendar day, stacking three email-grain series:
+ * past real sends (`actualSent`), already-scheduled in-flight follow-ups (`inFlightSent`), and new
+ * budget-driven sequences on the D0/D3/D10 model (`forecastNew`). See send-forecast-compute.ts.
+ */
+export async function handleSendForecast(daysParam: string | undefined, res: import("express").Response): Promise<void> {
+  const parsed = parseInt(daysParam ?? "", 10);
+  const days = Number.isFinite(parsed) && parsed >= 1 ? Math.min(parsed, MAX_FORECAST_DAYS) : DEFAULT_FORECAST_DAYS;
+
+  const cacheKey = `send-forecast:${days}`;
+  const cached = sendForecastCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    res.json(cached.payload);
+    return;
+  }
+
+  const now = new Date();
+  const todayIso = now.toISOString().slice(0, 10);
+  const dates = utcDateRange(addUtcDays(todayIso, -PAST_WINDOW_DAYS), addUtcDays(todayIso, days));
+
+  const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
+  const coldSlugs = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug));
+  const coldCsv = coldSlugs.join(",");
+
+  // Series 1 (past actuals) + Series 2 (in-flight scheduled) + Series 3 (budget-driven new cohorts).
+  const [actualByDay, inFlightByDay, fleet] = await Promise.all([
+    coldCsv ? fetchFleetEmailsSentByDay(coldCsv) : Promise.resolve(new Map<string, number>()),
+    fetchFleetSendingForecast(),
+    aggregateFleetNewSequences(coldSlugs, now),
+  ]);
+
+  const payload = buildSendForecast({
+    dates,
+    todayIso,
+    totalNewPerDay: fleet.totalNewPerDay,
+    todayNewOverride: fleet.todayNewOverride,
+    actualByDay,
+    inFlightByDay,
+    summary: {
+      totalDailyBudgetUsd: fleet.totalDailyBudgetUsd,
+      remainingTodayUsd: fleet.remainingTodayUsd,
+      activeBrandCount: fleet.activeBrandCount,
+      totalNewSequencesPerDay: fleet.totalNewPerDay,
+    },
+  });
+
+  sendForecastCache.set(cacheKey, { payload, expiresAt: Date.now() + PUBLIC_STATS_TTL_MS });
+  res.json(payload);
+}
+
 // ── GET /public/stats/ranked ─────────────────────────────────────────────────
 
 router.get("/public/stats/ranked", async (req, res) => {
@@ -886,6 +965,17 @@ router.get("/public/stats/revenue", async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] Public stats revenue error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/send-forecast ──────────────────────────────────────────
+
+router.get("/public/stats/send-forecast", async (req, res) => {
+  try {
+    await handleSendForecast(req.query.days as string | undefined, res);
+  } catch (error) {
+    console.error("[features-service] Public stats send-forecast error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

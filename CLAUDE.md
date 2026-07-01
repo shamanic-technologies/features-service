@@ -172,6 +172,53 @@ negligible at that grain; **campaign-service consumes `metrics.cpcCents` byte-eq
 `features-audience-client.ts`, so renaming there would break it — out of scope). (Set 2026-06-26;
 committed-spend on `/revenue` + total/actual/provisioned naming 2026-06-27, PR #403.)
 
+## `GET /public/stats/send-forecast` — GLOBAL fleet email send forecast, 3 email-grain series stacked
+
+Cross-org, fleet-wide projection of how many outreach emails will be SENT per calendar day over a
+past+future window (`?days=N`, default 14 future + fixed 7-day past tail). Answers Kevin's question
+"combien d'emails seront envoyés sur les N prochains jours, sachant les brands actives + leur budget".
+Handler `handleSendForecast` in `src/routes/public.ts`, pure assembly in
+`src/lib/send-forecast-compute.ts` (`buildSendForecast`), série-3 aggregation in
+`src/lib/send-forecast-aggregate.ts`, cross-org reads in `src/lib/send-forecast-client.ts`. 60s
+in-memory cache (`__resetSendForecastCache` seam), same pattern as the other `/public/stats/*`.
+
+**Three series, ALL email-grain (1 email = 1 unit) — do NOT mix grains.** Each day carries
+`{actualSent, inFlightSent, forecastNew, total}`, null-safe (null renders "-", never a false 0):
+- **`actualSent`** (past) = real `email_sent` EVENTS/day (follow-ups INCLUDED), from email-gateway
+  `GET /public/stats?groupBy=day` → `broadcast.emailStats.sent`. **NOT `recipientStats.contacted`**
+  (that's campaign-created = initials only, the funnel grain used by `sequences-client.ts`/#415) —
+  the forecast stacks email-grain, so the past actual MUST be email-grain too.
+- **`inFlightSent`** (future) = already-scheduled follow-up sends for sequences launched BEFORE today,
+  from instantly `sending-forecast` (provisioned steps) relayed by email-gateway
+  `GET /public/stats/sending-forecast` (`days[].scheduledCount`; that email-gateway route is mounted
+  at `/public` despite its `internalRouter` var name — verified byte-equal to prod v0.24.0).
+- **`forecastNew`** (future) = NEW sequences the active brands' daily budgets launch from today
+  onward, each emitting on the **D0/D3/D10** cadence model (convolution). `forecastNew` covers
+  cohorts started today-or-later; `inFlightSent` covers pre-today cohorts — **they never overlap**
+  (anti-double-count boundary at `today`).
+
+**Série-3 math (fleet reduces to 2 scalars).** Per brand `R_b = dailyBudget_b · (1/outreachUsd)`,
+where `outreachUsd` is the best-signup workflow's cost-per-outreach — a CROSS-ORG per-FEATURE figure
+(`computeFeatureOutreachUsd`, exported from `pipeline-activity.ts`), NOT per-brand: only the BUDGET is
+per-brand. Best-signup ranking is monotonic in `clickUsd` → economics-INVARIANT, so `outreachUsd` is
+computed ONCE per cold-email feature and reused across every active brand (a brand on multiple
+features takes the cheapest = `max` sequences/$). `totalNewPerDay = Σ_b R_b`; today's cohort is scaled
+to the REMAINING budget (`todayNewOverride = Σ_b R_b·remaining_b/budget_b`, remaining = budget −
+committed spend-so-far-today). The convolution then only needs those two scalars. **`max` over a
+brand's features, budget counted ONCE — do NOT sum per (feature,brand), that double-counts the
+budget.**
+
+**Fleet enumeration = the 5 `*-cold-email-outreach` seed slugs** (`coldEmailOutreachSlugs`, derived at
+runtime from the `features` table, `slug.endsWith`) — the instantly cold-email sequences that série 2
+also describes. Active (org, brand) pairs come from `fetchFeatureMemberships(slug)` per slug
+(cross-org, api-key only); per-brand daily budget + spent-today fan out to billing + runs forwarding
+the owning org's identity (service-stub user/run), same pattern as `/public/stats/revenue`. fail-loud
+(série 2 is essential, not optional — a forecast missing the in-flight component is misleading).
+
+**Depends on email-gateway `GET /public/stats/sending-forecast`** (shipped v0.24.0, prod). The endpoint
+is additive/dormant (no dashboard consumer yet) — a distribute.you follow-up wires the graph. Reuses
+existing env vars only (EMAIL_GATEWAY / LEAD / BILLING / RUNS). (Set 2026-07-01.)
+
 ## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #346)
 
 `pipeline-activity.ts` (the budget→forecast endpoint) was the LAST `customerProfileId` / brand-persona

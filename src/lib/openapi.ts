@@ -910,6 +910,53 @@ registry.registerPath({
   },
 });
 
+// ── GET /public/stats/send-forecast ───────────────────────────────────────────
+
+const sendForecastDaySchema = z.object({
+  date: z.string().describe("UTC calendar day (YYYY-MM-DD)."),
+  isToday: z.boolean(),
+  actualSent: z.number().nullable().describe("Past real emails sent that day (email-grain, follow-ups included). null on future days."),
+  inFlightSent: z.number().nullable().describe("Already-scheduled follow-up sends for sequences launched before today. null on past days."),
+  forecastNew: z.number().nullable().describe("Projected emails from NEW (today-onward) budget-driven sequences, D0/D3/D10 model. null on past days."),
+  total: z.number().nullable().describe("Predictive total — past: actualSent; today/future: sum of present components."),
+});
+
+const sendForecastResponseSchema = z.object({
+  days: z.array(sendForecastDaySchema),
+  summary: z.object({
+    totalDailyBudgetUsd: z.number().describe("Sum of daily budget over active brands (USD)."),
+    remainingTodayUsd: z.number().describe("Sum of remaining budget today over active brands (USD)."),
+    followupModel: z.string().describe("The send cadence model, e.g. 'D0/D3/D10'."),
+    activeBrandCount: z.number(),
+    totalNewSequencesPerDay: z.number().describe("Fleet new sequences/day at full budget (sum over brands of budget/outreachUsd)."),
+  }),
+});
+
+const sendForecastResponseRef = registry.register("SendForecastResponse", sendForecastResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/send-forecast",
+  summary: "Global fleet email send forecast per day (public, no auth)",
+  description:
+    "Cross-org, fleet-wide projection of how many outreach emails will be SENT per calendar day over a past+future window. " +
+    "Stacks three EMAIL-grain series: actualSent (past real email_sent events, follow-ups included, from email-gateway groupBy=day), " +
+    "inFlightSent (already-scheduled follow-up sends for sequences launched before today, from the instantly sending-forecast relayed via email-gateway), " +
+    "and forecastNew (new sequences the active brands' daily budgets launch from today onward, each emitting on the D0/D3/D10 cadence). " +
+    "forecastNew covers cohorts started today-or-later; inFlightSent covers pre-today cohorts' follow-ups, so they never overlap. " +
+    "Today's new-sequence cohort is scaled to the remaining daily budget. Values are null (not 0) when an input is absent.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      days: z.coerce.number().int().min(1).max(90).optional().describe("Future horizon in days (default 14, max 90). A 7-day past tail is always included."),
+    }),
+  },
+  responses: {
+    200: { description: "Per-day fleet send forecast + summary", content: { "application/json": { schema: sendForecastResponseRef } } },
+    500: { description: "Server error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /public/stats/cost-projection ─────────────────────────────────────────
 
 const publicCostProjectionResponseSchema = z.object({

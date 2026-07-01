@@ -201,7 +201,7 @@ function getRunsServiceHeaders(
   };
 }
 
-async function fetchBrandDailyBudgetUsd(
+export async function fetchBrandDailyBudgetUsd(
   brandId: string,
   featureSlug: string,
   headers: { orgId: string; userId: string; runId: string },
@@ -348,6 +348,35 @@ function chooseBestSignupWorkflow(units: Map<string, WorkflowActivityUnit>): Wor
     }
   }
   return best;
+}
+
+/**
+ * Feature-level cost-per-outreach (USD) of the best-signup workflow — the SAME `outreachUsd` the
+ * dashboard's per-brand forecast divides the daily budget by (`computeExpectedActivity`). It is a
+ * CROSS-ORG (goal-global) figure: `buildWorkflowActivityUnits` reads the PUBLIC workflow cost/email
+ * stats, so it depends only on the FEATURE, not the brand — only the daily BUDGET is per-brand.
+ *
+ * The best-signup ranking (`chooseBestSignupWorkflow`, lowest `costPerSignupUsd`) is monotonic in
+ * `clickUsd` for any fixed economics, so it's economics-INVARIANT: a neutral economics picks the same
+ * workflow the dashboard would for any real brand. So the global send-forecast can compute one
+ * `outreachUsd` per cold-email feature and reuse it across every active brand (fleet aggregation),
+ * instead of re-running the full per-brand expected-activity path. Returns null when no workflow has
+ * usable cost-per-outreach economics.
+ */
+const NEUTRAL_ECONOMICS: SalesEconomics = {
+  lifetimeRevenueUsd: 1000,
+  replyToMeetingPct: 10,
+  visitToMeetingPct: 10,
+  meetingToClosePct: 10,
+  visitToSignupPct: 10,
+  signupToPaidClientPct: 10,
+  visitToClosePct: 10,
+};
+
+export async function computeFeatureOutreachUsd(featureSlug: string): Promise<number | null> {
+  const units = await buildWorkflowActivityUnits(featureSlug, NEUTRAL_ECONOMICS);
+  const best = chooseBestSignupWorkflow(units);
+  return best?.outreachUsd ?? null;
 }
 
 interface AudienceOutcome {

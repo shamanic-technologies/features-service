@@ -54,8 +54,24 @@ vi.mock("./revenue.js", async (importOriginal) => ({
   computeFeatureRevenue: (...args: unknown[]) => mockComputeFeatureRevenue(...args),
 }));
 
+// Send-forecast: the two email-gateway reads + the fleet series-3 aggregation are unit-tested at
+// their own boundaries (send-forecast-client / -aggregate / -compute). Mock them here so the public
+// route test targets the WIRING (route → handler → buildSendForecast → response shape + cache).
+const { mockEmailsSent, mockSendingForecast, mockAggregate } = vi.hoisted(() => ({
+  mockEmailsSent: vi.fn(),
+  mockSendingForecast: vi.fn(),
+  mockAggregate: vi.fn(),
+}));
+vi.mock("../lib/send-forecast-client.js", () => ({
+  fetchFleetEmailsSentByDay: (...a: unknown[]) => mockEmailsSent(...a),
+  fetchFleetSendingForecast: (...a: unknown[]) => mockSendingForecast(...a),
+}));
+vi.mock("../lib/send-forecast-aggregate.js", () => ({
+  aggregateFleetNewSequences: (...a: unknown[]) => mockAggregate(...a),
+}));
+
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
@@ -1092,3 +1108,70 @@ function mockCostProjectionFetch(opts: {
   });
   return spy as unknown as ReturnType<typeof vi.fn>;
 }
+
+describe("GET /public/stats/send-forecast", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetSendForecastCache();
+    mockFindMany.mockResolvedValue([
+      { slug: "sales-cold-email-outreach" },
+      { slug: "outlet-database-discovery" }, // non-cold-email → filtered out
+    ]);
+    mockEmailsSent.mockResolvedValue(new Map<string, number>());
+    mockSendingForecast.mockResolvedValue(new Map<string, number>());
+    mockAggregate.mockResolvedValue({
+      totalNewPerDay: 100,
+      todayNewOverride: 40,
+      totalDailyBudgetUsd: 500,
+      remainingTodayUsd: 200,
+      activeBrandCount: 3,
+    });
+  });
+
+  it("returns the three-series forecast + summary with the D0/D3/D10 model", async () => {
+    const res = await request(app).get("/public/stats/send-forecast?days=14");
+    expect(res.status).toBe(200);
+    expect(res.body.summary).toMatchObject({
+      totalDailyBudgetUsd: 500,
+      remainingTodayUsd: 200,
+      followupModel: "D0/D3/D10",
+      activeBrandCount: 3,
+      totalNewSequencesPerDay: 100,
+    });
+    // window = 7 past + today + 14 future = 22 days
+    expect(res.body.days).toHaveLength(22);
+    const today = res.body.days.find((d: { isToday: boolean }) => d.isToday);
+    expect(today.forecastNew).toBe(40); // today cohort = remaining-scaled override
+    // every day carries all four series keys (null-safe shape)
+    for (const d of res.body.days) {
+      expect(d).toHaveProperty("actualSent");
+      expect(d).toHaveProperty("inFlightSent");
+      expect(d).toHaveProperty("forecastNew");
+      expect(d).toHaveProperty("total");
+    }
+  });
+
+  it("passes ONLY the cold-email outreach slugs to the fleet aggregation", async () => {
+    await request(app).get("/public/stats/send-forecast");
+    expect(mockAggregate).toHaveBeenCalledTimes(1);
+    expect(mockAggregate.mock.calls[0][0]).toEqual(["sales-cold-email-outreach"]);
+  });
+
+  it("overlays past actual sends and future in-flight scheduled sends", async () => {
+    // pick relative dates so the test never rots
+    const iso = (delta: number) => {
+      const t = new Date();
+      t.setUTCDate(t.getUTCDate() + delta);
+      return t.toISOString().slice(0, 10);
+    };
+    mockEmailsSent.mockResolvedValue(new Map([[iso(-2), 33]]));
+    mockSendingForecast.mockResolvedValue(new Map([[iso(4), 21]]));
+    const res = await request(app).get("/public/stats/send-forecast");
+    const past = res.body.days.find((d: { date: string }) => d.date === iso(-2));
+    expect(past).toMatchObject({ actualSent: 33, inFlightSent: null, forecastNew: null, total: 33 });
+    const future = res.body.days.find((d: { date: string }) => d.date === iso(4));
+    expect(future.inFlightSent).toBe(21);
+    expect(future.forecastNew).toBeGreaterThan(0);
+    expect(future.total).toBe(future.inFlightSent + future.forecastNew);
+  });
+});
