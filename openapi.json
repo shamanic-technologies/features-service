@@ -5893,12 +5893,12 @@
         }
       }
     },
-    "/public/stats/send-forecast": {
+    "/internal/stats/send-forecast": {
       "get": {
-        "summary": "Global fleet email send forecast per day (public, no auth)",
+        "summary": "Global fleet email send forecast per day (internal, api-key; staff-gated at api-service)",
         "description": "Cross-org, fleet-wide projection of how many outreach emails will be SENT per calendar day over a past+future window. Stacks three EMAIL-grain series: actualSent (past real email_sent events, follow-ups included, from email-gateway groupBy=day), inFlightSent (already-scheduled follow-up sends for sequences launched before today, from the instantly sending-forecast relayed via email-gateway), and forecastNew (new sequences the active brands' daily budgets launch from today onward, each emitting on the D0/D3/D10 cadence). forecastNew covers cohorts started today-or-later; inFlightSent covers pre-today cohorts' follow-ups, so they never overlap. Today's new-sequence cohort is scaled to the remaining daily budget. Values are null (not 0) when an input is absent.",
         "tags": [
-          "Public"
+          "Internal"
         ],
         "parameters": [
           {
@@ -5921,6 +5921,24 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SendForecastResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }

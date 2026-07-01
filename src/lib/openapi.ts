@@ -936,8 +936,8 @@ const sendForecastResponseRef = registry.register("SendForecastResponse", sendFo
 
 registry.registerPath({
   method: "get",
-  path: "/public/stats/send-forecast",
-  summary: "Global fleet email send forecast per day (public, no auth)",
+  path: "/internal/stats/send-forecast",
+  summary: "Global fleet email send forecast per day (internal, api-key; staff-gated at api-service)",
   description:
     "Cross-org, fleet-wide projection of how many outreach emails will be SENT per calendar day over a past+future window. " +
     "Stacks three EMAIL-grain series: actualSent (past real email_sent events, follow-ups included, from email-gateway groupBy=day), " +
@@ -945,7 +945,7 @@ registry.registerPath({
     "and forecastNew (new sequences the active brands' daily budgets launch from today onward, each emitting on the D0/D3/D10 cadence). " +
     "forecastNew covers cohorts started today-or-later; inFlightSent covers pre-today cohorts' follow-ups, so they never overlap. " +
     "Today's new-sequence cohort is scaled to the remaining daily budget. Values are null (not 0) when an input is absent.",
-  tags: ["Public"],
+  tags: ["Internal"],
   request: {
     query: z.object({
       days: z.coerce.number().int().min(1).max(90).optional().describe("Future horizon in days (default 14, max 90). A 7-day past tail is always included."),
@@ -953,6 +953,7 @@ registry.registerPath({
   },
   responses: {
     200: { description: "Per-day fleet send forecast + summary", content: { "application/json": { schema: sendForecastResponseRef } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
     500: { description: "Server error", content: { "application/json": { schema: errorResponse } } },
   },
 });

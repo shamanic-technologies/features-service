@@ -172,7 +172,7 @@ negligible at that grain; **campaign-service consumes `metrics.cpcCents` byte-eq
 `features-audience-client.ts`, so renaming there would break it — out of scope). (Set 2026-06-26;
 committed-spend on `/revenue` + total/actual/provisioned naming 2026-06-27, PR #403.)
 
-## `GET /public/stats/send-forecast` — GLOBAL fleet email send forecast, 3 email-grain series stacked
+## `GET /internal/stats/send-forecast` — GLOBAL fleet email send forecast (api-key, staff-gated at api-service), 3 email-grain series stacked
 
 Cross-org, fleet-wide projection of how many outreach emails will be SENT per calendar day over a
 past+future window (`?days=N`, default 14 future + fixed 7-day past tail). Answers Kevin's question
