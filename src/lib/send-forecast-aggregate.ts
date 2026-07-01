@@ -1,6 +1,6 @@
 /**
  * Series 3 aggregation for the global send-forecast — the fleet's NEW sequences per day driven by
- * active brands' daily budgets.
+ * ACTIVE brands' daily budgets.
  *
  * Per brand, new sequences/day `R_b = dailyBudget_b × (1 / outreachUsd)` where `outreachUsd` is the
  * best-signup workflow's cost-per-outreach — a CROSS-ORG per-FEATURE figure (see
@@ -8,35 +8,30 @@
  * it across every active brand. A brand on multiple cold-email features takes the cheapest (highest
  * sequences-per-USD) → `max` over its features. The daily BUDGET is the only per-brand input.
  *
+ * ACTIVE gate (shared with the `/internal/stats/accounts` audit — reuses `isActive`): a (org, brand)
+ * account contributes ONLY if `dailyBudget > 0` (a $0/null budget is paused/unset) AND the org's
+ * spendable credit balance EXCEEDS the daily budget (the org can fund at least one more day). This is
+ * the fix for the forecast over-count: without it, every brand that ever ran cold-email and still has
+ * a stale positive budget was summed in — including churned orgs with $0 credits — inflating the
+ * projection several-fold above the observed send rate.
+ *
  * Today's cohort is scaled to the REMAINING budget (`todayNewOverride`): the day's budget is partly
  * spent already, so only the remainder launches new sequences today. Remaining = daily budget −
- * committed spend-so-far-today (runs `startedAfter` 00:00 UTC), matching the campaign-service budget
- * gate's committed-spend semantics.
+ * committed spend-so-far-today (runs `startedAfter` 00:00 UTC).
  *
- * All reads are cross-org (fleet-wide): feature-memberships enumerate active (org, brand) pairs;
- * per-brand billing + runs reads forward the owning org's identity (service stub user/run), same
- * pattern as the public cross-org revenue endpoint. Fail loud on any read error.
+ * All reads are ORG-LESS PLATFORM reads: cross-org, api-key + x-org-id ONLY (org balance keys org in
+ * the path) — NO forwarded/faked user identity (see accounts-client). Fail loud on any read error.
  */
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { fetchSpendBreakdown } from "./spend-client.js";
+import { fetchOrgBalanceUsd } from "./accounts-client.js";
+import { isActive } from "./accounts-compute.js";
 import { computeFeatureOutreachUsd, fetchBrandDailyBudgetUsd } from "../routes/pipeline-activity.js";
 
-// Service-stub identity for the cross-org fleet reads. This is a platform-level (no real per-caller
-// user/run) forecast, but runs-service `/v1/stats/costs` VALIDATES `x-user-id` / `x-run-id` as a
-// well-formed UUID (400 "x-user-id header must be a valid UUID" otherwise), and the shared
-// pipeline-activity/billing header builders always send both. So the stub MUST be a valid UUID — a
-// plain marker string ("public-send-forecast") 400s the essential runs read and 500s the endpoint.
-// A fixed valid-v4-format UUID (version nibble 4, variant nibble 8) satisfies both generic and
-// v4-specific validators while staying an obvious synthetic stub in downstream logs. The real
-// attribution is the per-(org,brand) `x-org-id`; user/run are unvalidated context beyond format.
-const STUB_IDENTITY_UUID = "00000000-0000-4000-8000-000000000000";
-const STUB_USER = STUB_IDENTITY_UUID;
-const STUB_RUN = STUB_IDENTITY_UUID;
-
 export interface FleetNewSequences {
-  /** Σ over active brands of R_b (new sequences/day at full budget). The steady future cohort size. */
+  /** Σ over ACTIVE brands of R_b (new sequences/day at full budget). The steady future cohort size. */
   totalNewPerDay: number;
-  /** Σ over active brands of R_b × (remaining/budget) — today's cohort, scaled to remaining budget. */
+  /** Σ over ACTIVE brands of R_b × (remaining/budget) — today's cohort, scaled to remaining budget. */
   todayNewOverride: number;
   totalDailyBudgetUsd: number;
   remainingTodayUsd: number;
@@ -53,16 +48,19 @@ interface BrandEntry {
 export interface FleetDeps {
   featureOutreachUsd: (slug: string) => Promise<number | null>;
   featureMemberships: (slug: string) => Promise<Array<{ orgId: string; brandId: string }>>;
-  brandDailyBudgetUsd: (brandId: string, featureSlug: string, headers: { orgId: string; userId: string; runId: string }) => Promise<number | null>;
-  brandSpentTodayUsd: (brandId: string, featureSlugsCsv: string, headers: { orgId: string; userId: string; runId: string }, now: Date) => Promise<number>;
+  brandDailyBudgetUsd: (brandId: string, orgId: string) => Promise<number | null>;
+  orgBalanceUsd: (orgId: string) => Promise<number>;
+  brandSpentTodayUsd: (brandId: string, featureSlugsCsv: string, orgId: string, now: Date) => Promise<number>;
 }
 
 const REAL_DEPS: FleetDeps = {
   featureOutreachUsd: computeFeatureOutreachUsd,
   featureMemberships: async (slug) => (await fetchFeatureMemberships(slug)).map((m) => ({ orgId: m.orgId, brandId: m.brandId })),
-  brandDailyBudgetUsd: fetchBrandDailyBudgetUsd,
-  brandSpentTodayUsd: async (brandId, featureSlugsCsv, headers, now) => {
-    const spend = await fetchSpendBreakdown(brandId, undefined, featureSlugsCsv, headers, now);
+  // Org-only reads: billing daily-budget + runs cost authorize on x-org-id; user/run are omitted.
+  brandDailyBudgetUsd: (brandId, orgId) => fetchBrandDailyBudgetUsd(brandId, "", { orgId }),
+  orgBalanceUsd: fetchOrgBalanceUsd,
+  brandSpentTodayUsd: async (brandId, featureSlugsCsv, orgId, now) => {
+    const spend = await fetchSpendBreakdown(brandId, undefined, featureSlugsCsv, { orgId }, now);
     return spend.totalSpentTodayCents / 100;
   },
 };
@@ -81,7 +79,7 @@ export async function aggregateFleetNewSequences(
     }),
   );
 
-  // 2. Enumerate active (org, brand) pairs per cold-email feature; collect each brand's feature set.
+  // 2. Enumerate (org, brand) pairs per cold-email feature; collect each brand's feature set.
   const brands = new Map<string, BrandEntry>();
   await Promise.all(
     coldEmailSlugs.map(async (slug) => {
@@ -98,23 +96,30 @@ export async function aggregateFleetNewSequences(
     }),
   );
 
-  // 3. Per unique (org, brand): daily budget + best sequences-per-USD + remaining-today scaling.
+  // 3. Org spendable balance ONCE per org (shared across its brands) — the credit side of the active gate.
+  const orgIds = [...new Set([...brands.values()].map((b) => b.orgId))];
+  const balanceByOrg = new Map<string, number>();
+  await Promise.all(orgIds.map(async (orgId) => balanceByOrg.set(orgId, await deps.orgBalanceUsd(orgId))));
+
+  // 4. Per unique (org, brand): daily budget + ACTIVE gate (budget>0 && balance>budget) + remaining-today.
   const perBrand = await Promise.all(
     [...brands.values()].map(async (b) => {
       const featureList = [...b.features];
       const bestInvRate = featureList.reduce((max, f) => Math.max(max, invRateByFeature.get(f) ?? 0), 0);
       if (bestInvRate <= 0) return null; // no cold-email feature with usable cost → contributes nothing
 
-      const headers = { orgId: b.orgId, userId: STUB_USER, runId: STUB_RUN };
-      const budgetUsd = await deps.brandDailyBudgetUsd(b.brandId, featureList[0], headers);
-      if (budgetUsd === null || budgetUsd <= 0) return null; // unbudgeted brand launches no new sequences
+      const budgetUsd = await deps.brandDailyBudgetUsd(b.brandId, b.orgId);
+      const balanceUsd = balanceByOrg.get(b.orgId) ?? 0;
+      // Same active rule as /internal/stats/accounts: budget>0 AND org credits cover ≥1 more day.
+      if (!isActive(budgetUsd, balanceUsd)) return null;
+      const budget = budgetUsd as number; // isActive guarantees non-null & > 0
 
-      const R = budgetUsd * bestInvRate;
-      const spentTodayUsd = await deps.brandSpentTodayUsd(b.brandId, featureList.join(","), headers, now);
-      const remainingUsd = Math.max(0, budgetUsd - spentTodayUsd);
-      const remainFactor = budgetUsd > 0 ? remainingUsd / budgetUsd : 0;
+      const R = budget * bestInvRate;
+      const spentTodayUsd = await deps.brandSpentTodayUsd(b.brandId, featureList.join(","), b.orgId, now);
+      const remainingUsd = Math.max(0, budget - spentTodayUsd);
+      const remainFactor = remainingUsd / budget;
 
-      return { R, todayR: R * remainFactor, budgetUsd, remainingUsd };
+      return { R, todayR: R * remainFactor, budgetUsd: budget, remainingUsd };
     }),
   );
 

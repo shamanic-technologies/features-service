@@ -173,38 +173,38 @@ function getEmailGatewayHeaders(
   };
 }
 
+// Only x-org-id is required by the billing daily-budget / runs cost reads; x-user-id / x-run-id (and
+// brand/feature) are OPTIONAL context and are OMITTED when empty. This lets a platform (org-less)
+// fleet caller pass just x-org-id — no faked/sentinel user identity — while the authed dashboard path
+// still forwards its real user/run (truthy → included).
 function getBillingServiceHeaders(
   apiKey: string,
-  headers: { orgId: string; userId: string; runId: string; brandId: string; featureSlug: string },
+  headers: { orgId: string; userId?: string; runId?: string; brandId?: string; featureSlug?: string },
 ): Record<string, string> {
-  return {
-    "x-api-key": apiKey,
-    "x-org-id": headers.orgId,
-    "x-user-id": headers.userId,
-    "x-run-id": headers.runId,
-    "x-brand-id": headers.brandId,
-    "x-feature-slug": headers.featureSlug,
-  };
+  const h: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId };
+  if (headers.userId) h["x-user-id"] = headers.userId;
+  if (headers.runId) h["x-run-id"] = headers.runId;
+  if (headers.brandId) h["x-brand-id"] = headers.brandId;
+  if (headers.featureSlug) h["x-feature-slug"] = headers.featureSlug;
+  return h;
 }
 
 function getRunsServiceHeaders(
   apiKey: string,
-  headers: { orgId: string; userId: string; runId: string; brandId: string; featureSlug: string },
+  headers: { orgId: string; userId?: string; runId?: string; brandId?: string; featureSlug?: string },
 ): Record<string, string> {
-  return {
-    "x-api-key": apiKey,
-    "x-org-id": headers.orgId,
-    "x-user-id": headers.userId,
-    "x-run-id": headers.runId,
-    "x-brand-id": headers.brandId,
-    "x-feature-slug": headers.featureSlug,
-  };
+  const h: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId };
+  if (headers.userId) h["x-user-id"] = headers.userId;
+  if (headers.runId) h["x-run-id"] = headers.runId;
+  if (headers.brandId) h["x-brand-id"] = headers.brandId;
+  if (headers.featureSlug) h["x-feature-slug"] = headers.featureSlug;
+  return h;
 }
 
 export async function fetchBrandDailyBudgetUsd(
   brandId: string,
   featureSlug: string,
-  headers: { orgId: string; userId: string; runId: string },
+  headers: { orgId: string; userId?: string; runId?: string },
 ): Promise<number | null> {
   const url = process.env.BILLING_SERVICE_URL;
   const apiKey = process.env.BILLING_SERVICE_API_KEY;
