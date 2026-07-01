@@ -25,6 +25,7 @@ import {
   type SendForecastDay,
   type SendForecastSummary,
 } from "../lib/send-forecast-compute.js";
+import { buildAccountsAudit, type AccountsAudit } from "../lib/accounts-compute.js";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
@@ -930,6 +931,37 @@ export async function handleSendForecast(daysParam: string | undefined, res: imp
   res.json(payload);
 }
 
+// ── GET /internal/stats/accounts ─────────────────────────────────────────────
+
+let accountsCache: { payload: AccountsAudit; expiresAt: number } | null = null;
+
+/** Test seam — reset the in-memory accounts-audit cache. */
+export function __resetAccountsCache(): void {
+  accountsCache = null;
+}
+
+/**
+ * GET /internal/stats/accounts — GLOBAL (cross-org, fleet-wide) list of every cold-email customer
+ * account (org × brand) with its daily budget, the org's spendable balance, and whether the account
+ * is truly ACTIVE, plus fleet financial stats (total active daily budget → MRR → ARR). All money +
+ * the active determination + MRR/ARR are computed HERE; the admin dashboard renders only. See
+ * accounts-compute.ts. 60s in-memory cache, same pattern as the other /internal/stats/* audits.
+ */
+export async function handleAccounts(res: import("express").Response): Promise<void> {
+  if (accountsCache && accountsCache.expiresAt > Date.now()) {
+    res.json(accountsCache.payload);
+    return;
+  }
+
+  const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
+  const coldCsv = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug)).join(",");
+
+  const payload = await buildAccountsAudit(coldCsv, new Date());
+
+  accountsCache = { payload, expiresAt: Date.now() + PUBLIC_STATS_TTL_MS };
+  res.json(payload);
+}
+
 // ── GET /public/stats/ranked ─────────────────────────────────────────────────
 
 router.get("/public/stats/ranked", async (req, res) => {
@@ -977,6 +1009,17 @@ router.get("/internal/stats/send-forecast", apiKeyOnly, async (req, res) => {
     await handleSendForecast(req.query.days as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Internal stats send-forecast error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /internal/stats/accounts (api-key only; staff-gated upstream at api-service) ──────────────
+
+router.get("/internal/stats/accounts", apiKeyOnly, async (_req, res) => {
+  try {
+    await handleAccounts(res);
+  } catch (error) {
+    console.error("[features-service] Internal stats accounts error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

@@ -958,6 +958,55 @@ registry.registerPath({
   },
 });
 
+// ── GET /internal/stats/accounts ──────────────────────────────────────────────
+
+const accountRowSchema = z.object({
+  orgId: z.string().describe("Internal org UUID."),
+  orgExternalId: z.string().nullable().describe("Clerk org id (org_...); lets the admin resolve the org display name. Null if unset."),
+  ownerEmail: z.string().nullable().describe("The org owner's email (earliest-created user). Null if the org has no users."),
+  brandId: z.string().describe("Brand UUID."),
+  brandName: z.string().nullable(),
+  brandDomain: z.string().nullable(),
+  dailyBudgetUsd: z.number().nullable().describe("Brand's configured daily spend ceiling in USD. Null when unset/paused."),
+  orgBalanceUsd: z.number().describe("Org spendable credit balance in USD (billing balance_cents/100; 0 if no funded wallet)."),
+  status: z.enum(["active", "inactive"]).describe("active iff dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd; else inactive."),
+});
+
+const accountsStatsSchema = z.object({
+  totalDailyBudgetUsd: z.number().describe("Sum of daily budget over ACTIVE rows only (USD)."),
+  mrrUsd: z.number().describe("totalDailyBudgetUsd × 30."),
+  arrUsd: z.number().describe("totalDailyBudgetUsd × 365."),
+  activeCount: z.number().int(),
+  inactiveCount: z.number().int(),
+  totalCount: z.number().int(),
+});
+
+const accountsResponseSchema = z.object({
+  rows: z.array(accountRowSchema),
+  stats: accountsStatsSchema,
+  asOf: z.string().describe("ISO timestamp the audit was computed."),
+});
+
+const accountsResponseRef = registry.register("AccountsAuditResponse", accountsResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/stats/accounts",
+  summary: "Fleet-wide cold-email customer accounts audit (internal, api-key; staff-gated at api-service)",
+  description:
+    "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with its daily budget, the org's spendable credit balance, " +
+    "and whether the account is truly ACTIVE, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). " +
+    "A row is active iff dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd; otherwise inactive " +
+    "(covers $0/null/paused budget AND orgs whose balance can't cover the next day). Inactive rows are LISTED, not dropped. " +
+    "Stats sum ACTIVE rows only. All money + the active determination are computed here; the dashboard renders only.",
+  tags: ["Internal"],
+  responses: {
+    200: { description: "Per-account rows + fleet financial stats", content: { "application/json": { schema: accountsResponseRef } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Server error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /public/stats/cost-projection ─────────────────────────────────────────
 
 const publicCostProjectionResponseSchema = z.object({
