@@ -969,14 +969,15 @@ const accountRowSchema = z.object({
   brandDomain: z.string().nullable(),
   dailyBudgetUsd: z.number().nullable().describe("Brand's configured daily spend ceiling in USD. Null when unset/paused."),
   orgBalanceUsd: z.number().describe("Org spendable credit balance in USD (billing balance_cents/100; 0 if no funded wallet)."),
-  status: z.enum(["active", "inactive"]).describe("active iff dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd; else inactive."),
+  status: z.enum(["active", "paused", "inactive"]).describe("Precedence paused > active > inactive: 'paused' iff campaign-service brand pause=true; else 'active' iff dailyBudgetUsd>0 && orgBalanceUsd>dailyBudgetUsd; else 'inactive'."),
 });
 
 const accountsStatsSchema = z.object({
-  totalDailyBudgetUsd: z.number().describe("Sum of daily budget over ACTIVE rows only (USD)."),
+  totalDailyBudgetUsd: z.number().describe("Sum of daily budget over ACTIVE rows only (USD; paused/inactive excluded)."),
   mrrUsd: z.number().describe("totalDailyBudgetUsd × 30."),
   arrUsd: z.number().describe("totalDailyBudgetUsd × 365."),
   activeCount: z.number().int(),
+  pausedCount: z.number().int(),
   inactiveCount: z.number().int(),
   totalCount: z.number().int(),
 });
@@ -995,10 +996,10 @@ registry.registerPath({
   summary: "Fleet-wide cold-email customer accounts audit (internal, api-key; staff-gated at api-service)",
   description:
     "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with its daily budget, the org's spendable credit balance, " +
-    "and whether the account is truly ACTIVE, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). " +
-    "A row is active iff dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd; otherwise inactive " +
-    "(covers $0/null/paused budget AND orgs whose balance can't cover the next day). Inactive rows are LISTED, not dropped. " +
-    "Stats sum ACTIVE rows only. All money + the active determination are computed here; the dashboard renders only.",
+    "and a 3-way status, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). " +
+    "Status precedence paused > active > inactive: 'paused' iff the campaign-service brand pause is set (campaigns HELD, budget kept); " +
+    "else 'active' iff dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd; else 'inactive'. All rows (active + paused + inactive) are LISTED, never dropped. " +
+    "Stats sum ACTIVE rows only (a paused brand is not spending). All money + the status determination are computed here; the dashboard renders only.",
   tags: ["Internal"],
   responses: {
     200: { description: "Per-account rows + fleet financial stats", content: { "application/json": { schema: accountsResponseRef } } },

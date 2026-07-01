@@ -208,13 +208,14 @@ committed spend-so-far-today). The convolution then only needs those two scalars
 brand's features, budget counted ONCE — do NOT sum per (feature,brand), that double-counts the
 budget.**
 
-**Only ACTIVE accounts contribute — reuses `isActive()` from `accounts-compute.ts` (do NOT
-duplicate).** A (org, brand) enters `totalNewPerDay` iff `dailyBudget > 0 && orgBalance > dailyBudget`
-(budget>0 = not paused/unset; org spendable credit covers ≥1 more day). This is THE fix for the forecast
-OVER-count: before the gate, every brand that ever ran cold-email and still had a stale positive budget
-was summed in — incl. churned orgs with $0 credits — inflating the projection ~6× above the observed
-send rate. Org balance is fetched ONCE per org (shared across its brands). Same active rule + same
-account universe as `/internal/stats/accounts`.
+**Only ACTIVE accounts contribute — reuses `accountStatus()` from `accounts-compute.ts` (do NOT
+duplicate).** A (org, brand) enters `totalNewPerDay` iff `accountStatus(budget, balance, paused) ===
+"active"` — NOT paused (campaign-service brand pause) AND `dailyBudget > 0` AND `orgBalance > dailyBudget`
+(org spendable credit covers ≥1 more day). This is THE fix for the forecast OVER-count: before the gate,
+every brand that ever ran cold-email and still had a stale positive budget was summed in — incl. PAUSED
+brands and churned orgs with $0 credits — inflating the projection ~6× above the observed send rate.
+Org balance is fetched ONCE per org (shared across its brands); brand pause is read per (org, brand).
+Same status rule + same account universe as `/internal/stats/accounts`.
 
 **Fleet enumeration = the 5 `*-cold-email-outreach` seed slugs** (`coldEmailOutreachSlugs`, derived at
 runtime from the `features` table, `slug.endsWith`) — the instantly cold-email sequences that série 2
@@ -255,18 +256,24 @@ the active determination + MRR/ARR are computed HERE; the dashboard renders only
 
 Each row: `{ orgId, orgExternalId, ownerEmail, brandId, brandName, brandDomain, dailyBudgetUsd,
 orgBalanceUsd, status }`. Response also carries `stats { totalDailyBudgetUsd, mrrUsd, arrUsd,
-activeCount, inactiveCount, totalCount }` + `asOf`.
+activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
 
-**ACTIVE rule (exact, single source `isActive()` — do NOT re-litigate):** a row is `"active"` iff
-`dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd`; else `"inactive"`
-(covers $0/null/paused budget AND orgs whose spendable balance can't cover the next day). **Inactive
-rows are LISTED, tagged inactive — never dropped.** `stats.totalDailyBudgetUsd` sums ACTIVE rows only;
-`mrrUsd = total×30`, `arrUsd = total×365`.
+**STATUS rule (exact, single source `accountStatus()` — do NOT re-litigate). Precedence paused >
+active > inactive:** (1) `paused === true` (campaign-service brand pause) → `"paused"`; (2) else
+`dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd` → `"active"`; (3) else
+`"inactive"`. A PAUSED brand keeps its budget but campaigns are HELD — so it is neither active nor
+plain-inactive (paused wins even over a funded budget). **All rows (active + paused + inactive) are
+LISTED — never dropped.** `stats.totalDailyBudgetUsd`/MRR(×30)/ARR(×365) sum ACTIVE rows ONLY (a paused
+brand is not spending). send-forecast's série-3 gate reuses `accountStatus` and counts only `"active"`.
 
 **Account universe = the SAME source send-forecast uses** — lead-service `/internal/feature-memberships`
 over the cold-email slugs (`coldEmailOutreachSlugs`), deduped to distinct (org, brand). Org-level reads
-(balance + Clerk id + owner email) run ONCE per org; only the daily budget is per-(org,brand); brand
-name/domain is one batched brand-service call. Fail loud on any read error.
+(balance + Clerk id + owner email) run ONCE per org; the daily budget + the brand pause state are
+per-(org,brand); brand name/domain is one batched brand-service call. Fail loud on any read error.
+
+- **paused** = campaign-service **`GET /brands/:brandId/pause`** → `{ paused }` (api-key + x-org-id; no
+  user/run). The brand pause lives in campaign-service (NOT brand/billing): a brand can be paused while
+  keeping a non-zero daily budget. No pause row → `paused:false` (active by default). Fail loud.
 
 - **orgBalanceUsd** = billing **`GET /internal/accounts/by-org/:orgId/balance`** (user-less internal
   read — api-key only, org in path; NOT the user-required `/v1/accounts/balance`) → `balance_cents/100`

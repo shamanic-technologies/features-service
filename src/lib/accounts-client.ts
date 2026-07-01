@@ -1,8 +1,9 @@
 /**
  * Cross-org (fleet-wide) reads that feed the staff-gated `GET /internal/stats/accounts` audit.
  *
- * Three producer reads, all api-key service-to-service:
+ * Four producer reads, all api-key service-to-service:
  *   - org spendable balance      → billing-service  GET /internal/accounts/by-org/:orgId/balance  (api-key only, org in path)
+ *   - brand pause state          → campaign-service GET /brands/:brandId/pause  (api-key + x-org-id)
  *   - org Clerk id + owner email → client-service   GET /internal/orgs/:orgId + GET /internal/users
  *   - brand name + domain        → brand-service    GET /internal/brands?ids=  (batch, ≤100/req)
  *
@@ -58,6 +59,35 @@ function brandConfig(): { url: string; apiKey: string } {
     throw new Error("[features-service] BRAND_SERVICE_URL or BRAND_SERVICE_API_KEY not configured");
   }
   return { url, apiKey };
+}
+
+function campaignConfig(): { url: string; apiKey: string } {
+  const url = process.env.CAMPAIGN_SERVICE_URL;
+  const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
+  if (!url || !apiKey) {
+    throw new Error("[features-service] CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
+  }
+  return { url, apiKey };
+}
+
+/**
+ * Whether a brand is PAUSED, from campaign-service `GET /brands/:brandId/pause` → `{ paused }`.
+ * The brand active/paused status lives in campaign-service (NOT brand/billing): a brand can be paused
+ * while keeping a non-zero daily budget (campaigns are HELD, not stopped). Pause is keyed by
+ * (org, brand), so the owning org's x-org-id is required (api-key + x-org-id only — no user/run).
+ * No pause row → `paused:false` (active by default). Fail loud on any non-OK.
+ */
+export async function fetchBrandPaused(brandId: string, orgId: string): Promise<boolean> {
+  const { url, apiKey } = campaignConfig();
+  const response = await fetchWithRetry(`${url}/brands/${encodeURIComponent(brandId)}/pause`, {
+    headers: { "x-api-key": apiKey, "x-org-id": orgId },
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`[features-service] campaign-service /brands/:brandId/pause failed (${response.status}): ${body}`);
+  }
+  const data = (await response.json()) as { paused?: boolean };
+  return data.paused === true;
 }
 
 /**
