@@ -2,9 +2,14 @@
  * Cross-org (fleet-wide) reads that feed the staff-gated `GET /internal/stats/accounts` audit.
  *
  * Three producer reads, all api-key service-to-service:
- *   - org spendable balance      → billing-service  GET /v1/accounts/balance   (org-scoped)
+ *   - org spendable balance      → billing-service  GET /internal/accounts/by-org/:orgId/balance  (api-key only, org in path)
  *   - org Clerk id + owner email → client-service   GET /internal/orgs/:orgId + GET /internal/users
  *   - brand name + domain        → brand-service    GET /internal/brands?ids=  (batch, ≤100/req)
+ *
+ * All are org-less platform reads: they authenticate with ONLY the service api-key and pass the org
+ * as a PATH/QUERY param — NO forwarded/faked x-user-id identity (the balance read used to hit the
+ * org-scoped `/v1/accounts/balance`, which required a user, forcing a sentinel UUID; it now uses
+ * billing's user-less `/internal/accounts/by-org/:orgId/balance`).
  *
  * Fail loud on any transport / non-OK error (these own the displayed money + active determination —
  * not optional enrichment). The ONE mapped status is billing 404 "billing account not found" → 0
@@ -13,12 +18,6 @@
  * documented billing semantic (see api-registry), not a swallowed error.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
-
-// Service-stub identity for the cross-org fleet reads. billing `/v1/*` reads authorize on x-org-id
-// (the real per-(org) attribution); x-user-id / x-run-id are unvalidated context but the shared
-// header builders always send them, and some downstreams validate UUID format — so use a fixed
-// valid-v4-format UUID stub (matches send-forecast-aggregate's STUB_IDENTITY_UUID).
-const STUB_IDENTITY_UUID = "00000000-0000-4000-8000-000000000000";
 
 const BRAND_BATCH_CAP = 100;
 
@@ -62,31 +61,27 @@ function brandConfig(): { url: string; apiKey: string } {
 }
 
 /**
- * Org spendable credit balance in USD, from billing-service `GET /v1/accounts/balance`.
- * Uses `balance_cents` (spendable funds incl. provisioned holds — the authorization/runway value),
- * NOT `actual_balance_cents`. 404 (no billing account) → 0 (see module doc).
+ * Org spendable credit balance in USD, from billing-service `GET /internal/accounts/by-org/:orgId/balance`
+ * (user-less internal read — api-key only, org in path). Uses `balance_cents` (spendable funds incl.
+ * provisioned holds — the authorization/runway value), NOT `actual_balance_cents`. 404 (no billing
+ * account) → 0 (see module doc).
  */
 export async function fetchOrgBalanceUsd(orgId: string): Promise<number> {
   const { url, apiKey } = billingConfig();
-  const response = await fetchWithRetry(`${url}/v1/accounts/balance`, {
-    headers: {
-      "x-api-key": apiKey,
-      "x-org-id": orgId,
-      "x-user-id": STUB_IDENTITY_UUID,
-      "x-run-id": STUB_IDENTITY_UUID,
-    },
+  const response = await fetchWithRetry(`${url}/internal/accounts/by-org/${encodeURIComponent(orgId)}/balance`, {
+    headers: { "x-api-key": apiKey },
   });
 
   if (response.status === 404) return 0;
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`[features-service] billing-service /v1/accounts/balance failed (${response.status}): ${body}`);
+    throw new Error(`[features-service] billing-service /internal/accounts/by-org/:orgId/balance failed (${response.status}): ${body}`);
   }
 
   const data = (await response.json()) as { balance_cents?: string | number };
   const cents = Number(data.balance_cents);
   if (!Number.isFinite(cents)) {
-    throw new Error(`[features-service] billing-service /v1/accounts/balance returned non-numeric balance_cents: ${JSON.stringify(data.balance_cents)}`);
+    throw new Error(`[features-service] billing-service /internal/accounts/by-org/:orgId/balance returned non-numeric balance_cents: ${JSON.stringify(data.balance_cents)}`);
   }
   return cents / 100;
 }

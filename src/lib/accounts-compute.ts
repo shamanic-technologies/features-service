@@ -25,10 +25,6 @@ import {
   type BrandBasic,
 } from "./accounts-client.js";
 
-// Service-stub identity for the per-(org,brand) daily-budget read (billing authorizes on x-org-id;
-// user/run are unvalidated context but must be well-formed UUIDs for the shared header builder).
-const STUB_IDENTITY_UUID = "00000000-0000-4000-8000-000000000000";
-
 export type AccountStatus = "active" | "inactive";
 
 export interface AccountRow {
@@ -71,8 +67,8 @@ const REAL_DEPS: AccountsDeps = {
   featureMemberships: async (csv) => (await fetchFeatureMemberships(csv)).map((m) => ({ orgId: m.orgId, brandId: m.brandId })),
   orgBalanceUsd: fetchOrgBalanceUsd,
   orgIdentity: fetchOrgIdentity,
-  brandDailyBudgetUsd: (brandId, orgId) =>
-    fetchBrandDailyBudgetUsd(brandId, "", { orgId, userId: STUB_IDENTITY_UUID, runId: STUB_IDENTITY_UUID }),
+  // Org-only read: billing daily-budget authorizes on x-org-id; user/run are omitted (no sentinel).
+  brandDailyBudgetUsd: (brandId, orgId) => fetchBrandDailyBudgetUsd(brandId, "", { orgId }),
   brandsBasic: fetchBrandsBasic,
 };
 
