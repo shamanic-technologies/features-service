@@ -219,6 +219,22 @@ the owning org's identity (service-stub user/run), same pattern as `/public/stat
 is additive/dormant (no dashboard consumer yet) — a distribute.you follow-up wires the graph. Reuses
 existing env vars only (EMAIL_GATEWAY / LEAD / BILLING / RUNS). (Set 2026-07-01.)
 
+**The cross-org service-stub identity forwarded to runs/billing MUST be a valid UUID — a marker
+string 500s the endpoint.** The fleet reads (`aggregateFleetNewSequences` → `fetchSpendBreakdown`,
+`fetchBrandDailyBudgetUsd`) reuse pipeline-activity's `getRunsServiceHeaders`/`getBillingServiceHeaders`,
+which ALWAYS send `x-user-id`/`x-run-id`. Asymmetry that bit v0.70.3: `x-user-id` is *optional
+unvalidated context* on lead/brand/email-gateway, but **runs-service `/v1/stats/costs` format-VALIDATES
+it** (`400 "x-user-id header must be a valid UUID"`). The original stub `"public-send-forecast"` (a
+marker string) 400'd the essential runs read → the route's try/catch surfaced a generic 500 on EVERY
+request. Fix: stub = `STUB_IDENTITY_UUID = "00000000-0000-4000-8000-000000000000"` (valid v4 format,
+obvious synthetic in logs). The public-revenue path sidesteps this by forwarding ONLY `{orgId,
+featureSlug}` (its runs header builder omits user/run), but the send-forecast path can't reuse that —
+it goes through the always-send pipeline-activity builders, so a valid-UUID stub is the correct fix,
+NOT omission (would send `x-user-id: undefined`). **Test gap that hid it:** the aggregate's unit tests
+inject `FleetDeps`, so the real stub value never reaches a client — a regression guard now captures the
+forwarded identity and asserts UUID-shape (`send-forecast-aggregate.test.ts`). Any NEW cross-org fleet
+read reusing these builders must forward a UUID-shaped stub. (Set 2026-07-01, hotfix v0.70.3, #425.)
+
 ## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #346)
 
 `pipeline-activity.ts` (the budget→forecast endpoint) was the LAST `customerProfileId` / brand-persona
