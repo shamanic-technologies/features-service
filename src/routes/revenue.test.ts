@@ -104,9 +104,22 @@ function qualRows(quals: Qualifications): unknown[] {
 }
 
 /** Route fetch mock keyed by URL substring. effective economics (saved set + cross-brand average) + leads + status timestamps + manual quals + platform stats + cost overridable. */
-function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number } = {}): void {
+function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+    // email-gateway GET /orgs/stats?groupBy=day — the outreach-activity day series (#415). groupBy=day is
+    // unique to this call (no other /revenue downstream reads a day grouping), so match it before the
+    // substring branches below.
+    if (url.includes("groupBy=day")) {
+      if (opts.sequencesFail) {
+        return new Response("boom", { status: 500, headers: { "Content-Type": "application/json" } });
+      }
+      const groups = (opts.sequencesGroups ?? []).map((g) => ({
+        key: g.key,
+        broadcast: { recipientStats: { contacted: g.contacted } },
+      }));
+      return new Response(JSON.stringify({ groups }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (url.includes("/stats/costs")) {
       return new Response(costGroups(opts.costCents ?? 0), { status: 200, headers: { "Content-Type": "application/json" } });
     }
@@ -237,7 +250,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     for (const l of res.body.leads) expect(l.contactedAt).toBe(contactedAt);
   });
 
-  it("outreachContacted — server-computed card count + daily buckets, coherent with leads[] (#372)", async () => {
+  it("recipientsContacted — server-computed card count + daily buckets, coherent with leads[] (#372)", async () => {
     // Two contacted leads, both dated to the SAME UTC day → one daily bucket of 2, card total 2.
     const day = "2026-05-10";
     mockFetch({
@@ -250,7 +263,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    const oc = res.body.outreachContacted;
+    const oc = res.body.recipientsContacted;
     // Stat card.
     expect(oc.total).toBe(2);
     // Daily graph actuals — bucketed by the per-lead contactedAt UTC day, server-side.
@@ -263,7 +276,54 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(sumDaily + oc.undatedCount).toBe(oc.total);
   });
 
-  it("opened/clicked/goal-outcome series — server-computed from the SAME leads[], coherent with outreachContacted (#377)", async () => {
+  it("sequences — per-day outreach ACTIONS from email-gateway groupBy=day, INDEPENDENT of the lead snapshot and free to exceed recipientsContacted (#415)", async () => {
+    // The re-contact case that motivated #415: 2 distinct leads reached (recipientsContacted.total=2) but
+    // 34 campaigns launched today (re-contacts of leads first reached months ago). The activity series
+    // reports 34 for today; the two grains DIFFER by design and are NOT reconciled.
+    const day = "2026-07-01";
+    mockFetch({
+      economics: ECONOMICS,
+      leads: HAPPY_LEADS, // contacted total = 2, first-contacted months ago in these fixtures
+      sequencesGroups: [{ key: day, contacted: 34 }],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.sequences).toEqual({ total: 34, daily: [{ date: day, count: 34 }], undatedCount: 0 });
+    // Grain independence: activity (actions/day) legitimately exceeds recipientsContacted (distinct leads).
+    expect(res.body.sequences.total).toBeGreaterThan(res.body.recipientsContacted.total);
+  });
+
+  it("sequences — zero-count days dropped, multi-day series ascending, total = sum(daily) (#415)", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: HAPPY_LEADS,
+      sequencesGroups: [
+        { key: "2026-07-01", contacted: 5 },
+        { key: "2026-06-30", contacted: 3 },
+        { key: "2026-06-29", contacted: 0 }, // dropped — no activity that day
+      ],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.sequences.daily).toEqual([
+      { date: "2026-06-30", count: 3 },
+      { date: "2026-07-01", count: 5 },
+    ]);
+    expect(res.body.sequences.total).toBe(8);
+    expect(res.body.sequences.undatedCount).toBe(0);
+  });
+
+  it("sequences — email-gateway failure degrades to null (fail-soft), pipeline + leads stay intact (#415)", async () => {
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, sequencesFail: true });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.sequences).toBeNull();
+    // Rest of the response is unaffected by the degraded outreach-activity read.
+    expect(res.body.leads.length).toBeGreaterThan(0);
+    expect(res.body.recipientsContacted.total).toBe(2);
+  });
+
+  it("opened/clicked/goal-outcome series — server-computed from the SAME leads[], coherent with recipientsContacted (#377)", async () => {
     const day = "2026-05-10";
     mockFetch({
       economics: ECONOMICS,
@@ -275,8 +335,8 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    const { outreachContacted: oc, opened, clicked, repliedPositive, meetingsBooked, purchased } = res.body;
-    // Each series carries the same shape as outreachContacted.
+    const { recipientsContacted: oc, recipientsOpened: opened, recipientsClicked: clicked, recipientsRepliesPositive: repliedPositive, meetingsBooked, purchased } = res.body;
+    // Each series carries the same shape as recipientsContacted.
     expect(opened.total).toBe(2); // both opened
     expect(opened.daily).toEqual([{ date: day, count: 2 }]);
     expect(clicked.total).toBe(1); // only click@x.com clicked
@@ -381,6 +441,8 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.organizations).toEqual([]);
     expect(res.body.timeSeries).toEqual([]);
     expect(res.body.events).toEqual([]);
+    // Lens omits the brand-total outreach-activity series (same gate as spend). #415
+    expect(res.body.sequences).toBeNull();
   });
 
   it("lens=booked-meetings — only positive-reply leads; prob == r2m, revenue == (r2m/100)·LTR", async () => {
@@ -729,9 +791,9 @@ describe("GET /features/:featureSlug/revenue", () => {
     // ROI/CAC ride ACTUAL spend — costEconomics.actualCostUsd == actualSpentCents (coherent).
     expect(res.body.spend.actualSpentCents).toBe(res.body.costEconomics.actualCostUsd * 100);
     // The core reconciliation AC: each CPC == its OWN spend ÷ the displayed clicks (clicked.total).
-    expect(res.body.clicked.total).toBe(1);
-    expect(res.body.spend.totalCpcCents).toBe(res.body.spend.totalSpentCents / res.body.clicked.total);
-    expect(res.body.spend.actualCpcCents).toBe(res.body.spend.actualSpentCents / res.body.clicked.total);
+    expect(res.body.recipientsClicked.total).toBe(1);
+    expect(res.body.spend.totalCpcCents).toBe(res.body.spend.totalSpentCents / res.body.recipientsClicked.total);
+    expect(res.body.spend.actualCpcCents).toBe(res.body.spend.actualSpentCents / res.body.recipientsClicked.total);
     expect(res.body.spend.totalCpcCents).toBe(7000);
     expect(res.body.spend.actualCpcCents).toBe(7000);
     expect(res.body.spend.provisionedCpcCents).toBeNull(); // 0 provisioned → null, never a false $0.00
@@ -781,7 +843,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     mockFetch({ economics: ECONOMICS, leads: replyOnly, costCents: 5000 });
     let res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.clicked.total).toBe(0);
+    expect(res.body.recipientsClicked.total).toBe(0);
     expect(res.body.spend.totalCpcCents).toBeNull();
     expect(res.body.spend.actualCpcCents).toBeNull();
     expect(res.body.spend.provisionedCpcCents).toBeNull();
@@ -828,7 +890,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.sources[0]).toEqual({ source: "email-send-step-1", totalSpentCents: 6000, actualSpentCents: 6000, provisionedSpentCents: 0, sharePct: 75 });
     expect(res.body.spend.sources[1]).toEqual({ source: "apollo people-search", totalSpentCents: 2000, actualSpentCents: 2000, provisionedSpentCents: 0, sharePct: 25 });
     // CPC derives from the SAME total → reconciles with the source list the dashboard renders.
-    expect(res.body.spend.totalCpcCents).toBe(8000 / res.body.clicked.total);
+    expect(res.body.spend.totalCpcCents).toBe(8000 / res.body.recipientsClicked.total);
   });
 
   it("spend — null on the lensed response (brand-total concept; lens pages use costPerConversionUsd)", async () => {
