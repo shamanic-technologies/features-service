@@ -53,3 +53,18 @@ export const apiKeyAuth: RequestHandler = (
 
   next();
 };
+
+/**
+ * API key auth WITHOUT the org/user/run requirement — for CROSS-ORG internal reads that are not
+ * scoped to a single org (e.g. the fleet-wide `/internal/stats/send-forecast`). Only the shared
+ * service key is required; staff-gating (which humans may call it) is enforced upstream at api-service.
+ * Not on the public (no-auth) tier — so the endpoint is never reachable without the service key.
+ */
+export const apiKeyOnly: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
+  const apiKey = req.headers["x-api-key"] as string;
+  if (!apiKey || apiKey !== process.env.FEATURES_SERVICE_API_KEY) {
+    res.status(401).json({ error: "Invalid or missing API key" });
+    return;
+  }
+  next();
+};

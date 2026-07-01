@@ -1109,7 +1109,8 @@ function mockCostProjectionFetch(opts: {
   return spy as unknown as ReturnType<typeof vi.fn>;
 }
 
-describe("GET /public/stats/send-forecast", () => {
+describe("GET /internal/stats/send-forecast", () => {
+  const KEY = { "x-api-key": "test-key" };
   beforeEach(() => {
     vi.clearAllMocks();
     __resetSendForecastCache();
@@ -1129,7 +1130,7 @@ describe("GET /public/stats/send-forecast", () => {
   });
 
   it("returns the three-series forecast + summary with the D0/D3/D10 model", async () => {
-    const res = await request(app).get("/public/stats/send-forecast?days=14");
+    const res = await request(app).get("/internal/stats/send-forecast?days=14").set(KEY);
     expect(res.status).toBe(200);
     expect(res.body.summary).toMatchObject({
       totalDailyBudgetUsd: 500,
@@ -1152,7 +1153,7 @@ describe("GET /public/stats/send-forecast", () => {
   });
 
   it("passes ONLY the cold-email outreach slugs to the fleet aggregation", async () => {
-    await request(app).get("/public/stats/send-forecast");
+    await request(app).get("/internal/stats/send-forecast").set(KEY);
     expect(mockAggregate).toHaveBeenCalledTimes(1);
     expect(mockAggregate.mock.calls[0][0]).toEqual(["sales-cold-email-outreach"]);
   });
@@ -1166,12 +1167,18 @@ describe("GET /public/stats/send-forecast", () => {
     };
     mockEmailsSent.mockResolvedValue(new Map([[iso(-2), 33]]));
     mockSendingForecast.mockResolvedValue(new Map([[iso(4), 21]]));
-    const res = await request(app).get("/public/stats/send-forecast");
+    const res = await request(app).get("/internal/stats/send-forecast").set(KEY);
     const past = res.body.days.find((d: { date: string }) => d.date === iso(-2));
     expect(past).toMatchObject({ actualSent: 33, inFlightSent: null, forecastNew: null, total: 33 });
     const future = res.body.days.find((d: { date: string }) => d.date === iso(4));
     expect(future.inFlightSent).toBe(21);
     expect(future.forecastNew).toBeGreaterThan(0);
     expect(future.total).toBe(future.inFlightSent + future.forecastNew);
+  });
+
+  it("401s without the service api-key (internal, not public)", async () => {
+    const res = await request(app).get("/internal/stats/send-forecast");
+    expect(res.status).toBe(401);
+    expect(mockAggregate).not.toHaveBeenCalled();
   });
 });

@@ -25,6 +25,7 @@ import {
   type SendForecastDay,
   type SendForecastSummary,
 } from "../lib/send-forecast-compute.js";
+import { apiKeyOnly } from "../middleware/auth.js";
 import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
 
@@ -879,7 +880,7 @@ export function __resetSendForecastCache(): void {
 }
 
 /**
- * GET /public/stats/send-forecast?days=N — GLOBAL (cross-org, fleet-wide) projection of how many
+ * GET /internal/stats/send-forecast?days=N — GLOBAL (cross-org, fleet-wide) projection of how many
  * outreach emails the fleet will send per calendar day, stacking three email-grain series:
  * past real sends (`actualSent`), already-scheduled in-flight follow-ups (`inFlightSent`), and new
  * budget-driven sequences on the D0/D3/D10 model (`forecastNew`). See send-forecast-compute.ts.
@@ -969,13 +970,13 @@ router.get("/public/stats/revenue", async (req, res) => {
   }
 });
 
-// ── GET /public/stats/send-forecast ──────────────────────────────────────────
+// ── GET /internal/stats/send-forecast (api-key only; staff-gated upstream at api-service) ─────────
 
-router.get("/public/stats/send-forecast", async (req, res) => {
+router.get("/internal/stats/send-forecast", apiKeyOnly, async (req, res) => {
   try {
     await handleSendForecast(req.query.days as string | undefined, res);
   } catch (error) {
-    console.error("[features-service] Public stats send-forecast error:", error);
+    console.error("[features-service] Internal stats send-forecast error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
