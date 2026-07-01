@@ -9,6 +9,7 @@ import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
 import { fetchSpendBreakdown, type SpendBreakdown, type SpendSource } from "../lib/spend-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
+import { fetchSequencesByDay } from "../lib/sequences-client.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
 import { fetchPlatformEmailRates } from "../lib/platform-rates-client.js";
 import {
@@ -142,15 +143,15 @@ interface RevenueResponse {
    * Outreach surfaces (card, graph, table) agree from one snapshot (features-service#371/#372).
    * Coherent by construction: total === sum(daily counts) + undatedCount === count(leads contacted).
    */
-  outreachContacted: SignalSeries;
+  recipientsContacted: SignalSeries;
   /**
    * The Opens / Clicks / goal-outcome ACTUAL series for the Overview daily graph, each
-   * server-computed from the SAME `leads[]` above — exactly like `outreachContacted` — so all four
+   * server-computed from the SAME `leads[]` above — exactly like `recipientsContacted` — so all four
    * actual series and the conversions table move together from one snapshot (features-service#377).
    * This replaces the old pipeline-activity / instantly event-day source, which bucketed raw events
    * (re-opens by already-advanced leads) decoupled from the contacted snapshot and produced
    * impossible states ("3 opens today while 0 outreach today"). Coherent by construction with
-   * `outreachContacted` + the table: each series' total = sum(daily counts) + undatedCount =
+   * `recipientsContacted` + the table: each series' total = sum(daily counts) + undatedCount =
    * count(leads carrying the signal), and no series can exceed the contacted snapshot.
    *   - opened         → Opens series   (email-gateway firstOpenedAt).
    *   - clicked        → Clicks series  (website-visit; ALSO the signup-goal outcome — a self-serve
@@ -163,11 +164,24 @@ interface RevenueResponse {
    *   - meetingsBooked → the meeting-goal outcome (instantly manual-qualification meetingBookedAt).
    *   - purchased      → the purchase-goal outcome (instantly manual-qualification closedAt).
    */
-  opened: SignalSeries;
-  clicked: SignalSeries;
-  repliedPositive: SignalSeries;
+  recipientsOpened: SignalSeries;
+  recipientsClicked: SignalSeries;
+  recipientsRepliesPositive: SignalSeries;
   meetingsBooked: SignalSeries;
   purchased: SignalSeries;
+  /**
+   * OUTREACH ACTIVITY daily series for the Overview graph — instantly campaigns-created per day (via
+   * email-gateway groupBy=day), NOT the lead snapshot (features-service#415). Answers "how much outreach
+   * happened each day" (re-contacts count each day, matches "budget spent today"), whereas
+   * `recipientsContacted` answers "how many distinct leads have I reached" (funnel view, deduped by
+   * first-ever contact). The two grains DIFFER by design and are NOT reconciled — the card renders
+   * `recipientsContacted.total` (unique leads), the graph's Outreach ACTUAL bars render
+   * `sequences.daily` (per-day actions). undatedCount is always 0 (instantly buckets every
+   * campaign by created_at). Present on the OVERVIEW response only (same gate as `spend`); null on the
+   * lensed (?lens=) response and absent on grouped (?groupBy=campaignId) groups. Fail-soft: null when the
+   * email-gateway read fails (the graph degrades to no outreach bars, the rest of the response stays intact).
+   */
+  sequences: SignalSeries | null;
   /**
    * Canonical spend block for the Overview card — Total spent / today's spend / top cost sources /
    * CPC, each in committed/actual/provisioned variants (see {@link Spend}). Present on the OVERVIEW
@@ -179,13 +193,13 @@ interface RevenueResponse {
 
 /**
  * The Opens / Clicks / meeting / purchase ACTUAL series, each built from the SAME `leads[]` snapshot
- * (mirrors `buildContactedSeries`). Coherent-by-construction with `outreachContacted` + the table.
+ * (mirrors `buildContactedSeries`). Coherent-by-construction with `recipientsContacted` + the table.
  */
-function buildOutcomeSeries(leads: LeadRow[]): Pick<RevenueBody, "opened" | "clicked" | "repliedPositive" | "meetingsBooked" | "purchased"> {
+function buildOutcomeSeries(leads: LeadRow[]): Pick<RevenueBody, "recipientsOpened" | "recipientsClicked" | "recipientsRepliesPositive" | "meetingsBooked" | "purchased"> {
   return {
-    opened: buildSignalSeries(leads, (l) => l.opened, (l) => l.openedAt),
-    clicked: buildSignalSeries(leads, (l) => l.clicked, (l) => l.clickedAt),
-    repliedPositive: buildSignalSeries(leads, (l) => l.repliedPositive, (l) => l.repliedPositiveAt),
+    recipientsOpened: buildSignalSeries(leads, (l) => l.opened, (l) => l.openedAt),
+    recipientsClicked: buildSignalSeries(leads, (l) => l.clicked, (l) => l.clickedAt),
+    recipientsRepliesPositive: buildSignalSeries(leads, (l) => l.repliedPositive, (l) => l.repliedPositiveAt),
     meetingsBooked: buildSignalSeries(leads, (l) => l.meetingBooked, (l) => l.meetingBookedAt),
     purchased: buildSignalSeries(leads, (l) => l.purchased, (l) => l.purchasedAt),
   };
@@ -196,7 +210,12 @@ export type RevenueBody = Omit<RevenueResponse, "featureSlug">;
 
 export type DownstreamHeaders = { orgId: string; userId?: string; runId?: string; featureSlug?: string };
 
-function emptyBody(totalPipelineUsd: number | null, actualCostInUsdCents: number, spend: Spend | null): RevenueBody {
+function emptyBody(
+  totalPipelineUsd: number | null,
+  actualCostInUsdCents: number,
+  spend: Spend | null,
+  sequences: SignalSeries | null = null,
+): RevenueBody {
   return {
     headline: { totalPipelineUsd, economicsSource: null },
     costEconomics: buildCostEconomics(actualCostInUsdCents, totalPipelineUsd),
@@ -204,10 +223,30 @@ function emptyBody(totalPipelineUsd: number | null, actualCostInUsdCents: number
     organizations: [],
     leads: [],
     events: [],
-    outreachContacted: buildContactedSeries([]),
+    recipientsContacted: buildContactedSeries([]),
     ...buildOutcomeSeries([]),
+    sequences,
     spend,
   };
+}
+
+/**
+ * Fetch the OUTREACH ACTIVITY day series (email-gateway groupBy=day) for the OVERVIEW path only.
+ * Fail-soft — a failure degrades to null (the graph drops its Outreach bars) rather than 502-ing the
+ * whole /revenue response, mirroring the other email-gateway enrichment reads.
+ */
+function fetchSequencesSoft(
+  brandId: string,
+  campaignId: string | undefined,
+  featureSlug: string,
+  headers: DownstreamHeaders,
+): Promise<SignalSeries | null> {
+  return fetchSequencesByDay(brandId, campaignId, featureSlug, headers).catch((err) => {
+    console.warn(
+      `[features-service] sequences enrichment failed (degrading to null): ${(err as Error).message}`,
+    );
+    return null;
+  });
 }
 
 // ── Outcome lenses (dashboard Signups / Booked Meetings / Sales tabs) ─────────
@@ -324,10 +363,12 @@ function buildLensBody(
     organizations: [],
     leads,
     events: [],
-    outreachContacted: buildContactedSeries(leads),
+    recipientsContacted: buildContactedSeries(leads),
     ...buildOutcomeSeries(leads),
-    // The lens response omits the brand-total spend block (it would describe the brand, not the lensed
-    // subset). The dashboard reads spend from the unlensed Overview call; lens pages use costPerConversionUsd.
+    // The lens response omits the brand-total spend block AND the sequences series (both describe
+    // the brand, not the lensed subset). The dashboard reads them from the unlensed Overview call; lens
+    // pages use costPerConversionUsd.
+    sequences: null,
     spend: null,
   };
 }
@@ -367,9 +408,14 @@ export async function computeFeatureRevenue(
   // swallowed cost error must not fake $0 cost / infinite ROI.
   if (!funnel) {
     if (includeSpend) {
-      const breakdown = await fetchSpendBreakdown(brandId, campaignId, featureSlug, headers);
+      // Overview: fetch spend (fail-loud) + sequences (fail-soft) in parallel. Outreach activity
+      // is independent of the funnel — a no-funnel feature still launches campaigns worth graphing.
+      const [breakdown, sequences] = await Promise.all([
+        fetchSpendBreakdown(brandId, campaignId, featureSlug, headers),
+        fetchSequencesSoft(brandId, campaignId, featureSlug, headers),
+      ]);
       // ROI/CAC ride ACTUAL spend; the `spend` block carries the committed total separately.
-      return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, []));
+      return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, []), sequences);
     }
     const actualCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers);
     return emptyBody(null, actualCostInUsdCents, null);
@@ -386,13 +432,18 @@ export async function computeFeatureRevenue(
   // All four are fail-loud (Promise.all rejects → the endpoint 502s): each is a core input to the
   // pipeline total / cost / ROI; a swallowed error would fake a number. The economics===null
   // cold-start path below over-fetches rates+leads — accepted for the common-path win.
-  const [costResult, { economics, source }, platformRates, persons] = await Promise.all([
+  const [costResult, { economics, source }, platformRates, persons, sequences] = await Promise.all([
     includeSpend
       ? fetchSpendBreakdown(brandId, campaignId, featureSlug, headers)
       : fetchRunsCostCents(brandId, campaignId, featureSlug, headers),
     economicsOverride ?? fetchEffectiveEconomics(brandId, { ...headers, campaignId }),
     fetchPlatformEmailRates(),
     fetchLeadsForRevenue(brandId, campaignId, headers),
+    // Overview-only sequences day series (email-gateway groupBy=day). Pre-caught → resolves to
+    // null on failure, so it never rejects fail-loud Wave A. Off-overview it's null (not fetched).
+    includeSpend
+      ? fetchSequencesSoft(brandId, campaignId, featureSlug, headers)
+      : Promise.resolve<SignalSeries | null>(null),
   ]);
   const breakdown: SpendBreakdown | null = typeof costResult === "number" ? null : costResult;
   // ROI/CAC + costEconomics ride ACTUAL (billed) spend; the `spend` block (buildSpend) carries the
@@ -400,7 +451,7 @@ export async function computeFeatureRevenue(
   const actualCostInUsdCents = typeof costResult === "number" ? costResult : costResult.actualSpentCents;
 
   if (economics === null) {
-    return emptyBody(null, actualCostInUsdCents, breakdown ? buildSpend(breakdown, []) : null);
+    return emptyBody(null, actualCostInUsdCents, breakdown ? buildSpend(breakdown, []) : null, sequences);
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
 
@@ -478,8 +529,9 @@ export async function computeFeatureRevenue(
     organizations: result.organizations,
     leads: result.leads,
     events: result.events,
-    outreachContacted: buildContactedSeries(result.leads),
+    recipientsContacted: buildContactedSeries(result.leads),
     ...buildOutcomeSeries(result.leads),
+    sequences,
     spend: breakdown ? buildSpend(breakdown, result.leads) : null,
   };
 }

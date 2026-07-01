@@ -299,23 +299,23 @@ const revenueCostEconomicsSchema = z.object({
 // Server-computed "contacted" aggregates for the Overview's Outreach surfaces (stat card + 7-day
 // graph), derived from the SAME leads[] this response returns. Coherent by construction:
 // total === sum(daily[].count) + undatedCount === count(leads with contacted === true).
-const outreachContactedDailySchema = z.object({
+const recipientsContactedDailySchema = z.object({
   date: z.string().describe("UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."),
   count: z.number().int().describe("Number of leads first contacted on this UTC day."),
 });
 
-const outreachContactedSchema = z.object({
+const recipientsContactedSchema = z.object({
   total: z.number().int().describe("Total contacted leads in scope — the Outreach stat-card count. Equals sum(daily[].count) + undatedCount."),
-  daily: z.array(outreachContactedDailySchema).describe("Per-day contacted buckets (the Outreach ACTUAL series the daily graph renders), keyed by the UTC day of each lead's contactedAt, ascending. Complete series — one entry per day with ≥1 dated contacted lead; the dashboard slices its 7-day window from it. Sums to total - undatedCount. No wall-clock dependence (buckets come only from per-lead timestamps)."),
+  daily: z.array(recipientsContactedDailySchema).describe("Per-day contacted buckets (the Outreach ACTUAL series the daily graph renders), keyed by the UTC day of each lead's contactedAt, ascending. Complete series — one entry per day with ≥1 dated contacted lead; the dashboard slices its 7-day window from it. Sums to total - undatedCount. No wall-clock dependence (buckets come only from per-lead timestamps)."),
   undatedCount: z.number().int().describe("Contacted leads with a null contactedAt (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."),
 });
 
 // Generic per-signal ACTUAL series (Opens / Clicks / goal outcome) — same shape + coherence
-// guarantee as outreachContacted, built from the SAME leads[] (features-service#377). Reuses the
+// guarantee as recipientsContacted, built from the SAME leads[] (features-service#377). Reuses the
 // daily-point schema. total === sum(daily[].count) + undatedCount === count(leads with the signal).
 const signalSeriesSchema = z.object({
   total: z.number().int().describe("Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."),
-  daily: z.array(outreachContactedDailySchema).describe("Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."),
+  daily: z.array(recipientsContactedDailySchema).describe("Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."),
   undatedCount: z.number().int().describe("Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."),
 });
 
@@ -350,12 +350,13 @@ const spendSchema = z.object({
 const featureRevenueResponseSchema = z.object({
   featureSlug: z.string(),
   spend: spendSchema.nullable().describe("Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"),
-  outreachContacted: outreachContactedSchema.describe("Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."),
-  opened: signalSeriesSchema.describe("Opens ACTUAL series for the Overview daily graph, server-computed from the SAME leads[] snapshot — coherent with outreachContacted + the table (features-service#377). Replaces the pipeline-activity/instantly event-day source."),
-  clicked: signalSeriesSchema.describe("Clicks ACTUAL series (website visits), server-computed from the SAME leads[] snapshot. ALSO the signup-goal's observed outcome — a downstream account signup is not tracked here, so the visit is the coherent signup-funnel actual; the dashboard scales it by visitToSignupPct for the projected signups line (forecast). features-service#377."),
-  repliedPositive: signalSeriesSchema.describe("Positive-replies ACTUAL series (email-gateway firstRepliedAt), server-computed from the SAME leads[] snapshot — coherent with the other actual series + the table. The booked-meetings lens's engagement signal (P=replyToMeeting) the meeting-goal Outcome line renders; distinct from meetingsBooked (the reply is the signal, the booked meeting its downstream outcome). features-service#390."),
+  recipientsContacted: recipientsContactedSchema.describe("Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."),
+  recipientsOpened: signalSeriesSchema.describe("Opens ACTUAL series for the Overview daily graph, server-computed from the SAME leads[] snapshot — coherent with recipientsContacted + the table (features-service#377). Replaces the pipeline-activity/instantly event-day source."),
+  recipientsClicked: signalSeriesSchema.describe("Clicks ACTUAL series (website visits), server-computed from the SAME leads[] snapshot. ALSO the signup-goal's observed outcome — a downstream account signup is not tracked here, so the visit is the coherent signup-funnel actual; the dashboard scales it by visitToSignupPct for the projected signups line (forecast). features-service#377."),
+  recipientsRepliesPositive: signalSeriesSchema.describe("Positive-replies ACTUAL series (email-gateway firstRepliedAt), server-computed from the SAME leads[] snapshot — coherent with the other actual series + the table. The booked-meetings lens's engagement signal (P=replyToMeeting) the meeting-goal Outcome line renders; distinct from meetingsBooked (the reply is the signal, the booked meeting its downstream outcome). features-service#390."),
   meetingsBooked: signalSeriesSchema.describe("Meeting-goal outcome ACTUAL series (instantly manual-qualification meetingBookedAt), server-computed from the SAME leads[] snapshot. features-service#377."),
   purchased: signalSeriesSchema.describe("Purchase-goal outcome ACTUAL series (instantly manual-qualification closedAt), server-computed from the SAME leads[] snapshot. features-service#377."),
+  sequences: signalSeriesSchema.nullable().describe("OUTREACH ACTIVITY daily series for the Overview graph — instantly campaigns-created per day (email-gateway groupBy=day), NOT the lead snapshot. Answers 'how much outreach happened each day' (re-contacts count each day, matches 'budget spent today'), whereas recipientsContacted answers 'how many DISTINCT leads have I reached' (deduped by first-ever contact). The two grains DIFFER by design and are NOT reconciled: the Outreach card renders recipientsContacted.total (unique leads); the graph's Outreach ACTUAL bars render sequences.daily (per-day actions). undatedCount is always 0. Present on the OVERVIEW response only (same gate as spend); null on the lensed (?lens=) response and absent on grouped (?groupBy=campaignId) groups. Fail-soft: null when the email-gateway read fails. features-service#415."),
   headline: z.object({
     totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."),
     economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no funnel wired or no economics applied)."),
@@ -906,6 +907,53 @@ registry.registerPath({
     200: { description: "Per-brand cross-org revenue, or the slim rollup when rollup=true", content: { "application/json": { schema: z.union([publicRevenueResponseRef, publicRevenueRollupRef]) } } },
     400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/send-forecast ───────────────────────────────────────────
+
+const sendForecastDaySchema = z.object({
+  date: z.string().describe("UTC calendar day (YYYY-MM-DD)."),
+  isToday: z.boolean(),
+  actualSent: z.number().nullable().describe("Past real emails sent that day (email-grain, follow-ups included). null on future days."),
+  inFlightSent: z.number().nullable().describe("Already-scheduled follow-up sends for sequences launched before today. null on past days."),
+  forecastNew: z.number().nullable().describe("Projected emails from NEW (today-onward) budget-driven sequences, D0/D3/D10 model. null on past days."),
+  total: z.number().nullable().describe("Predictive total — past: actualSent; today/future: sum of present components."),
+});
+
+const sendForecastResponseSchema = z.object({
+  days: z.array(sendForecastDaySchema),
+  summary: z.object({
+    totalDailyBudgetUsd: z.number().describe("Sum of daily budget over active brands (USD)."),
+    remainingTodayUsd: z.number().describe("Sum of remaining budget today over active brands (USD)."),
+    followupModel: z.string().describe("The send cadence model, e.g. 'D0/D3/D10'."),
+    activeBrandCount: z.number(),
+    totalNewSequencesPerDay: z.number().describe("Fleet new sequences/day at full budget (sum over brands of budget/outreachUsd)."),
+  }),
+});
+
+const sendForecastResponseRef = registry.register("SendForecastResponse", sendForecastResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/send-forecast",
+  summary: "Global fleet email send forecast per day (public, no auth)",
+  description:
+    "Cross-org, fleet-wide projection of how many outreach emails will be SENT per calendar day over a past+future window. " +
+    "Stacks three EMAIL-grain series: actualSent (past real email_sent events, follow-ups included, from email-gateway groupBy=day), " +
+    "inFlightSent (already-scheduled follow-up sends for sequences launched before today, from the instantly sending-forecast relayed via email-gateway), " +
+    "and forecastNew (new sequences the active brands' daily budgets launch from today onward, each emitting on the D0/D3/D10 cadence). " +
+    "forecastNew covers cohorts started today-or-later; inFlightSent covers pre-today cohorts' follow-ups, so they never overlap. " +
+    "Today's new-sequence cohort is scaled to the remaining daily budget. Values are null (not 0) when an input is absent.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      days: z.coerce.number().int().min(1).max(90).optional().describe("Future horizon in days (default 14, max 90). A 7-day past tail is always included."),
+    }),
+  },
+  responses: {
+    200: { description: "Per-day fleet send forecast + summary", content: { "application/json": { schema: sendForecastResponseRef } } },
+    500: { description: "Server error", content: { "application/json": { schema: errorResponse } } },
   },
 });
 

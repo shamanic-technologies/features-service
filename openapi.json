@@ -724,7 +724,7 @@
             ],
             "description": "Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"
           },
-          "outreachContacted": {
+          "recipientsContacted": {
             "type": "object",
             "properties": {
               "total": {
@@ -764,7 +764,7 @@
             ],
             "description": "Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."
           },
-          "opened": {
+          "recipientsOpened": {
             "type": "object",
             "properties": {
               "total": {
@@ -802,9 +802,9 @@
               "daily",
               "undatedCount"
             ],
-            "description": "Opens ACTUAL series for the Overview daily graph, server-computed from the SAME leads[] snapshot — coherent with outreachContacted + the table (features-service#377). Replaces the pipeline-activity/instantly event-day source."
+            "description": "Opens ACTUAL series for the Overview daily graph, server-computed from the SAME leads[] snapshot — coherent with recipientsContacted + the table (features-service#377). Replaces the pipeline-activity/instantly event-day source."
           },
-          "clicked": {
+          "recipientsClicked": {
             "type": "object",
             "properties": {
               "total": {
@@ -844,7 +844,7 @@
             ],
             "description": "Clicks ACTUAL series (website visits), server-computed from the SAME leads[] snapshot. ALSO the signup-goal's observed outcome — a downstream account signup is not tracked here, so the visit is the coherent signup-funnel actual; the dashboard scales it by visitToSignupPct for the projected signups line (forecast). features-service#377."
           },
-          "repliedPositive": {
+          "recipientsRepliesPositive": {
             "type": "object",
             "properties": {
               "total": {
@@ -963,6 +963,47 @@
               "undatedCount"
             ],
             "description": "Purchase-goal outcome ACTUAL series (instantly manual-qualification closedAt), server-computed from the SAME leads[] snapshot. features-service#377."
+          },
+          "sequences": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "OUTREACH ACTIVITY daily series for the Overview graph — instantly campaigns-created per day (email-gateway groupBy=day), NOT the lead snapshot. Answers 'how much outreach happened each day' (re-contacts count each day, matches 'budget spent today'), whereas recipientsContacted answers 'how many DISTINCT leads have I reached' (deduped by first-ever contact). The two grains DIFFER by design and are NOT reconciled: the Outreach card renders recipientsContacted.total (unique leads); the graph's Outreach ACTUAL bars render sequences.daily (per-day actions). undatedCount is always 0. Present on the OVERVIEW response only (same gate as spend); null on the lensed (?lens=) response and absent on grouped (?groupBy=campaignId) groups. Fail-soft: null when the email-gateway read fails. features-service#415."
           },
           "headline": {
             "type": "object",
@@ -1285,12 +1326,13 @@
         "required": [
           "featureSlug",
           "spend",
-          "outreachContacted",
-          "opened",
-          "clicked",
-          "repliedPositive",
+          "recipientsContacted",
+          "recipientsOpened",
+          "recipientsClicked",
+          "recipientsRepliesPositive",
           "meetingsBooked",
           "purchased",
+          "sequences",
           "headline",
           "costEconomics",
           "timeSeries",
@@ -2298,6 +2340,89 @@
         "required": [
           "featureSlug",
           "totalPipelineUsd"
+        ]
+      },
+      "SendForecastResponse": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "description": "UTC calendar day (YYYY-MM-DD)."
+                },
+                "isToday": {
+                  "type": "boolean"
+                },
+                "actualSent": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Past real emails sent that day (email-grain, follow-ups included). null on future days."
+                },
+                "inFlightSent": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Already-scheduled follow-up sends for sequences launched before today. null on past days."
+                },
+                "forecastNew": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Projected emails from NEW (today-onward) budget-driven sequences, D0/D3/D10 model. null on past days."
+                },
+                "total": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Predictive total — past: actualSent; today/future: sum of present components."
+                }
+              },
+              "required": [
+                "date",
+                "isToday",
+                "actualSent",
+                "inFlightSent",
+                "forecastNew",
+                "total"
+              ]
+            }
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "totalDailyBudgetUsd": {
+                "type": "number",
+                "description": "Sum of daily budget over active brands (USD)."
+              },
+              "remainingTodayUsd": {
+                "type": "number",
+                "description": "Sum of remaining budget today over active brands (USD)."
+              },
+              "followupModel": {
+                "type": "string",
+                "description": "The send cadence model, e.g. 'D0/D3/D10'."
+              },
+              "activeBrandCount": {
+                "type": "number"
+              },
+              "totalNewSequencesPerDay": {
+                "type": "number",
+                "description": "Fleet new sequences/day at full budget (sum over brands of budget/outreachUsd)."
+              }
+            },
+            "required": [
+              "totalDailyBudgetUsd",
+              "remainingTodayUsd",
+              "followupModel",
+              "activeBrandCount",
+              "totalNewSequencesPerDay"
+            ]
+          }
+        },
+        "required": [
+          "days",
+          "summary"
         ]
       }
     },
@@ -5749,6 +5874,59 @@
           },
           "404": {
             "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/stats/send-forecast": {
+      "get": {
+        "summary": "Global fleet email send forecast per day (public, no auth)",
+        "description": "Cross-org, fleet-wide projection of how many outreach emails will be SENT per calendar day over a past+future window. Stacks three EMAIL-grain series: actualSent (past real email_sent events, follow-ups included, from email-gateway groupBy=day), inFlightSent (already-scheduled follow-up sends for sequences launched before today, from the instantly sending-forecast relayed via email-gateway), and forecastNew (new sequences the active brands' daily budgets launch from today onward, each emitting on the D0/D3/D10 cadence). forecastNew covers cohorts started today-or-later; inFlightSent covers pre-today cohorts' follow-ups, so they never overlap. Today's new-sequence cohort is scaled to the remaining daily budget. Values are null (not 0) when an input is absent.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90,
+              "description": "Future horizon in days (default 14, max 90). A 7-day past tail is always included."
+            },
+            "required": false,
+            "description": "Future horizon in days (default 14, max 90). A 7-day past tail is always included.",
+            "name": "days",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-day fleet send forecast + summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendForecastResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
             "content": {
               "application/json": {
                 "schema": {
