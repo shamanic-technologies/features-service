@@ -279,7 +279,15 @@ name/domain is one batched brand-service call. Fail loud on any read error.
 Rows sort active-first, then daily budget desc (nulls last), tiebreak brandId. **Depends on the NEW
 client-service `GET /internal/orgs/:orgId` + the SHARED `CLIENT_SERVICE_URL`/`CLIENT_SERVICE_API_KEY`
 on features-service Railway (prod + staging).** Additive/dormant (no dashboard consumer yet). Reuses
-existing env vars otherwise (BILLING / LEAD / BRAND). (Set 2026-07-01.)
+existing env vars otherwise (BILLING / LEAD / BRAND).
+
+**VERIFY ON PROD, NOT STAGING — the balance path is prod-only.** `orgBalanceUsd` reads billing
+`/v1/accounts/balance`, whose `computeBalance` calls **stripe-service, which has NO staging runtime**
+(prod-only). So on staging billing 502s "Failed to compose account funds" fleet-wide → this endpoint
+correctly fails loud → 500 on staging. That is NOT a features-service defect; it's the documented
+prod-only-dependency gotcha (railway-vars skill). Verified working on prod v0.72.0 (2026-07-01): 32
+rows, 10 active / 22 inactive, `totalDailyBudgetUsd`=Σ active budgets, `mrr`=×30, `arr`=×365.
+(Set 2026-07-01.)
 
 ## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #346)
 
