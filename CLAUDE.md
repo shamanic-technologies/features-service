@@ -269,7 +269,10 @@ name/domain is one batched brand-service call. Fail loud on any read error.
   `fetchBrandDailyBudgetUsd`); `dailyBudgetCents:null` = unset/paused → row inactive.
 - **orgExternalId** (Clerk `org_...`) = client-service `GET /internal/orgs/:orgId` (NEW producer read,
   client-service). **ownerEmail** = client-service `GET /internal/users?orgId=` → earliest-created
-  user's email (owner proxy; no staff flag exposed, so earliest-createdAt is the heuristic).
+  user's email (owner proxy; no staff flag exposed, so earliest-createdAt is the heuristic). A
+  feature-membership org can have NO client-service row (resolved directly in lead/billing, or staging
+  drift) → **client-service 404 → null identity, row STILL listed** (both fields nullable; same
+  documented-not-found→null pattern as balance 404→0 — do NOT fail-loud it, that 500s the whole audit).
 - **brandName/brandDomain** = brand-service `GET /internal/brands?ids=` (batch, ≤100/req; missing ids
   omitted → null name/domain, still listed).
 

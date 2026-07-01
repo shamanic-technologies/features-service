@@ -105,28 +105,39 @@ export async function fetchOrgIdentity(orgId: string): Promise<OrgIdentity> {
     fetchWithRetry(`${url}/internal/users?orgId=${encodeURIComponent(orgId)}&limit=100`, { headers }),
   ]);
 
-  if (!orgRes.ok) {
-    const body = await orgRes.text();
-    throw new Error(`[features-service] client-service /internal/orgs/:orgId failed (${orgRes.status}): ${body}`);
-  }
-  if (!usersRes.ok) {
-    const body = await usersRes.text();
-    throw new Error(`[features-service] client-service /internal/users failed (${usersRes.status}): ${body}`);
-  }
-
-  const org = (await orgRes.json()) as { externalId?: string | null };
-  const usersData = (await usersRes.json()) as {
-    users?: Array<{ email?: string | null; createdAt?: string }>;
-  };
-  if (!Array.isArray(usersData.users)) {
-    throw new Error("[features-service] client-service /internal/users returned no users array");
+  // A feature-membership org may have no client-service row (org resolved directly in lead/billing,
+  // or staging data drift). 404 "not found" ⇒ its Clerk identity is simply unknown → null, and the
+  // account row is STILL listed. That's the truthful null (both fields are nullable by contract), not
+  // a swallowed error — same documented-not-found→null mapping as billing balance 404→0. Any OTHER
+  // non-OK fails loud.
+  let orgExternalId: string | null = null;
+  if (orgRes.status !== 404) {
+    if (!orgRes.ok) {
+      const body = await orgRes.text();
+      throw new Error(`[features-service] client-service /internal/orgs/:orgId failed (${orgRes.status}): ${body}`);
+    }
+    const org = (await orgRes.json()) as { externalId?: string | null };
+    orgExternalId = org.externalId ?? null;
   }
 
-  // Owner = earliest-created user of the org (proxy for the founding owner).
-  const sorted = [...usersData.users].sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
-  const ownerEmail = sorted.find((u) => typeof u.email === "string" && u.email.length > 0)?.email ?? null;
+  let ownerEmail: string | null = null;
+  if (usersRes.status !== 404) {
+    if (!usersRes.ok) {
+      const body = await usersRes.text();
+      throw new Error(`[features-service] client-service /internal/users failed (${usersRes.status}): ${body}`);
+    }
+    const usersData = (await usersRes.json()) as {
+      users?: Array<{ email?: string | null; createdAt?: string }>;
+    };
+    if (!Array.isArray(usersData.users)) {
+      throw new Error("[features-service] client-service /internal/users returned no users array");
+    }
+    // Owner = earliest-created user of the org (proxy for the founding owner).
+    const sorted = [...usersData.users].sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+    ownerEmail = sorted.find((u) => typeof u.email === "string" && u.email.length > 0)?.email ?? null;
+  }
 
-  return { orgExternalId: org.externalId ?? null, ownerEmail };
+  return { orgExternalId, ownerEmail };
 }
 
 /**
