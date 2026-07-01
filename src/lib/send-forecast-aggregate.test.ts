@@ -103,4 +103,33 @@ describe("aggregateFleetNewSequences", () => {
     const r = await aggregateFleetNewSequences(COLD, NOW, deps({ outreachUsd: {}, memberships: {}, budgetUsd: {} }));
     expect(r).toEqual({ totalNewPerDay: 0, todayNewOverride: 0, totalDailyBudgetUsd: 0, remainingTodayUsd: 0, activeBrandCount: 0 });
   });
+
+  // Regression guard for the prod 500 (features-service#419): the service-stub identity forwarded to
+  // billing/runs MUST be a well-formed UUID — runs-service `/v1/stats/costs` rejects a non-UUID
+  // `x-user-id`/`x-run-id` with 400, which propagated up as an "Internal server error" on every call.
+  // Unit tests inject deps, so a bad stub was previously invisible; capture the headers and assert.
+  it("forwards a valid-UUID service-stub identity to billing + runs (not a marker string)", async () => {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const seenBudgetHeaders: Array<{ userId: string; runId: string }> = [];
+    const seenSpendHeaders: Array<{ userId: string; runId: string }> = [];
+    const d: FleetDeps = {
+      featureOutreachUsd: async () => 2,
+      featureMemberships: async (slug) => (slug === "sales-cold-email-outreach" ? [{ orgId: "o1", brandId: "b1" }] : []),
+      brandDailyBudgetUsd: async (_brandId, _featureSlug, headers) => {
+        seenBudgetHeaders.push({ userId: headers.userId, runId: headers.runId });
+        return 100;
+      },
+      brandSpentTodayUsd: async (_brandId, _csv, headers) => {
+        seenSpendHeaders.push({ userId: headers.userId, runId: headers.runId });
+        return 0;
+      },
+    };
+    await aggregateFleetNewSequences(COLD, NOW, d);
+    expect(seenBudgetHeaders).toHaveLength(1);
+    expect(seenSpendHeaders).toHaveLength(1);
+    for (const h of [...seenBudgetHeaders, ...seenSpendHeaders]) {
+      expect(h.userId).toMatch(UUID_RE);
+      expect(h.runId).toMatch(UUID_RE);
+    }
+  });
 });
