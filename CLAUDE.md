@@ -208,32 +208,41 @@ committed spend-so-far-today). The convolution then only needs those two scalars
 brand's features, budget counted ONCE — do NOT sum per (feature,brand), that double-counts the
 budget.**
 
+**Only ACTIVE accounts contribute — reuses `isActive()` from `accounts-compute.ts` (do NOT
+duplicate).** A (org, brand) enters `totalNewPerDay` iff `dailyBudget > 0 && orgBalance > dailyBudget`
+(budget>0 = not paused/unset; org spendable credit covers ≥1 more day). This is THE fix for the forecast
+OVER-count: before the gate, every brand that ever ran cold-email and still had a stale positive budget
+was summed in — incl. churned orgs with $0 credits — inflating the projection ~6× above the observed
+send rate. Org balance is fetched ONCE per org (shared across its brands). Same active rule + same
+account universe as `/internal/stats/accounts`.
+
 **Fleet enumeration = the 5 `*-cold-email-outreach` seed slugs** (`coldEmailOutreachSlugs`, derived at
 runtime from the `features` table, `slug.endsWith`) — the instantly cold-email sequences that série 2
 also describes. Active (org, brand) pairs come from `fetchFeatureMemberships(slug)` per slug
-(cross-org, api-key only); per-brand daily budget + spent-today fan out to billing + runs forwarding
-the owning org's identity (service-stub user/run), same pattern as `/public/stats/revenue`. fail-loud
-(série 2 is essential, not optional — a forecast missing the in-flight component is misleading).
+(cross-org, api-key only). All per-org/brand reads are **ORG-LESS platform reads — api-key + x-org-id
+ONLY, NO forwarded/faked user identity**: daily-budget + runs cost authorize on `x-org-id` (their
+header builders now OMIT user/run when absent), and org balance uses billing's user-less
+`GET /internal/accounts/by-org/:orgId/balance`. fail-loud (série 2 is essential, not optional — a
+forecast missing the in-flight component is misleading).
 
 **Depends on email-gateway `GET /public/stats/sending-forecast`** (shipped v0.24.0, prod). The endpoint
 is additive/dormant (no dashboard consumer yet) — a distribute.you follow-up wires the graph. Reuses
 existing env vars only (EMAIL_GATEWAY / LEAD / BILLING / RUNS). (Set 2026-07-01.)
 
-**The cross-org service-stub identity forwarded to runs/billing MUST be a valid UUID — a marker
-string 500s the endpoint.** The fleet reads (`aggregateFleetNewSequences` → `fetchSpendBreakdown`,
-`fetchBrandDailyBudgetUsd`) reuse pipeline-activity's `getRunsServiceHeaders`/`getBillingServiceHeaders`,
-which ALWAYS send `x-user-id`/`x-run-id`. Asymmetry that bit v0.70.3: `x-user-id` is *optional
-unvalidated context* on lead/brand/email-gateway, but **runs-service `/v1/stats/costs` format-VALIDATES
-it** (`400 "x-user-id header must be a valid UUID"`). The original stub `"public-send-forecast"` (a
-marker string) 400'd the essential runs read → the route's try/catch surfaced a generic 500 on EVERY
-request. Fix: stub = `STUB_IDENTITY_UUID = "00000000-0000-4000-8000-000000000000"` (valid v4 format,
-obvious synthetic in logs). The public-revenue path sidesteps this by forwarding ONLY `{orgId,
-featureSlug}` (its runs header builder omits user/run), but the send-forecast path can't reuse that —
-it goes through the always-send pipeline-activity builders, so a valid-UUID stub is the correct fix,
-NOT omission (would send `x-user-id: undefined`). **Test gap that hid it:** the aggregate's unit tests
-inject `FleetDeps`, so the real stub value never reaches a client — a regression guard now captures the
-forwarded identity and asserts UUID-shape (`send-forecast-aggregate.test.ts`). Any NEW cross-org fleet
-read reusing these builders must forward a UUID-shaped stub. (Set 2026-07-01, hotfix v0.70.3, #425.)
+**Cross-org platform fleet reads send api-key + x-org-id ONLY — NO sentinel/faked user identity.**
+(Supersedes the earlier "stub MUST be a valid UUID" pin, #425/v0.70.3, now REMOVED.) The original 500
+(v0.70.3) came from forwarding a *marker string* `x-user-id` to runs `/v1/stats/costs`, which
+format-validates it (`400 "x-user-id header must be a valid UUID"`). The band-aid was a valid-UUID
+sentinel `00000000-0000-4000-8000-000000000000`; the REAL fix is that these reads never needed a user
+at all — `x-user-id`/`x-run-id` are OPTIONAL context on every one of them (runs `/v1/stats/costs`
+validates *only if present*; billing daily-budget authorizes on `x-org-id`). So:
+`getRunsServiceHeaders`/`getBillingServiceHeaders` (pipeline-activity) now OMIT user/run/brand/feature
+when empty (the authed dashboard path still forwards its real values), the fleet reads pass `{orgId}`
+only, and the org-balance read moved off the user-required `/v1/accounts/balance` onto billing's
+**user-less `GET /internal/accounts/by-org/:orgId/balance`** (`fetchOrgBalanceUsd`). Zero sentinel in
+`send-forecast-aggregate.ts` / `accounts-client.ts` / `accounts-compute.ts`. Any NEW cross-org fleet
+read: pass org-only, use an `/internal/*` (org-in-path) producer endpoint — never fabricate a user.
+(Set 2026-07-01, send-forecast active-gate + sentinel removal.)
 
 ## `GET /internal/stats/accounts` — fleet cold-email customer ACCOUNTS audit (api-key, staff-gated at api-service)
 
@@ -259,12 +268,13 @@ over the cold-email slugs (`coldEmailOutreachSlugs`), deduped to distinct (org, 
 (balance + Clerk id + owner email) run ONCE per org; only the daily budget is per-(org,brand); brand
 name/domain is one batched brand-service call. Fail loud on any read error.
 
-- **orgBalanceUsd** = billing `GET /v1/accounts/balance` → `balance_cents/100` (SPENDABLE, incl.
-  provisioned holds — the authorization/runway value), **NOT `actual_balance_cents`**. The ONE mapped
-  status: billing **404 "billing account not found" → 0** (an org that never funded a wallet has zero
-  spendable → inactive by the rule). That is a documented billing semantic, NOT a swallowed error — do
-  NOT "fix" it to fail-loud (it would 500 the whole fleet audit on one unfunded org). Any OTHER non-OK
-  fails loud.
+- **orgBalanceUsd** = billing **`GET /internal/accounts/by-org/:orgId/balance`** (user-less internal
+  read — api-key only, org in path; NOT the user-required `/v1/accounts/balance`) → `balance_cents/100`
+  (SPENDABLE, incl. provisioned holds — the authorization/runway value), **NOT `actual_balance_cents`**.
+  The ONE mapped status: billing **404 "billing account not found" → 0** (an org that never funded a
+  wallet has zero spendable → inactive by the rule). That is a documented billing semantic, NOT a
+  swallowed error — do NOT "fix" it to fail-loud (it would 500 the whole fleet audit on one unfunded
+  org). Any OTHER non-OK fails loud.
 - **dailyBudgetUsd** = billing `GET /internal/brands/:brandId/daily-budget` (reuses
   `fetchBrandDailyBudgetUsd`); `dailyBudgetCents:null` = unset/paused → row inactive.
 - **orgExternalId** (Clerk `org_...`) = client-service `GET /internal/orgs/:orgId` (NEW producer read,
