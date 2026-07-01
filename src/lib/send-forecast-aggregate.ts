@@ -21,8 +21,17 @@ import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { fetchSpendBreakdown } from "./spend-client.js";
 import { computeFeatureOutreachUsd, fetchBrandDailyBudgetUsd } from "../routes/pipeline-activity.js";
 
-const STUB_USER = "public-send-forecast";
-const STUB_RUN = "public-send-forecast";
+// Service-stub identity for the cross-org fleet reads. This is a platform-level (no real per-caller
+// user/run) forecast, but runs-service `/v1/stats/costs` VALIDATES `x-user-id` / `x-run-id` as a
+// well-formed UUID (400 "x-user-id header must be a valid UUID" otherwise), and the shared
+// pipeline-activity/billing header builders always send both. So the stub MUST be a valid UUID — a
+// plain marker string ("public-send-forecast") 400s the essential runs read and 500s the endpoint.
+// A fixed valid-v4-format UUID (version nibble 4, variant nibble 8) satisfies both generic and
+// v4-specific validators while staying an obvious synthetic stub in downstream logs. The real
+// attribution is the per-(org,brand) `x-org-id`; user/run are unvalidated context beyond format.
+const STUB_IDENTITY_UUID = "00000000-0000-4000-8000-000000000000";
+const STUB_USER = STUB_IDENTITY_UUID;
+const STUB_RUN = STUB_IDENTITY_UUID;
 
 export interface FleetNewSequences {
   /** Σ over active brands of R_b (new sequences/day at full budget). The steady future cohort size. */
