@@ -235,6 +235,49 @@ inject `FleetDeps`, so the real stub value never reaches a client — a regressi
 forwarded identity and asserts UUID-shape (`send-forecast-aggregate.test.ts`). Any NEW cross-org fleet
 read reusing these builders must forward a UUID-shaped stub. (Set 2026-07-01, hotfix v0.70.3, #425.)
 
+## `GET /internal/stats/accounts` — fleet cold-email customer ACCOUNTS audit (api-key, staff-gated at api-service)
+
+Cross-org, fleet-wide list of every cold-email customer account (org × brand) for the admin
+"Audit → Accounts" page — the money-and-status analog of send-forecast. Handler `handleAccounts` in
+`src/routes/public.ts`, pure assembly in `src/lib/accounts-compute.ts` (`buildAccountsAudit`,
+injectable deps), new cross-org reads in `src/lib/accounts-client.ts`. 60s in-memory cache
+(`__resetAccountsCache` seam), same pattern as the other `/internal/stats/*` audits. **All money +
+the active determination + MRR/ARR are computed HERE; the dashboard renders only.**
+
+Each row: `{ orgId, orgExternalId, ownerEmail, brandId, brandName, brandDomain, dailyBudgetUsd,
+orgBalanceUsd, status }`. Response also carries `stats { totalDailyBudgetUsd, mrrUsd, arrUsd,
+activeCount, inactiveCount, totalCount }` + `asOf`.
+
+**ACTIVE rule (exact, single source `isActive()` — do NOT re-litigate):** a row is `"active"` iff
+`dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd`; else `"inactive"`
+(covers $0/null/paused budget AND orgs whose spendable balance can't cover the next day). **Inactive
+rows are LISTED, tagged inactive — never dropped.** `stats.totalDailyBudgetUsd` sums ACTIVE rows only;
+`mrrUsd = total×30`, `arrUsd = total×365`.
+
+**Account universe = the SAME source send-forecast uses** — lead-service `/internal/feature-memberships`
+over the cold-email slugs (`coldEmailOutreachSlugs`), deduped to distinct (org, brand). Org-level reads
+(balance + Clerk id + owner email) run ONCE per org; only the daily budget is per-(org,brand); brand
+name/domain is one batched brand-service call. Fail loud on any read error.
+
+- **orgBalanceUsd** = billing `GET /v1/accounts/balance` → `balance_cents/100` (SPENDABLE, incl.
+  provisioned holds — the authorization/runway value), **NOT `actual_balance_cents`**. The ONE mapped
+  status: billing **404 "billing account not found" → 0** (an org that never funded a wallet has zero
+  spendable → inactive by the rule). That is a documented billing semantic, NOT a swallowed error — do
+  NOT "fix" it to fail-loud (it would 500 the whole fleet audit on one unfunded org). Any OTHER non-OK
+  fails loud.
+- **dailyBudgetUsd** = billing `GET /internal/brands/:brandId/daily-budget` (reuses
+  `fetchBrandDailyBudgetUsd`); `dailyBudgetCents:null` = unset/paused → row inactive.
+- **orgExternalId** (Clerk `org_...`) = client-service `GET /internal/orgs/:orgId` (NEW producer read,
+  client-service). **ownerEmail** = client-service `GET /internal/users?orgId=` → earliest-created
+  user's email (owner proxy; no staff flag exposed, so earliest-createdAt is the heuristic).
+- **brandName/brandDomain** = brand-service `GET /internal/brands?ids=` (batch, ≤100/req; missing ids
+  omitted → null name/domain, still listed).
+
+Rows sort active-first, then daily budget desc (nulls last), tiebreak brandId. **Depends on the NEW
+client-service `GET /internal/orgs/:orgId` + the SHARED `CLIENT_SERVICE_URL`/`CLIENT_SERVICE_API_KEY`
+on features-service Railway (prod + staging).** Additive/dormant (no dashboard consumer yet). Reuses
+existing env vars otherwise (BILLING / LEAD / BRAND). (Set 2026-07-01.)
+
 ## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #346)
 
 `pipeline-activity.ts` (the budget→forecast endpoint) was the LAST `customerProfileId` / brand-persona
