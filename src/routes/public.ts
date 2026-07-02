@@ -862,7 +862,7 @@ export async function handlePublicCostProjection(
   res.json(payload);
 }
 
-// ── GET /public/stats/send-forecast ──────────────────────────────────────────
+// ── GET /internal/stats/send-forecast ─────────────────────────────────────────
 
 const PAST_WINDOW_DAYS = 7;
 const DEFAULT_FORECAST_DAYS = 14;
