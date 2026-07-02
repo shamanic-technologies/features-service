@@ -1,5 +1,5 @@
 /**
- * Cross-org (fleet-wide) reads that feed the global `GET /public/stats/send-forecast` endpoint.
+ * Cross-org (fleet-wide) reads that feed the global `GET /internal/stats/send-forecast` endpoint.
  * Both go through email-gateway (the provider-agnostic outreach layer) so the forecast stays correct
  * if another outreach provider is added beside instantly. api-key only, no org identity.
  *

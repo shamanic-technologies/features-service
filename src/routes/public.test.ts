@@ -1181,4 +1181,10 @@ describe("GET /internal/stats/send-forecast", () => {
     expect(res.status).toBe(401);
     expect(mockAggregate).not.toHaveBeenCalled();
   });
+
+  it("no longer exposes an unauthenticated PUBLIC route (fleet financials must not be public)", async () => {
+    const res = await request(app).get("/public/stats/send-forecast");
+    expect(res.status).toBe(404);
+    expect(mockAggregate).not.toHaveBeenCalled();
+  });
 });

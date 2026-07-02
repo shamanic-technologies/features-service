@@ -910,7 +910,7 @@ registry.registerPath({
   },
 });
 
-// ── GET /public/stats/send-forecast ───────────────────────────────────────────
+// ── GET /internal/stats/send-forecast ──────────────────────────────────────────
 
 const sendForecastDaySchema = z.object({
   date: z.string().describe("UTC calendar day (YYYY-MM-DD)."),

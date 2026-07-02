@@ -1,5 +1,5 @@
 /**
- * Pure assembly of the GLOBAL email send-forecast — `GET /public/stats/send-forecast`.
+ * Pure assembly of the GLOBAL email send-forecast — `GET /internal/stats/send-forecast`.
  *
  * Answers "how many outreach emails will the fleet send per calendar day over the next N days"
  * by STACKING three per-day series that are all in the SAME grain (one email = one unit):
