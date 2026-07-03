@@ -77,6 +77,21 @@ export interface EnginePerson {
   orgLogoUrl: string | null;
   /** Company domain (no protocol, no www), for the dashboard to build a logo.dev URL. Null when unknown. */
   orgDomain: string | null;
+  // Firmographic context (lead-service #327/#336) — carried through so the digest/dashboard can show
+  // WHO the prospect + their company are. All null when the upstream enrichment never resolved a value;
+  // never synthesized. The engine ignores these (they don't affect EV); pure passthrough to leads[].
+  /** Person's current-employer job title. Null when unknown. */
+  title: string | null;
+  /** Person's Apollo seniority band (e.g. "vp", "director", "manager"). Null when unknown. */
+  seniority: string | null;
+  /** Company industry. Null when unknown. */
+  orgIndustry: string | null;
+  /** Company estimated headcount (raw number — the consumer bands it). Null when unknown. */
+  orgEmployeeCount: number | null;
+  /** Company city. Null when unknown. */
+  orgCity: string | null;
+  /** Company country. Null when unknown. */
+  orgCountry: string | null;
   /** Recipient email — used by the route to join per-event timestamps; ignored by the engine. */
   email?: string | null;
   /** Which funnel signals fired for this person (e.g. { clicked: true, positiveReply: false }). */
@@ -113,6 +128,21 @@ export interface LeadRow {
   orgLogoUrl: string | null;
   /** Company domain (no protocol, no www) for logo.dev. Null when unknown for this lead's org. */
   orgDomain: string | null;
+  // Firmographic context (lead-service #327/#336) — WHO the prospect + their company are, so the
+  // outcome-digest email + dashboard conversions/leads surfaces can reassure the customer without a
+  // dashboard open. All null when the upstream enrichment never resolved a value; never synthesized.
+  /** Person's current-employer job title. Null when unknown. */
+  title: string | null;
+  /** Person's Apollo seniority band (e.g. "vp", "director", "manager"). Null when unknown. */
+  seniority: string | null;
+  /** Company industry. Null when unknown. */
+  orgIndustry: string | null;
+  /** Company estimated headcount (raw number — the consumer bands it for display). Null when unknown. */
+  orgEmployeeCount: number | null;
+  /** Company city. Null when unknown. */
+  orgCity: string | null;
+  /** Company country. Null when unknown. */
+  orgCountry: string | null;
   tags: string[];
   expectedRevenueUsd: number;
   /** Most-advanced (max) event date for the lead. Null when no event date is known. */
@@ -345,8 +375,16 @@ export function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
       existing.orgId = row.orgId;
       existing.orgName = row.orgName;
       existing.orgLogoUrl = row.orgLogoUrl;
+      // Org firmographics travel with the org identity — backfill from the same row that supplies it.
+      existing.orgIndustry = row.orgIndustry;
+      existing.orgEmployeeCount = row.orgEmployeeCount;
+      existing.orgCity = row.orgCity;
+      existing.orgCountry = row.orgCountry;
     }
     if (!existing.orgDomain && row.orgDomain) existing.orgDomain = row.orgDomain;
+    // Person firmographics: first non-null across the lead's campaign rows (never overwrite a known value).
+    if (existing.title == null && row.title != null) existing.title = row.title;
+    if (existing.seniority == null && row.seniority != null) existing.seniority = row.seniority;
   }
   return [...byLead.values()];
 }
@@ -458,6 +496,12 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     orgName: person.orgName,
     orgLogoUrl: person.orgLogoUrl,
     orgDomain: person.orgDomain,
+    title: person.title,
+    seniority: person.seniority,
+    orgIndustry: person.orgIndustry,
+    orgEmployeeCount: person.orgEmployeeCount,
+    orgCity: person.orgCity,
+    orgCountry: person.orgCountry,
     tags,
     expectedRevenueUsd: ev,
     date,

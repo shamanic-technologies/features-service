@@ -18,6 +18,12 @@ function person(over: Partial<EnginePerson> & { leadId: string; signals: Record<
     orgName: null,
     orgLogoUrl: null,
     orgDomain: null,
+    title: null,
+    seniority: null,
+    orgIndustry: null,
+    orgEmployeeCount: null,
+    orgCity: null,
+    orgCountry: null,
     ...over,
   };
 }
@@ -613,6 +619,7 @@ describe("buildContactedSeries — server-computed Outreach aggregates (features
     return {
       firstName: null, lastName: null, photoUrl: null,
       orgName: null, orgLogoUrl: null, orgDomain: null,
+      title: null, seniority: null, orgIndustry: null, orgEmployeeCount: null, orgCity: null, orgCountry: null,
       tags: [], expectedRevenueUsd: 0, date: null,
       contacted: false, contactedAt: null,
       opened: false, openedAt: null, clicked: false, clickedAt: null,
@@ -759,6 +766,7 @@ describe("buildSignalSeries — generic per-signal aggregator (features-service#
     return {
       firstName: null, lastName: null, photoUrl: null,
       orgName: null, orgLogoUrl: null, orgDomain: null,
+      title: null, seniority: null, orgIndustry: null, orgEmployeeCount: null, orgCity: null, orgCountry: null,
       tags: [], expectedRevenueUsd: 0, date: null,
       contacted: false, contactedAt: null,
       opened: false, openedAt: null, clicked: false, clickedAt: null,
@@ -783,5 +791,72 @@ describe("buildSignalSeries — generic per-signal aggregator (features-service#
     expect(s.daily).toEqual([{ date: "2026-06-20", count: 2 }]);
     expect(s.undatedCount).toBe(1);
     expect(s.daily.reduce((a, b) => a + b.count, 0) + s.undatedCount).toBe(s.total);
+  });
+});
+
+// Firmographic passthrough — the person's title/seniority + company industry/headcount/location ride
+// through computeRevenue onto each leads[] row so the outcome digest + dashboard can show WHO the
+// prospect is. Present when known, null when unknown (no synthesis); dedup backfills null from a
+// later campaign row of the same lead.
+describe("computeRevenue — firmographic passthrough onto leads[]", () => {
+  function fp(over: Partial<EnginePerson> & { leadId: string; signals: Record<string, boolean> }): EnginePerson {
+    return {
+      firstName: "A", lastName: "B", photoUrl: null,
+      orgId: null, orgName: null, orgLogoUrl: null, orgDomain: null,
+      title: null, seniority: null, orgIndustry: null, orgEmployeeCount: null, orgCity: null, orgCountry: null,
+      ...over,
+    };
+  }
+
+  it("carries known firmographics onto the leads[] row", () => {
+    const r = computeRevenue(PATHS, [
+      fp({
+        leadId: "l1", signals: { clicked: true, positiveReply: false },
+        title: "VP Sales", seniority: "vp",
+        orgId: "o1", orgName: "Acme", orgIndustry: "software",
+        orgEmployeeCount: 42, orgCity: "Portland", orgCountry: "United States",
+      }),
+    ]);
+    expect(r.leads[0]).toMatchObject({
+      title: "VP Sales", seniority: "vp",
+      orgIndustry: "software", orgEmployeeCount: 42,
+      orgCity: "Portland", orgCountry: "United States",
+    });
+  });
+
+  it("leaves every unknown firmographic null — no synthesis", () => {
+    const r = computeRevenue(PATHS, [fp({ leadId: "l1", signals: { clicked: true, positiveReply: false } })]);
+    expect(r.leads[0]).toMatchObject({
+      title: null, seniority: null, orgIndustry: null,
+      orgEmployeeCount: null, orgCity: null, orgCountry: null,
+    });
+  });
+
+  it("dedup backfills null firmographics from a later campaign row of the same lead", () => {
+    const r = computeRevenue(PATHS, [
+      // First row: engaged but no firmographics resolved yet.
+      fp({ leadId: "l1", signals: { clicked: true, positiveReply: false } }),
+      // Second row (same lead, another campaign): carries the enrichment.
+      fp({
+        leadId: "l1", signals: { clicked: false, positiveReply: true },
+        title: "Director", seniority: "director",
+        orgId: "o1", orgName: "Acme", orgIndustry: "fintech",
+        orgEmployeeCount: 500, orgCity: "Berlin", orgCountry: "Germany",
+      }),
+    ]);
+    expect(r.leads).toHaveLength(1);
+    expect(r.leads[0]).toMatchObject({
+      title: "Director", seniority: "director",
+      orgIndustry: "fintech", orgEmployeeCount: 500,
+      orgCity: "Berlin", orgCountry: "Germany",
+    });
+  });
+
+  it("dedup never overwrites a known person firmographic with a later null", () => {
+    const r = computeRevenue(PATHS, [
+      fp({ leadId: "l1", signals: { clicked: true, positiveReply: false }, title: "CEO", seniority: "c_suite" }),
+      fp({ leadId: "l1", signals: { clicked: false, positiveReply: true } }), // no title/seniority
+    ]);
+    expect(r.leads[0]).toMatchObject({ title: "CEO", seniority: "c_suite" });
   });
 });
