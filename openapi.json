@@ -1185,6 +1185,36 @@
                   "nullable": true,
                   "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
                 },
+                "title": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "FIRMOGRAPHIC — the person's current-employer job title (lead-service currentTitle, #336). Null when unknown; never synthesized."
+                },
+                "seniority": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "FIRMOGRAPHIC — the person's Apollo seniority band (e.g. \"vp\", \"director\", \"manager\") (lead-service seniority, #327). Null when unknown; never synthesized."
+                },
+                "orgIndustry": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "FIRMOGRAPHIC — the company's industry (lead-service organization.industry, #327). Null when unknown; never synthesized."
+                },
+                "orgEmployeeCount": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "FIRMOGRAPHIC — the company's estimated headcount (raw number from lead-service organization.estimatedNumEmployees, #327). The consumer bands it for display (e.g. \"11-50\"); NOT pre-banded here. Null when unknown; never synthesized."
+                },
+                "orgCity": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "FIRMOGRAPHIC — the company's city (lead-service organization.city, #327). Null when unknown; never synthesized."
+                },
+                "orgCountry": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "FIRMOGRAPHIC — the company's country (lead-service organization.country, #327). Null when unknown; never synthesized."
+                },
                 "tags": {
                   "type": "array",
                   "items": {
@@ -1267,6 +1297,12 @@
                 "orgName",
                 "orgLogoUrl",
                 "orgDomain",
+                "title",
+                "seniority",
+                "orgIndustry",
+                "orgEmployeeCount",
+                "orgCity",
+                "orgCountry",
                 "tags",
                 "expectedRevenueUsd",
                 "date",
