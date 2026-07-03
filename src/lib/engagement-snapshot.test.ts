@@ -21,6 +21,12 @@ function person(over: Partial<EnginePerson> & { leadId: string; signals: Record<
     orgName: null,
     orgLogoUrl: null,
     orgDomain: null,
+    title: null,
+    seniority: null,
+    orgIndustry: null,
+    orgEmployeeCount: null,
+    orgCity: null,
+    orgCountry: null,
     email: null,
     ...over,
   };

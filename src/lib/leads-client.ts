@@ -13,6 +13,14 @@ interface LeadOrganization {
   primaryDomain?: string | null;
   /** Canonical company website URL (with protocol), e.g. "https://cascobay.com". */
   websiteUrl?: string | null;
+  // Firmographic passthrough (lead-service #327) — carried onto the revenue leads[] row so the
+  // digest / dashboard can show WHO the prospect's company is. Null when the upstream enrichment
+  // never resolved a value; never synthesized.
+  industry?: string | null;
+  /** Apollo estimated headcount (raw number — the consumer bands it for display). */
+  estimatedNumEmployees?: number | null;
+  city?: string | null;
+  country?: string | null;
 }
 
 /**
@@ -47,6 +55,10 @@ interface LeadRow {
     firstName?: string | null;
     lastName?: string | null;
     photoUrl?: string | null;
+    // Firmographic passthrough (lead-service #327/#336) — the person's current-employer job title
+    // + Apollo seniority band. Null when unknown; never synthesized.
+    currentTitle?: string | null;
+    seniority?: string | null;
     organization?: LeadOrganization | null;
   } | null;
 }
@@ -120,6 +132,13 @@ export async function fetchLeadsForRevenue(
       orgLogoUrl: org?.logoUrl ?? null,
       // Prefer the bare primaryDomain; fall back to a hostname parsed from websiteUrl. Null when neither known.
       orgDomain: org?.primaryDomain ?? domainFromUrl(org?.websiteUrl),
+      // Firmographic passthrough — null when the upstream enrichment never resolved a value (no synthesis).
+      title: row.lead?.currentTitle ?? null,
+      seniority: row.lead?.seniority ?? null,
+      orgIndustry: org?.industry ?? null,
+      orgEmployeeCount: org?.estimatedNumEmployees ?? null,
+      orgCity: org?.city ?? null,
+      orgCountry: org?.country ?? null,
       signals,
     };
   });
