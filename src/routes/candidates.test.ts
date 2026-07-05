@@ -316,6 +316,40 @@ describe("GET /features/:featureSlug/candidates", () => {
     expect(a.conversion.rate).toBeCloseTo(0.05, 6);
   });
 
+  // SINGLE-STEP goals: v2pc=0.05 (visitToPaidClientPct 5), r2pc=0.20 (replyToPaidClientPct 20).
+  const SINGLE_STEP_ECON = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 20 };
+
+  it("goal=websiteVisit → single-step cost = clickUsd/v2pc; conversion.rate = v2pc", async () => {
+    mockFetch({ economics: SINGLE_STEP_ECON });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=websiteVisit`).set(AUTH);
+    expect(res.body.goal).toBe("websiteVisit");
+    const a = byDynasty(res.body, "dyn-a");
+    expect(a.costPerOutcomeUsd).toBeCloseTo(200, 3); // 10 / 0.05
+    expect(a.conversion.rate).toBeCloseTo(0.05, 6);
+  });
+
+  it("goal=positiveReply → single-step cost = replyUsd/r2pc; conversion.rate = r2pc", async () => {
+    mockFetch({ economics: SINGLE_STEP_ECON });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=positiveReply`).set(AUTH);
+    expect(res.body.goal).toBe("positiveReply");
+    const a = byDynasty(res.body, "dyn-a");
+    expect(a.costPerOutcomeUsd).toBeCloseTo(100, 3); // 20 / 0.20
+    expect(a.conversion.rate).toBeCloseTo(0.2, 6);
+  });
+
+  it("snake_case goal spelling (website_visits) is accepted and echoed canonical camel", async () => {
+    mockFetch({ economics: SINGLE_STEP_ECON });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=website_visits`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.goal).toBe("websiteVisit");
+  });
+
+  it("single-step goal with the rate field ABSENT → fail loud (502), not NaN", async () => {
+    mockFetch({ economics: ECONOMICS }); // no visitToPaidClientPct
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=websiteVisit`).set(AUTH);
+    expect(res.status).toBe(502);
+  });
+
   it("economics source 'user' → grain brand-goal", async () => {
     mockFetch({ economics: ECONOMICS, source: "user" });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);

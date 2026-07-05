@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getFunnel, orP, projectOutcomeCosts } from "./funnel-registry.js";
+import { getFunnel, orP, projectOutcomeCosts, singleStepRateDecimal } from "./funnel-registry.js";
 
 const ECONOMICS = {
   lifetimeRevenueUsd: 1000,
@@ -139,15 +139,19 @@ describe("projectOutcomeCosts — expected cost per purchase / meeting", () => {
       costPerPurchaseUsd: null,
       costPerMeetingBookedUsd: null,
       costPerSignupUsd: null,
+      costPerVisitPaidClientUsd: null,
+      costPerReplyPaidClientUsd: null,
     });
   });
 
   it("zero conversion rates → perBudget 0 → all null", () => {
-    const dead = { r2m: 0, v2m: 0, m2c: 0, v2c: 0, v2s: 0 };
+    const dead = { r2m: 0, v2m: 0, m2c: 0, v2c: 0, v2s: 0, v2pc: 0, r2pc: 0 };
     expect(projectOutcomeCosts(dead, { clickUsd: 10, replyUsd: 5 })).toEqual({
       costPerPurchaseUsd: null,
       costPerMeetingBookedUsd: null,
       costPerSignupUsd: null,
+      costPerVisitPaidClientUsd: null,
+      costPerReplyPaidClientUsd: null,
     });
   });
 
@@ -159,5 +163,66 @@ describe("projectOutcomeCosts — expected cost per purchase / meeting", () => {
   it("signup cost null when there is no click cost (replies do not fund signups)", () => {
     const { costPerSignupUsd } = projectOutcomeCosts(econ, { clickUsd: null, replyUsd: 5 });
     expect(costPerSignupUsd).toBeNull();
+  });
+});
+
+describe("projectOutcomeCosts — SINGLE-STEP goals (visit→paid / reply→paid)", () => {
+  // v2pc = 0.05 (visit→paid 5%), r2pc = 0.20 (reply→paid 20%)
+  const econ = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04, v2pc: 0.05, r2pc: 0.2 };
+
+  it("website_visits cost = clickUsd / v2pc — click route ONLY (single step)", () => {
+    const { costPerVisitPaidClientUsd, costPerReplyPaidClientUsd } = projectOutcomeCosts(econ, { clickUsd: 10, replyUsd: 5 });
+    expect(costPerVisitPaidClientUsd).toBeCloseTo(10 / 0.05); // 200
+    // reply cost also computed here, but website_visits routes read costPerVisitPaidClientUsd only.
+    expect(costPerReplyPaidClientUsd).toBeCloseTo(5 / 0.2); // 25
+  });
+
+  it("website_visits cost null when there is no click cost (reply channel does not fund it)", () => {
+    const { costPerVisitPaidClientUsd } = projectOutcomeCosts(econ, { clickUsd: null, replyUsd: 5 });
+    expect(costPerVisitPaidClientUsd).toBeNull();
+  });
+
+  it("positive_replies cost = replyUsd / r2pc — reply route ONLY (single step)", () => {
+    const { costPerReplyPaidClientUsd } = projectOutcomeCosts(econ, { clickUsd: 10, replyUsd: 8 });
+    expect(costPerReplyPaidClientUsd).toBeCloseTo(8 / 0.2); // 40
+  });
+
+  it("positive_replies cost null when there is no reply cost", () => {
+    const { costPerReplyPaidClientUsd } = projectOutcomeCosts(econ, { clickUsd: 10, replyUsd: null });
+    expect(costPerReplyPaidClientUsd).toBeNull();
+  });
+
+  it("rate 0 → zero-denominator gate → null (never a false $0)", () => {
+    const zeroRates = { ...econ, v2pc: 0, r2pc: 0 };
+    const out = projectOutcomeCosts(zeroRates, { clickUsd: 10, replyUsd: 5 });
+    expect(out.costPerVisitPaidClientUsd).toBeNull();
+    expect(out.costPerReplyPaidClientUsd).toBeNull();
+  });
+
+  it("unset single-step rate contributes null (legacy goal econ, no v2pc/r2pc)", () => {
+    const legacy = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04 };
+    const out = projectOutcomeCosts(legacy, { clickUsd: 10, replyUsd: 5 });
+    expect(out.costPerVisitPaidClientUsd).toBeNull();
+    expect(out.costPerReplyPaidClientUsd).toBeNull();
+    // legacy metrics unaffected
+    expect(out.costPerPurchaseUsd).not.toBeNull();
+  });
+});
+
+describe("singleStepRateDecimal — fail loud on genuinely-absent rate", () => {
+  const base = { ...ECONOMICS };
+
+  it("returns the decimal rate when present", () => {
+    expect(singleStepRateDecimal({ ...base, visitToPaidClientPct: 5 }, "websiteVisit")).toBeCloseTo(0.05);
+    expect(singleStepRateDecimal({ ...base, replyToPaidClientPct: 20 }, "positiveReply")).toBeCloseTo(0.2);
+  });
+
+  it("a 0 rate is valid (passes through — gates cost to null downstream)", () => {
+    expect(singleStepRateDecimal({ ...base, visitToPaidClientPct: 0 }, "websiteVisit")).toBe(0);
+  });
+
+  it("throws when the required rate field is absent (producer gap, not a zero to substitute)", () => {
+    expect(() => singleStepRateDecimal(base, "websiteVisit")).toThrow(/visitToPaidClientPct/);
+    expect(() => singleStepRateDecimal(base, "positiveReply")).toThrow(/replyToPaidClientPct/);
   });
 });

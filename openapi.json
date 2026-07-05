@@ -1480,9 +1480,11 @@
               "meeting-booked",
               "self-serve",
               "signup",
-              "purchase"
+              "purchase",
+              "website_visits",
+              "positive_replies"
             ],
-            "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias."
+            "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) whose costPerCloseUsd rides the single-step rate, not the multi-step purchase funnel."
           },
           "workflows": {
             "type": "array",
@@ -1617,7 +1619,7 @@
           "recommendedBudgetUsd": {
             "type": "number",
             "nullable": true,
-            "description": "10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve/signup use costPerSignupUsd; purchase uses costPerCloseUsd. Null when there is no pick."
+            "description": "10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve/signup use costPerSignupUsd; purchase / website_visits / positive_replies use costPerCloseUsd (for the single-step goals this is the single-step cost-per-paid-client). Null when there is no pick."
           }
         },
         "required": [
@@ -1806,7 +1808,9 @@
             "enum": [
               "signup",
               "meetingBooked",
-              "purchase"
+              "purchase",
+              "websiteVisit",
+              "positiveReply"
             ]
           },
           "brandProfileId": {
@@ -1845,7 +1849,9 @@
                   "enum": [
                     "signup",
                     "meetingBooked",
-                    "purchase"
+                    "purchase",
+                    "websiteVisit",
+                    "positiveReply"
                   ]
                 },
                 "grain": {
@@ -2003,7 +2009,9 @@
             "enum": [
               "signup",
               "meetingBooked",
-              "purchase"
+              "purchase",
+              "websiteVisit",
+              "positiveReply"
             ]
           },
           "brandProfileId": {
@@ -3721,12 +3729,14 @@
               "enum": [
                 "signups",
                 "booked-meetings",
-                "sales"
+                "sales",
+                "website_visits",
+                "positive_replies"
               ],
-              "description": "Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), sales=click and/or positive reply (combined-OR paid-close). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged."
+              "description": "Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), sales=click and/or positive reply (combined-OR paid-close), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged."
             },
             "required": false,
-            "description": "Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), sales=click and/or positive reply (combined-OR paid-close). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged.",
+            "description": "Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), sales=click and/or positive reply (combined-OR paid-close), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged.",
             "name": "lens",
             "in": "query"
           },
@@ -3882,12 +3892,14 @@
                 "meeting-booked",
                 "self-serve",
                 "signup",
-                "purchase"
+                "purchase",
+                "website_visits",
+                "positive_replies"
               ],
-              "description": "Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. Defaults to meeting-booked."
+              "description": "Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) — costPerCloseUsd rides the single-step rate. Also accepts the camelCase (websiteVisit / positiveReply) spelling. Defaults to meeting-booked."
             },
             "required": false,
-            "description": "Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. Defaults to meeting-booked.",
+            "description": "Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) — costPerCloseUsd rides the single-step rate. Also accepts the camelCase (websiteVisit / positiveReply) spelling. Defaults to meeting-booked.",
             "name": "objective",
             "in": "query"
           },
@@ -3962,9 +3974,11 @@
                         "meeting-booked",
                         "self-serve",
                         "signup",
-                        "purchase"
+                        "purchase",
+                        "website_visits",
+                        "positive_replies"
                       ],
-                      "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias."
+                      "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) whose costPerCloseUsd rides the single-step rate, not the multi-step purchase funnel."
                     },
                     "workflows": {
                       "type": "array",
@@ -4099,7 +4113,7 @@
                     "recommendedBudgetUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve/signup use costPerSignupUsd; purchase uses costPerCloseUsd. Null when there is no pick."
+                      "description": "10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve/signup use costPerSignupUsd; purchase / website_visits / positive_replies use costPerCloseUsd (for the single-step goals this is the single-step cost-per-paid-client). Null when there is no pick."
                     }
                   },
                   "required": [
@@ -4521,12 +4535,14 @@
               "enum": [
                 "signup",
                 "meetingBooked",
-                "purchase"
+                "purchase",
+                "websiteVisit",
+                "positiveReply"
               ],
-              "description": "Optimization target (required). Maps to the projected cost-per-outcome."
+              "description": "Optimization target (required). Maps to the projected cost-per-outcome. websiteVisit / positiveReply are SINGLE-STEP goals (cost per paid client via visitToPaidClient / replyToPaidClient); the snake_case spellings (website_visits / positive_replies) are also accepted."
             },
             "required": true,
-            "description": "Optimization target (required). Maps to the projected cost-per-outcome.",
+            "description": "Optimization target (required). Maps to the projected cost-per-outcome. websiteVisit / positiveReply are SINGLE-STEP goals (cost per paid client via visitToPaidClient / replyToPaidClient); the snake_case spellings (website_visits / positive_replies) are also accepted.",
             "name": "goal",
             "in": "query"
           },
@@ -4603,7 +4619,9 @@
                       "enum": [
                         "signup",
                         "meetingBooked",
-                        "purchase"
+                        "purchase",
+                        "websiteVisit",
+                        "positiveReply"
                       ]
                     },
                     "brandProfileId": {
@@ -4642,7 +4660,9 @@
                             "enum": [
                               "signup",
                               "meetingBooked",
-                              "purchase"
+                              "purchase",
+                              "websiteVisit",
+                              "positiveReply"
                             ]
                           },
                           "grain": {
@@ -4878,12 +4898,14 @@
               "enum": [
                 "signup",
                 "meetingBooked",
-                "purchase"
+                "purchase",
+                "websiteVisit",
+                "positiveReply"
               ],
-              "description": "Active optimization goal (required). signup sorts by CPC; other goals sort by CPPR."
+              "description": "Active optimization goal (required). signup + websiteVisit sort by CPC; meetingBooked / purchase / positiveReply sort by CPPR. snake_case single-step spellings (website_visits / positive_replies) are also accepted."
             },
             "required": true,
-            "description": "Active optimization goal (required). signup sorts by CPC; other goals sort by CPPR.",
+            "description": "Active optimization goal (required). signup + websiteVisit sort by CPC; meetingBooked / purchase / positiveReply sort by CPPR. snake_case single-step spellings (website_visits / positive_replies) are also accepted.",
             "name": "goal",
             "in": "query"
           },
@@ -4980,7 +5002,9 @@
                       "enum": [
                         "signup",
                         "meetingBooked",
-                        "purchase"
+                        "purchase",
+                        "websiteVisit",
+                        "positiveReply"
                       ]
                     },
                     "brandProfileId": {

@@ -298,6 +298,53 @@ describe("GET /features/:featureSlug/workflow-projection", () => {
     expect(res.body.recommendedBudgetUsd).toBeCloseTo(1055.966, 2);
   });
 
+  // ── SINGLE-STEP goals: website_visits (visit→paid) / positive_replies (reply→paid) ──────────
+  // v2pc=0.05 (visitToPaidClientPct 5), r2pc=0.20 (replyToPaidClientPct 20).
+  const SINGLE_STEP_ECON = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 20 };
+
+  it("website_visits → costPerCloseUsd = clickUsd/v2pc (single step), positive recommended budget", async () => {
+    mockFetch({ economics: SINGLE_STEP_ECON });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=website_visits`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.objective).toBe("website_visits");
+    const a = byDynasty(res.body, "dyn-a");
+    // wf-a clickUsd $10 → 10 / 0.05 = 200 (reply route does NOT fund website_visits)
+    expect(a.costPerCloseUsd).toBeCloseTo(200, 3);
+    expect(a.roiMultiple).toBeCloseTo(1000 / 200, 6); // LTR / single-step cost = 5
+    const b = byDynasty(res.body, "dyn-b");
+    expect(b.costPerCloseUsd).toBeCloseTo(400, 3); // wf-b clickUsd $20 → 20 / 0.05
+    // Cheapest single-step cost wins; budget = 10 × 200 > 0 (no zero-collapse, no NaN).
+    expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a");
+    expect(res.body.recommendedBudgetUsd).toBeCloseTo(2000, 2);
+  });
+
+  it("positive_replies → costPerCloseUsd = replyUsd/r2pc (single step), positive recommended budget", async () => {
+    mockFetch({ economics: SINGLE_STEP_ECON });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=positive_replies`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.objective).toBe("positive_replies");
+    const a = byDynasty(res.body, "dyn-a");
+    // wf-a replyUsd $20 → 20 / 0.20 = 100 (click route does NOT fund positive_replies)
+    expect(a.costPerCloseUsd).toBeCloseTo(100, 3);
+    expect(a.roiMultiple).toBeCloseTo(1000 / 100, 6); // 10
+    expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a");
+    expect(res.body.recommendedBudgetUsd).toBeCloseTo(1000, 2); // 10 × 100
+  });
+
+  it("camelCase spelling (websiteVisit) is accepted and echoed as the canonical snake objective", async () => {
+    mockFetch({ economics: SINGLE_STEP_ECON });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=websiteVisit`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.objective).toBe("website_visits");
+    expect(byDynasty(res.body, "dyn-a").costPerCloseUsd).toBeCloseTo(200, 3);
+  });
+
+  it("single-step goal with the rate field ABSENT → fail loud (502), not NaN / zero", async () => {
+    mockFetch({ economics: ECONOMICS }); // no visitToPaidClientPct on the wire
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=website_visits`).set(AUTH);
+    expect(res.status).toBe(502);
+  });
+
   it("workflow with no contacted-lead denominator → projection carries explicit contactedLeads null", async () => {
     mockFetch({ emailGroups: [emailGroup("wf-a", 100, 50, 0)] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);

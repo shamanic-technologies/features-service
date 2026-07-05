@@ -25,6 +25,15 @@ export interface SalesEconomics {
   /** Signup → paying-client rate. */
   signupToPaidClientPct: number;
   visitToClosePct: number;
+  /**
+   * SINGLE-STEP rates for the `website_visits` / `positive_replies` optimization goals — brand-service
+   * serves both on the sales-economics + effective (gold) layers (always present there once the brand
+   * has economics). Optional here because the LEGACY multi-step goals never read them and older
+   * fixtures / cold-start bodies omit them; a single-step goal that finds one ABSENT fails loud at
+   * compute time (singleStepRatePct) rather than silently substituting zero.
+   */
+  visitToPaidClientPct?: number;
+  replyToPaidClientPct?: number;
 }
 
 export interface FunnelInputs {
@@ -76,6 +85,10 @@ export interface ProjectionEconomics {
   m2c: number; // P(close | meeting)
   v2c: number; // P(close | click/visit) — direct, self-serve path
   v2s: number; // P(signup | click/visit) — self-serve signup (visitToClose = v2s × signupToPaidClient)
+  // SINGLE-STEP paid-client rates for the website_visits / positive_replies goals. Optional: only the
+  // single-step goals read them (see projectOutcomeCosts); undefined ⟹ that single-step cost is null.
+  v2pc?: number; // P(paid client | click/visit) — direct single step (visitToPaidClientPct)
+  r2pc?: number; // P(paid client | positive reply) — direct single step (replyToPaidClientPct)
 }
 
 /** Global per-workflow unit costs (USD); null when the workflow has no clicks / replies. */
@@ -91,6 +104,15 @@ export interface ProjectedOutcomeCosts {
    * positive reply leads to a meeting → paying close (the "purchase" outcome), not a direct
    * signup, so the reply channel does not fund signups here. Null when there is no click cost. */
   costPerSignupUsd: number | null;
+  /** SINGLE-STEP goal `website_visits`: cost per paid client via the visit→paid rate. A budget spent
+   * on clicks yields (1/clickUsd)·v2pc paid clients. costPerVisitPaidClientUsd = clickUsd / v2pc.
+   * Null when there is no click cost OR v2pc is unset / 0 (zero-denominator gate). ONLY the click
+   * route funds it — the single-step visit→paid conversion, NOT the multi-step purchase funnel. */
+  costPerVisitPaidClientUsd: number | null;
+  /** SINGLE-STEP goal `positive_replies`: cost per paid client via the reply→paid rate. A budget
+   * spent on replies yields (1/replyUsd)·r2pc paid clients. costPerReplyPaidClientUsd = replyUsd /
+   * r2pc. Null when there is no reply cost OR r2pc is unset / 0. ONLY the reply route funds it. */
+  costPerReplyPaidClientUsd: number | null;
 }
 
 export function projectOutcomeCosts(
@@ -112,11 +134,41 @@ export function projectOutcomeCosts(
   // per click. The reply route closes via meetings (purchases), not direct signups.
   const signupsPerBudget = costs.clickUsd != null ? (1 / costs.clickUsd) * econ.v2s : 0;
 
+  // SINGLE-STEP goals — one rate applied to ONE channel (no funnel chaining):
+  //   website_visits  → click channel only: (1/clickUsd)·v2pc paid clients per budget.
+  //   positive_replies→ reply channel only: (1/replyUsd)·r2pc paid clients per budget.
+  const visitPaidPerBudget =
+    costs.clickUsd != null && econ.v2pc != null ? (1 / costs.clickUsd) * econ.v2pc : 0;
+  const replyPaidPerBudget =
+    costs.replyUsd != null && econ.r2pc != null ? (1 / costs.replyUsd) * econ.r2pc : 0;
+
   return {
     costPerPurchaseUsd: closesPerBudget > 0 ? 1 / closesPerBudget : null,
     costPerMeetingBookedUsd: meetingsPerBudget > 0 ? 1 / meetingsPerBudget : null,
     costPerSignupUsd: signupsPerBudget > 0 ? 1 / signupsPerBudget : null,
+    costPerVisitPaidClientUsd: visitPaidPerBudget > 0 ? 1 / visitPaidPerBudget : null,
+    costPerReplyPaidClientUsd: replyPaidPerBudget > 0 ? 1 / replyPaidPerBudget : null,
   };
+}
+
+/**
+ * Read the SINGLE-STEP paid-client rate (0..100) a single-step goal needs off a brand's economics —
+ * `visitToPaidClientPct` for `websiteVisit`, `replyToPaidClientPct` for `positiveReply`.
+ *
+ * FAIL LOUD when the field is genuinely absent on the wire (undefined / non-finite): brand-service
+ * OWNS these fields on its sales-economics + effective layers and must serve them; a single-step goal
+ * that cannot find its rate is a producer gap, not a zero to substitute (a `0` rate IS valid and
+ * passes through — it gates the downstream cost to null, never a false $0). Returns the decimal 0..1.
+ */
+export function singleStepRateDecimal(economics: SalesEconomics, goal: "websiteVisit" | "positiveReply"): number {
+  const field = goal === "websiteVisit" ? "visitToPaidClientPct" : "replyToPaidClientPct";
+  const pctValue = economics[field];
+  if (typeof pctValue !== "number" || !Number.isFinite(pctValue)) {
+    throw new Error(
+      `brand economics is missing ${field} (required for the ${goal} single-step goal) — brand-service must serve it on the sales-economics / effective layer`,
+    );
+  }
+  return pct(pctValue);
 }
 
 // Global decay windows (not per-brand): a lead that reaches a stage and sits there past this

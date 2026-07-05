@@ -479,6 +479,46 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(34.7 + 120 + 150.536, 5);
   });
 
+  // SINGLE-STEP lenses: EV per lead = one paid-client rate × LTR (no funnel chaining).
+  const SINGLE_STEP_ECON = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 20 };
+
+  it("lens=website_visits — clicked leads; prob == visitToPaidClient; revenue == (rate/100)·LTR (single step)", async () => {
+    mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=website_visits").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.leads.map((l: any) => l.leadId).sort()).toEqual(["lb", "lc"]); // clicked leads
+    for (const lead of res.body.leads) {
+      expect(lead.conversionProbabilityPct).toBe(5); // visitToPaidClientPct — single step, not the funnel
+      expect(lead.expectedRevenueUsd).toBeCloseTo(50, 6); // (5/100)·1000
+    }
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(100, 6); // 2 × 50
+  });
+
+  it("lens=positive_replies — reply leads; prob == replyToPaidClient; revenue == (rate/100)·LTR (single step)", async () => {
+    mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=positive_replies").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.leads.map((l: any) => l.leadId).sort()).toEqual(["lb", "lr"]); // reply leads
+    for (const lead of res.body.leads) {
+      expect(lead.conversionProbabilityPct).toBe(20); // replyToPaidClientPct — single step
+      expect(lead.expectedRevenueUsd).toBeCloseTo(200, 6); // (20/100)·1000
+    }
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(400, 6); // 2 × 200
+  });
+
+  it("camelCase lens spelling (positiveReply) is accepted", async () => {
+    mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=positiveReply").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.leads.every((l: any) => l.conversionProbabilityPct === 20)).toBe(true);
+  });
+
+  it("single-step lens with the rate field ABSENT → fail loud (502), not NaN / zero", async () => {
+    mockFetch({ economics: ECONOMICS, leads: LENS_LEADS }); // no visitToPaidClientPct on the wire
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=website_visits").set(AUTH);
+    expect(res.status).toBe(502);
+  });
+
   it("lens with no matching leads → empty leads + 0 pipeline; expectedConversions 0, costPerConversionUsd null", async () => {
     mockFetch({ economics: ECONOMICS, leads: [LENS_LEADS[3]], costCents: 5000 }); // only the cold lead, $50 cost
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=signups").set(AUTH);
