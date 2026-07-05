@@ -419,7 +419,7 @@ registry.registerPath({
       brandId: z.string().describe("Brand UUID (required) — revenue is brand-scoped."),
       campaignId: z.string().optional().describe("Optional campaign drill-down (ignored when groupBy=campaignId)."),
       groupBy: z.enum(["campaignId"]).optional().describe("When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview."),
-      lens: z.enum(["signups", "booked-meetings", "sales"]).optional().describe("Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), sales=click and/or positive reply (combined-OR paid-close). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged."),
+      lens: z.enum(["signups", "booked-meetings", "sales", "website_visits", "positive_replies"]).optional().describe("Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), sales=click and/or positive reply (combined-OR paid-close), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged."),
     }),
   },
   responses: {
@@ -459,10 +459,10 @@ const workflowProjectionItemSchema = z.object({
 
 const workflowProjectionResponseSchema = z.object({
   featureSlug: z.string(),
-  objective: z.enum(["meeting-booked", "self-serve", "signup", "purchase"]).describe("Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias."),
+  objective: z.enum(["meeting-booked", "self-serve", "signup", "purchase", "website_visits", "positive_replies"]).describe("Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) whose costPerCloseUsd rides the single-step rate, not the multi-step purchase funnel."),
   workflows: z.array(workflowProjectionItemSchema),
   recommendedWorkflowDynastySlug: z.string().nullable().describe("Workflow with the lowest cost metric for the requested objective. Null when none has usable data."),
-  recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve/signup use costPerSignupUsd; purchase uses costPerCloseUsd. Null when there is no pick."),
+  recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve/signup use costPerSignupUsd; purchase / website_visits / positive_replies use costPerCloseUsd (for the single-step goals this is the single-step cost-per-paid-client). Null when there is no pick."),
 });
 
 registry.register("WorkflowProjectionResponse", workflowProjectionResponseSchema);
@@ -482,7 +482,7 @@ registry.registerPath({
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — conversion economics are brand-scoped."),
-      objective: z.enum(["meeting-booked", "self-serve", "signup", "purchase"]).optional().describe("Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. Defaults to meeting-booked."),
+      objective: z.enum(["meeting-booked", "self-serve", "signup", "purchase", "website_visits", "positive_replies"]).optional().describe("Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) — costPerCloseUsd rides the single-step rate. Also accepts the camelCase (websiteVisit / positiveReply) spelling. Defaults to meeting-booked."),
       budgetUsd: z.string().optional().describe("Optional budget (USD) to project through the funnel."),
     }),
   },
@@ -582,7 +582,7 @@ const candidateCostSchema = z.object({
 const candidateSchema = z.object({
   audienceId: z.string().nullable().describe("Audience lever — non-null with grain='audience' for couples that have audience-attributed runs/outcomes (active human-service audience × runs-attributed workflow). Null on the coarser brand-goal/goal-global fallback rows when there is no audience-level evidence."),
   workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() }),
-  goal: z.enum(["signup", "meetingBooked", "purchase"]),
+  goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"]),
   grain: z.enum(["audience", "brand-goal", "goal-global"]).describe("SUMMARY label: the finest grain reached ACROSS this candidate's evidence components (audience > brand-goal > goal-global). Does NOT describe the sample, and the components can resolve at different grains — read conversion.grain for the conversion rate's provenance and cost.grain + cost.sampleSize for the cost evidence's provenance and size. On a coarse row this can read 'brand-goal' (brand-own economics) while cost.grain is 'goal-global' (cross-org cost sample)."),
   costPerOutcomeUsd: z.number().nullable().describe("The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."),
   costPerCloseUsd: z.number().nullable().describe("Cost to acquire one paying client (cost per close = cost per PURCHASE), at this row's grain. Same definition/source as workflow-projection's costPerCloseUsd. Null when economics are absent (cold start) or there is no usable close projection."),
@@ -595,7 +595,7 @@ const candidateSchema = z.object({
 const candidatesResponseSchema = z.object({
   featureSlug: z.string(),
   brandId: z.string(),
-  goal: z.enum(["signup", "meetingBooked", "purchase"]),
+  goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"]),
   brandProfileId: z.string().nullable().describe("Brand-profile-version context echoed back."),
   candidates: z.array(candidateSchema),
 });
@@ -616,7 +616,7 @@ registry.registerPath({
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — conversion economics are brand-scoped."),
-      goal: z.enum(["signup", "meetingBooked", "purchase"]).describe("Optimization target (required). Maps to the projected cost-per-outcome."),
+      goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"]).describe("Optimization target (required). Maps to the projected cost-per-outcome. websiteVisit / positiveReply are SINGLE-STEP goals (cost per paid client via visitToPaidClient / replyToPaidClient); the snake_case spellings (website_visits / positive_replies) are also accepted."),
       brandProfileId: z.string().optional().describe("Brand-profile-version context (optional, echoed)."),
     }),
   },
@@ -680,7 +680,7 @@ const audienceStatsRowSchema = z.object({
 const audienceStatsResponseSchema = z.object({
   featureSlug: z.string(),
   brandId: z.string(),
-  goal: z.enum(["signup", "meetingBooked", "purchase"]),
+  goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"]),
   brandProfileId: z.string().nullable(),
   sortMetric: z.enum(["cpc", "cppr"]).describe("signup sorts by CPC; meetingBooked and purchase sort by CPPR."),
   audiences: z.array(audienceStatsRowSchema).describe("Audience rows sorted ascending by sortMetric, with null metric values last."),
@@ -702,7 +702,7 @@ registry.registerPath({
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
-      goal: z.enum(["signup", "meetingBooked", "purchase"]).describe("Active optimization goal (required). signup sorts by CPC; other goals sort by CPPR."),
+      goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"]).describe("Active optimization goal (required). signup + websiteVisit sort by CPC; meetingBooked / purchase / positiveReply sort by CPPR. snake_case single-step spellings (website_visits / positive_replies) are also accepted."),
       brandProfileId: z.string().optional().describe("Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted."),
       limit: z.string().optional().describe("Optional positive integer row limit after sorting."),
       statuses: z

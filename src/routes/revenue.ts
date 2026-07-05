@@ -3,7 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { getFunnel, orP, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
+import { getFunnel, orP, singleStepRateDecimal, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
+import { matchSingleStepGoal } from "../lib/goals.js";
 import { fetchEffectiveEconomics, type EffectiveEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
@@ -256,8 +257,10 @@ function fetchSequencesSoft(
 // the furthest-stage EV engine (no decay, no platform funnel rates). It reuses the SAME orP channel
 // model as `salesFunnel`: the sales-lens pClick/pReply below are byte-identical to its
 // pCloseClick/pCloseReply, just expressed as probabilities instead of dollars.
-export type Lens = "signups" | "booked-meetings" | "sales";
-export const LENS_VALUES: readonly Lens[] = ["signups", "booked-meetings", "sales"];
+// website_visits / positive_replies are SINGLE-STEP lenses: per-lead EV = one paid-client rate × LTR
+// (visit→paid / reply→paid), NOT the multi-step sales close.
+export type Lens = "signups" | "booked-meetings" | "sales" | "website_visits" | "positive_replies";
+export const LENS_VALUES: readonly Lens[] = ["signups", "booked-meetings", "sales", "website_visits", "positive_replies"];
 
 const pct = (n: number): number => n / 100;
 
@@ -270,6 +273,9 @@ const pct = (n: number): number => n / 100;
  *       pClick = orP(visitToClose, visitToMeeting · meetingToClose)   (self-serve OR via meeting)
  *       pReply = replyToMeeting · meetingToClose                       (reply → meeting → close)
  *       clicked only → pClick ; reply only → pReply ; both → orP(pClick, pReply)
+ *   - website_visits  → website CLICK; P = visitToPaidClient  (SINGLE STEP: visit→paid, one rate)
+ *   - positive_replies→ positive REPLY; P = replyToPaidClient (SINGLE STEP: reply→paid, one rate)
+ * The two single-step lenses fail loud when their rate field is absent (singleStepRateDecimal).
  */
 function lensProbability(lens: Lens, signals: Record<string, boolean>, e: SalesEconomics): number | null {
   const clicked = Boolean(signals.clicked);
@@ -286,6 +292,12 @@ function lensProbability(lens: Lens, signals: Record<string, boolean>, e: SalesE
       if (clicked && positiveReply) return orP(pClick, pReply);
       return clicked ? pClick : pReply;
     }
+    case "website_visits":
+      // SINGLE STEP: a visiting (clicked) lead converts to a paid client at visitToPaidClientPct.
+      return clicked ? singleStepRateDecimal(e, "websiteVisit") : null;
+    case "positive_replies":
+      // SINGLE STEP: a positively-replying lead converts to a paid client at replyToPaidClientPct.
+      return positiveReply ? singleStepRateDecimal(e, "positiveReply") : null;
   }
 }
 
@@ -565,10 +577,16 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     return res.status(400).json({ error: "brandId query parameter is required" });
   }
 
-  if (lensParam !== undefined && !LENS_VALUES.includes(lensParam as Lens)) {
+  // Normalise the single-step lens's fleet spellings (camel/kebab → canonical snake) before validating.
+  const singleStepLens = lensParam ? matchSingleStepGoal(lensParam) : null;
+  const normalizedLens =
+    singleStepLens === "websiteVisit" ? "website_visits"
+      : singleStepLens === "positiveReply" ? "positive_replies"
+      : lensParam;
+  if (normalizedLens !== undefined && !LENS_VALUES.includes(normalizedLens as Lens)) {
     return res.status(400).json({ error: `lens must be one of: ${LENS_VALUES.join(", ")}` });
   }
-  const lens = lensParam as Lens | undefined;
+  const lens = normalizedLens as Lens | undefined;
 
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });

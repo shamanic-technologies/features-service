@@ -1,5 +1,37 @@
 # Features Service — CLAUDE.md
 
+## SINGLE-STEP optimization goals — `websiteVisit` (visit→paid) + `positiveReply` (reply→paid)
+
+Two beta brand goals convert straight to a paid client in ONE step, NOT through the multi-step
+funnels the legacy goals use. brand-service owns them (its `OptimizationGoal` = `website_visits` /
+`positive_replies`, its runtime `CurrentGoal` = `websiteVisit` / `positiveReply`) and serves two new
+rate fields — **`visitToPaidClientPct`** + **`replyToPaidClientPct`** (0..100) — on the
+sales-economics **and** effective (gold) layers. features-service reads them verbatim; it does NOT own
+or default them (a brand-service gap → fail loud, never a substituted 0).
+
+**Math (single-sourced through `projectOutcomeCosts`, `src/lib/funnel-registry.ts`):** the goal's
+paid-client rate is applied to ONE channel — `websiteVisit` → click channel only
+(`costPerVisitPaidClientUsd = clickUsd / (visitToPaidClientPct/100)`), `positiveReply` → reply channel
+only (`costPerReplyPaidClientUsd = replyUsd / (replyToPaidClientPct/100)`). EV per lead =
+`(rate/100) × LTR`. No funnel chaining, no orP — the OTHER channel does NOT fund it. A `0` rate is a
+valid zero-denominator gate → null cost (renders "-"), never a false $0; a genuinely-ABSENT rate field
+fails loud via `singleStepRateDecimal` (502), never NaN / zero-collapse.
+
+**Surfaces wired (each keyed on the goal):**
+- `workflow-projection` (`objective`): `costPerCloseUsd` rides the single-step cost (NOT
+  `costPerPurchaseUsd`) → non-null `roiMultiple` + positive `recommendedBudgetUsd`, no zero-collapse.
+- `candidates` + `audience-stats` (`goal`): `costPerOutcomeUsd` / sort-metric per goal
+  (`websiteVisit`→CPC, `positiveReply`→CPPR); `conversion.rate` = the single-step rate.
+- `revenue` (`lens=website_visits`/`positive_replies`): per-lead EV = rate × LTR via `lensProbability`
+  (mirrors the existing `signups`/`booked-meetings` lens, single-step).
+
+**Vocabulary — accept ALL fleet spellings, echo the per-param canonical (`matchSingleStepGoal`, `src/lib/goals.ts`).**
+campaign-service forwards the brand's `currentGoal` in camelCase (`websiteVisit`); the dashboard reads
+`salesEconomics.optimizationGoal` in snake_case (`website_visits`). Every param accepts snake / camel /
+kebab and normalises internally (input tolerance, NOT a missing-data fallback). Canonical echo: `goal`
+param → camel (`websiteVisit`, = CurrentGoal); `objective` + `lens` → snake (`website_visits`, = the
+brief's LOCKED byte-equal + the endpoints' existing snake style). Legacy goals unchanged. (Set 2026-07-05.)
+
 ## Quick Start
 
 ```bash
