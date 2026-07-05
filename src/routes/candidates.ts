@@ -4,8 +4,8 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
-import { projectOutcomeCosts, orP, type ProjectionEconomics } from "../lib/funnel-registry.js";
-import { isGoal, type Goal } from "../lib/goals.js";
+import { projectOutcomeCosts, orP, singleStepRateDecimal, type ProjectionEconomics } from "../lib/funnel-registry.js";
+import { isGoal, matchSingleStepGoal, type Goal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
@@ -122,6 +122,15 @@ function conversionRateForGoal(goal: Goal, econ: ProjectionEconomics): number {
       return econ.v2m; // P(meeting | click)
     case "purchase":
       return orP(econ.v2c, econ.v2m * econ.m2c); // P(close | click): self-serve OR via meeting
+    case "websiteVisit":
+      // P(paid client | visit) — single step. econ.v2pc is set fail-loud in the handler for this goal.
+      if (econ.v2pc == null) throw new Error("v2pc unset while resolving websiteVisit conversion rate");
+      return econ.v2pc;
+    case "positiveReply":
+      // P(paid client | positive reply) — single step. Reply-route rate, not click-route, but exposed
+      // as this goal's conversion signal alongside its cost.
+      if (econ.r2pc == null) throw new Error("r2pc unset while resolving positiveReply conversion rate");
+      return econ.r2pc;
   }
 }
 
@@ -160,6 +169,10 @@ function costPerOutcomeForGoal(
       return projected.costPerMeetingBookedUsd;
     case "purchase":
       return projected.costPerPurchaseUsd;
+    case "websiteVisit":
+      return projected.costPerVisitPaidClientUsd;
+    case "positiveReply":
+      return projected.costPerReplyPaidClientUsd;
   }
 }
 
@@ -187,10 +200,13 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
   if (!brandId) {
     return res.status(400).json({ error: "brandId query parameter is required" });
   }
-  if (!isGoal(goalParam)) {
-    return res.status(400).json({ error: "goal query parameter is required and must be one of: signup, meetingBooked, purchase" });
+  // Normalise the single-step goal's fleet spellings (snake/kebab → canonical camel) before validating;
+  // legacy goals pass through unchanged. campaign-service forwards the brand's `currentGoal` verbatim.
+  const normalizedGoal = goalParam ? (matchSingleStepGoal(goalParam) ?? goalParam) : undefined;
+  if (!isGoal(normalizedGoal)) {
+    return res.status(400).json({ error: "goal query parameter is required and must be one of: signup, meetingBooked, purchase, websiteVisit, positiveReply" });
   }
-  const goal: Goal = goalParam;
+  const goal: Goal = normalizedGoal;
 
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
@@ -225,6 +241,10 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
           m2c: economics.meetingToClosePct / 100,
           v2c: economics.visitToClosePct / 100,
           v2s: economics.visitToSignupPct / 100,
+          // Single-step rate resolved (fail-loud on genuinely-absent field) ONLY for the requested
+          // single-step goal — the legacy goals never read v2pc / r2pc.
+          ...(goal === "websiteVisit" ? { v2pc: singleStepRateDecimal(economics, "websiteVisit") } : {}),
+          ...(goal === "positiveReply" ? { r2pc: singleStepRateDecimal(economics, "positiveReply") } : {}),
         }
       : null;
 

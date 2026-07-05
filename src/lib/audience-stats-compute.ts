@@ -7,7 +7,7 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { fetchCurrentBrandProfile } from "./brand-client.js";
 import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, type AudienceFilters, type AudienceStatus } from "./human-client.js";
 import { fetchEmailOutcomes } from "./email-status-client.js";
-import { isGoal, type Goal } from "./goals.js";
+import { isGoal, matchSingleStepGoal, type Goal } from "./goals.js";
 
 export type SortMetric = "cpc" | "cppr";
 
@@ -103,7 +103,9 @@ function readFiniteNumber(value: unknown, field: string): number {
 }
 
 function sortMetricForGoal(goal: Goal): SortMetric {
-  return goal === "signup" ? "cpc" : "cppr";
+  // signup + websiteVisit rank on cost-per-click/visit (the visit is the outcome proxy);
+  // meetingBooked / purchase / positiveReply rank on cost-per-positive-reply.
+  return goal === "signup" || goal === "websiteVisit" ? "cpc" : "cppr";
 }
 
 const VALID_STATUSES: readonly AudienceStatus[] = ["active", "paused", "archived"];
@@ -255,8 +257,10 @@ export async function computeAudienceStats(req: Request): Promise<ComputeResult>
   if (!brandId) {
     return { ok: false, status: 400, error: "brandId query parameter is required" };
   }
-  if (!isGoal(goalParam)) {
-    return { ok: false, status: 400, error: "goal query parameter is required and must be one of: signup, meetingBooked, purchase" };
+  // Normalise the single-step goal's fleet spellings (snake/kebab → canonical camel) before validating.
+  const normalizedGoal = goalParam ? (matchSingleStepGoal(goalParam) ?? goalParam) : undefined;
+  if (!isGoal(normalizedGoal)) {
+    return { ok: false, status: 400, error: "goal query parameter is required and must be one of: signup, meetingBooked, purchase, websiteVisit, positiveReply" };
   }
 
   const parsedStatuses = parseStatuses(statusesParam);
@@ -320,7 +324,7 @@ export async function computeAudienceStats(req: Request): Promise<ComputeResult>
     });
   }
 
-  const sortMetric = sortMetricForGoal(goalParam);
+  const sortMetric = sortMetricForGoal(normalizedGoal);
   rows.sort((a, b) => compareByMetric(sortMetric, a, b));
   const audiencesOut = parsedLimit !== undefined ? rows.slice(0, parsedLimit) : rows;
 
@@ -329,7 +333,7 @@ export async function computeAudienceStats(req: Request): Promise<ComputeResult>
     envelope: {
       featureSlug,
       brandId,
-      goal: goalParam,
+      goal: normalizedGoal,
       brandProfileId,
       sortMetric,
       audiences: audiencesOut,

@@ -2,24 +2,58 @@
  * Goal vocabulary — the optimization targets a campaign budget can pursue (e.g. $/signup).
  *
  * OWNERSHIP: the canonical Goal enum belongs to brand-service — a brand declares which goals it
- * pursues. brand-service has not yet built the goals entity (verified: no goals endpoint on
- * staging), so feature-service mirrors a minimal local enum here. This matches the existing
- * convention in this repo: SalesEconomics is likewise re-declared locally rather than imported
- * from a shared package (there is no shared-contract package wired into features-service today).
+ * pursues. This mirrors brand-service's runtime `CurrentGoal` — the vocabulary brand-service
+ * explicitly documents as "the vocabulary features-service accepts as runtime candidate-selection
+ * input" (schemas.ts `CurrentGoalSchema`). campaign-service reads the brand's `currentGoal` from
+ * brand-service `/internal/brands/:id/runtime-context` and forwards it verbatim as the `goal` param.
+ * SalesEconomics is likewise re-declared locally rather than imported from a shared package (there
+ * is no shared-contract package wired into features-service today).
  *
- * When brand-service ships goals, swap this for the brand-service-owned type. Whether that means
- * publishing a shared npm package or mirroring (as with SalesEconomics) is a fleet-wide infra
- * decision tracked alongside the audience/brand-profile write-side blockers in features-service#298.
+ * When brand-service ships a shared goals package, swap this for the brand-service-owned type.
  *
  * Each goal maps to ONE projected cost-per-outcome the funnel can already compute from a brand's
  * effective sales-economics:
  *   - signup        → cost per self-serve signup (click → signup, visitToSignupPct)
  *   - meetingBooked → cost per booked meeting (click + reply routes)
  *   - purchase      → cost per paying close (full funnel)
+ *   - websiteVisit  → cost per paid client via the SINGLE-STEP visit→paid rate (visitToPaidClientPct)
+ *   - positiveReply → cost per paid client via the SINGLE-STEP reply→paid rate (replyToPaidClientPct)
+ *
+ * websiteVisit / positiveReply are SINGLE-STEP goals: the paid-client conversion is one rate applied
+ * to the click (visit) or positive-reply population — NOT the multi-step funnels the other goals use.
  */
-export type Goal = "signup" | "meetingBooked" | "purchase";
+export type Goal = "signup" | "meetingBooked" | "purchase" | "websiteVisit" | "positiveReply";
 
-export const GOALS: readonly Goal[] = ["signup", "meetingBooked", "purchase"] as const;
+export const GOALS: readonly Goal[] = ["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"] as const;
 
 export const isGoal = (value: unknown): value is Goal =>
   typeof value === "string" && (GOALS as readonly string[]).includes(value);
+
+/** The two SINGLE-STEP goals (visit→paid / reply→paid). */
+export type SingleStepGoal = "websiteVisit" | "positiveReply";
+
+/**
+ * Recognise a single-step goal from ANY of the vocabularies the fleet uses for it — the runtime
+ * camelCase (`websiteVisit`, brand-service CurrentGoal + campaign-service currentGoal), the stored /
+ * dashboard snake_case (`website_visits` / `positive_replies`, brand-service OptimizationGoal, read
+ * verbatim off `salesEconomics.optimizationGoal`), and the kebab spelling the workflow-projection
+ * `objective` / revenue `lens` params style favours. Returns the canonical camelCase SingleStepGoal,
+ * or null when `raw` is not a single-step goal (existing goals fall through to their own validators).
+ *
+ * This is input tolerance across the fleet's three real spellings — NOT a silent fallback for
+ * missing data. A genuinely-absent rate field still fails loud at compute time (see funnel-registry).
+ */
+export function matchSingleStepGoal(raw: string): SingleStepGoal | null {
+  switch (raw) {
+    case "websiteVisit":
+    case "website_visits":
+    case "website-visits":
+      return "websiteVisit";
+    case "positiveReply":
+    case "positive_replies":
+    case "positive-replies":
+      return "positiveReply";
+    default:
+      return null;
+  }
+}

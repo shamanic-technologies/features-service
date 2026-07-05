@@ -4,7 +4,8 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
-import { projectOutcomeCosts } from "../lib/funnel-registry.js";
+import { projectOutcomeCosts, singleStepRateDecimal } from "../lib/funnel-registry.js";
+import { matchSingleStepGoal, type SingleStepGoal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
@@ -17,7 +18,10 @@ const router = Router();
 // Target outcomes/month used to size the recommended budget (recommendedBudgetUsd = TARGET × best metric).
 const TARGET_OUTCOMES_PER_MONTH = 10;
 
-type Objective = "meeting-booked" | "self-serve" | "signup" | "purchase";
+// website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid). self-serve is a
+// signup alias. The echo value is the canonical spelling; the request param is normalised (any of the
+// fleet's snake/camel/kebab single-step spellings) via matchSingleStepGoal.
+type Objective = "meeting-booked" | "self-serve" | "signup" | "purchase" | "website_visits" | "positive_replies";
 
 // Brand sales-economics as decimals (brand-service stores percentages 0–100).
 interface BrandEcon {
@@ -27,6 +31,8 @@ interface BrandEcon {
   m2c: number; // P(close | meeting)
   v2c: number; // P(close | click/visit) — direct, self-serve path
   v2s: number; // P(signup | click/visit) — self-serve signup
+  v2pc?: number; // P(paid client | click/visit) — single step (website_visits goal)
+  r2pc?: number; // P(paid client | positive reply) — single step (positive_replies goal)
 }
 
 interface Projection {
@@ -89,11 +95,19 @@ function project(
   clickUsd: number | null,
   econ: BrandEcon,
   budgetUsd: number | null,
+  singleStepGoal: SingleStepGoal | null,
 ): { costPerSignupUsd: number | null; costPerCloseUsd: number | null; costPerMeetingBookedUsd: number | null; projection: Projection | null } {
   // Outcome costs are single-sourced from the shared projection helper (same EV funnel as the
   // public cost-projection endpoint, candidates endpoint, and revenue engine).
-  const { costPerSignupUsd, costPerPurchaseUsd, costPerMeetingBookedUsd } = projectOutcomeCosts(econ, { clickUsd, replyUsd });
-  const costPerCloseUsd = costPerPurchaseUsd;
+  const { costPerSignupUsd, costPerPurchaseUsd, costPerMeetingBookedUsd, costPerVisitPaidClientUsd, costPerReplyPaidClientUsd } =
+    projectOutcomeCosts(econ, { clickUsd, replyUsd });
+  // For a single-step goal, "close" IS the paid client reached by that ONE rate — NOT the multi-step
+  // purchase funnel. costPerCloseUsd therefore rides the single-step cost, so ROI + recommendedBudget
+  // derive from the brand's actual goal (never the zero-collapsing multi-step chain).
+  const costPerCloseUsd =
+    singleStepGoal === "websiteVisit" ? costPerVisitPaidClientUsd
+    : singleStepGoal === "positiveReply" ? costPerReplyPaidClientUsd
+    : costPerPurchaseUsd;
 
   if (budgetUsd == null || budgetUsd <= 0) return { costPerSignupUsd, costPerCloseUsd, costPerMeetingBookedUsd, projection: null };
 
@@ -131,11 +145,15 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
   if (!brandId) {
     return res.status(400).json({ error: "brandId query parameter is required" });
   }
-  // Default meeting-booked when absent/invalid for response back-compat.
+  // A single-step objective (website_visits / positive_replies, any fleet spelling) short-circuits to
+  // the canonical snake echo; otherwise default meeting-booked when absent/invalid (response back-compat).
+  const singleStepGoal: SingleStepGoal | null = objectiveParam ? matchSingleStepGoal(objectiveParam) : null;
   const objective: Objective =
-    objectiveParam === "self-serve" || objectiveParam === "signup" || objectiveParam === "purchase"
-      ? objectiveParam
-      : "meeting-booked";
+    singleStepGoal === "websiteVisit" ? "website_visits"
+      : singleStepGoal === "positiveReply" ? "positive_replies"
+      : objectiveParam === "self-serve" || objectiveParam === "signup" || objectiveParam === "purchase"
+        ? objectiveParam
+        : "meeting-booked";
   const budgetUsd = budgetRaw != null && budgetRaw !== "" ? Number(budgetRaw) : null;
 
   try {
@@ -171,6 +189,11 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
           m2c: economics.meetingToClosePct / 100,
           v2c: economics.visitToClosePct / 100,
           v2s: economics.visitToSignupPct / 100,
+          // Single-step rate resolved (fail-loud on genuinely-absent field) ONLY for the goal that
+          // needs it — the legacy goals never touch these, so a brand-service without the fields still
+          // serves them fine.
+          ...(singleStepGoal === "websiteVisit" ? { v2pc: singleStepRateDecimal(economics, "websiteVisit") } : {}),
+          ...(singleStepGoal === "positiveReply" ? { r2pc: singleStepRateDecimal(economics, "positiveReply") } : {}),
         }
       : null;
 
@@ -188,7 +211,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       const clickUsd = clicks > 0 && costUsd > 0 ? costUsd / clicks : null;
 
       const { costPerSignupUsd, costPerCloseUsd, costPerMeetingBookedUsd, projection } = econ
-        ? project(contactedUsd, replyUsd, clickUsd, econ, budgetUsd)
+        ? project(contactedUsd, replyUsd, clickUsd, econ, budgetUsd, singleStepGoal)
         : { costPerSignupUsd: null, costPerCloseUsd: null, costPerMeetingBookedUsd: null, projection: null };
 
       // ROI multiple = revenue per acquisition dollar = LTR / costPerClose. Budget-independent
@@ -211,8 +234,10 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     }
 
     const recommendedMetric = (p: WorkflowProjection): number | null => {
+      // Single-step goals + purchase rank on costPerCloseUsd (which, for a single-step goal, already
+      // rides the single-step cost — see project()).
+      if (singleStepGoal || objective === "purchase") return p.costPerCloseUsd;
       if (objective === "meeting-booked") return p.costPerMeetingBookedUsd;
-      if (objective === "purchase") return p.costPerCloseUsd;
       return p.costPerSignupUsd;
     };
 

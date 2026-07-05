@@ -249,6 +249,32 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(res.body.audiences[1].metrics.cpprCents).toBe(1500);
   });
 
+  it("goal=websiteVisit sorts by CPC (visit is the outcome proxy) and echoes the goal", async () => {
+    fetchSpy = mockFetch();
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=websiteVisit")
+      .set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.goal).toBe("websiteVisit");
+    expect(res.body.sortMetric).toBe("cpc");
+  });
+
+  it("goal=positiveReply sorts by CPPR; snake_case (positive_replies) is accepted", async () => {
+    fetchSpy = mockFetch();
+    const camel = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=positiveReply")
+      .set(AUTH);
+    expect(camel.status).toBe(200);
+    expect(camel.body.sortMetric).toBe("cppr");
+    fetchSpy = mockFetch();
+    const snake = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=positive_replies")
+      .set(AUTH);
+    expect(snake.status).toBe(200);
+    expect(snake.body.goal).toBe("positiveReply"); // normalised to canonical camel
+    expect(snake.body.sortMetric).toBe("cppr");
+  });
+
   it("uses explicit brandProfileId and respects limit", async () => {
     fetchSpy = mockFetch();
 
