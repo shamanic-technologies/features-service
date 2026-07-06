@@ -432,39 +432,72 @@ registry.registerPath({
 
 // ── GET /features/:featureSlug/workflow-projection ─────────────────────────
 
-const workflowProjectionDetailSchema = z.object({
-  contactedLeads: z.number().nullable().describe("Expected unique leads contacted from the budget. Null when the workflow has no usable contacted-lead denominator."),
-  replies: z.number().nullable().describe("Expected positive replies from the budget. Null when the workflow has no reply cost."),
-  visits: z.number().nullable().describe("Expected clicks/visits from the budget. Null when the workflow has no click cost."),
-  signups: z.number().nullable().describe("Expected signups from the budget (visits × visitToSignupPct). Null when the workflow has no click cost."),
-  formSubmissions: z.number().nullable().describe("Expected form submissions from the budget (visits × visitToFormSubmissionPct). Null when the workflow has no click cost or visitToFormSubmissionPct is unset."),
-  meetings: z.number().nullable().describe("Expected meetings booked (from both the reply and click routes)."),
-  closes: z.number().nullable().describe("Expected closes from the budget."),
-  revenue: z.number().nullable().describe("closes × LTR (lifetime revenue per close)."),
-  cacPct: z.number().nullable().describe("(budget / revenue) × 100. Null when revenue is 0."),
-  cacAbs: z.number().nullable().describe("budget / closes (absolute cost per close). Null when closes is 0."),
+// 3-grain projection ladder (crossOrg → brand → audience) + a resolved pick, keyed per
+// (audienceId?, workflowDynasty). Replaces the flat per-workflow row + the deleted /candidates endpoint.
+
+const grainBlockSchema = z.object({
+  evidence: z.object({
+    spentUsd: z.number().describe("Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."),
+    observedContacted: z.number(),
+    observedClicks: z.number(),
+    observedPositiveReplies: z.number(),
+  }),
+  unitCosts: z.object({
+    costPerClickUsd: z.number().describe("spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."),
+    costPerPositiveReplyUsd: z.number().describe("spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."),
+    costPerContactedUsd: z.number().describe("spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."),
+  }),
+  projected: z.object({
+    costPerSignupUsd: z.number().nullable(),
+    costPerPaidClientUsd: z.number().nullable().describe("Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."),
+    costPerMeetingBookedUsd: z.number().nullable(),
+    roiMultiple: z.number().nullable().describe("LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."),
+    cacPct: z.number().nullable().describe("100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."),
+  }).describe("All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."),
 });
 
-const workflowProjectionItemSchema = z.object({
-  workflowDynastySlug: z.string(),
-  workflowDynastyName: z.string().nullable(),
-  contactedUsd: z.number().nullable().describe("Cost per unique lead contacted (USD). Null when the contacted-lead denominator is absent or zero."),
-  replyUsd: z.number().nullable().describe("Cost per positive reply (USD). Null when the metric is absent or zero."),
-  clickUsd: z.number().nullable().describe("Cost per click (USD). Null when the metric is absent or zero."),
-  costPerSignupUsd: z.number().nullable().describe("Budget required per signup for this workflow. Null when there is no usable click/conversion data."),
-  costPerFormSubmissionUsd: z.number().nullable().describe("Budget required per form submission for this workflow (form_submissions goal — click-route only, mirrors costPerSignupUsd). Null when there is no usable click/conversion data."),
-  costPerCloseUsd: z.number().nullable().describe("Budget required per close for this workflow. Null when there is no usable cost/conversion data."),
-  costPerMeetingBookedUsd: z.number().nullable().describe("Budget required per booked meeting for this workflow. Null when there is no usable cost/conversion data."),
-  roiMultiple: z.number().nullable().describe("Lifetime ROI multiple = LTR / costPerCloseUsd (revenue per acquisition dollar; budget-independent, = 100 / cacPct). Rendered verbatim instead of inverting cacPct client-side. Null when economics are absent or costPerCloseUsd is null/0. (features-service#396)"),
-  projection: workflowProjectionDetailSchema.nullable().describe("Null when budgetUsd is absent/≤0 or the workflow has no usable data."),
+const resolvedBlockSchema = z.object({
+  grain: z.enum(["audience", "brand", "crossOrg"]).describe("Finest grain present with spentUsd > 0 (precedence audience > brand > crossOrg). Never null-grain: crossOrg always has spend."),
+  costPerClickUsd: z.number().describe("The resolved grain's costPerClickUsd (never 0)."),
+  costPerOutcomeUsd: z.number().nullable().describe("The GOAL metric at the resolved grain (cost per signup/meeting/paid-client per goal) — campaign-service ranks on THIS. Null only at cold start (no economics)."),
+  costPerPaidClientUsd: z.number().nullable(),
+  costPerMeetingBookedUsd: z.number().nullable(),
+  roiMultiple: z.number().nullable(),
+  cacPct: z.number().nullable(),
 });
+
+const workflowProjectionRowSchema = z.object({
+  audienceId: z.string().nullable().describe("null = brand-level row (crossOrg + brand grains). Non-null = one row per (active audience × workflow dynasty) couple that ran (adds the audience grain)."),
+  workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() }),
+  estimatesByGrain: z.object({
+    crossOrg: grainBlockSchema.optional().describe("Fleet-wide unit costs (same source as /public/stats/best). Present for any dynasty with real fleet spend."),
+    brand: grainBlockSchema.optional().describe("The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow."),
+    audience: grainBlockSchema.optional().describe("Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."),
+  }).describe("A grain block is included ONLY when that grain has spentUsd > 0."),
+  resolved: resolvedBlockSchema,
+});
+
+const workflowProjectionEconomicsSchema = z.object({
+  lifetimeRevenueUsd: z.number(),
+  visitToSignupPct: z.number(),
+  visitToMeetingPct: z.number(),
+  meetingToClosePct: z.number(),
+  visitToClosePct: z.number(),
+  replyToMeetingPct: z.number(),
+  visitToPaidClientPct: z.number().optional().describe("Single-step visit→paid rate — present when the queried goal is website_visits."),
+  replyToPaidClientPct: z.number().optional().describe("Single-step reply→paid rate — present when the queried goal is positive_replies."),
+  visitToFormSubmissionPct: z.number().optional().describe("Two-step visit→form rate — present when the queried goal is form_submissions."),
+  formSubmissionToPaidClientPct: z.number().optional().describe("Two-step form→paid rate — present when the queried goal is form_submissions."),
+}).describe("The brand's EFFECTIVE economics, shown ONCE (same across grains). Includes the queried goal's resolved single-step / form-submission rates.");
 
 const workflowProjectionResponseSchema = z.object({
   featureSlug: z.string(),
-  objective: z.enum(["meeting-booked", "self-serve", "signup", "purchase", "website_visits", "positive_replies", "form_submissions"]).describe("Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) whose costPerCloseUsd rides the single-step rate. form_submissions is a TWO-STEP self-serve goal (visit→form submission→paid), the sibling of signup: it ranks on costPerFormSubmissionUsd and its costPerCloseUsd rides the visit→form→paid route."),
-  workflows: z.array(workflowProjectionItemSchema),
-  recommendedWorkflowDynastySlug: z.string().nullable().describe("Workflow with the lowest cost metric for the requested objective. Null when none has usable data."),
-  recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve/signup use costPerSignupUsd; purchase / website_visits / positive_replies use costPerCloseUsd (for the single-step goals this is the single-step cost-per-paid-client). Null when there is no pick."),
+  objective: z.enum(["meeting-booked", "self-serve", "signup", "purchase", "website_visits", "positive_replies", "form_submissions"]).describe("Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params."),
+  goal: z.enum(["meetingBooked", "signup", "purchase", "websiteVisit", "positiveReply", "formSubmission"]).describe("Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup."),
+  economics: workflowProjectionEconomicsSchema.nullable().describe("Null only at cold start (no effective economics) — rows still emit with null projected."),
+  rows: z.array(workflowProjectionRowSchema),
+  recommendedWorkflowDynastySlug: z.string().nullable().describe("Dynasty of the row with the lowest resolved.costPerOutcomeUsd. Null when none has usable data."),
+  recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the recommended row's resolved.costPerOutcomeUsd. Null when there is no pick."),
 });
 
 registry.register("WorkflowProjectionResponse", workflowProjectionResponseSchema);
@@ -472,24 +505,26 @@ registry.register("WorkflowProjectionResponse", workflowProjectionResponseSchema
 registry.registerPath({
   method: "get",
   path: "/features/{featureSlug}/workflow-projection",
-  summary: "Rank workflows by cost-per-outcome and project a budget",
+  summary: "3-grain cost-per-outcome projection ladder per (audience?, workflow dynasty)",
   description:
-    "Ranks a brand's workflows by the requested objective's cost-per-outcome (the reply + click engagement routes funded by one budget) and — when budgetUsd is given — projects that budget through the funnel. " +
-    "Per-workflow unit costs (cost per positive reply / per click) are global cross-org workflow efficiency (same source as /public/stats/best), aggregated over each workflow's upgrade chain. " +
-    "Conversion rates + LTR come from the brand's EFFECTIVE sales-economics (its own saved set, or the cross-brand-average when unset — null only at cold start). " +
-    "recommendedWorkflowDynastySlug is the workflow with the lowest objective metric; recommendedBudgetUsd = 10 × that cost.",
+    "Serves a 3-grain projection ladder (crossOrg → brand → audience) + a resolved pick, keyed per (audienceId?, workflowDynasty). " +
+    "crossOrg = fleet-wide per-workflow unit costs (same source as /public/stats/best); brand = the same path scoped to this brandId; audience = audience-attributed evidence for each active human-service audience that ran the workflow (audience-WIDE — the fleet does not tag outcomes per audience×workflow). " +
+    "Each grain carries its own evidence, floor-ruled unit costs (costPerXUsd = spentUsd / max(observedX,1), never null), and projected cost-per-outcome from the brand's EFFECTIVE economics. A grain is included only when it has spentUsd > 0. resolved = the finest grain present (precedence audience > brand > crossOrg); campaign-service ranks on resolved.costPerOutcomeUsd. " +
+    "recommendedWorkflowDynastySlug = argmin over rows of resolved.costPerOutcomeUsd; recommendedBudgetUsd = 10 × that cost. Folds in the audience×workflow grain formerly served by the removed /candidates endpoint.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — conversion economics are brand-scoped."),
-      objective: z.enum(["meeting-booked", "self-serve", "signup", "purchase", "website_visits", "positive_replies", "form_submissions"]).optional().describe("Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) — costPerCloseUsd rides the single-step rate. form_submissions is a TWO-STEP self-serve goal ranking on costPerFormSubmissionUsd. Also accepts the camelCase (websiteVisit / positiveReply / formSubmission) spelling. Defaults to meeting-booked."),
-      budgetUsd: z.string().optional().describe("Optional budget (USD) to project through the funnel."),
+      audienceId: z.string().optional().describe("Optional audience UUID context (echoed via audience rows). Audience rows always enumerate ALL of the brand's active audiences that ran the workflow."),
+      goal: z.string().optional().describe("Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase), snake (website_visits/positive_replies/form_submissions), and kebab. Also accepted via `objective`. Defaults to meeting-booked."),
+      objective: z.string().optional().describe("Alias of `goal` (snake/kebab spelling). Either param is accepted."),
+      budgetUsd: z.string().optional().describe("Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface)."),
     }),
   },
   responses: {
-    200: { description: "Workflow projection", content: { "application/json": { schema: workflowProjectionResponseSchema } } },
+    200: { description: "Workflow projection ladder", content: { "application/json": { schema: workflowProjectionResponseSchema } } },
     400: { description: "Missing brandId", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
@@ -553,78 +588,6 @@ registry.registerPath({
   responses: {
     200: { description: "Pipeline activity buckets", content: { "application/json": { schema: pipelineActivityResponseSchema } } },
     400: { description: "Missing/invalid brandId, days, or timezone", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
-    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
-  },
-});
-
-// ── GET /features/:featureSlug/candidates ──────────────────────────────────
-
-const candidateConversionSchema = z.object({
-  rate: z.number().nullable().describe("P(goal-outcome | engaged click) from the brand's effective sales-economics. Null at cold start (no economics)."),
-  grain: z.enum(["brand-goal", "goal-global"]).nullable().describe("Provenance of the conversion rate: brand-goal = the brand's own saved economics; goal-global = the cross-org average fallback; null = cold start."),
-  sampleSize: z.null().describe("Always null: the conversion rate comes from the brand's saved sales-economics, which carry no per-grain observation count (brand-service#242). The empirical sample behind a candidate lives ENTIRELY on the cost side (cost.sampleSize, at cost.grain) — do NOT read the cost sample as the conversion sample."),
-});
-
-const candidateCostSampleSizeSchema = z.object({
-  runs: z.number().describe("Completed runs behind the cost evidence (chain-aggregated for goal-global, audience-scoped for audience)."),
-  contacted: z.number(),
-  clicks: z.number(),
-  replies: z.number(),
-});
-
-const candidateCostSchema = z.object({
-  costPerLeadUsd: z.number().nullable().describe("Cost per contacted lead (USD). Null when there is no contacted-lead denominator."),
-  clickUsd: z.number().nullable().describe("Cost per click (USD). Null when absent/zero."),
-  replyUsd: z.number().nullable().describe("Cost per positive reply (USD). Null when absent/zero."),
-  grain: z.enum(["goal-global", "audience"]).describe("Cost-evidence grain: 'goal-global' = cross-org workflow unit costs (same source as /public/stats/best); 'audience' = audience-attributed cost (same source as /audience-stats)."),
-  sampleSize: candidateCostSampleSizeSchema.describe("The sample behind THIS cost evidence, at the cost grain above. On coarse rows grain='goal-global' → this is the CROSS-ORG cost population (NOT the brand's own activity); on audience rows grain='audience' → the audience's own attributed slice. Lives here (not at the candidate top level) so a fresh brand's cross-org cost sample is never mis-read as that brand's own evidence."),
-});
-
-const candidateSchema = z.object({
-  audienceId: z.string().nullable().describe("Audience lever — non-null with grain='audience' for couples that have audience-attributed runs/outcomes (active human-service audience × runs-attributed workflow). Null on the coarser brand-goal/goal-global fallback rows when there is no audience-level evidence."),
-  workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() }),
-  goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"]),
-  grain: z.enum(["audience", "brand-goal", "goal-global"]).describe("SUMMARY label: the finest grain reached ACROSS this candidate's evidence components (audience > brand-goal > goal-global). Does NOT describe the sample, and the components can resolve at different grains — read conversion.grain for the conversion rate's provenance and cost.grain + cost.sampleSize for the cost evidence's provenance and size. On a coarse row this can read 'brand-goal' (brand-own economics) while cost.grain is 'goal-global' (cross-org cost sample)."),
-  costPerOutcomeUsd: z.number().nullable().describe("The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."),
-  costPerCloseUsd: z.number().nullable().describe("Cost to acquire one paying client (cost per close = cost per PURCHASE), at this row's grain. Same definition/source as workflow-projection's costPerCloseUsd. Null when economics are absent (cold start) or there is no usable close projection."),
-  roiMultiple: z.number().nullable().describe("Lifetime ROI multiple = lifetime-revenue-per-client / costPerCloseUsd (= 100 / cacPct), budget-independent, at this row's grain. Same definition as workflow-projection's roiMultiple. Null when economics are absent or costPerCloseUsd is null/0."),
-  cacPct: z.number().nullable().describe("CAC as a share of lifetime revenue (%) = costPerCloseUsd / lifetime-revenue-per-client × 100 (= 100 / roiMultiple), budget-independent, at this row's grain. Same definition as workflow-projection's cacPct. Null when economics are absent or costPerCloseUsd is null/0."),
-  conversion: candidateConversionSchema,
-  cost: candidateCostSchema,
-});
-
-const candidatesResponseSchema = z.object({
-  featureSlug: z.string(),
-  brandId: z.string(),
-  goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"]),
-  brandProfileId: z.string().nullable().describe("Brand-profile-version context echoed back."),
-  candidates: z.array(candidateSchema),
-});
-
-registry.register("CandidatesResponse", candidatesResponseSchema);
-
-registry.registerPath({
-  method: "get",
-  path: "/features/{featureSlug}/candidates",
-  summary: "Serve the (audienceId, workflow) candidate set with per-candidate evidence + sample size",
-  description:
-    "Runtime per-lead selection evidence: returns the candidate SET — one per active workflow — each with its OWN cost-per-outcome for the goal, CONVERSION and COST evidence kept separate (each labelled with its own grain), and the SAMPLE SIZE living WITH the cost evidence it describes (cost.sampleSize at cost.grain) so a coarse row's cross-org cost sample is never mis-read as the brand's own activity (the conversion rate carries provenance but no count). The top-level grain is a summary label = the finest grain across components. Deliberately does NOT collapse to a single best: the consumer owns the uncertainty-aware selection policy (Thompson-style). " +
-    "Fallback grain ladder (finest→coarsest): audience (brandId×goal×audienceId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The audience rung is LIVE: for active human-service audiences with runs-attributed couples this endpoint emits one audience-grain candidate per couple (audienceId non-null, grain='audience'); couples with no audience-level evidence fall through to the coarser rungs with audienceId null. " +
-    "Reuses the workflow-projection data path: global per-workflow unit costs aggregated over the upgrade chain + the brand's EFFECTIVE sales-economics. Additive — does not change workflow-projection / stats/ranked.",
-  tags: ["Stats"],
-  request: {
-    headers: identityHeaders,
-    params: z.object({ featureSlug: z.string() }),
-    query: z.object({
-      brandId: z.string().describe("Brand UUID (required) — conversion economics are brand-scoped."),
-      goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"]).describe("Optimization target (required). Maps to the projected cost-per-outcome. websiteVisit / positiveReply are SINGLE-STEP goals (cost per paid client via visitToPaidClient / replyToPaidClient); the snake_case spellings (website_visits / positive_replies) are also accepted."),
-      brandProfileId: z.string().optional().describe("Brand-profile-version context (optional, echoed)."),
-    }),
-  },
-  responses: {
-    200: { description: "Candidate evidence set", content: { "application/json": { schema: candidatesResponseSchema } } },
-    400: { description: "Missing brandId or invalid goal", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },
