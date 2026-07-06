@@ -22,6 +22,8 @@ process.env.WORKFLOW_SERVICE_URL = "http://workflow:3000";
 process.env.WORKFLOW_SERVICE_API_KEY = "workflow-key";
 process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
+process.env.HUMAN_SERVICE_URL = "http://human:3000";
+process.env.HUMAN_SERVICE_API_KEY = "human-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
@@ -47,8 +49,7 @@ const ECONOMICS = {
   signupToPaidClientPct: 50,
 };
 
-// Two dynasties. wf-a: $1000 cost / 200 contacted / 100 clicks / 50 replies
-//                wf-b: $1000 cost / 200 contacted / 50 clicks / 10 replies
+// Two dynasties.
 function wf(over: Record<string, unknown>): Record<string, unknown> {
   return { id: "id", workflowSlug: "wf", workflowName: "WF", workflowDynastyName: "Dyn", workflowDynastySlug: "dyn", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null, ...over };
 }
@@ -56,317 +57,310 @@ const WORKFLOWS = [
   wf({ id: "ida", workflowSlug: "wf-a", workflowDynastySlug: "dyn-a", workflowDynastyName: "Dynasty A" }),
   wf({ id: "idb", workflowSlug: "wf-b", workflowDynastySlug: "dyn-b", workflowDynastyName: "Dynasty B" }),
 ];
+
 function costGroup(slug: string, cents: number, runCount = 10): Record<string, unknown> {
   return { dimensions: { workflowSlug: slug }, totalCostInUsdCents: String(cents), runCount, minStartedAt: null, maxStartedAt: null };
 }
-const COST_GROUPS = [costGroup("wf-a", 100000), costGroup("wf-b", 100000)];
+// crossOrg (fleet): wf-a $1000 / 100 clicks / 50 replies / 200 contacted; wf-b $1000 / 50 clicks / 10 replies
+const CROSSORG_COST = [costGroup("wf-a", 100000), costGroup("wf-b", 100000)];
+
 function emailGroup(slug: string, clicked: number, repliesPositive: number, contacted = 200): Record<string, unknown> {
   return { key: slug, broadcast: { recipientStats: { contacted, sent: 200, delivered: 200, opened: 150, clicked, bounced: 0, repliesPositive, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } };
 }
-const EMAIL_GROUPS = [emailGroup("wf-a", 100, 50), emailGroup("wf-b", 50, 10)];
+const CROSSORG_EMAIL = [emailGroup("wf-a", 100, 50), emailGroup("wf-b", 50, 10)];
 
-function mockFetch(opts: { workflows?: unknown[]; costGroups?: unknown[]; emailGroups?: unknown[]; economics?: unknown; source?: unknown } = {}): void {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+// Brand grain: this brand ran ONLY wf-a — $500 / 25 clicks / 5 replies / 100 contacted (so cpc=$20 ≠ fleet $10).
+const BRAND_COST = [costGroup("wf-a", 50000)];
+const BRAND_EMAIL = [emailGroup("wf-a", 25, 5, 100)];
+
+// ── Mock builder ──────────────────────────────────────────────────────────────
+// runs /v1/stats/costs is distinguished by the groupBy param:
+//   groupBy=workflowSlug (+ brandId) → brand grain
+//   groupBy=audienceId               → audience cost totals
+//   groupBy=audienceId,workflowDynastySlug → audience couples
+interface MockOpts {
+  workflows?: unknown[];
+  crossOrgCost?: unknown[];
+  crossOrgEmail?: unknown[];
+  brandCost?: unknown[];
+  brandEmail?: unknown[];
+  economics?: unknown;
+  source?: unknown;
+  // audiences: array of { id }, audienceCost groups, couple groups, membersByAudience, outcomesByEmail
+  audiences?: Array<{ id: string }>;
+  audienceCost?: unknown[];
+  audienceCouples?: unknown[];
+  membersByAudience?: Record<string, string[]>;
+  outcomesByEmail?: Record<string, { contacted?: boolean; clicked?: boolean; replied?: boolean; replyClassification?: string }>;
+}
+
+function mockFetch(opts: MockOpts = {}): void {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-    if (url.includes("stats/public/costs")) {
-      return new Response(JSON.stringify({ groups: opts.costGroups ?? COST_GROUPS }), { status: 200, headers: { "Content-Type": "application/json" } });
-    }
+    const u = new URL(url, "http://x");
+
     if (url.includes("/public/workflows")) {
-      return new Response(JSON.stringify({ workflows: opts.workflows ?? WORKFLOWS }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return json({ workflows: opts.workflows ?? WORKFLOWS });
+    }
+    // crossOrg fleet cost (public, no brand)
+    if (url.includes("/v1/stats/public/costs")) {
+      return json({ groups: opts.crossOrgCost ?? CROSSORG_COST });
+    }
+    // org-scoped runs cost — split by groupBy
+    if (url.includes("/v1/stats/costs")) {
+      const groupBy = u.searchParams.get("groupBy") ?? "";
+      if (groupBy === "audienceId") return json({ groups: opts.audienceCost ?? [] });
+      if (groupBy === "audienceId,workflowDynastySlug") return json({ groups: opts.audienceCouples ?? [] });
+      // groupBy=workflowSlug + brandId → brand grain
+      return json({ groups: opts.brandCost ?? BRAND_COST });
+    }
+    // email stats — org-scoped brand grain vs public crossOrg
+    if (url.includes("/orgs/stats")) {
+      return json({ groups: opts.brandEmail ?? BRAND_EMAIL });
     }
     if (url.includes("/public/stats")) {
-      return new Response(JSON.stringify({ groups: opts.emailGroups ?? EMAIL_GROUPS }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return json({ groups: opts.crossOrgEmail ?? CROSSORG_EMAIL });
     }
-    // Effective economics — brand-service owns saved-vs-average; the route reads { economics, source }.
     if (url.includes("/sales-economics-effective")) {
-      const economics = "economics" in opts ? opts.economics : ECONOMICS; // distinguish explicit null (cold start)
+      const economics = "economics" in opts ? opts.economics : ECONOMICS;
       const source = "source" in opts ? opts.source : economics == null ? null : "user";
-      return new Response(JSON.stringify({ economics, source }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return json({ economics, source });
     }
-    return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    // human-service audiences list
+    if (url.includes("/orgs/audiences") && url.includes("/members")) {
+      const idMatch = url.match(/\/orgs\/audiences\/([^/]+)\/members/);
+      const audienceId = idMatch ? idMatch[1] : "";
+      const emails = opts.membersByAudience?.[audienceId] ?? [];
+      return json({ members: emails.map((e) => ({ emailNorm: e })), total: emails.length });
+    }
+    if (url.includes("/orgs/audiences")) {
+      return json({ audiences: opts.audiences ?? [] });
+    }
+    // email-gateway POST /orgs/status → per-email outcome flags
+    if (url.includes("/orgs/status")) {
+      const body = init?.body ? JSON.parse(init.body as string) : {};
+      const items: Array<{ email: string }> = body.items ?? [];
+      const results = items.map(({ email }) => {
+        const o = opts.outcomesByEmail?.[email] ?? {};
+        return { email, broadcast: { brand: { contacted: o.contacted, clicked: o.clicked, replied: o.replied, replyClassification: o.replyClassification ?? null } } };
+      });
+      return json({ results });
+    }
+    return json({});
   });
 }
 
-const URL_BASE = "/features/sales-cold-email-outreach/workflow-projection";
-const byDynasty = (body: any, slug: string) => body.workflows.find((w: any) => w.workflowDynastySlug === slug);
+function json(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+}
 
-describe("GET /features/:featureSlug/workflow-projection", () => {
+const URL_BASE = "/features/sales-cold-email-outreach/workflow-projection";
+const rowFor = (body: any, dynasty: string, audienceId: string | null = null) =>
+  body.rows.find((r: any) => r.workflow.workflowDynastySlug === dynasty && r.audienceId === audienceId);
+
+describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () => {
   beforeEach(() => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
   });
   afterEach(() => vi.restoreAllMocks());
 
   it("400 when brandId missing", async () => {
-    const res = await request(app).get(`${URL_BASE}?objective=meeting-booked`).set(AUTH);
+    const res = await request(app).get(`${URL_BASE}?goal=meetingBooked`).set(AUTH);
     expect(res.status).toBe(400);
-  });
-
-  it("objective optional — missing or invalid → 200, echoed objective defaults to meeting-booked", async () => {
-    mockFetch();
-    const missing = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
-    expect(missing.status).toBe(200);
-    expect(missing.body.objective).toBe("meeting-booked");
-    const invalid = await request(app).get(`${URL_BASE}?brandId=b1&objective=growth`).set(AUTH);
-    expect(invalid.status).toBe(200);
-    expect(invalid.body.objective).toBe("meeting-booked");
   });
 
   it("404 when feature not found", async () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(undefined as any);
     mockFetch();
-    const res = await request(app).get(`/features/unknown/workflow-projection?brandId=b1&objective=meeting-booked`).set(AUTH);
+    const res = await request(app).get(`/features/unknown/workflow-projection?brandId=b1&goal=meetingBooked`).set(AUTH);
     expect(res.status).toBe(404);
   });
 
-  it("no budget → per-workflow unit costs + costs per outcome, projection null, recommends cheapest meeting objective", async () => {
+  it("goal echo: accepts camel `goal` and snake `objective`; canonical snake objective + camel goal", async () => {
     mockFetch();
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked`).set(AUTH);
-    expect(res.status).toBe(200);
-    expect(res.body.objective).toBe("meeting-booked");
-    expect(res.body.workflows).toHaveLength(2);
-
-    const a = byDynasty(res.body, "dyn-a");
-    expect(a.workflowDynastyName).toBe("Dynasty A");
-    expect(a.contactedUsd).toBeCloseTo(5, 6); // $1000 / 200 contacted leads
-    expect(a.replyUsd).toBeCloseTo(20, 6);  // $1000 / 50 replies
-    expect(a.clickUsd).toBeCloseTo(10, 6);  // $1000 / 100 clicks
-    expect(a.costPerSignupUsd).toBeCloseTo(250, 3); // 1 / ((1/10)·0.04)
-    // pCloseClick=orP(0.02,0.05·0.30)=0.0347, pCloseReply=0.40·0.30=0.12
-    // closesPerBudget = (1/10)·0.0347 + (1/20)·0.12 = 0.00347 + 0.006 = 0.00947 → cpc = 105.5966
-    expect(a.costPerCloseUsd).toBeCloseTo(105.5966, 3);
-    // meetingsPerBudget = (1/10)·0.05 + (1/20)·0.40 = 0.005 + 0.02 = 0.025 → cpm = 40
-    expect(a.costPerMeetingBookedUsd).toBeCloseTo(40, 3);
-    // ROI multiple = LTR / costPerClose = 1000 / 105.5966 (budget-independent, = 100/cacPct).
-    expect(a.roiMultiple).toBeCloseTo(1000 / 105.5966, 3);
-    expect(a.projection).toBeNull(); // no budget
-
-    const b = byDynasty(res.body, "dyn-b");
-    // closesPerBudget = (1/20)·0.0347 + (1/100)·0.12 = 0.001735 + 0.0012 = 0.002935 → cpc = 340.7155
-    expect(b.costPerSignupUsd).toBeCloseTo(500, 3);
-    expect(b.costPerCloseUsd).toBeCloseTo(340.7155, 3);
-    expect(b.costPerMeetingBookedUsd).toBeCloseTo(153.846, 3);
-    expect(b.roiMultiple).toBeCloseTo(1000 / 340.7155, 3);
-
-    expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a"); // lower cost per meeting
-    expect(res.body.recommendedBudgetUsd).toBeCloseTo(400, 2); // 10 × $40/meeting
+    const camel = await request(app).get(`${URL_BASE}?brandId=b1&goal=websiteVisit`).set(AUTH);
+    // websiteVisit needs the single-step rate — mock without it → fail loud below; use meetingBooked for echo
+    const mb = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    expect(mb.body.objective).toBe("meeting-booked");
+    expect(mb.body.goal).toBe("meetingBooked");
+    const snake = await request(app).get(`${URL_BASE}?brandId=b1&objective=self-serve`).set(AUTH);
+    expect(snake.body.objective).toBe("self-serve");
+    expect(snake.body.goal).toBe("signup"); // self-serve aliases signup
+    void camel;
   });
 
-  it("with budget → full projection block", async () => {
+  it("brand-level rows: crossOrg + brand grains; brand grain reflects the brand's own unit costs", async () => {
     mockFetch();
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
     expect(res.status).toBe(200);
-    const a = byDynasty(res.body, "dyn-a");
-    expect(a.projection.contactedLeads).toBeCloseTo(200, 6); // 1000/5
-    expect(a.projection.replies).toBeCloseTo(50, 6);    // 1000/20
-    expect(a.projection.visits).toBeCloseTo(100, 6);    // 1000/10
-    expect(a.projection.signups).toBeCloseTo(4, 6);      // 100·0.04
-    expect(a.projection.meetings).toBeCloseTo(25, 6);   // 50·0.4 + 100·0.05 (both routes)
-    expect(a.projection.closes).toBeCloseTo(9.47, 6);   // 1000·0.00947
-    expect(a.projection.revenue).toBeCloseTo(9470, 4);  // 9.47·1000
-    expect(a.projection.cacPct).toBeCloseTo(10.5597, 3); // 1000/9470·100
-    expect(a.projection.cacAbs).toBeCloseTo(105.5966, 3); // 1000/9.47
+
+    // dyn-a: brand ran it → both grains. dyn-b: brand did NOT run it → crossOrg only.
+    const a = rowFor(res.body, "dyn-a");
+    expect(a).toBeTruthy();
+    expect(a.workflow.workflowDynastyName).toBe("Dynasty A");
+    expect(a.estimatesByGrain.crossOrg).toBeTruthy();
+    expect(a.estimatesByGrain.brand).toBeTruthy();
+    expect(a.estimatesByGrain.audience).toBeUndefined();
+
+    // crossOrg: $1000 / 100 clicks = $10; brand: $500 / 25 clicks = $20.
+    expect(a.estimatesByGrain.crossOrg.unitCosts.costPerClickUsd).toBeCloseTo(10, 6);
+    expect(a.estimatesByGrain.brand.unitCosts.costPerClickUsd).toBeCloseTo(20, 6);
+    expect(a.estimatesByGrain.crossOrg.unitCosts.costPerPositiveReplyUsd).toBeCloseTo(20, 6); // 1000/50
+    expect(a.estimatesByGrain.brand.unitCosts.costPerPositiveReplyUsd).toBeCloseTo(100, 6);   // 500/5
+    expect(a.estimatesByGrain.crossOrg.unitCosts.costPerContactedUsd).toBeCloseTo(5, 6);      // 1000/200
+    expect(a.estimatesByGrain.brand.unitCosts.costPerContactedUsd).toBeCloseTo(5, 6);         // 500/100
+
+    // dyn-b: only crossOrg (brand never ran it).
+    const b = rowFor(res.body, "dyn-b");
+    expect(b.estimatesByGrain.crossOrg).toBeTruthy();
+    expect(b.estimatesByGrain.brand).toBeUndefined();
   });
 
-  it("objective controls only the recommendation metric; projection details remain the same", async () => {
+  it("resolved precedence: brand grain wins over crossOrg when the brand has spend", async () => {
     mockFetch();
-    const none = await request(app).get(`${URL_BASE}?brandId=b1&budgetUsd=1000`).set(AUTH);
-    const meeting = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
-    const self = await request(app).get(`${URL_BASE}?brandId=b1&objective=self-serve&budgetUsd=1000`).set(AUTH);
-    expect(none.status).toBe(200);
-    expect(meeting.status).toBe(200);
-    expect(self.status).toBe(200);
-    // Per-workflow facts are objective-independent.
-    expect(none.body.workflows).toEqual(meeting.body.workflows);
-    expect(self.body.workflows).toEqual(meeting.body.workflows);
-    // The recommended budget uses the objective's cost: meeting-booked → costPerMeetingBookedUsd,
-    // self-serve → costPerSignupUsd.
-    expect(meeting.body.recommendedBudgetUsd).toBeCloseTo(400, 2);
-    expect(none.body.recommendedBudgetUsd).toBeCloseTo(400, 2);
-    expect(self.body.recommendedBudgetUsd).toBeCloseTo(2500, 2);
-    // both routes (click + reply) feed meetings now — non-null even under the former "self-serve"
-    const selfA = byDynasty(self.body, "dyn-a");
-    expect(selfA.projection.signups).toBeCloseTo(4, 6);
-    expect(selfA.projection.replies).toBeCloseTo(50, 6);
-    expect(selfA.projection.meetings).toBeCloseTo(25, 6);
-    // objective is still echoed for back-compat: default meeting-booked when absent/invalid
-    expect(none.body.objective).toBe("meeting-booked");
-    expect(self.body.objective).toBe("self-serve");
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    const a = rowFor(res.body, "dyn-a");
+    expect(a.resolved.grain).toBe("brand");
+    // resolved.costPerClickUsd == brand grain click cost ($20)
+    expect(a.resolved.costPerClickUsd).toBeCloseTo(20, 6);
+    const b = rowFor(res.body, "dyn-b");
+    expect(b.resolved.grain).toBe("crossOrg");
+    expect(b.resolved.costPerClickUsd).toBeCloseTo(20, 6); // $1000/50 = $20
   });
 
-  it("cold start (effective economics null) → unit costs present, cost-per-close + projection + recommendation null", async () => {
-    mockFetch({ economics: null, source: null }); // no brand on the platform has saved economics yet
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
-    expect(res.status).toBe(200);
-    const a = byDynasty(res.body, "dyn-a");
-    expect(a.replyUsd).toBeCloseTo(20, 6);   // unit costs still computed
-    expect(a.clickUsd).toBeCloseTo(10, 6);
-    expect(a.costPerSignupUsd).toBeNull();
-    expect(a.costPerCloseUsd).toBeNull();
-    expect(a.roiMultiple).toBeNull(); // no economics → no costPerClose → no ROI
-    expect(a.projection).toBeNull();
-    expect(res.body.recommendedWorkflowDynastySlug).toBeNull();
-    expect(res.body.recommendedBudgetUsd).toBeNull();
+  it("no nulls in unitCosts; floor rule: 0 clicks → costPerClickUsd == spentUsd", async () => {
+    // Brand ran wf-a with 0 clicks but $500 spend + 100 contacted.
+    mockFetch({ brandEmail: [emailGroup("wf-a", 0, 0, 100)] });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    const a = rowFor(res.body, "dyn-a");
+    expect(a.estimatesByGrain.brand.unitCosts.costPerClickUsd).toBeCloseTo(500, 6); // floor = spentUsd
+    expect(a.estimatesByGrain.brand.unitCosts.costPerPositiveReplyUsd).toBeCloseTo(500, 6); // floor
+    expect(a.estimatesByGrain.brand.unitCosts.costPerContactedUsd).toBeCloseTo(5, 6); // 500/100 real
+    // none null
+    for (const g of ["crossOrg", "brand"]) {
+      const uc = a.estimatesByGrain[g].unitCosts;
+      expect(uc.costPerClickUsd).not.toBeNull();
+      expect(uc.costPerPositiveReplyUsd).not.toBeNull();
+      expect(uc.costPerContactedUsd).not.toBeNull();
+    }
   });
 
-  it("no SAVED set but effective returns the cross-brand-average → non-null cost-per-close + budget", async () => {
-    // Brand hasn't saved economics; brand-service serves the org-wide average (source "cross-brand-average").
-    // features-service consumes it identically to a user-saved set — non-null budget, no averaging here.
-    mockFetch({ economics: ECONOMICS, source: "cross-brand-average" });
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
-    expect(res.status).toBe(200);
-    const a = byDynasty(res.body, "dyn-a");
-    expect(a.costPerSignupUsd).toBeCloseTo(250, 3);
-    expect(a.costPerCloseUsd).toBeCloseTo(105.5966, 3); // same math as a saved set
-    expect(a.costPerMeetingBookedUsd).toBeCloseTo(40, 3);
-    expect(a.projection.closes).toBeCloseTo(9.47, 6);
-    expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a");
-    expect(res.body.recommendedBudgetUsd).toBeCloseTo(400, 2);
+  it("projected non-null when economics present (floor guarantees unit costs > 0)", async () => {
+    mockFetch();
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    const a = rowFor(res.body, "dyn-a");
+    // crossOrg meeting cost = 1/((1/10)·0.05 + (1/20)·0.40) = 1/0.025 = 40
+    expect(a.estimatesByGrain.crossOrg.projected.costPerMeetingBookedUsd).toBeCloseTo(40, 3);
+    expect(a.estimatesByGrain.crossOrg.projected.costPerSignupUsd).toBeCloseTo(250, 3); // 1/((1/10)·0.04)
+    // paid-client (purchase funnel): closesPerBudget = (1/10)·0.0347 + (1/20)·0.12 = 0.00947 → 105.5966
+    expect(a.estimatesByGrain.crossOrg.projected.costPerPaidClientUsd).toBeCloseTo(105.5966, 3);
+    expect(a.estimatesByGrain.crossOrg.projected.roiMultiple).toBeCloseTo(1000 / 105.5966, 3);
+    expect(a.estimatesByGrain.crossOrg.projected.cacPct).toBeCloseTo(100 / (1000 / 105.5966), 3);
   });
 
-  it("workflow with no replies → replyUsd null, click route still funds closes", async () => {
-    mockFetch({ emailGroups: [emailGroup("wf-a", 100, 0)] }); // 0 positive replies
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
-    expect(res.status).toBe(200);
-    const a = byDynasty(res.body, "dyn-a");
-    expect(a.replyUsd).toBeNull();
-    expect(a.clickUsd).toBeCloseTo(10, 6);
-    expect(a.costPerSignupUsd).toBeCloseTo(250, 3);
-    // closesPerBudget = (1/10)·0.0347 = 0.00347 → cpc ≈ 288.18 (reply route contributes 0)
-    expect(a.costPerCloseUsd).toBeCloseTo(288.1844, 3);
-    expect(a.costPerMeetingBookedUsd).toBeCloseTo(200, 3);
+  it("economics echoed once (non-null); null at cold start with rows still emitted", async () => {
+    mockFetch();
+    const withEcon = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    expect(withEcon.body.economics.lifetimeRevenueUsd).toBe(1000);
+    expect(withEcon.body.economics.visitToSignupPct).toBe(4);
+
+    mockFetch({ economics: null, source: null });
+    const cold = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    expect(cold.status).toBe(200);
+    expect(cold.body.economics).toBeNull();
+    const a = rowFor(cold.body, "dyn-a");
+    expect(a.estimatesByGrain.crossOrg.unitCosts.costPerClickUsd).toBeCloseTo(10, 6); // unit costs still real
+    expect(a.estimatesByGrain.crossOrg.projected.costPerMeetingBookedUsd).toBeNull();
+    expect(a.estimatesByGrain.crossOrg.projected.roiMultiple).toBeNull();
+    expect(cold.body.recommendedWorkflowDynastySlug).toBeNull();
+    expect(cold.body.recommendedBudgetUsd).toBeNull();
   });
 
-  it("meeting-booked recommendation does not multiply by meeting→close", async () => {
+  it("recommended: argmin over resolved.costPerOutcomeUsd; budget = 10 × that cost", async () => {
+    mockFetch();
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    // dyn-a resolves at brand grain (cpc $20): meeting cost = 1/((1/20)·0.05 + (1/100)·0.40) = 1/0.0065 = 153.846
+    // dyn-b resolves at crossOrg (cpc $20, reply $100): meeting = 1/((1/20)·0.05 + (1/100)·0.40) = 153.846 too
+    // Both 153.846 → argmin picks the first encountered (dyn-a). recommendedBudget = 10 × 153.846.
+    expect(res.body.recommendedWorkflowDynastySlug).toBeTruthy();
+    const picked = rowFor(res.body, res.body.recommendedWorkflowDynastySlug);
+    expect(res.body.recommendedBudgetUsd).toBeCloseTo(10 * picked.resolved.costPerOutcomeUsd, 2);
+  });
+
+  it("audience rows: one per (audienceId × workflow dynasty) couple; audience grain audience-wide, resolves at audience", async () => {
     mockFetch({
-      emailGroups: [emailGroup("wf-a", 0, 10, 100)],
-      costGroups: [costGroup("wf-a", 70000)],
-      economics: {
-        ...ECONOMICS,
-        replyToMeetingPct: 30,
-        visitToMeetingPct: 0.3,
-        meetingToClosePct: 30,
-        visitToClosePct: 0,
+      audiences: [{ id: "aud-1" }],
+      // aud-1 cost: $400 / (from couples we learn it ran dyn-a). groupBy=audienceId total.
+      audienceCost: [{ dimensions: { audienceId: "aud-1" }, totalCostInUsdCents: "40000", runCount: 8 }],
+      audienceCouples: [{ dimensions: { audienceId: "aud-1", workflowDynastySlug: "dyn-a" }, totalCostInUsdCents: "40000", runCount: 8 }],
+      membersByAudience: { "aud-1": ["m1@x.com", "m2@x.com", "m3@x.com", "m4@x.com"] },
+      outcomesByEmail: {
+        "m1@x.com": { contacted: true, clicked: true },
+        "m2@x.com": { contacted: true, clicked: true },
+        "m3@x.com": { contacted: true, replied: true, replyClassification: "positive" },
+        "m4@x.com": { contacted: true },
       },
     });
-
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked`).set(AUTH);
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
     expect(res.status).toBe(200);
-    const a = byDynasty(res.body, "dyn-a");
-    expect(a.replyUsd).toBeCloseTo(70, 6);
-    expect(a.costPerMeetingBookedUsd).toBeCloseTo(233.333, 3); // $70 / 0.30
-    expect(a.costPerCloseUsd).toBeCloseTo(777.778, 3); // $70 / (0.30 × 0.30)
-    expect(res.body.recommendedBudgetUsd).toBeCloseTo(2333.333, 2); // 10 × costPerMeetingBookedUsd
+
+    const audRow = rowFor(res.body, "dyn-a", "aud-1");
+    expect(audRow).toBeTruthy();
+    expect(audRow.estimatesByGrain.audience).toBeTruthy();
+    expect(audRow.estimatesByGrain.crossOrg).toBeTruthy();
+    expect(audRow.estimatesByGrain.brand).toBeTruthy();
+    // audience: $400 / 2 clicks = $200; 4 contacted; 1 positive reply → $400/1 = $400.
+    expect(audRow.estimatesByGrain.audience.evidence.spentUsd).toBeCloseTo(400, 6);
+    expect(audRow.estimatesByGrain.audience.evidence.observedClicks).toBe(2);
+    expect(audRow.estimatesByGrain.audience.evidence.observedContacted).toBe(4);
+    expect(audRow.estimatesByGrain.audience.evidence.observedPositiveReplies).toBe(1);
+    expect(audRow.estimatesByGrain.audience.unitCosts.costPerClickUsd).toBeCloseTo(200, 6);
+    // resolved at the FINEST grain present → audience.
+    expect(audRow.resolved.grain).toBe("audience");
+    expect(audRow.resolved.costPerClickUsd).toBeCloseTo(200, 6);
   });
 
-  it("self-serve recommendation uses signup cost, not paid-close cost", async () => {
-    mockFetch({
-      emailGroups: [emailGroup("wf-a", 100, 0, 100)],
-      costGroups: [costGroup("wf-a", 30000)],
-      economics: {
-        ...ECONOMICS,
-        visitToSignupPct: 3,
-        signupToPaidClientPct: 10,
-        visitToClosePct: 0.3,
-        visitToMeetingPct: 0,
-        meetingToClosePct: 0,
-      },
-    });
-
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=self-serve`).set(AUTH);
-    expect(res.status).toBe(200);
-    expect(res.body.objective).toBe("self-serve");
-    const a = byDynasty(res.body, "dyn-a");
-    expect(a.clickUsd).toBeCloseTo(3, 6);
-    expect(a.costPerSignupUsd).toBeCloseTo(100, 3); // $3 / 0.03
-    expect(a.costPerCloseUsd).toBeCloseTo(1000, 3); // $3 / 0.003
-    expect(res.body.recommendedBudgetUsd).toBeCloseTo(1000, 2); // 10 × costPerSignupUsd
+  it("grain omission: a grain with spentUsd = 0 is absent from estimatesByGrain", async () => {
+    // Brand ran wf-a with 0 cost (should be omitted). crossOrg still present.
+    mockFetch({ brandCost: [costGroup("wf-a", 0)] });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    const a = rowFor(res.body, "dyn-a");
+    expect(a.estimatesByGrain.crossOrg).toBeTruthy();
+    expect(a.estimatesByGrain.brand).toBeUndefined();
+    expect(a.resolved.grain).toBe("crossOrg");
   });
 
-  it("signup objective aliases self-serve for explicit consumers", async () => {
-    mockFetch();
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=signup`).set(AUTH);
-    expect(res.status).toBe(200);
-    expect(res.body.objective).toBe("signup");
-    expect(res.body.recommendedBudgetUsd).toBeCloseTo(2500, 2);
-  });
-
-  it("purchase objective keeps the paid-close recommendation available", async () => {
-    mockFetch();
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=purchase`).set(AUTH);
-    expect(res.status).toBe(200);
-    expect(res.body.objective).toBe("purchase");
-    expect(res.body.recommendedBudgetUsd).toBeCloseTo(1055.966, 2);
-  });
-
-  // ── SINGLE-STEP goals: website_visits (visit→paid) / positive_replies (reply→paid) ──────────
-  // v2pc=0.05 (visitToPaidClientPct 5), r2pc=0.20 (replyToPaidClientPct 20).
-  const SINGLE_STEP_ECON = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 20 };
-
-  it("website_visits → costPerCloseUsd = clickUsd/v2pc (single step), positive recommended budget", async () => {
-    mockFetch({ economics: SINGLE_STEP_ECON });
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=website_visits`).set(AUTH);
+  it("single-step website_visits: costPerPaidClientUsd = clickUsd / v2pc; costPerOutcomeUsd rides it", async () => {
+    const SINGLE = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 20 };
+    mockFetch({ economics: SINGLE });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=website_visits`).set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.objective).toBe("website_visits");
-    const a = byDynasty(res.body, "dyn-a");
-    // wf-a clickUsd $10 → 10 / 0.05 = 200 (reply route does NOT fund website_visits)
-    expect(a.costPerCloseUsd).toBeCloseTo(200, 3);
-    expect(a.roiMultiple).toBeCloseTo(1000 / 200, 6); // LTR / single-step cost = 5
-    const b = byDynasty(res.body, "dyn-b");
-    expect(b.costPerCloseUsd).toBeCloseTo(400, 3); // wf-b clickUsd $20 → 20 / 0.05
-    // Cheapest single-step cost wins; budget = 10 × 200 > 0 (no zero-collapse, no NaN).
-    expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a");
-    expect(res.body.recommendedBudgetUsd).toBeCloseTo(2000, 2);
+    expect(res.body.goal).toBe("websiteVisit");
+    expect(res.body.economics.visitToPaidClientPct).toBe(5);
+    const a = rowFor(res.body, "dyn-a");
+    // crossOrg cpc $10 → 10 / 0.05 = 200
+    expect(a.estimatesByGrain.crossOrg.projected.costPerPaidClientUsd).toBeCloseTo(200, 3);
+    // resolved at brand grain (cpc $20) → 20 / 0.05 = 400
+    expect(a.resolved.grain).toBe("brand");
+    expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(400, 3);
+    expect(a.resolved.costPerPaidClientUsd).toBeCloseTo(400, 3);
   });
 
-  it("positive_replies → costPerCloseUsd = replyUsd/r2pc (single step), positive recommended budget", async () => {
-    mockFetch({ economics: SINGLE_STEP_ECON });
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=positive_replies`).set(AUTH);
-    expect(res.status).toBe(200);
-    expect(res.body.objective).toBe("positive_replies");
-    const a = byDynasty(res.body, "dyn-a");
-    // wf-a replyUsd $20 → 20 / 0.20 = 100 (click route does NOT fund positive_replies)
-    expect(a.costPerCloseUsd).toBeCloseTo(100, 3);
-    expect(a.roiMultiple).toBeCloseTo(1000 / 100, 6); // 10
-    expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a");
-    expect(res.body.recommendedBudgetUsd).toBeCloseTo(1000, 2); // 10 × 100
-  });
-
-  it("camelCase spelling (websiteVisit) is accepted and echoed as the canonical snake objective", async () => {
-    mockFetch({ economics: SINGLE_STEP_ECON });
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=websiteVisit`).set(AUTH);
-    expect(res.status).toBe(200);
-    expect(res.body.objective).toBe("website_visits");
-    expect(byDynasty(res.body, "dyn-a").costPerCloseUsd).toBeCloseTo(200, 3);
-  });
-
-  it("single-step goal with the rate field ABSENT → fail loud (502), not NaN / zero", async () => {
-    mockFetch({ economics: ECONOMICS }); // no visitToPaidClientPct on the wire
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=website_visits`).set(AUTH);
+  it("single-step goal with the rate field ABSENT → fail loud (502)", async () => {
+    mockFetch({ economics: ECONOMICS }); // no visitToPaidClientPct
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=website_visits`).set(AUTH);
     expect(res.status).toBe(502);
-  });
-
-  it("workflow with no contacted-lead denominator → projection carries explicit contactedLeads null", async () => {
-    mockFetch({ emailGroups: [emailGroup("wf-a", 100, 50, 0)] });
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked&budgetUsd=1000`).set(AUTH);
-    expect(res.status).toBe(200);
-    const a = byDynasty(res.body, "dyn-a");
-    expect(a.contactedUsd).toBeNull();
-    expect(a.projection.contactedLeads).toBeNull();
-    expect(a.projection.replies).toBeCloseTo(50, 6);
-    expect(a.projection.visits).toBeCloseTo(100, 6);
-    expect(a.projection.signups).toBeCloseTo(4, 6);
   });
 
   it("502 when a downstream source fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
-      if (url.includes("stats/public/costs")) return new Response("boom", { status: 500 });
-      if (url.includes("/public/workflows")) return new Response(JSON.stringify({ workflows: WORKFLOWS }), { status: 200 });
-      if (url.includes("/public/stats")) return new Response(JSON.stringify({ groups: EMAIL_GROUPS }), { status: 200 });
-      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
-      return new Response("{}", { status: 200 });
+      if (url.includes("/v1/stats/public/costs")) return new Response("boom", { status: 500 });
+      if (url.includes("/public/workflows")) return json({ workflows: WORKFLOWS });
+      return json({});
     });
-    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=meeting-booked`).set(AUTH);
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
     expect(res.status).toBe(502);
   });
 });

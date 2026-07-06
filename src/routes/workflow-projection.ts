@@ -4,7 +4,7 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
-import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal } from "../lib/funnel-registry.js";
+import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, type ProjectionEconomics } from "../lib/funnel-registry.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, type SingleStepGoal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
@@ -12,6 +12,13 @@ import {
   fetchPublicEmailStats,
 } from "../lib/public-stats-clients.js";
 import { buildUpgradeChains, aggregateAcrossChains } from "./public.js";
+import {
+  fetchBrandWorkflowEvidence,
+  fetchAudienceGrainEvidence,
+  type WorkflowGrainEvidence,
+  type AudienceGrainEvidence,
+  type Identity,
+} from "../lib/workflow-projection-grains.js";
 
 const router = Router();
 
@@ -19,154 +26,229 @@ const router = Router();
 const TARGET_OUTCOMES_PER_MONTH = 10;
 
 // website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid). self-serve is a
-// signup alias. The echo value is the canonical spelling; the request param is normalised (any of the
-// fleet's snake/camel/kebab single-step spellings) via matchSingleStepGoal.
+// signup alias. The `objective` echo is the canonical snake spelling; the `goal` echo is the canonical
+// camel spelling (= brand-service CurrentGoal). Both request params are normalised (any of the fleet's
+// snake/camel/kebab spellings) via matchSingleStepGoal / matchFormSubmissionGoal.
 type Objective = "meeting-booked" | "self-serve" | "signup" | "purchase" | "website_visits" | "positive_replies" | "form_submissions";
+type GoalEcho = "meetingBooked" | "signup" | "purchase" | "websiteVisit" | "positiveReply" | "formSubmission";
 
-// Brand sales-economics as decimals (brand-service stores percentages 0–100).
-interface BrandEcon {
-  ltv: number; // lifetime revenue per close (USD)
-  r2m: number; // P(meeting | positive reply)
-  v2m: number; // P(meeting | click/visit)
-  m2c: number; // P(close | meeting)
-  v2c: number; // P(close | click/visit) — direct, self-serve path
-  v2s: number; // P(signup | click/visit) — self-serve signup
-  v2pc?: number; // P(paid client | click/visit) — single step (website_visits goal)
-  r2pc?: number; // P(paid client | positive reply) — single step (positive_replies goal)
-  v2fs?: number; // P(form submission | click/visit) — two-step self-serve (form_submissions goal)
-  fs2pc?: number; // P(paid client | form submission) — two-step self-serve (form_submissions goal)
+// ── Response shape (3-grain ladder + resolved pick) ──────────────────────────
+
+type GrainName = "crossOrg" | "brand" | "audience";
+
+interface GrainBlock {
+  evidence: { spentUsd: number; observedContacted: number; observedClicks: number; observedPositiveReplies: number };
+  unitCosts: { costPerClickUsd: number; costPerPositiveReplyUsd: number; costPerContactedUsd: number };
+  projected: {
+    costPerSignupUsd: number | null;
+    costPerPaidClientUsd: number | null;
+    costPerMeetingBookedUsd: number | null;
+    roiMultiple: number | null;
+    cacPct: number | null;
+  };
 }
 
-interface Projection {
-  contactedLeads: number | null;
-  replies: number | null;
-  visits: number | null;
-  signups: number | null;
-  formSubmissions: number | null;
-  meetings: number | null;
-  closes: number | null;
-  revenue: number | null;
-  cacPct: number | null;
-  cacAbs: number | null;
-}
-
-interface WorkflowProjection {
-  workflowDynastySlug: string;
-  workflowDynastyName: string | null;
-  contactedUsd: number | null;
-  replyUsd: number | null;
-  clickUsd: number | null;
-  costPerSignupUsd: number | null;
-  /** Budget required per form submission (form_submissions goal). Click-route only, mirrors
-   * costPerSignupUsd. Null when there is no usable click/conversion data. */
-  costPerFormSubmissionUsd: number | null;
-  costPerCloseUsd: number | null;
+interface ResolvedBlock {
+  grain: GrainName;
+  costPerClickUsd: number;
+  costPerOutcomeUsd: number | null;
+  costPerPaidClientUsd: number | null;
   costPerMeetingBookedUsd: number | null;
-  /**
-   * Lifetime ROI multiple for this workflow = LTR / costPerCloseUsd (revenue returned per dollar spent
-   * to acquire one close). Budget-independent (= 100 / cacPct), so present even without budgetUsd. The
-   * dashboard renders this verbatim instead of inverting cacPct (100/cacPct) in the browser. Null when
-   * economics are absent or costPerCloseUsd is null/0. (features-service#396)
-   */
   roiMultiple: number | null;
-  projection: Projection | null;
+  cacPct: number | null;
+}
+
+interface ProjectionRow {
+  audienceId: string | null;
+  workflow: { workflowDynastySlug: string; workflowDynastyName: string | null };
+  estimatesByGrain: Partial<Record<GrainName, GrainBlock>>;
+  resolved: ResolvedBlock;
+}
+
+interface EconomicsEcho {
+  lifetimeRevenueUsd: number;
+  visitToSignupPct: number;
+  visitToMeetingPct: number;
+  meetingToClosePct: number;
+  visitToClosePct: number;
+  replyToMeetingPct: number;
+  visitToPaidClientPct?: number;
+  replyToPaidClientPct?: number;
+  visitToFormSubmissionPct?: number;
+  formSubmissionToPaidClientPct?: number;
 }
 
 interface WorkflowProjectionResponse {
   featureSlug: string;
   objective: Objective;
-  workflows: WorkflowProjection[];
+  goal: GoalEcho;
+  economics: EconomicsEcho | null;
+  rows: ProjectionRow[];
   recommendedWorkflowDynastySlug: string | null;
   recommendedBudgetUsd: number | null;
 }
 
 /**
- * Cost-per-outcome + (optional) budget projection for one workflow, given its unit costs and the
- * brand's economics. Same funnel as the revenue engine:
- *   - a click closes via TWO independent (non-exclusive) routes — direct self-serve (v2c, "buy
- *     without a meeting") OR via a booked meeting (v2m·m2c) — combined with orP:
- *       pCloseClick = orP(v2c, v2m·m2c)
- *   - a positive reply closes via a meeting: pCloseReply = r2m·m2c
- * At the population/expected-count level the click-volume and reply-volume channels ADD by linearity
- * of expectation (distinct from the per-lead engine, which OR-combines click vs reply):
- *   closesPerBudget = (1/clickUsd)·pCloseClick + (1/replyUsd)·pCloseReply
- *
- * Signups are click-only: (1/clickUsd)·v2s.
- * Meetings stop one stage earlier than closes: (1/clickUsd)·v2m + (1/replyUsd)·r2m.
- * A route with a null unit cost contributes 0. perBudget ≤ 0 → no usable data → null for that metric.
+ * The PAID-CLIENT cost for the queried goal, single-sourced through projectOutcomeCosts. For a
+ * single-step goal this is the ONE-rate cost (visit→paid / reply→paid); for form_submissions it is the
+ * two-step form route (visit→form→paid); otherwise the multi-step purchase funnel. Drives ROI + the
+ * recommended budget (never the zero-collapsing multi-step chain when a single-step goal is active).
  */
-function project(
-  contactedUsd: number | null,
-  replyUsd: number | null,
-  clickUsd: number | null,
-  econ: BrandEcon,
-  budgetUsd: number | null,
+function paidClientCostForGoal(
+  econ: ProjectionEconomics,
+  unitCosts: { clickUsd: number | null; replyUsd: number | null },
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
-): { costPerSignupUsd: number | null; costPerFormSubmissionUsd: number | null; costPerCloseUsd: number | null; costPerMeetingBookedUsd: number | null; projection: Projection | null } {
-  // Outcome costs are single-sourced from the shared projection helper (same EV funnel as the
-  // public cost-projection endpoint, candidates endpoint, and revenue engine).
-  const { costPerSignupUsd, costPerPurchaseUsd, costPerMeetingBookedUsd, costPerVisitPaidClientUsd, costPerReplyPaidClientUsd, costPerFormSubmissionUsd, costPerFormSubmissionPaidClientUsd } =
-    projectOutcomeCosts(econ, { clickUsd, replyUsd });
-  // For a single-step goal, "close" IS the paid client reached by that ONE rate — NOT the multi-step
-  // purchase funnel. For the form_submissions goal, "close" is the paid client via the TWO-STEP form
-  // route (visit→form→paid). costPerCloseUsd therefore rides the brand's actual goal cost, so ROI +
-  // recommendedBudget derive from it (never the zero-collapsing multi-step chain).
-  const costPerCloseUsd =
-    singleStepGoal === "websiteVisit" ? costPerVisitPaidClientUsd
-    : singleStepGoal === "positiveReply" ? costPerReplyPaidClientUsd
-    : formSubmissionGoal ? costPerFormSubmissionPaidClientUsd
-    : costPerPurchaseUsd;
+): number | null {
+  const p = projectOutcomeCosts(econ, unitCosts);
+  if (singleStepGoal === "websiteVisit") return p.costPerVisitPaidClientUsd;
+  if (singleStepGoal === "positiveReply") return p.costPerReplyPaidClientUsd;
+  if (formSubmissionGoal) return p.costPerFormSubmissionPaidClientUsd;
+  return p.costPerPurchaseUsd;
+}
 
-  if (budgetUsd == null || budgetUsd <= 0) return { costPerSignupUsd, costPerFormSubmissionUsd, costPerCloseUsd, costPerMeetingBookedUsd, projection: null };
+/**
+ * The GOAL metric (what campaign-service ranks on) — cost per signup / meeting-booked / paid-client
+ * per goal. Mirrors the legacy `recommendedMetric` selection: single-step goals + purchase + form
+ * submission close-route rank on the paid-client cost; meeting-booked on costPerMeetingBooked; signup /
+ * self-serve on costPerSignup; form_submissions optimization metric on costPerFormSubmission.
+ */
+function outcomeCostForGoal(
+  econ: ProjectionEconomics,
+  unitCosts: { clickUsd: number | null; replyUsd: number | null },
+  objective: Objective,
+  singleStepGoal: SingleStepGoal | null,
+  formSubmissionGoal: boolean,
+): number | null {
+  const p = projectOutcomeCosts(econ, unitCosts);
+  if (singleStepGoal === "websiteVisit") return p.costPerVisitPaidClientUsd;
+  if (singleStepGoal === "positiveReply") return p.costPerReplyPaidClientUsd;
+  if (objective === "purchase") return p.costPerPurchaseUsd;
+  if (objective === "meeting-booked") return p.costPerMeetingBookedUsd;
+  if (formSubmissionGoal) return p.costPerFormSubmissionUsd;
+  return p.costPerSignupUsd; // signup / self-serve
+}
 
-  const contactedLeads = contactedUsd != null ? budgetUsd / contactedUsd : null;
-  const replies = replyUsd != null ? budgetUsd / replyUsd : null;
-  const visits = clickUsd != null ? budgetUsd / clickUsd : null;
-  const signups = visits != null ? visits * econ.v2s : null;
-  // Form submissions are a click-route outcome (visit × v2fs), like signups. Null when v2fs is unset.
-  const formSubmissions = visits != null && econ.v2fs != null ? visits * econ.v2fs : null;
-  // Meetings come from BOTH routes (reply→meeting and click→meeting), regardless of objective.
-  const meetings = (replies ?? 0) * econ.r2m + (visits ?? 0) * econ.v2m;
-  const closes = costPerCloseUsd != null ? budgetUsd / costPerCloseUsd : null; // = budgetUsd × closesPerBudget
-  const revenue = closes != null ? closes * econ.ltv : null;
-  const cacPct = revenue != null && revenue > 0 ? (budgetUsd / revenue) * 100 : null;
-  const cacAbs = closes != null && closes > 0 ? budgetUsd / closes : null;
+/**
+ * Build ONE grain block from a grain's raw evidence + the brand economics. Unit costs use the FLOOR
+ * rule: costPerXUsd = spentUsd / max(observedX, 1) — a real ratio when observedX ≥ 1, the raw spend
+ * when observedX = 0 (never null). projected is null ONLY when economics is null (cold start): the
+ * floor guarantees unitCosts > 0 at any spent > 0 grain, so a zero-denominator never nulls projected.
+ * Caller only invokes this when spentUsd > 0 (spent-0 grains are omitted, rule 3).
+ */
+function buildGrainBlock(
+  evidence: WorkflowGrainEvidence | AudienceGrainEvidence,
+  econ: ProjectionEconomics | null,
+  ltrUsd: number | null,
+  singleStepGoal: SingleStepGoal | null,
+  formSubmissionGoal: boolean,
+): GrainBlock {
+  const spentUsd = evidence.totalCostInUsdCents / 100;
+  const observedContacted = evidence.contacted;
+  const observedClicks = evidence.clicks;
+  const observedPositiveReplies = evidence.replies;
 
-  return { costPerSignupUsd, costPerFormSubmissionUsd, costPerCloseUsd, costPerMeetingBookedUsd, projection: { contactedLeads, replies, visits, signups, formSubmissions, meetings, closes, revenue, cacPct, cacAbs } };
+  // Floor rule: never null. observedX >= 1 → real ratio; observedX = 0 → floor = spentUsd.
+  const costPerClickUsd = spentUsd / Math.max(observedClicks, 1);
+  const costPerPositiveReplyUsd = spentUsd / Math.max(observedPositiveReplies, 1);
+  const costPerContactedUsd = spentUsd / Math.max(observedContacted, 1);
+
+  let projected: GrainBlock["projected"];
+  if (!econ) {
+    projected = {
+      costPerSignupUsd: null,
+      costPerPaidClientUsd: null,
+      costPerMeetingBookedUsd: null,
+      roiMultiple: null,
+      cacPct: null,
+    };
+  } else {
+    const unitCosts = { clickUsd: costPerClickUsd, replyUsd: costPerPositiveReplyUsd };
+    const p = projectOutcomeCosts(econ, unitCosts);
+    const costPerPaidClientUsd = paidClientCostForGoal(econ, unitCosts, singleStepGoal, formSubmissionGoal);
+    const roiMultiple = ltrUsd != null && costPerPaidClientUsd != null && costPerPaidClientUsd > 0 ? ltrUsd / costPerPaidClientUsd : null;
+    const cacPct = roiMultiple != null && roiMultiple > 0 ? 100 / roiMultiple : null;
+    projected = {
+      costPerSignupUsd: p.costPerSignupUsd,
+      costPerPaidClientUsd,
+      costPerMeetingBookedUsd: p.costPerMeetingBookedUsd,
+      roiMultiple,
+      cacPct,
+    };
+  }
+
+  return {
+    evidence: { spentUsd, observedContacted, observedClicks, observedPositiveReplies },
+    unitCosts: { costPerClickUsd, costPerPositiveReplyUsd, costPerContactedUsd },
+    projected,
+  };
+}
+
+/**
+ * Resolve the finest-grain block present (precedence audience > brand > crossOrg), producing the
+ * `resolved` pick. crossOrg always has spend, so resolved is never null-grain and costPerClickUsd is
+ * never 0. costPerOutcomeUsd = the queried goal's metric at the resolved grain.
+ */
+function resolvePick(
+  estimatesByGrain: Partial<Record<GrainName, GrainBlock>>,
+  econ: ProjectionEconomics | null,
+  objective: Objective,
+  singleStepGoal: SingleStepGoal | null,
+  formSubmissionGoal: boolean,
+): ResolvedBlock {
+  const grain: GrainName = estimatesByGrain.audience ? "audience" : estimatesByGrain.brand ? "brand" : "crossOrg";
+  const block = estimatesByGrain[grain]!;
+  const unitCosts = { clickUsd: block.unitCosts.costPerClickUsd, replyUsd: block.unitCosts.costPerPositiveReplyUsd };
+  const costPerOutcomeUsd = econ ? outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal) : null;
+  return {
+    grain,
+    costPerClickUsd: block.unitCosts.costPerClickUsd,
+    costPerOutcomeUsd,
+    costPerPaidClientUsd: block.projected.costPerPaidClientUsd,
+    costPerMeetingBookedUsd: block.projected.costPerMeetingBookedUsd,
+    roiMultiple: block.projected.roiMultiple,
+    cacPct: block.projected.cacPct,
+  };
 }
 
 // ── GET /features/:featureSlug/workflow-projection ───────────────────────────
 //
-// Ranks a brand's workflows by the requested objective's cost-per-outcome (reply + click routes
-// funded by one budget) and — when budgetUsd is given — projects that budget through the funnel.
-// Inputs: per-workflow unit costs (cost /
-// positive reply, cost / click) are GLOBAL workflow efficiency (cross-org, feature-scoped, same
-// source as /public/stats/best); the conversion rates + LTR come from the brand's EFFECTIVE
-// sales-economics (its own saved set, or the cross-brand-average when unset — brand-service owns the
-// defaulting; null only at cold start). features-service computes; the dashboard renders.
+// Serves a 3-grain projection ladder (crossOrg → brand → audience) + a resolved pick, keyed per
+// (audienceId?, workflowDynasty). crossOrg = fleet unit costs (same source as /public/stats/best);
+// brand = the same path scoped to this brandId; audience = audience-attributed evidence for each active
+// human-service audience that ran the workflow. Each grain carries its own evidence, floor-ruled unit
+// costs (never null), and projected cost-per-outcome from the brand's EFFECTIVE economics. The consumer
+// (campaign-service) ranks on resolved.costPerOutcomeUsd.
 
 router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req, res) => {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
   const brandId = req.query.brandId as string | undefined;
-  const objectiveParam = req.query.objective as string | undefined;
+  // Accept BOTH `goal` (camel, campaign-service) and `objective` (snake/kebab, dashboard) params.
+  const goalParam = (req.query.goal as string | undefined) ?? (req.query.objective as string | undefined);
   const budgetRaw = req.query.budgetUsd as string | undefined;
 
   if (!brandId) {
     return res.status(400).json({ error: "brandId query parameter is required" });
   }
-  // A single-step objective (website_visits / positive_replies, any fleet spelling) short-circuits to
-  // the canonical snake echo; otherwise default meeting-booked when absent/invalid (response back-compat).
-  const singleStepGoal: SingleStepGoal | null = objectiveParam ? matchSingleStepGoal(objectiveParam) : null;
-  const formSubmissionGoal: boolean = objectiveParam ? matchFormSubmissionGoal(objectiveParam) !== null : false;
+
+  const singleStepGoal: SingleStepGoal | null = goalParam ? matchSingleStepGoal(goalParam) : null;
+  const formSubmissionGoal: boolean = goalParam ? matchFormSubmissionGoal(goalParam) !== null : false;
   const objective: Objective =
     singleStepGoal === "websiteVisit" ? "website_visits"
       : singleStepGoal === "positiveReply" ? "positive_replies"
       : formSubmissionGoal ? "form_submissions"
-      : objectiveParam === "self-serve" || objectiveParam === "signup" || objectiveParam === "purchase"
-        ? objectiveParam
+      : goalParam === "self-serve" || goalParam === "signup" || goalParam === "purchase"
+        ? goalParam
         : "meeting-booked";
+  // Canonical camel goal echo (= brand-service CurrentGoal). self-serve aliases signup.
+  const goal: GoalEcho =
+    objective === "website_visits" ? "websiteVisit"
+      : objective === "positive_replies" ? "positiveReply"
+      : objective === "form_submissions" ? "formSubmission"
+      : objective === "purchase" ? "purchase"
+      : objective === "self-serve" || objective === "signup" ? "signup"
+      : "meetingBooked";
   const budgetUsd = budgetRaw != null && budgetRaw !== "" ? Number(budgetRaw) : null;
 
   try {
@@ -175,108 +257,173 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       return res.status(404).json({ error: "Feature not found" });
     }
 
-    // Per-workflow GLOBAL unit costs (cross-org) + brand-scoped EFFECTIVE economics, fetched together.
-    // brand-service OWNS the null→cross-brand-average defaulting (source "user" = the brand's own saved
-    // set; "cross-brand-average" = the org-wide estimate). economics is null ONLY at cold start (no brand
-    // has saved economics yet) → cost-per-close genuinely incomputable → null budget. features-service
-    // reimplements no averaging — it just consumes whatever brand-service deems effective.
-    const [workflows, costGroups, emailStats, effective] = await Promise.all([
-      fetchPublicWorkflows(featureSlug, "all"),
+    const identity: Identity = { orgId, userId, runId, featureSlug: headerFeatureSlug };
+
+    // The workflow list is needed by the crossOrg AND brand dynasty rollups, so fetch it first; the
+    // brand grain then fans out in parallel with the remaining reads.
+    const workflows = await fetchPublicWorkflows(featureSlug, "all");
+    const [costGroups, emailStats, effective, brandGrain, audienceEvidence] = await Promise.all([
       fetchPublicCosts(featureSlug, "workflowSlug"),
       fetchPublicEmailStats(featureSlug, "workflowSlug"),
-      fetchEffectiveEconomics(brandId, { orgId, userId, runId, featureSlug: headerFeatureSlug }),
+      fetchEffectiveEconomics(brandId, identity),
+      fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity),
+      fetchAudienceGrainEvidence(brandId, featureSlug, identity),
     ]);
     const economics = effective.economics;
 
-    // Aggregate per-version cost + outcomes into the active workflow (dynasty upgrade chain),
-    // exactly as /public/stats/best|ranked do — so a workflow's stats include its predecessors'.
+    // crossOrg dynasty rollup (identical to /public/stats/best).
     const chains = buildUpgradeChains(workflows);
     const { costMap, aggregatedOutcomes } = aggregateAcrossChains(chains, costGroups, emailStats, "workflowSlug");
     const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
+    const dynastyNameBySlug = new Map(workflows.map((w) => [w.workflowDynastySlug, w.workflowDynastyName]));
 
-    const econ: BrandEcon | null = economics
+    // Brand economics as decimals, with the goal's extra rates resolved fail-loud ONLY when needed.
+    const econ: ProjectionEconomics | null = economics
       ? {
-          ltv: economics.lifetimeRevenueUsd,
           r2m: economics.replyToMeetingPct / 100,
           v2m: economics.visitToMeetingPct / 100,
           m2c: economics.meetingToClosePct / 100,
           v2c: economics.visitToClosePct / 100,
           v2s: economics.visitToSignupPct / 100,
-          // Single-step rate resolved (fail-loud on genuinely-absent field) ONLY for the goal that
-          // needs it — the legacy goals never touch these, so a brand-service without the fields still
-          // serves them fine.
           ...(singleStepGoal === "websiteVisit" ? { v2pc: singleStepRateDecimal(economics, "websiteVisit") } : {}),
           ...(singleStepGoal === "positiveReply" ? { r2pc: singleStepRateDecimal(economics, "positiveReply") } : {}),
-          // Two-step form-submission rates resolved (fail-loud on genuinely-absent field) ONLY for the
-          // form_submissions goal — the other goals never touch them.
           ...(formSubmissionGoal ? formSubmissionRatesDecimal(economics) : {}),
         }
       : null;
+    const ltrUsd = economics?.lifetimeRevenueUsd ?? null;
 
-    const projections: WorkflowProjection[] = [];
+    // economics echo — the brand's effective economics, shown ONCE (same across grains). Includes the
+    // goal's resolved single-step / form-submission rates, mirroring the econ mapping above.
+    const economicsEcho: EconomicsEcho | null = economics
+      ? {
+          lifetimeRevenueUsd: economics.lifetimeRevenueUsd,
+          visitToSignupPct: economics.visitToSignupPct,
+          visitToMeetingPct: economics.visitToMeetingPct,
+          meetingToClosePct: economics.meetingToClosePct,
+          visitToClosePct: economics.visitToClosePct,
+          replyToMeetingPct: economics.replyToMeetingPct,
+          ...(singleStepGoal === "websiteVisit" ? { visitToPaidClientPct: economics.visitToPaidClientPct } : {}),
+          ...(singleStepGoal === "positiveReply" ? { replyToPaidClientPct: economics.replyToPaidClientPct } : {}),
+          ...(formSubmissionGoal
+            ? {
+                visitToFormSubmissionPct: economics.visitToFormSubmissionPct,
+                formSubmissionToPaidClientPct: economics.formSubmissionToPaidClientPct,
+              }
+            : {}),
+        }
+      : null;
+
+    const buildBlock = (ev: WorkflowGrainEvidence | AudienceGrainEvidence): GrainBlock =>
+      buildGrainBlock(ev, econ, ltrUsd, singleStepGoal, formSubmissionGoal);
+    const resolve = (grains: Partial<Record<GrainName, GrainBlock>>): ResolvedBlock =>
+      resolvePick(grains, econ, objective, singleStepGoal, formSubmissionGoal);
+
+    const rows: ProjectionRow[] = [];
+
+    // ── Brand-level rows (audienceId: null), one per active workflow dynasty ────────────────────
+    // Keyed by the dynasty's active slug. crossOrg grain always present (real fleet spend); brand grain
+    // added only when the brand spent on the dynasty (spentUsd > 0).
     for (const [activeSlug, cost] of costMap) {
       const wf = workflowBySlug.get(activeSlug);
       const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
-      const costUsd = cost.totalCostInUsdCents / 100;
-      const contacted = outcomes.recipientsContacted ?? 0;
-      const replies = outcomes.recipientsRepliesPositive ?? 0;
-      const clicks = outcomes.recipientsClicked ?? 0;
+      const crossOrgEvidence: WorkflowGrainEvidence = {
+        totalCostInUsdCents: cost.totalCostInUsdCents,
+        completedRuns: cost.completedRuns,
+        contacted: outcomes.recipientsContacted ?? 0,
+        clicks: outcomes.recipientsClicked ?? 0,
+        replies: outcomes.recipientsRepliesPositive ?? 0,
+      };
 
-      const contactedUsd = Number.isFinite(contacted) && contacted > 0 && costUsd > 0 ? costUsd / contacted : null;
-      const replyUsd = replies > 0 && costUsd > 0 ? costUsd / replies : null;
-      const clickUsd = clicks > 0 && costUsd > 0 ? costUsd / clicks : null;
+      const estimatesByGrain: Partial<Record<GrainName, GrainBlock>> = {};
+      if (crossOrgEvidence.totalCostInUsdCents > 0) estimatesByGrain.crossOrg = buildBlock(crossOrgEvidence);
+      const brandEv = brandGrain.get(activeSlug);
+      if (brandEv && brandEv.totalCostInUsdCents > 0) estimatesByGrain.brand = buildBlock(brandEv);
 
-      const { costPerSignupUsd, costPerFormSubmissionUsd, costPerCloseUsd, costPerMeetingBookedUsd, projection } = econ
-        ? project(contactedUsd, replyUsd, clickUsd, econ, budgetUsd, singleStepGoal, formSubmissionGoal)
-        : { costPerSignupUsd: null, costPerFormSubmissionUsd: null, costPerCloseUsd: null, costPerMeetingBookedUsd: null, projection: null };
+      // crossOrg is (almost) always present, but if a dynasty had 0 crossOrg cost AND 0 brand cost there
+      // is no grain to resolve — skip the row (nothing to project).
+      if (!estimatesByGrain.crossOrg && !estimatesByGrain.brand) continue;
 
-      // ROI multiple = revenue per acquisition dollar = LTR / costPerClose. Budget-independent
-      // (= 100 / cacPct). The dashboard renders this instead of inverting cacPct client-side.
-      const roiMultiple =
-        econ && costPerCloseUsd != null && costPerCloseUsd > 0 ? econ.ltv / costPerCloseUsd : null;
-
-      projections.push({
-        workflowDynastySlug: wf?.workflowDynastySlug ?? activeSlug,
-        workflowDynastyName: wf?.workflowDynastyName ?? null,
-        contactedUsd,
-        replyUsd,
-        clickUsd,
-        costPerSignupUsd,
-        costPerFormSubmissionUsd,
-        costPerCloseUsd,
-        costPerMeetingBookedUsd,
-        roiMultiple,
-        projection,
+      rows.push({
+        audienceId: null,
+        workflow: {
+          workflowDynastySlug: wf?.workflowDynastySlug ?? activeSlug,
+          workflowDynastyName: wf?.workflowDynastyName ?? null,
+        },
+        estimatesByGrain,
+        resolved: resolve(estimatesByGrain),
       });
     }
 
-    const recommendedMetric = (p: WorkflowProjection): number | null => {
-      // Single-step goals + purchase rank on costPerCloseUsd (which, for a single-step goal, already
-      // rides the single-step cost — see project()).
-      if (singleStepGoal || objective === "purchase") return p.costPerCloseUsd;
-      if (objective === "meeting-booked") return p.costPerMeetingBookedUsd;
-      // form_submissions ranks on cost-per-form-submission (its click-route optimization metric).
-      if (formSubmissionGoal) return p.costPerFormSubmissionUsd;
-      return p.costPerSignupUsd;
-    };
-
-    // Recommendation: the workflow with the LOWEST usable cost-per-outcome for the requested objective.
-    let recommended: WorkflowProjection | null = null;
-    for (const p of projections) {
-      const metric = recommendedMetric(p);
-      if (metric == null) continue;
-      const current = recommended == null ? null : recommendedMetric(recommended);
-      if (current == null || metric < current) recommended = p;
+    // ── Audience rows — one per (audienceId × workflowDynasty) couple that ran ──────────────────
+    // crossOrg + brand grains resolve by the dynasty (keyed on the dynasty's active slug); the audience
+    // grain is audience-WIDE (same block across the audience's couple rows). Precedence audience > brand
+    // > crossOrg → these rows resolve at the audience grain when the audience has spend.
+    // Map dynastySlug → active workflow slug (for crossOrg/brand grain lookup keyed on active slug).
+    const activeSlugByDynasty = new Map<string, string>();
+    for (const [activeSlug, wf] of workflowBySlug) {
+      if (wf.status === "active") activeSlugByDynasty.set(wf.workflowDynastySlug, activeSlug);
     }
 
-    const recommendedCost = recommended == null ? null : recommendedMetric(recommended);
+    for (const ev of audienceEvidence) {
+      const audienceBlock = ev.totalCostInUsdCents > 0 ? buildBlock(ev) : null;
+      for (const dynastySlug of ev.workflowDynastySlugs) {
+        const activeSlug = activeSlugByDynasty.get(dynastySlug);
+
+        const estimatesByGrain: Partial<Record<GrainName, GrainBlock>> = {};
+        if (activeSlug) {
+          const cost = costMap.get(activeSlug);
+          if (cost && cost.totalCostInUsdCents > 0) {
+            const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
+            estimatesByGrain.crossOrg = buildBlock({
+              totalCostInUsdCents: cost.totalCostInUsdCents,
+              completedRuns: cost.completedRuns,
+              contacted: outcomes.recipientsContacted ?? 0,
+              clicks: outcomes.recipientsClicked ?? 0,
+              replies: outcomes.recipientsRepliesPositive ?? 0,
+            });
+          }
+          const brandEv = brandGrain.get(activeSlug);
+          if (brandEv && brandEv.totalCostInUsdCents > 0) estimatesByGrain.brand = buildBlock(brandEv);
+        }
+        if (audienceBlock) estimatesByGrain.audience = audienceBlock;
+
+        // A couple with no grain at all (no crossOrg/brand/audience spend) has nothing to project.
+        if (!estimatesByGrain.crossOrg && !estimatesByGrain.brand && !estimatesByGrain.audience) continue;
+
+        rows.push({
+          audienceId: ev.audienceId,
+          workflow: {
+            workflowDynastySlug: dynastySlug,
+            workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null,
+          },
+          estimatesByGrain,
+          resolved: resolve(estimatesByGrain),
+        });
+      }
+    }
+
+    // Recommendation: the row with the LOWEST resolved cost-per-outcome for the requested goal.
+    let recommended: ProjectionRow | null = null;
+    for (const row of rows) {
+      const metric = row.resolved.costPerOutcomeUsd;
+      if (metric == null || metric <= 0) continue;
+      const current = recommended?.resolved.costPerOutcomeUsd ?? null;
+      if (current == null || metric < current) recommended = row;
+    }
+    const recommendedCost = recommended?.resolved.costPerOutcomeUsd ?? null;
+
     const response: WorkflowProjectionResponse = {
       featureSlug,
       objective,
-      workflows: projections,
-      recommendedWorkflowDynastySlug: recommended?.workflowDynastySlug ?? null,
+      goal,
+      economics: economicsEcho,
+      rows,
+      recommendedWorkflowDynastySlug: recommended?.workflow.workflowDynastySlug ?? null,
       recommendedBudgetUsd: recommendedCost != null ? TARGET_OUTCOMES_PER_MONTH * recommendedCost : null,
     };
+    // budgetUsd is accepted for back-compat but no longer shapes a per-workflow projection block (the
+    // grain ladder + recommendedBudgetUsd cover the projection surface). Referenced to avoid unused-var.
+    void budgetUsd;
     res.json(response);
   } catch (error) {
     console.error("[features-service] Workflow projection error:", error);
