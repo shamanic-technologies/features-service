@@ -1482,9 +1482,10 @@
               "signup",
               "purchase",
               "website_visits",
-              "positive_replies"
+              "positive_replies",
+              "form_submissions"
             ],
-            "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) whose costPerCloseUsd rides the single-step rate, not the multi-step purchase funnel."
+            "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) whose costPerCloseUsd rides the single-step rate. form_submissions is a TWO-STEP self-serve goal (visit→form submission→paid), the sibling of signup: it ranks on costPerFormSubmissionUsd and its costPerCloseUsd rides the visit→form→paid route."
           },
           "workflows": {
             "type": "array",
@@ -1517,6 +1518,11 @@
                   "type": "number",
                   "nullable": true,
                   "description": "Budget required per signup for this workflow. Null when there is no usable click/conversion data."
+                },
+                "costPerFormSubmissionUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Budget required per form submission for this workflow (form_submissions goal — click-route only, mirrors costPerSignupUsd). Null when there is no usable click/conversion data."
                 },
                 "costPerCloseUsd": {
                   "type": "number",
@@ -1557,6 +1563,11 @@
                       "nullable": true,
                       "description": "Expected signups from the budget (visits × visitToSignupPct). Null when the workflow has no click cost."
                     },
+                    "formSubmissions": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Expected form submissions from the budget (visits × visitToFormSubmissionPct). Null when the workflow has no click cost or visitToFormSubmissionPct is unset."
+                    },
                     "meetings": {
                       "type": "number",
                       "nullable": true,
@@ -1588,6 +1599,7 @@
                     "replies",
                     "visits",
                     "signups",
+                    "formSubmissions",
                     "meetings",
                     "closes",
                     "revenue",
@@ -1604,6 +1616,7 @@
                 "replyUsd",
                 "clickUsd",
                 "costPerSignupUsd",
+                "costPerFormSubmissionUsd",
                 "costPerCloseUsd",
                 "costPerMeetingBookedUsd",
                 "roiMultiple",
@@ -3894,12 +3907,13 @@
                 "signup",
                 "purchase",
                 "website_visits",
-                "positive_replies"
+                "positive_replies",
+                "form_submissions"
               ],
-              "description": "Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) — costPerCloseUsd rides the single-step rate. Also accepts the camelCase (websiteVisit / positiveReply) spelling. Defaults to meeting-booked."
+              "description": "Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) — costPerCloseUsd rides the single-step rate. form_submissions is a TWO-STEP self-serve goal ranking on costPerFormSubmissionUsd. Also accepts the camelCase (websiteVisit / positiveReply / formSubmission) spelling. Defaults to meeting-booked."
             },
             "required": false,
-            "description": "Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) — costPerCloseUsd rides the single-step rate. Also accepts the camelCase (websiteVisit / positiveReply) spelling. Defaults to meeting-booked.",
+            "description": "Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) — costPerCloseUsd rides the single-step rate. form_submissions is a TWO-STEP self-serve goal ranking on costPerFormSubmissionUsd. Also accepts the camelCase (websiteVisit / positiveReply / formSubmission) spelling. Defaults to meeting-booked.",
             "name": "objective",
             "in": "query"
           },
@@ -3976,9 +3990,10 @@
                         "signup",
                         "purchase",
                         "website_visits",
-                        "positive_replies"
+                        "positive_replies",
+                        "form_submissions"
                       ],
-                      "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) whose costPerCloseUsd rides the single-step rate, not the multi-step purchase funnel."
+                      "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) whose costPerCloseUsd rides the single-step rate. form_submissions is a TWO-STEP self-serve goal (visit→form submission→paid), the sibling of signup: it ranks on costPerFormSubmissionUsd and its costPerCloseUsd rides the visit→form→paid route."
                     },
                     "workflows": {
                       "type": "array",
@@ -4011,6 +4026,11 @@
                             "type": "number",
                             "nullable": true,
                             "description": "Budget required per signup for this workflow. Null when there is no usable click/conversion data."
+                          },
+                          "costPerFormSubmissionUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Budget required per form submission for this workflow (form_submissions goal — click-route only, mirrors costPerSignupUsd). Null when there is no usable click/conversion data."
                           },
                           "costPerCloseUsd": {
                             "type": "number",
@@ -4051,6 +4071,11 @@
                                 "nullable": true,
                                 "description": "Expected signups from the budget (visits × visitToSignupPct). Null when the workflow has no click cost."
                               },
+                              "formSubmissions": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Expected form submissions from the budget (visits × visitToFormSubmissionPct). Null when the workflow has no click cost or visitToFormSubmissionPct is unset."
+                              },
                               "meetings": {
                                 "type": "number",
                                 "nullable": true,
@@ -4082,6 +4107,7 @@
                               "replies",
                               "visits",
                               "signups",
+                              "formSubmissions",
                               "meetings",
                               "closes",
                               "revenue",
@@ -4098,6 +4124,7 @@
                           "replyUsd",
                           "clickUsd",
                           "costPerSignupUsd",
+                          "costPerFormSubmissionUsd",
                           "costPerCloseUsd",
                           "costPerMeetingBookedUsd",
                           "roiMultiple",
