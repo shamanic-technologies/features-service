@@ -1485,160 +1485,454 @@
               "positive_replies",
               "form_submissions"
             ],
-            "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) whose costPerCloseUsd rides the single-step rate. form_submissions is a TWO-STEP self-serve goal (visit→form submission→paid), the sibling of signup: it ranks on costPerFormSubmissionUsd and its costPerCloseUsd rides the visit→form→paid route."
+            "description": "Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params."
           },
-          "workflows": {
+          "goal": {
+            "type": "string",
+            "enum": [
+              "meetingBooked",
+              "signup",
+              "purchase",
+              "websiteVisit",
+              "positiveReply",
+              "formSubmission"
+            ],
+            "description": "Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup."
+          },
+          "economics": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "lifetimeRevenueUsd": {
+                "type": "number"
+              },
+              "visitToSignupPct": {
+                "type": "number"
+              },
+              "visitToMeetingPct": {
+                "type": "number"
+              },
+              "meetingToClosePct": {
+                "type": "number"
+              },
+              "visitToClosePct": {
+                "type": "number"
+              },
+              "replyToMeetingPct": {
+                "type": "number"
+              },
+              "visitToPaidClientPct": {
+                "type": "number",
+                "description": "Single-step visit→paid rate — present when the queried goal is website_visits."
+              },
+              "replyToPaidClientPct": {
+                "type": "number",
+                "description": "Single-step reply→paid rate — present when the queried goal is positive_replies."
+              },
+              "visitToFormSubmissionPct": {
+                "type": "number",
+                "description": "Two-step visit→form rate — present when the queried goal is form_submissions."
+              },
+              "formSubmissionToPaidClientPct": {
+                "type": "number",
+                "description": "Two-step form→paid rate — present when the queried goal is form_submissions."
+              }
+            },
+            "required": [
+              "lifetimeRevenueUsd",
+              "visitToSignupPct",
+              "visitToMeetingPct",
+              "meetingToClosePct",
+              "visitToClosePct",
+              "replyToMeetingPct"
+            ],
+            "description": "Null only at cold start (no effective economics) — rows still emit with null projected."
+          },
+          "rows": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "workflowDynastySlug": {
-                  "type": "string"
-                },
-                "workflowDynastyName": {
+                "audienceId": {
                   "type": "string",
-                  "nullable": true
-                },
-                "contactedUsd": {
-                  "type": "number",
                   "nullable": true,
-                  "description": "Cost per unique lead contacted (USD). Null when the contacted-lead denominator is absent or zero."
+                  "description": "null = brand-level row (crossOrg + brand grains). Non-null = one row per (active audience × workflow dynasty) couple that ran (adds the audience grain)."
                 },
-                "replyUsd": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "Cost per positive reply (USD). Null when the metric is absent or zero."
-                },
-                "clickUsd": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "Cost per click (USD). Null when the metric is absent or zero."
-                },
-                "costPerSignupUsd": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "Budget required per signup for this workflow. Null when there is no usable click/conversion data."
-                },
-                "costPerFormSubmissionUsd": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "Budget required per form submission for this workflow (form_submissions goal — click-route only, mirrors costPerSignupUsd). Null when there is no usable click/conversion data."
-                },
-                "costPerCloseUsd": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "Budget required per close for this workflow. Null when there is no usable cost/conversion data."
-                },
-                "costPerMeetingBookedUsd": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "Budget required per booked meeting for this workflow. Null when there is no usable cost/conversion data."
-                },
-                "roiMultiple": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "Lifetime ROI multiple = LTR / costPerCloseUsd (revenue per acquisition dollar; budget-independent, = 100 / cacPct). Rendered verbatim instead of inverting cacPct client-side. Null when economics are absent or costPerCloseUsd is null/0. (features-service#396)"
-                },
-                "projection": {
+                "workflow": {
                   "type": "object",
-                  "nullable": true,
                   "properties": {
-                    "contactedLeads": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Expected unique leads contacted from the budget. Null when the workflow has no usable contacted-lead denominator."
+                    "workflowDynastySlug": {
+                      "type": "string"
                     },
-                    "replies": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Expected positive replies from the budget. Null when the workflow has no reply cost."
-                    },
-                    "visits": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Expected clicks/visits from the budget. Null when the workflow has no click cost."
-                    },
-                    "signups": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Expected signups from the budget (visits × visitToSignupPct). Null when the workflow has no click cost."
-                    },
-                    "formSubmissions": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Expected form submissions from the budget (visits × visitToFormSubmissionPct). Null when the workflow has no click cost or visitToFormSubmissionPct is unset."
-                    },
-                    "meetings": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Expected meetings booked (from both the reply and click routes)."
-                    },
-                    "closes": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Expected closes from the budget."
-                    },
-                    "revenue": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "closes × LTR (lifetime revenue per close)."
-                    },
-                    "cacPct": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "(budget / revenue) × 100. Null when revenue is 0."
-                    },
-                    "cacAbs": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "budget / closes (absolute cost per close). Null when closes is 0."
+                    "workflowDynastyName": {
+                      "type": "string",
+                      "nullable": true
                     }
                   },
                   "required": [
-                    "contactedLeads",
-                    "replies",
-                    "visits",
-                    "signups",
-                    "formSubmissions",
-                    "meetings",
-                    "closes",
-                    "revenue",
-                    "cacPct",
-                    "cacAbs"
-                  ],
-                  "description": "Null when budgetUsd is absent/≤0 or the workflow has no usable data."
+                    "workflowDynastySlug",
+                    "workflowDynastyName"
+                  ]
+                },
+                "estimatesByGrain": {
+                  "type": "object",
+                  "properties": {
+                    "crossOrg": {
+                      "type": "object",
+                      "properties": {
+                        "evidence": {
+                          "type": "object",
+                          "properties": {
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                            },
+                            "observedContacted": {
+                              "type": "number"
+                            },
+                            "observedClicks": {
+                              "type": "number"
+                            },
+                            "observedPositiveReplies": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "spentUsd",
+                            "observedContacted",
+                            "observedClicks",
+                            "observedPositiveReplies"
+                          ]
+                        },
+                        "unitCosts": {
+                          "type": "object",
+                          "properties": {
+                            "costPerClickUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                            },
+                            "costPerPositiveReplyUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                            },
+                            "costPerContactedUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                            }
+                          },
+                          "required": [
+                            "costPerClickUsd",
+                            "costPerPositiveReplyUsd",
+                            "costPerContactedUsd"
+                          ]
+                        },
+                        "projected": {
+                          "type": "object",
+                          "properties": {
+                            "costPerSignupUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "costPerPaidClientUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."
+                            },
+                            "costPerMeetingBookedUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "roiMultiple": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                            },
+                            "cacPct": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                            }
+                          },
+                          "required": [
+                            "costPerSignupUsd",
+                            "costPerPaidClientUsd",
+                            "costPerMeetingBookedUsd",
+                            "roiMultiple",
+                            "cacPct"
+                          ],
+                          "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        }
+                      },
+                      "required": [
+                        "evidence",
+                        "unitCosts",
+                        "projected"
+                      ],
+                      "description": "Fleet-wide unit costs (same source as /public/stats/best). Present for any dynasty with real fleet spend."
+                    },
+                    "brand": {
+                      "type": "object",
+                      "properties": {
+                        "evidence": {
+                          "type": "object",
+                          "properties": {
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                            },
+                            "observedContacted": {
+                              "type": "number"
+                            },
+                            "observedClicks": {
+                              "type": "number"
+                            },
+                            "observedPositiveReplies": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "spentUsd",
+                            "observedContacted",
+                            "observedClicks",
+                            "observedPositiveReplies"
+                          ]
+                        },
+                        "unitCosts": {
+                          "type": "object",
+                          "properties": {
+                            "costPerClickUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                            },
+                            "costPerPositiveReplyUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                            },
+                            "costPerContactedUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                            }
+                          },
+                          "required": [
+                            "costPerClickUsd",
+                            "costPerPositiveReplyUsd",
+                            "costPerContactedUsd"
+                          ]
+                        },
+                        "projected": {
+                          "type": "object",
+                          "properties": {
+                            "costPerSignupUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "costPerPaidClientUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."
+                            },
+                            "costPerMeetingBookedUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "roiMultiple": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                            },
+                            "cacPct": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                            }
+                          },
+                          "required": [
+                            "costPerSignupUsd",
+                            "costPerPaidClientUsd",
+                            "costPerMeetingBookedUsd",
+                            "roiMultiple",
+                            "cacPct"
+                          ],
+                          "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        }
+                      },
+                      "required": [
+                        "evidence",
+                        "unitCosts",
+                        "projected"
+                      ],
+                      "description": "The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow."
+                    },
+                    "audience": {
+                      "type": "object",
+                      "properties": {
+                        "evidence": {
+                          "type": "object",
+                          "properties": {
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                            },
+                            "observedContacted": {
+                              "type": "number"
+                            },
+                            "observedClicks": {
+                              "type": "number"
+                            },
+                            "observedPositiveReplies": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "spentUsd",
+                            "observedContacted",
+                            "observedClicks",
+                            "observedPositiveReplies"
+                          ]
+                        },
+                        "unitCosts": {
+                          "type": "object",
+                          "properties": {
+                            "costPerClickUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                            },
+                            "costPerPositiveReplyUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                            },
+                            "costPerContactedUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                            }
+                          },
+                          "required": [
+                            "costPerClickUsd",
+                            "costPerPositiveReplyUsd",
+                            "costPerContactedUsd"
+                          ]
+                        },
+                        "projected": {
+                          "type": "object",
+                          "properties": {
+                            "costPerSignupUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "costPerPaidClientUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."
+                            },
+                            "costPerMeetingBookedUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "roiMultiple": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                            },
+                            "cacPct": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                            }
+                          },
+                          "required": [
+                            "costPerSignupUsd",
+                            "costPerPaidClientUsd",
+                            "costPerMeetingBookedUsd",
+                            "roiMultiple",
+                            "cacPct"
+                          ],
+                          "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        }
+                      },
+                      "required": [
+                        "evidence",
+                        "unitCosts",
+                        "projected"
+                      ],
+                      "description": "Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."
+                    }
+                  },
+                  "description": "A grain block is included ONLY when that grain has spentUsd > 0."
+                },
+                "resolved": {
+                  "type": "object",
+                  "properties": {
+                    "grain": {
+                      "type": "string",
+                      "enum": [
+                        "audience",
+                        "brand",
+                        "crossOrg"
+                      ],
+                      "description": "Finest grain present with spentUsd > 0 (precedence audience > brand > crossOrg). Never null-grain: crossOrg always has spend."
+                    },
+                    "costPerClickUsd": {
+                      "type": "number",
+                      "description": "The resolved grain's costPerClickUsd (never 0)."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The GOAL metric at the resolved grain (cost per signup/meeting/paid-client per goal) — campaign-service ranks on THIS. Null only at cold start (no economics)."
+                    },
+                    "costPerPaidClientUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "costPerMeetingBookedUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "roiMultiple": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "cacPct": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "grain",
+                    "costPerClickUsd",
+                    "costPerOutcomeUsd",
+                    "costPerPaidClientUsd",
+                    "costPerMeetingBookedUsd",
+                    "roiMultiple",
+                    "cacPct"
+                  ]
                 }
               },
               "required": [
-                "workflowDynastySlug",
-                "workflowDynastyName",
-                "contactedUsd",
-                "replyUsd",
-                "clickUsd",
-                "costPerSignupUsd",
-                "costPerFormSubmissionUsd",
-                "costPerCloseUsd",
-                "costPerMeetingBookedUsd",
-                "roiMultiple",
-                "projection"
+                "audienceId",
+                "workflow",
+                "estimatesByGrain",
+                "resolved"
               ]
             }
           },
           "recommendedWorkflowDynastySlug": {
             "type": "string",
             "nullable": true,
-            "description": "Workflow with the lowest cost metric for the requested objective. Null when none has usable data."
+            "description": "Dynasty of the row with the lowest resolved.costPerOutcomeUsd. Null when none has usable data."
           },
           "recommendedBudgetUsd": {
             "type": "number",
             "nullable": true,
-            "description": "10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve/signup use costPerSignupUsd; purchase / website_visits / positive_replies use costPerCloseUsd (for the single-step goals this is the single-step cost-per-paid-client). Null when there is no pick."
+            "description": "10 target outcomes/month × the recommended row's resolved.costPerOutcomeUsd. Null when there is no pick."
           }
         },
         "required": [
           "featureSlug",
           "objective",
-          "workflows",
+          "goal",
+          "economics",
+          "rows",
           "recommendedWorkflowDynastySlug",
           "recommendedBudgetUsd"
         ]
@@ -1805,207 +2099,6 @@
           "generatedAt",
           "days",
           "summary"
-        ]
-      },
-      "CandidatesResponse": {
-        "type": "object",
-        "properties": {
-          "featureSlug": {
-            "type": "string"
-          },
-          "brandId": {
-            "type": "string"
-          },
-          "goal": {
-            "type": "string",
-            "enum": [
-              "signup",
-              "meetingBooked",
-              "purchase",
-              "websiteVisit",
-              "positiveReply"
-            ]
-          },
-          "brandProfileId": {
-            "type": "string",
-            "nullable": true,
-            "description": "Brand-profile-version context echoed back."
-          },
-          "candidates": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "audienceId": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "Audience lever — non-null with grain='audience' for couples that have audience-attributed runs/outcomes (active human-service audience × runs-attributed workflow). Null on the coarser brand-goal/goal-global fallback rows when there is no audience-level evidence."
-                },
-                "workflow": {
-                  "type": "object",
-                  "properties": {
-                    "workflowDynastySlug": {
-                      "type": "string"
-                    },
-                    "workflowDynastyName": {
-                      "type": "string",
-                      "nullable": true
-                    }
-                  },
-                  "required": [
-                    "workflowDynastySlug",
-                    "workflowDynastyName"
-                  ]
-                },
-                "goal": {
-                  "type": "string",
-                  "enum": [
-                    "signup",
-                    "meetingBooked",
-                    "purchase",
-                    "websiteVisit",
-                    "positiveReply"
-                  ]
-                },
-                "grain": {
-                  "type": "string",
-                  "enum": [
-                    "audience",
-                    "brand-goal",
-                    "goal-global"
-                  ],
-                  "description": "SUMMARY label: the finest grain reached ACROSS this candidate's evidence components (audience > brand-goal > goal-global). Does NOT describe the sample, and the components can resolve at different grains — read conversion.grain for the conversion rate's provenance and cost.grain + cost.sampleSize for the cost evidence's provenance and size. On a coarse row this can read 'brand-goal' (brand-own economics) while cost.grain is 'goal-global' (cross-org cost sample)."
-                },
-                "costPerOutcomeUsd": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."
-                },
-                "costPerCloseUsd": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "Cost to acquire one paying client (cost per close = cost per PURCHASE), at this row's grain. Same definition/source as workflow-projection's costPerCloseUsd. Null when economics are absent (cold start) or there is no usable close projection."
-                },
-                "roiMultiple": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "Lifetime ROI multiple = lifetime-revenue-per-client / costPerCloseUsd (= 100 / cacPct), budget-independent, at this row's grain. Same definition as workflow-projection's roiMultiple. Null when economics are absent or costPerCloseUsd is null/0."
-                },
-                "cacPct": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "CAC as a share of lifetime revenue (%) = costPerCloseUsd / lifetime-revenue-per-client × 100 (= 100 / roiMultiple), budget-independent, at this row's grain. Same definition as workflow-projection's cacPct. Null when economics are absent or costPerCloseUsd is null/0."
-                },
-                "conversion": {
-                  "type": "object",
-                  "properties": {
-                    "rate": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "P(goal-outcome | engaged click) from the brand's effective sales-economics. Null at cold start (no economics)."
-                    },
-                    "grain": {
-                      "type": "string",
-                      "nullable": true,
-                      "enum": [
-                        "brand-goal",
-                        "goal-global"
-                      ],
-                      "description": "Provenance of the conversion rate: brand-goal = the brand's own saved economics; goal-global = the cross-org average fallback; null = cold start."
-                    },
-                    "sampleSize": {
-                      "nullable": true,
-                      "description": "Always null: the conversion rate comes from the brand's saved sales-economics, which carry no per-grain observation count (brand-service#242). The empirical sample behind a candidate lives ENTIRELY on the cost side (cost.sampleSize, at cost.grain) — do NOT read the cost sample as the conversion sample."
-                    }
-                  },
-                  "required": [
-                    "rate",
-                    "grain",
-                    "sampleSize"
-                  ]
-                },
-                "cost": {
-                  "type": "object",
-                  "properties": {
-                    "costPerLeadUsd": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Cost per contacted lead (USD). Null when there is no contacted-lead denominator."
-                    },
-                    "clickUsd": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Cost per click (USD). Null when absent/zero."
-                    },
-                    "replyUsd": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Cost per positive reply (USD). Null when absent/zero."
-                    },
-                    "grain": {
-                      "type": "string",
-                      "enum": [
-                        "goal-global",
-                        "audience"
-                      ],
-                      "description": "Cost-evidence grain: 'goal-global' = cross-org workflow unit costs (same source as /public/stats/best); 'audience' = audience-attributed cost (same source as /audience-stats)."
-                    },
-                    "sampleSize": {
-                      "type": "object",
-                      "properties": {
-                        "runs": {
-                          "type": "number",
-                          "description": "Completed runs behind the cost evidence (chain-aggregated for goal-global, audience-scoped for audience)."
-                        },
-                        "contacted": {
-                          "type": "number"
-                        },
-                        "clicks": {
-                          "type": "number"
-                        },
-                        "replies": {
-                          "type": "number"
-                        }
-                      },
-                      "required": [
-                        "runs",
-                        "contacted",
-                        "clicks",
-                        "replies"
-                      ],
-                      "description": "The sample behind THIS cost evidence, at the cost grain above. On coarse rows grain='goal-global' → this is the CROSS-ORG cost population (NOT the brand's own activity); on audience rows grain='audience' → the audience's own attributed slice. Lives here (not at the candidate top level) so a fresh brand's cross-org cost sample is never mis-read as that brand's own evidence."
-                    }
-                  },
-                  "required": [
-                    "costPerLeadUsd",
-                    "clickUsd",
-                    "replyUsd",
-                    "grain",
-                    "sampleSize"
-                  ]
-                }
-              },
-              "required": [
-                "audienceId",
-                "workflow",
-                "goal",
-                "grain",
-                "costPerOutcomeUsd",
-                "costPerCloseUsd",
-                "roiMultiple",
-                "cacPct",
-                "conversion",
-                "cost"
-              ]
-            }
-          }
-        },
-        "required": [
-          "featureSlug",
-          "brandId",
-          "goal",
-          "brandProfileId",
-          "candidates"
         ]
       },
       "AudienceStatsResponse": {
@@ -3874,8 +3967,8 @@
     },
     "/features/{featureSlug}/workflow-projection": {
       "get": {
-        "summary": "Rank workflows by cost-per-outcome and project a budget",
-        "description": "Ranks a brand's workflows by the requested objective's cost-per-outcome (the reply + click engagement routes funded by one budget) and — when budgetUsd is given — projects that budget through the funnel. Per-workflow unit costs (cost per positive reply / per click) are global cross-org workflow efficiency (same source as /public/stats/best), aggregated over each workflow's upgrade chain. Conversion rates + LTR come from the brand's EFFECTIVE sales-economics (its own saved set, or the cross-brand-average when unset — null only at cold start). recommendedWorkflowDynastySlug is the workflow with the lowest objective metric; recommendedBudgetUsd = 10 × that cost.",
+        "summary": "3-grain cost-per-outcome projection ladder per (audience?, workflow dynasty)",
+        "description": "Serves a 3-grain projection ladder (crossOrg → brand → audience) + a resolved pick, keyed per (audienceId?, workflowDynasty). crossOrg = fleet-wide per-workflow unit costs (same source as /public/stats/best); brand = the same path scoped to this brandId; audience = audience-attributed evidence for each active human-service audience that ran the workflow (audience-WIDE — the fleet does not tag outcomes per audience×workflow). Each grain carries its own evidence, floor-ruled unit costs (costPerXUsd = spentUsd / max(observedX,1), never null), and projected cost-per-outcome from the brand's EFFECTIVE economics. A grain is included only when it has spentUsd > 0. resolved = the finest grain present (precedence audience > brand > crossOrg); campaign-service ranks on resolved.costPerOutcomeUsd. recommendedWorkflowDynastySlug = argmin over rows of resolved.costPerOutcomeUsd; recommendedBudgetUsd = 10 × that cost. Folds in the audience×workflow grain formerly served by the removed /candidates endpoint.",
         "tags": [
           "Stats"
         ],
@@ -3901,29 +3994,40 @@
           {
             "schema": {
               "type": "string",
-              "enum": [
-                "meeting-booked",
-                "self-serve",
-                "signup",
-                "purchase",
-                "website_visits",
-                "positive_replies",
-                "form_submissions"
-              ],
-              "description": "Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) — costPerCloseUsd rides the single-step rate. form_submissions is a TWO-STEP self-serve goal ranking on costPerFormSubmissionUsd. Also accepts the camelCase (websiteVisit / positiveReply / formSubmission) spelling. Defaults to meeting-booked."
+              "description": "Optional audience UUID context (echoed via audience rows). Audience rows always enumerate ALL of the brand's active audiences that ran the workflow."
             },
             "required": false,
-            "description": "Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) — costPerCloseUsd rides the single-step rate. form_submissions is a TWO-STEP self-serve goal ranking on costPerFormSubmissionUsd. Also accepts the camelCase (websiteVisit / positiveReply / formSubmission) spelling. Defaults to meeting-booked.",
+            "description": "Optional audience UUID context (echoed via audience rows). Audience rows always enumerate ALL of the brand's active audiences that ran the workflow.",
+            "name": "audienceId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase), snake (website_visits/positive_replies/form_submissions), and kebab. Also accepted via `objective`. Defaults to meeting-booked."
+            },
+            "required": false,
+            "description": "Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase), snake (website_visits/positive_replies/form_submissions), and kebab. Also accepted via `objective`. Defaults to meeting-booked.",
+            "name": "goal",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Alias of `goal` (snake/kebab spelling). Either param is accepted."
+            },
+            "required": false,
+            "description": "Alias of `goal` (snake/kebab spelling). Either param is accepted.",
             "name": "objective",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Optional budget (USD) to project through the funnel."
+              "description": "Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface)."
             },
             "required": false,
-            "description": "Optional budget (USD) to project through the funnel.",
+            "description": "Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface).",
             "name": "budgetUsd",
             "in": "query"
           },
@@ -3973,7 +4077,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Workflow projection",
+            "description": "Workflow projection ladder",
             "content": {
               "application/json": {
                 "schema": {
@@ -3993,160 +4097,454 @@
                         "positive_replies",
                         "form_submissions"
                       ],
-                      "description": "Echo of the requested objective (defaults to meeting-booked). Controls which cost metric sizes recommendedBudgetUsd. self-serve is a signup alias. website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid) whose costPerCloseUsd rides the single-step rate. form_submissions is a TWO-STEP self-serve goal (visit→form submission→paid), the sibling of signup: it ranks on costPerFormSubmissionUsd and its costPerCloseUsd rides the visit→form→paid route."
+                      "description": "Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params."
                     },
-                    "workflows": {
+                    "goal": {
+                      "type": "string",
+                      "enum": [
+                        "meetingBooked",
+                        "signup",
+                        "purchase",
+                        "websiteVisit",
+                        "positiveReply",
+                        "formSubmission"
+                      ],
+                      "description": "Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup."
+                    },
+                    "economics": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "lifetimeRevenueUsd": {
+                          "type": "number"
+                        },
+                        "visitToSignupPct": {
+                          "type": "number"
+                        },
+                        "visitToMeetingPct": {
+                          "type": "number"
+                        },
+                        "meetingToClosePct": {
+                          "type": "number"
+                        },
+                        "visitToClosePct": {
+                          "type": "number"
+                        },
+                        "replyToMeetingPct": {
+                          "type": "number"
+                        },
+                        "visitToPaidClientPct": {
+                          "type": "number",
+                          "description": "Single-step visit→paid rate — present when the queried goal is website_visits."
+                        },
+                        "replyToPaidClientPct": {
+                          "type": "number",
+                          "description": "Single-step reply→paid rate — present when the queried goal is positive_replies."
+                        },
+                        "visitToFormSubmissionPct": {
+                          "type": "number",
+                          "description": "Two-step visit→form rate — present when the queried goal is form_submissions."
+                        },
+                        "formSubmissionToPaidClientPct": {
+                          "type": "number",
+                          "description": "Two-step form→paid rate — present when the queried goal is form_submissions."
+                        }
+                      },
+                      "required": [
+                        "lifetimeRevenueUsd",
+                        "visitToSignupPct",
+                        "visitToMeetingPct",
+                        "meetingToClosePct",
+                        "visitToClosePct",
+                        "replyToMeetingPct"
+                      ],
+                      "description": "Null only at cold start (no effective economics) — rows still emit with null projected."
+                    },
+                    "rows": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "workflowDynastySlug": {
-                            "type": "string"
-                          },
-                          "workflowDynastyName": {
+                          "audienceId": {
                             "type": "string",
-                            "nullable": true
-                          },
-                          "contactedUsd": {
-                            "type": "number",
                             "nullable": true,
-                            "description": "Cost per unique lead contacted (USD). Null when the contacted-lead denominator is absent or zero."
+                            "description": "null = brand-level row (crossOrg + brand grains). Non-null = one row per (active audience × workflow dynasty) couple that ran (adds the audience grain)."
                           },
-                          "replyUsd": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "Cost per positive reply (USD). Null when the metric is absent or zero."
-                          },
-                          "clickUsd": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "Cost per click (USD). Null when the metric is absent or zero."
-                          },
-                          "costPerSignupUsd": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "Budget required per signup for this workflow. Null when there is no usable click/conversion data."
-                          },
-                          "costPerFormSubmissionUsd": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "Budget required per form submission for this workflow (form_submissions goal — click-route only, mirrors costPerSignupUsd). Null when there is no usable click/conversion data."
-                          },
-                          "costPerCloseUsd": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "Budget required per close for this workflow. Null when there is no usable cost/conversion data."
-                          },
-                          "costPerMeetingBookedUsd": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "Budget required per booked meeting for this workflow. Null when there is no usable cost/conversion data."
-                          },
-                          "roiMultiple": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "Lifetime ROI multiple = LTR / costPerCloseUsd (revenue per acquisition dollar; budget-independent, = 100 / cacPct). Rendered verbatim instead of inverting cacPct client-side. Null when economics are absent or costPerCloseUsd is null/0. (features-service#396)"
-                          },
-                          "projection": {
+                          "workflow": {
                             "type": "object",
-                            "nullable": true,
                             "properties": {
-                              "contactedLeads": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Expected unique leads contacted from the budget. Null when the workflow has no usable contacted-lead denominator."
+                              "workflowDynastySlug": {
+                                "type": "string"
                               },
-                              "replies": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Expected positive replies from the budget. Null when the workflow has no reply cost."
-                              },
-                              "visits": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Expected clicks/visits from the budget. Null when the workflow has no click cost."
-                              },
-                              "signups": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Expected signups from the budget (visits × visitToSignupPct). Null when the workflow has no click cost."
-                              },
-                              "formSubmissions": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Expected form submissions from the budget (visits × visitToFormSubmissionPct). Null when the workflow has no click cost or visitToFormSubmissionPct is unset."
-                              },
-                              "meetings": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Expected meetings booked (from both the reply and click routes)."
-                              },
-                              "closes": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Expected closes from the budget."
-                              },
-                              "revenue": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "closes × LTR (lifetime revenue per close)."
-                              },
-                              "cacPct": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "(budget / revenue) × 100. Null when revenue is 0."
-                              },
-                              "cacAbs": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "budget / closes (absolute cost per close). Null when closes is 0."
+                              "workflowDynastyName": {
+                                "type": "string",
+                                "nullable": true
                               }
                             },
                             "required": [
-                              "contactedLeads",
-                              "replies",
-                              "visits",
-                              "signups",
-                              "formSubmissions",
-                              "meetings",
-                              "closes",
-                              "revenue",
-                              "cacPct",
-                              "cacAbs"
-                            ],
-                            "description": "Null when budgetUsd is absent/≤0 or the workflow has no usable data."
+                              "workflowDynastySlug",
+                              "workflowDynastyName"
+                            ]
+                          },
+                          "estimatesByGrain": {
+                            "type": "object",
+                            "properties": {
+                              "crossOrg": {
+                                "type": "object",
+                                "properties": {
+                                  "evidence": {
+                                    "type": "object",
+                                    "properties": {
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                                      },
+                                      "observedContacted": {
+                                        "type": "number"
+                                      },
+                                      "observedClicks": {
+                                        "type": "number"
+                                      },
+                                      "observedPositiveReplies": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "spentUsd",
+                                      "observedContacted",
+                                      "observedClicks",
+                                      "observedPositiveReplies"
+                                    ]
+                                  },
+                                  "unitCosts": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerClickUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                                      },
+                                      "costPerPositiveReplyUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                                      },
+                                      "costPerContactedUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerClickUsd",
+                                      "costPerPositiveReplyUsd",
+                                      "costPerContactedUsd"
+                                    ]
+                                  },
+                                  "projected": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerSignupUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "costPerPaidClientUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."
+                                      },
+                                      "costPerMeetingBookedUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "roiMultiple": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                                      },
+                                      "cacPct": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerSignupUsd",
+                                      "costPerPaidClientUsd",
+                                      "costPerMeetingBookedUsd",
+                                      "roiMultiple",
+                                      "cacPct"
+                                    ],
+                                    "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  }
+                                },
+                                "required": [
+                                  "evidence",
+                                  "unitCosts",
+                                  "projected"
+                                ],
+                                "description": "Fleet-wide unit costs (same source as /public/stats/best). Present for any dynasty with real fleet spend."
+                              },
+                              "brand": {
+                                "type": "object",
+                                "properties": {
+                                  "evidence": {
+                                    "type": "object",
+                                    "properties": {
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                                      },
+                                      "observedContacted": {
+                                        "type": "number"
+                                      },
+                                      "observedClicks": {
+                                        "type": "number"
+                                      },
+                                      "observedPositiveReplies": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "spentUsd",
+                                      "observedContacted",
+                                      "observedClicks",
+                                      "observedPositiveReplies"
+                                    ]
+                                  },
+                                  "unitCosts": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerClickUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                                      },
+                                      "costPerPositiveReplyUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                                      },
+                                      "costPerContactedUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerClickUsd",
+                                      "costPerPositiveReplyUsd",
+                                      "costPerContactedUsd"
+                                    ]
+                                  },
+                                  "projected": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerSignupUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "costPerPaidClientUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."
+                                      },
+                                      "costPerMeetingBookedUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "roiMultiple": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                                      },
+                                      "cacPct": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerSignupUsd",
+                                      "costPerPaidClientUsd",
+                                      "costPerMeetingBookedUsd",
+                                      "roiMultiple",
+                                      "cacPct"
+                                    ],
+                                    "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  }
+                                },
+                                "required": [
+                                  "evidence",
+                                  "unitCosts",
+                                  "projected"
+                                ],
+                                "description": "The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow."
+                              },
+                              "audience": {
+                                "type": "object",
+                                "properties": {
+                                  "evidence": {
+                                    "type": "object",
+                                    "properties": {
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                                      },
+                                      "observedContacted": {
+                                        "type": "number"
+                                      },
+                                      "observedClicks": {
+                                        "type": "number"
+                                      },
+                                      "observedPositiveReplies": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "spentUsd",
+                                      "observedContacted",
+                                      "observedClicks",
+                                      "observedPositiveReplies"
+                                    ]
+                                  },
+                                  "unitCosts": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerClickUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                                      },
+                                      "costPerPositiveReplyUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                                      },
+                                      "costPerContactedUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerClickUsd",
+                                      "costPerPositiveReplyUsd",
+                                      "costPerContactedUsd"
+                                    ]
+                                  },
+                                  "projected": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerSignupUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "costPerPaidClientUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."
+                                      },
+                                      "costPerMeetingBookedUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "roiMultiple": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                                      },
+                                      "cacPct": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerSignupUsd",
+                                      "costPerPaidClientUsd",
+                                      "costPerMeetingBookedUsd",
+                                      "roiMultiple",
+                                      "cacPct"
+                                    ],
+                                    "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  }
+                                },
+                                "required": [
+                                  "evidence",
+                                  "unitCosts",
+                                  "projected"
+                                ],
+                                "description": "Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."
+                              }
+                            },
+                            "description": "A grain block is included ONLY when that grain has spentUsd > 0."
+                          },
+                          "resolved": {
+                            "type": "object",
+                            "properties": {
+                              "grain": {
+                                "type": "string",
+                                "enum": [
+                                  "audience",
+                                  "brand",
+                                  "crossOrg"
+                                ],
+                                "description": "Finest grain present with spentUsd > 0 (precedence audience > brand > crossOrg). Never null-grain: crossOrg always has spend."
+                              },
+                              "costPerClickUsd": {
+                                "type": "number",
+                                "description": "The resolved grain's costPerClickUsd (never 0)."
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "The GOAL metric at the resolved grain (cost per signup/meeting/paid-client per goal) — campaign-service ranks on THIS. Null only at cold start (no economics)."
+                              },
+                              "costPerPaidClientUsd": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "costPerMeetingBookedUsd": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "roiMultiple": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "cacPct": {
+                                "type": "number",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "grain",
+                              "costPerClickUsd",
+                              "costPerOutcomeUsd",
+                              "costPerPaidClientUsd",
+                              "costPerMeetingBookedUsd",
+                              "roiMultiple",
+                              "cacPct"
+                            ]
                           }
                         },
                         "required": [
-                          "workflowDynastySlug",
-                          "workflowDynastyName",
-                          "contactedUsd",
-                          "replyUsd",
-                          "clickUsd",
-                          "costPerSignupUsd",
-                          "costPerFormSubmissionUsd",
-                          "costPerCloseUsd",
-                          "costPerMeetingBookedUsd",
-                          "roiMultiple",
-                          "projection"
+                          "audienceId",
+                          "workflow",
+                          "estimatesByGrain",
+                          "resolved"
                         ]
                       }
                     },
                     "recommendedWorkflowDynastySlug": {
                       "type": "string",
                       "nullable": true,
-                      "description": "Workflow with the lowest cost metric for the requested objective. Null when none has usable data."
+                      "description": "Dynasty of the row with the lowest resolved.costPerOutcomeUsd. Null when none has usable data."
                     },
                     "recommendedBudgetUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "10 target outcomes/month × the best cost metric for the requested objective. meeting-booked uses costPerMeetingBookedUsd; self-serve/signup use costPerSignupUsd; purchase / website_visits / positive_replies use costPerCloseUsd (for the single-step goals this is the single-step cost-per-paid-client). Null when there is no pick."
+                      "description": "10 target outcomes/month × the recommended row's resolved.costPerOutcomeUsd. Null when there is no pick."
                     }
                   },
                   "required": [
                     "featureSlug",
                     "objective",
-                    "workflows",
+                    "goal",
+                    "economics",
+                    "rows",
                     "recommendedWorkflowDynastySlug",
                     "recommendedBudgetUsd"
                   ]
@@ -4475,369 +4873,6 @@
           },
           "400": {
             "description": "Missing/invalid brandId, days, or timezone",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Feature not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          },
-          "502": {
-            "description": "Downstream service error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/features/{featureSlug}/candidates": {
-      "get": {
-        "summary": "Serve the (audienceId, workflow) candidate set with per-candidate evidence + sample size",
-        "description": "Runtime per-lead selection evidence: returns the candidate SET — one per active workflow — each with its OWN cost-per-outcome for the goal, CONVERSION and COST evidence kept separate (each labelled with its own grain), and the SAMPLE SIZE living WITH the cost evidence it describes (cost.sampleSize at cost.grain) so a coarse row's cross-org cost sample is never mis-read as the brand's own activity (the conversion rate carries provenance but no count). The top-level grain is a summary label = the finest grain across components. Deliberately does NOT collapse to a single best: the consumer owns the uncertainty-aware selection policy (Thompson-style). Fallback grain ladder (finest→coarsest): audience (brandId×goal×audienceId) → brand-goal (brandId×goal) → goal-global (cross-org workflow evidence). The audience rung is LIVE: for active human-service audiences with runs-attributed couples this endpoint emits one audience-grain candidate per couple (audienceId non-null, grain='audience'); couples with no audience-level evidence fall through to the coarser rungs with audienceId null. Reuses the workflow-projection data path: global per-workflow unit costs aggregated over the upgrade chain + the brand's EFFECTIVE sales-economics. Additive — does not change workflow-projection / stats/ranked.",
-        "tags": [
-          "Stats"
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "featureSlug",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Brand UUID (required) — conversion economics are brand-scoped."
-            },
-            "required": true,
-            "description": "Brand UUID (required) — conversion economics are brand-scoped.",
-            "name": "brandId",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "enum": [
-                "signup",
-                "meetingBooked",
-                "purchase",
-                "websiteVisit",
-                "positiveReply"
-              ],
-              "description": "Optimization target (required). Maps to the projected cost-per-outcome. websiteVisit / positiveReply are SINGLE-STEP goals (cost per paid client via visitToPaidClient / replyToPaidClient); the snake_case spellings (website_visits / positive_replies) are also accepted."
-            },
-            "required": true,
-            "description": "Optimization target (required). Maps to the projected cost-per-outcome. websiteVisit / positiveReply are SINGLE-STEP goals (cost per paid client via visitToPaidClient / replyToPaidClient); the snake_case spellings (website_visits / positive_replies) are also accepted.",
-            "name": "goal",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Brand-profile-version context (optional, echoed)."
-            },
-            "required": false,
-            "description": "Brand-profile-version context (optional, echoed).",
-            "name": "brandProfileId",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Internal org UUID from client-service"
-            },
-            "required": true,
-            "description": "Internal org UUID from client-service",
-            "name": "x-org-id",
-            "in": "header"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Internal user UUID from client-service"
-            },
-            "required": true,
-            "description": "Internal user UUID from client-service",
-            "name": "x-user-id",
-            "in": "header"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Run ID for tracking and billing"
-            },
-            "required": true,
-            "description": "Run ID for tracking and billing",
-            "name": "x-run-id",
-            "in": "header"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Brand UUID(s), comma-separated"
-            },
-            "required": false,
-            "description": "Brand UUID(s), comma-separated",
-            "name": "x-brand-id",
-            "in": "header"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Candidate evidence set",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "featureSlug": {
-                      "type": "string"
-                    },
-                    "brandId": {
-                      "type": "string"
-                    },
-                    "goal": {
-                      "type": "string",
-                      "enum": [
-                        "signup",
-                        "meetingBooked",
-                        "purchase",
-                        "websiteVisit",
-                        "positiveReply"
-                      ]
-                    },
-                    "brandProfileId": {
-                      "type": "string",
-                      "nullable": true,
-                      "description": "Brand-profile-version context echoed back."
-                    },
-                    "candidates": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "audienceId": {
-                            "type": "string",
-                            "nullable": true,
-                            "description": "Audience lever — non-null with grain='audience' for couples that have audience-attributed runs/outcomes (active human-service audience × runs-attributed workflow). Null on the coarser brand-goal/goal-global fallback rows when there is no audience-level evidence."
-                          },
-                          "workflow": {
-                            "type": "object",
-                            "properties": {
-                              "workflowDynastySlug": {
-                                "type": "string"
-                              },
-                              "workflowDynastyName": {
-                                "type": "string",
-                                "nullable": true
-                              }
-                            },
-                            "required": [
-                              "workflowDynastySlug",
-                              "workflowDynastyName"
-                            ]
-                          },
-                          "goal": {
-                            "type": "string",
-                            "enum": [
-                              "signup",
-                              "meetingBooked",
-                              "purchase",
-                              "websiteVisit",
-                              "positiveReply"
-                            ]
-                          },
-                          "grain": {
-                            "type": "string",
-                            "enum": [
-                              "audience",
-                              "brand-goal",
-                              "goal-global"
-                            ],
-                            "description": "SUMMARY label: the finest grain reached ACROSS this candidate's evidence components (audience > brand-goal > goal-global). Does NOT describe the sample, and the components can resolve at different grains — read conversion.grain for the conversion rate's provenance and cost.grain + cost.sampleSize for the cost evidence's provenance and size. On a coarse row this can read 'brand-goal' (brand-own economics) while cost.grain is 'goal-global' (cross-org cost sample)."
-                          },
-                          "costPerOutcomeUsd": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "The goal metric: cost per goal-outcome (USD). Null when economics are absent (cold start)."
-                          },
-                          "costPerCloseUsd": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "Cost to acquire one paying client (cost per close = cost per PURCHASE), at this row's grain. Same definition/source as workflow-projection's costPerCloseUsd. Null when economics are absent (cold start) or there is no usable close projection."
-                          },
-                          "roiMultiple": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "Lifetime ROI multiple = lifetime-revenue-per-client / costPerCloseUsd (= 100 / cacPct), budget-independent, at this row's grain. Same definition as workflow-projection's roiMultiple. Null when economics are absent or costPerCloseUsd is null/0."
-                          },
-                          "cacPct": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "CAC as a share of lifetime revenue (%) = costPerCloseUsd / lifetime-revenue-per-client × 100 (= 100 / roiMultiple), budget-independent, at this row's grain. Same definition as workflow-projection's cacPct. Null when economics are absent or costPerCloseUsd is null/0."
-                          },
-                          "conversion": {
-                            "type": "object",
-                            "properties": {
-                              "rate": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "P(goal-outcome | engaged click) from the brand's effective sales-economics. Null at cold start (no economics)."
-                              },
-                              "grain": {
-                                "type": "string",
-                                "nullable": true,
-                                "enum": [
-                                  "brand-goal",
-                                  "goal-global"
-                                ],
-                                "description": "Provenance of the conversion rate: brand-goal = the brand's own saved economics; goal-global = the cross-org average fallback; null = cold start."
-                              },
-                              "sampleSize": {
-                                "nullable": true,
-                                "description": "Always null: the conversion rate comes from the brand's saved sales-economics, which carry no per-grain observation count (brand-service#242). The empirical sample behind a candidate lives ENTIRELY on the cost side (cost.sampleSize, at cost.grain) — do NOT read the cost sample as the conversion sample."
-                              }
-                            },
-                            "required": [
-                              "rate",
-                              "grain",
-                              "sampleSize"
-                            ]
-                          },
-                          "cost": {
-                            "type": "object",
-                            "properties": {
-                              "costPerLeadUsd": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Cost per contacted lead (USD). Null when there is no contacted-lead denominator."
-                              },
-                              "clickUsd": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Cost per click (USD). Null when absent/zero."
-                              },
-                              "replyUsd": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Cost per positive reply (USD). Null when absent/zero."
-                              },
-                              "grain": {
-                                "type": "string",
-                                "enum": [
-                                  "goal-global",
-                                  "audience"
-                                ],
-                                "description": "Cost-evidence grain: 'goal-global' = cross-org workflow unit costs (same source as /public/stats/best); 'audience' = audience-attributed cost (same source as /audience-stats)."
-                              },
-                              "sampleSize": {
-                                "type": "object",
-                                "properties": {
-                                  "runs": {
-                                    "type": "number",
-                                    "description": "Completed runs behind the cost evidence (chain-aggregated for goal-global, audience-scoped for audience)."
-                                  },
-                                  "contacted": {
-                                    "type": "number"
-                                  },
-                                  "clicks": {
-                                    "type": "number"
-                                  },
-                                  "replies": {
-                                    "type": "number"
-                                  }
-                                },
-                                "required": [
-                                  "runs",
-                                  "contacted",
-                                  "clicks",
-                                  "replies"
-                                ],
-                                "description": "The sample behind THIS cost evidence, at the cost grain above. On coarse rows grain='goal-global' → this is the CROSS-ORG cost population (NOT the brand's own activity); on audience rows grain='audience' → the audience's own attributed slice. Lives here (not at the candidate top level) so a fresh brand's cross-org cost sample is never mis-read as that brand's own evidence."
-                              }
-                            },
-                            "required": [
-                              "costPerLeadUsd",
-                              "clickUsd",
-                              "replyUsd",
-                              "grain",
-                              "sampleSize"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "audienceId",
-                          "workflow",
-                          "goal",
-                          "grain",
-                          "costPerOutcomeUsd",
-                          "costPerCloseUsd",
-                          "roiMultiple",
-                          "cacPct",
-                          "conversion",
-                          "cost"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "featureSlug",
-                    "brandId",
-                    "goal",
-                    "brandProfileId",
-                    "candidates"
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Missing brandId or invalid goal",
             "content": {
               "application/json": {
                 "schema": {

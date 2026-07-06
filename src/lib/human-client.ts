@@ -114,8 +114,8 @@ export async function fetchAudiencesByStatuses(
 
 /**
  * Fetch the ACTIVE audiences for a brand from human-service. Thin wrapper over
- * `fetchAudiencesByStatuses` for the common active-only callers (candidates,
- * pipeline-activity) — byte-identical to the original single `status=active` read.
+ * `fetchAudiencesByStatuses` for the common active-only callers (workflow-projection
+ * audience grain, pipeline-activity) — byte-identical to the original single `status=active` read.
  */
 export async function fetchActiveAudiences(
   brandId: string,
