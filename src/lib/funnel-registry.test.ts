@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getFunnel, orP, projectOutcomeCosts, singleStepRateDecimal } from "./funnel-registry.js";
+import { getFunnel, orP, projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal } from "./funnel-registry.js";
 
 const ECONOMICS = {
   lifetimeRevenueUsd: 1000,
@@ -141,17 +141,21 @@ describe("projectOutcomeCosts — expected cost per purchase / meeting", () => {
       costPerSignupUsd: null,
       costPerVisitPaidClientUsd: null,
       costPerReplyPaidClientUsd: null,
+      costPerFormSubmissionUsd: null,
+      costPerFormSubmissionPaidClientUsd: null,
     });
   });
 
   it("zero conversion rates → perBudget 0 → all null", () => {
-    const dead = { r2m: 0, v2m: 0, m2c: 0, v2c: 0, v2s: 0, v2pc: 0, r2pc: 0 };
+    const dead = { r2m: 0, v2m: 0, m2c: 0, v2c: 0, v2s: 0, v2pc: 0, r2pc: 0, v2fs: 0, fs2pc: 0 };
     expect(projectOutcomeCosts(dead, { clickUsd: 10, replyUsd: 5 })).toEqual({
       costPerPurchaseUsd: null,
       costPerMeetingBookedUsd: null,
       costPerSignupUsd: null,
       costPerVisitPaidClientUsd: null,
       costPerReplyPaidClientUsd: null,
+      costPerFormSubmissionUsd: null,
+      costPerFormSubmissionPaidClientUsd: null,
     });
   });
 
@@ -206,6 +210,63 @@ describe("projectOutcomeCosts — SINGLE-STEP goals (visit→paid / reply→paid
     expect(out.costPerReplyPaidClientUsd).toBeNull();
     // legacy metrics unaffected
     expect(out.costPerPurchaseUsd).not.toBeNull();
+  });
+});
+
+describe("projectOutcomeCosts — TWO-STEP form_submissions goal (visit→form→paid)", () => {
+  // v2fs = 0.10 (visit→form 10%), fs2pc = 0.25 (form→paid 25%)
+  const econ = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04, v2fs: 0.1, fs2pc: 0.25 };
+
+  it("form-submission cost = clickUsd / v2fs — click route ONLY (mirrors signup)", () => {
+    const { costPerFormSubmissionUsd } = projectOutcomeCosts(econ, { clickUsd: 10, replyUsd: 5 });
+    expect(costPerFormSubmissionUsd).toBeCloseTo(10 / 0.1); // 100
+  });
+
+  it("form-submission PAID (close) cost = clickUsd / (v2fs·fs2pc)", () => {
+    const { costPerFormSubmissionPaidClientUsd } = projectOutcomeCosts(econ, { clickUsd: 10, replyUsd: 5 });
+    expect(costPerFormSubmissionPaidClientUsd).toBeCloseTo(10 / (0.1 * 0.25)); // 400
+  });
+
+  it("both form costs null when there is no click cost (reply channel does not fund them)", () => {
+    const out = projectOutcomeCosts(econ, { clickUsd: null, replyUsd: 5 });
+    expect(out.costPerFormSubmissionUsd).toBeNull();
+    expect(out.costPerFormSubmissionPaidClientUsd).toBeNull();
+  });
+
+  it("rate 0 → zero-denominator gate → null (never a false $0)", () => {
+    const zeroV2fs = { ...econ, v2fs: 0 };
+    const out = projectOutcomeCosts(zeroV2fs, { clickUsd: 10, replyUsd: 5 });
+    expect(out.costPerFormSubmissionUsd).toBeNull();
+    expect(out.costPerFormSubmissionPaidClientUsd).toBeNull();
+  });
+
+  it("unset form-submission rates contribute null (legacy goal econ, no v2fs/fs2pc)", () => {
+    const legacy = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04 };
+    const out = projectOutcomeCosts(legacy, { clickUsd: 10, replyUsd: 5 });
+    expect(out.costPerFormSubmissionUsd).toBeNull();
+    expect(out.costPerFormSubmissionPaidClientUsd).toBeNull();
+    expect(out.costPerPurchaseUsd).not.toBeNull();
+  });
+});
+
+describe("formSubmissionRatesDecimal — fail loud on genuinely-absent rate", () => {
+  const base = { ...ECONOMICS };
+
+  it("returns both decimal rates when present", () => {
+    const out = formSubmissionRatesDecimal({ ...base, visitToFormSubmissionPct: 10, formSubmissionToPaidClientPct: 25 });
+    expect(out.v2fs).toBeCloseTo(0.1);
+    expect(out.fs2pc).toBeCloseTo(0.25);
+  });
+
+  it("a 0 rate is valid (passes through — gates cost to null downstream)", () => {
+    const out = formSubmissionRatesDecimal({ ...base, visitToFormSubmissionPct: 0, formSubmissionToPaidClientPct: 0 });
+    expect(out.v2fs).toBe(0);
+    expect(out.fs2pc).toBe(0);
+  });
+
+  it("throws when either required rate field is absent (producer gap, not a zero to substitute)", () => {
+    expect(() => formSubmissionRatesDecimal({ ...base, formSubmissionToPaidClientPct: 25 })).toThrow(/visitToFormSubmissionPct/);
+    expect(() => formSubmissionRatesDecimal({ ...base, visitToFormSubmissionPct: 10 })).toThrow(/formSubmissionToPaidClientPct/);
   });
 });
 

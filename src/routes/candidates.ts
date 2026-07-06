@@ -4,8 +4,8 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
-import { projectOutcomeCosts, orP, singleStepRateDecimal, type ProjectionEconomics } from "../lib/funnel-registry.js";
-import { isGoal, matchSingleStepGoal, type Goal } from "../lib/goals.js";
+import { projectOutcomeCosts, orP, singleStepRateDecimal, formSubmissionRatesDecimal, type ProjectionEconomics } from "../lib/funnel-registry.js";
+import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, type Goal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
@@ -131,6 +131,11 @@ function conversionRateForGoal(goal: Goal, econ: ProjectionEconomics): number {
       // as this goal's conversion signal alongside its cost.
       if (econ.r2pc == null) throw new Error("r2pc unset while resolving positiveReply conversion rate");
       return econ.r2pc;
+    case "formSubmission":
+      // P(form submission | click) — two-step self-serve micro-conversion (click route), the signal
+      // the form_submissions goal ranks on. econ.v2fs is set fail-loud in the handler for this goal.
+      if (econ.v2fs == null) throw new Error("v2fs unset while resolving formSubmission conversion rate");
+      return econ.v2fs;
   }
 }
 
@@ -173,6 +178,8 @@ function costPerOutcomeForGoal(
       return projected.costPerVisitPaidClientUsd;
     case "positiveReply":
       return projected.costPerReplyPaidClientUsd;
+    case "formSubmission":
+      return projected.costPerFormSubmissionUsd;
   }
 }
 
@@ -202,9 +209,11 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
   }
   // Normalise the single-step goal's fleet spellings (snake/kebab → canonical camel) before validating;
   // legacy goals pass through unchanged. campaign-service forwards the brand's `currentGoal` verbatim.
-  const normalizedGoal = goalParam ? (matchSingleStepGoal(goalParam) ?? goalParam) : undefined;
+  const normalizedGoal = goalParam
+    ? (matchSingleStepGoal(goalParam) ?? matchFormSubmissionGoal(goalParam) ?? goalParam)
+    : undefined;
   if (!isGoal(normalizedGoal)) {
-    return res.status(400).json({ error: "goal query parameter is required and must be one of: signup, meetingBooked, purchase, websiteVisit, positiveReply" });
+    return res.status(400).json({ error: "goal query parameter is required and must be one of: signup, meetingBooked, purchase, websiteVisit, positiveReply, formSubmission" });
   }
   const goal: Goal = normalizedGoal;
 
@@ -245,6 +254,8 @@ router.get("/features/:featureSlug/candidates", apiKeyAuth, async (req, res) => 
           // single-step goal — the legacy goals never read v2pc / r2pc.
           ...(goal === "websiteVisit" ? { v2pc: singleStepRateDecimal(economics, "websiteVisit") } : {}),
           ...(goal === "positiveReply" ? { r2pc: singleStepRateDecimal(economics, "positiveReply") } : {}),
+          // Two-step form-submission rates resolved (fail-loud) ONLY for the form_submissions goal.
+          ...(goal === "formSubmission" ? formSubmissionRatesDecimal(economics) : {}),
         }
       : null;
 

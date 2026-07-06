@@ -7,7 +7,7 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { fetchCurrentBrandProfile } from "./brand-client.js";
 import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, type AudienceFilters, type AudienceStatus } from "./human-client.js";
 import { fetchEmailOutcomes } from "./email-status-client.js";
-import { isGoal, matchSingleStepGoal, type Goal } from "./goals.js";
+import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, type Goal } from "./goals.js";
 
 export type SortMetric = "cpc" | "cppr";
 
@@ -103,9 +103,10 @@ function readFiniteNumber(value: unknown, field: string): number {
 }
 
 function sortMetricForGoal(goal: Goal): SortMetric {
-  // signup + websiteVisit rank on cost-per-click/visit (the visit is the outcome proxy);
-  // meetingBooked / purchase / positiveReply rank on cost-per-positive-reply.
-  return goal === "signup" || goal === "websiteVisit" ? "cpc" : "cppr";
+  // signup + websiteVisit + formSubmission rank on cost-per-click/visit (the visit is the outcome
+  // proxy — all three are visit-driven); meetingBooked / purchase / positiveReply rank on
+  // cost-per-positive-reply.
+  return goal === "signup" || goal === "websiteVisit" || goal === "formSubmission" ? "cpc" : "cppr";
 }
 
 const VALID_STATUSES: readonly AudienceStatus[] = ["active", "paused", "archived"];
@@ -257,10 +258,13 @@ export async function computeAudienceStats(req: Request): Promise<ComputeResult>
   if (!brandId) {
     return { ok: false, status: 400, error: "brandId query parameter is required" };
   }
-  // Normalise the single-step goal's fleet spellings (snake/kebab → canonical camel) before validating.
-  const normalizedGoal = goalParam ? (matchSingleStepGoal(goalParam) ?? goalParam) : undefined;
+  // Normalise the single-step + form-submission goal fleet spellings (snake/kebab → canonical camel)
+  // before validating.
+  const normalizedGoal = goalParam
+    ? (matchSingleStepGoal(goalParam) ?? matchFormSubmissionGoal(goalParam) ?? goalParam)
+    : undefined;
   if (!isGoal(normalizedGoal)) {
-    return { ok: false, status: 400, error: "goal query parameter is required and must be one of: signup, meetingBooked, purchase, websiteVisit, positiveReply" };
+    return { ok: false, status: 400, error: "goal query parameter is required and must be one of: signup, meetingBooked, purchase, websiteVisit, positiveReply, formSubmission" };
   }
 
   const parsedStatuses = parseStatuses(statusesParam);

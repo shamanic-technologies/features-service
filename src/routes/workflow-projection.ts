@@ -4,8 +4,8 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
-import { projectOutcomeCosts, singleStepRateDecimal } from "../lib/funnel-registry.js";
-import { matchSingleStepGoal, type SingleStepGoal } from "../lib/goals.js";
+import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal } from "../lib/funnel-registry.js";
+import { matchSingleStepGoal, matchFormSubmissionGoal, type SingleStepGoal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
@@ -21,7 +21,7 @@ const TARGET_OUTCOMES_PER_MONTH = 10;
 // website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid). self-serve is a
 // signup alias. The echo value is the canonical spelling; the request param is normalised (any of the
 // fleet's snake/camel/kebab single-step spellings) via matchSingleStepGoal.
-type Objective = "meeting-booked" | "self-serve" | "signup" | "purchase" | "website_visits" | "positive_replies";
+type Objective = "meeting-booked" | "self-serve" | "signup" | "purchase" | "website_visits" | "positive_replies" | "form_submissions";
 
 // Brand sales-economics as decimals (brand-service stores percentages 0–100).
 interface BrandEcon {
@@ -33,6 +33,8 @@ interface BrandEcon {
   v2s: number; // P(signup | click/visit) — self-serve signup
   v2pc?: number; // P(paid client | click/visit) — single step (website_visits goal)
   r2pc?: number; // P(paid client | positive reply) — single step (positive_replies goal)
+  v2fs?: number; // P(form submission | click/visit) — two-step self-serve (form_submissions goal)
+  fs2pc?: number; // P(paid client | form submission) — two-step self-serve (form_submissions goal)
 }
 
 interface Projection {
@@ -40,6 +42,7 @@ interface Projection {
   replies: number | null;
   visits: number | null;
   signups: number | null;
+  formSubmissions: number | null;
   meetings: number | null;
   closes: number | null;
   revenue: number | null;
@@ -54,6 +57,9 @@ interface WorkflowProjection {
   replyUsd: number | null;
   clickUsd: number | null;
   costPerSignupUsd: number | null;
+  /** Budget required per form submission (form_submissions goal). Click-route only, mirrors
+   * costPerSignupUsd. Null when there is no usable click/conversion data. */
+  costPerFormSubmissionUsd: number | null;
   costPerCloseUsd: number | null;
   costPerMeetingBookedUsd: number | null;
   /**
@@ -96,25 +102,30 @@ function project(
   econ: BrandEcon,
   budgetUsd: number | null,
   singleStepGoal: SingleStepGoal | null,
-): { costPerSignupUsd: number | null; costPerCloseUsd: number | null; costPerMeetingBookedUsd: number | null; projection: Projection | null } {
+  formSubmissionGoal: boolean,
+): { costPerSignupUsd: number | null; costPerFormSubmissionUsd: number | null; costPerCloseUsd: number | null; costPerMeetingBookedUsd: number | null; projection: Projection | null } {
   // Outcome costs are single-sourced from the shared projection helper (same EV funnel as the
   // public cost-projection endpoint, candidates endpoint, and revenue engine).
-  const { costPerSignupUsd, costPerPurchaseUsd, costPerMeetingBookedUsd, costPerVisitPaidClientUsd, costPerReplyPaidClientUsd } =
+  const { costPerSignupUsd, costPerPurchaseUsd, costPerMeetingBookedUsd, costPerVisitPaidClientUsd, costPerReplyPaidClientUsd, costPerFormSubmissionUsd, costPerFormSubmissionPaidClientUsd } =
     projectOutcomeCosts(econ, { clickUsd, replyUsd });
   // For a single-step goal, "close" IS the paid client reached by that ONE rate — NOT the multi-step
-  // purchase funnel. costPerCloseUsd therefore rides the single-step cost, so ROI + recommendedBudget
-  // derive from the brand's actual goal (never the zero-collapsing multi-step chain).
+  // purchase funnel. For the form_submissions goal, "close" is the paid client via the TWO-STEP form
+  // route (visit→form→paid). costPerCloseUsd therefore rides the brand's actual goal cost, so ROI +
+  // recommendedBudget derive from it (never the zero-collapsing multi-step chain).
   const costPerCloseUsd =
     singleStepGoal === "websiteVisit" ? costPerVisitPaidClientUsd
     : singleStepGoal === "positiveReply" ? costPerReplyPaidClientUsd
+    : formSubmissionGoal ? costPerFormSubmissionPaidClientUsd
     : costPerPurchaseUsd;
 
-  if (budgetUsd == null || budgetUsd <= 0) return { costPerSignupUsd, costPerCloseUsd, costPerMeetingBookedUsd, projection: null };
+  if (budgetUsd == null || budgetUsd <= 0) return { costPerSignupUsd, costPerFormSubmissionUsd, costPerCloseUsd, costPerMeetingBookedUsd, projection: null };
 
   const contactedLeads = contactedUsd != null ? budgetUsd / contactedUsd : null;
   const replies = replyUsd != null ? budgetUsd / replyUsd : null;
   const visits = clickUsd != null ? budgetUsd / clickUsd : null;
   const signups = visits != null ? visits * econ.v2s : null;
+  // Form submissions are a click-route outcome (visit × v2fs), like signups. Null when v2fs is unset.
+  const formSubmissions = visits != null && econ.v2fs != null ? visits * econ.v2fs : null;
   // Meetings come from BOTH routes (reply→meeting and click→meeting), regardless of objective.
   const meetings = (replies ?? 0) * econ.r2m + (visits ?? 0) * econ.v2m;
   const closes = costPerCloseUsd != null ? budgetUsd / costPerCloseUsd : null; // = budgetUsd × closesPerBudget
@@ -122,7 +133,7 @@ function project(
   const cacPct = revenue != null && revenue > 0 ? (budgetUsd / revenue) * 100 : null;
   const cacAbs = closes != null && closes > 0 ? budgetUsd / closes : null;
 
-  return { costPerSignupUsd, costPerCloseUsd, costPerMeetingBookedUsd, projection: { contactedLeads, replies, visits, signups, meetings, closes, revenue, cacPct, cacAbs } };
+  return { costPerSignupUsd, costPerFormSubmissionUsd, costPerCloseUsd, costPerMeetingBookedUsd, projection: { contactedLeads, replies, visits, signups, formSubmissions, meetings, closes, revenue, cacPct, cacAbs } };
 }
 
 // ── GET /features/:featureSlug/workflow-projection ───────────────────────────
@@ -148,9 +159,11 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
   // A single-step objective (website_visits / positive_replies, any fleet spelling) short-circuits to
   // the canonical snake echo; otherwise default meeting-booked when absent/invalid (response back-compat).
   const singleStepGoal: SingleStepGoal | null = objectiveParam ? matchSingleStepGoal(objectiveParam) : null;
+  const formSubmissionGoal: boolean = objectiveParam ? matchFormSubmissionGoal(objectiveParam) !== null : false;
   const objective: Objective =
     singleStepGoal === "websiteVisit" ? "website_visits"
       : singleStepGoal === "positiveReply" ? "positive_replies"
+      : formSubmissionGoal ? "form_submissions"
       : objectiveParam === "self-serve" || objectiveParam === "signup" || objectiveParam === "purchase"
         ? objectiveParam
         : "meeting-booked";
@@ -194,6 +207,9 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
           // serves them fine.
           ...(singleStepGoal === "websiteVisit" ? { v2pc: singleStepRateDecimal(economics, "websiteVisit") } : {}),
           ...(singleStepGoal === "positiveReply" ? { r2pc: singleStepRateDecimal(economics, "positiveReply") } : {}),
+          // Two-step form-submission rates resolved (fail-loud on genuinely-absent field) ONLY for the
+          // form_submissions goal — the other goals never touch them.
+          ...(formSubmissionGoal ? formSubmissionRatesDecimal(economics) : {}),
         }
       : null;
 
@@ -210,9 +226,9 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       const replyUsd = replies > 0 && costUsd > 0 ? costUsd / replies : null;
       const clickUsd = clicks > 0 && costUsd > 0 ? costUsd / clicks : null;
 
-      const { costPerSignupUsd, costPerCloseUsd, costPerMeetingBookedUsd, projection } = econ
-        ? project(contactedUsd, replyUsd, clickUsd, econ, budgetUsd, singleStepGoal)
-        : { costPerSignupUsd: null, costPerCloseUsd: null, costPerMeetingBookedUsd: null, projection: null };
+      const { costPerSignupUsd, costPerFormSubmissionUsd, costPerCloseUsd, costPerMeetingBookedUsd, projection } = econ
+        ? project(contactedUsd, replyUsd, clickUsd, econ, budgetUsd, singleStepGoal, formSubmissionGoal)
+        : { costPerSignupUsd: null, costPerFormSubmissionUsd: null, costPerCloseUsd: null, costPerMeetingBookedUsd: null, projection: null };
 
       // ROI multiple = revenue per acquisition dollar = LTR / costPerClose. Budget-independent
       // (= 100 / cacPct). The dashboard renders this instead of inverting cacPct client-side.
@@ -226,6 +242,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         replyUsd,
         clickUsd,
         costPerSignupUsd,
+        costPerFormSubmissionUsd,
         costPerCloseUsd,
         costPerMeetingBookedUsd,
         roiMultiple,
@@ -238,6 +255,8 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       // rides the single-step cost — see project()).
       if (singleStepGoal || objective === "purchase") return p.costPerCloseUsd;
       if (objective === "meeting-booked") return p.costPerMeetingBookedUsd;
+      // form_submissions ranks on cost-per-form-submission (its click-route optimization metric).
+      if (formSubmissionGoal) return p.costPerFormSubmissionUsd;
       return p.costPerSignupUsd;
     };
 

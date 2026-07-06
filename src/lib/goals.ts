@@ -18,13 +18,16 @@
  *   - purchase      → cost per paying close (full funnel)
  *   - websiteVisit  → cost per paid client via the SINGLE-STEP visit→paid rate (visitToPaidClientPct)
  *   - positiveReply → cost per paid client via the SINGLE-STEP reply→paid rate (replyToPaidClientPct)
+ *   - formSubmission→ cost per form submission via the TWO-STEP click route (visitToFormSubmissionPct);
+ *                     close economics ride visit→form→paid. Visit-driven, the sibling of signup.
  *
  * websiteVisit / positiveReply are SINGLE-STEP goals: the paid-client conversion is one rate applied
  * to the click (visit) or positive-reply population — NOT the multi-step funnels the other goals use.
+ * formSubmission is a TWO-STEP self-serve goal (visit → micro-conversion → paid), the sibling of signup.
  */
-export type Goal = "signup" | "meetingBooked" | "purchase" | "websiteVisit" | "positiveReply";
+export type Goal = "signup" | "meetingBooked" | "purchase" | "websiteVisit" | "positiveReply" | "formSubmission";
 
-export const GOALS: readonly Goal[] = ["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"] as const;
+export const GOALS: readonly Goal[] = ["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply", "formSubmission"] as const;
 
 export const isGoal = (value: unknown): value is Goal =>
   typeof value === "string" && (GOALS as readonly string[]).includes(value);
@@ -53,6 +56,24 @@ export function matchSingleStepGoal(raw: string): SingleStepGoal | null {
     case "positive_replies":
     case "positive-replies":
       return "positiveReply";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Recognise the TWO-STEP `formSubmission` goal from ANY of the fleet's spellings — runtime camelCase
+ * (`formSubmission`, brand-service CurrentGoal + campaign-service currentGoal), stored/dashboard
+ * snake_case (`form_submissions`, brand-service OptimizationGoal), and the kebab spelling. Returns the
+ * canonical camelCase `formSubmission`, or null when `raw` is not the form-submission goal. Same input
+ * tolerance as matchSingleStepGoal — NOT a silent fallback for missing data.
+ */
+export function matchFormSubmissionGoal(raw: string): "formSubmission" | null {
+  switch (raw) {
+    case "formSubmission":
+    case "form_submissions":
+    case "form-submissions":
+      return "formSubmission";
     default:
       return null;
   }

@@ -34,6 +34,15 @@ export interface SalesEconomics {
    */
   visitToPaidClientPct?: number;
   replyToPaidClientPct?: number;
+  /**
+   * TWO-STEP self-serve rates for the `form_submissions` optimization goal (website visit → form
+   * submission → paid client) — brand-service serves both on the sales-economics + effective layers
+   * once the brand has economics. Optional here for the same reason as the single-step rates: the
+   * legacy goals never read them and cold-start bodies omit them; the form_submissions goal fails loud
+   * at compute time (formSubmissionRatesDecimal) when a rate is genuinely absent.
+   */
+  visitToFormSubmissionPct?: number;
+  formSubmissionToPaidClientPct?: number;
 }
 
 export interface FunnelInputs {
@@ -89,6 +98,10 @@ export interface ProjectionEconomics {
   // single-step goals read them (see projectOutcomeCosts); undefined ⟹ that single-step cost is null.
   v2pc?: number; // P(paid client | click/visit) — direct single step (visitToPaidClientPct)
   r2pc?: number; // P(paid client | positive reply) — direct single step (replyToPaidClientPct)
+  // TWO-STEP self-serve rates for the form_submissions goal (visit → form submission → paid). Optional:
+  // only the form_submissions goal reads them (see projectOutcomeCosts); undefined ⟹ those costs null.
+  v2fs?: number; // P(form submission | click/visit) — self-serve micro-conversion (visitToFormSubmissionPct)
+  fs2pc?: number; // P(paid client | form submission) (formSubmissionToPaidClientPct)
 }
 
 /** Global per-workflow unit costs (USD); null when the workflow has no clicks / replies. */
@@ -113,6 +126,16 @@ export interface ProjectedOutcomeCosts {
    * spent on replies yields (1/replyUsd)·r2pc paid clients. costPerReplyPaidClientUsd = replyUsd /
    * r2pc. Null when there is no reply cost OR r2pc is unset / 0. ONLY the reply route funds it. */
   costPerReplyPaidClientUsd: number | null;
+  /** TWO-STEP goal `form_submissions` OPTIMIZATION metric: cost per form submission. Form submissions
+   * come from the CLICK route only (visitToFormSubmissionPct); a budget spent on clicks yields
+   * (1/clickUsd)·v2fs form submissions. costPerFormSubmissionUsd = clickUsd / v2fs. Null when there is
+   * no click cost OR v2fs is unset / 0. Mirrors costPerSignupUsd exactly (its 2-step sibling). */
+  costPerFormSubmissionUsd: number | null;
+  /** TWO-STEP goal `form_submissions` CLOSE metric: cost per paying client via the form route
+   * (visit → form submission → paid). A budget spent on clicks yields (1/clickUsd)·v2fs·fs2pc paid
+   * clients. costPerFormSubmissionPaidClientUsd = clickUsd / (v2fs·fs2pc). Drives costPerCloseUsd + ROI
+   * for the form_submissions goal. Null when there is no click cost OR v2fs/fs2pc is unset / 0. */
+  costPerFormSubmissionPaidClientUsd: number | null;
 }
 
 export function projectOutcomeCosts(
@@ -142,12 +165,24 @@ export function projectOutcomeCosts(
   const replyPaidPerBudget =
     costs.replyUsd != null && econ.r2pc != null ? (1 / costs.replyUsd) * econ.r2pc : 0;
 
+  // TWO-STEP form_submissions goal — CLICK route only, like signups:
+  //   form submissions per budget = (1/clickUsd)·v2fs
+  //   paid clients via form route  = (1/clickUsd)·v2fs·fs2pc  (visit → form submission → paid)
+  const formSubmissionsPerBudget =
+    costs.clickUsd != null && econ.v2fs != null ? (1 / costs.clickUsd) * econ.v2fs : 0;
+  const formSubmissionPaidPerBudget =
+    costs.clickUsd != null && econ.v2fs != null && econ.fs2pc != null
+      ? (1 / costs.clickUsd) * econ.v2fs * econ.fs2pc
+      : 0;
+
   return {
     costPerPurchaseUsd: closesPerBudget > 0 ? 1 / closesPerBudget : null,
     costPerMeetingBookedUsd: meetingsPerBudget > 0 ? 1 / meetingsPerBudget : null,
     costPerSignupUsd: signupsPerBudget > 0 ? 1 / signupsPerBudget : null,
     costPerVisitPaidClientUsd: visitPaidPerBudget > 0 ? 1 / visitPaidPerBudget : null,
     costPerReplyPaidClientUsd: replyPaidPerBudget > 0 ? 1 / replyPaidPerBudget : null,
+    costPerFormSubmissionUsd: formSubmissionsPerBudget > 0 ? 1 / formSubmissionsPerBudget : null,
+    costPerFormSubmissionPaidClientUsd: formSubmissionPaidPerBudget > 0 ? 1 / formSubmissionPaidPerBudget : null,
   };
 }
 
@@ -169,6 +204,28 @@ export function singleStepRateDecimal(economics: SalesEconomics, goal: "websiteV
     );
   }
   return pct(pctValue);
+}
+
+/**
+ * Read the TWO-STEP form-submission rates (0..100) the `form_submissions` goal needs off a brand's
+ * economics — `visitToFormSubmissionPct` (visit→form) + `formSubmissionToPaidClientPct` (form→paid).
+ *
+ * FAIL LOUD when either field is genuinely absent (undefined / non-finite): brand-service OWNS both on
+ * its sales-economics + effective layers and must serve them; a form_submissions goal that cannot find
+ * its rates is a producer gap, not a zero to substitute (a `0` rate IS valid and passes through — it
+ * gates the downstream cost to null, never a false $0). Returns the decimals 0..1.
+ */
+export function formSubmissionRatesDecimal(economics: SalesEconomics): { v2fs: number; fs2pc: number } {
+  const read = (field: "visitToFormSubmissionPct" | "formSubmissionToPaidClientPct"): number => {
+    const pctValue = economics[field];
+    if (typeof pctValue !== "number" || !Number.isFinite(pctValue)) {
+      throw new Error(
+        `brand economics is missing ${field} (required for the form_submissions goal) — brand-service must serve it on the sales-economics / effective layer`,
+      );
+    }
+    return pct(pctValue);
+  };
+  return { v2fs: read("visitToFormSubmissionPct"), fs2pc: read("formSubmissionToPaidClientPct") };
 }
 
 // Global decay windows (not per-brand): a lead that reaches a stage and sits there past this
