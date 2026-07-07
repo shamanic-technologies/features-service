@@ -743,6 +743,15 @@ Databricks medallion Gold, Kleppmann derived-data).
     persist, serve.
   The slow fan-out thus runs ~once per TTL per *viewed* cell, OFF the request path; idle cells never refresh.
 
+  **Views wired through `servedCached` (all AUTHED read endpoints):** `revenue` / `revenue-lens` /
+  `revenue-grouped` (revenue.ts), `stats` (stats.ts), `workflow-projection`, `audience-stats`,
+  `pipeline-activity`. Validation (400/404) stays OUTSIDE the cached compute (never cached — except
+  audience-stats caches its whole deterministic `ComputeResult` union, since its validation lives inside
+  the compute lib; transient downstream failures THROW and bypass the cache). `pipeline-activity`'s
+  `generatedAt` is frozen to the snapshot's compute time (the as-of semantic). The CROSS-ORG `/public/*`
+  + `/internal/stats/*` endpoints do NOT use this (no per-org `scope_key`); they keep short in-memory
+  caches (consolidation into one shared memo helper is the deferred #2-Wave-2 cleanup).
+
 **It is DERIVED + rebuildable** — dropping every row is safe (next read recomputes); siblings stay SoT.
 **Eventual-consistency is the accepted CQRS tradeoff**: a served body is "as-of `computed_at`", at most
 the hard max stale window (default 60s). The revenue engine's day-scale decay is therefore as-of
