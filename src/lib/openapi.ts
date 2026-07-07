@@ -353,8 +353,10 @@ const spendSchema = z.object({
   provisionedCpcCents: z.number().nullable().describe("PROVISIONED cost per website click = provisionedSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 provisioned holds."),
   signupsCount: z.number().int().optional().describe("REAL attributed signups (lead-service conversion tracker, deduped, excludes 'ping') for the brand — the Signups tile. 0 when none. ABSENT (undefined) on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (features-service#461)"),
   salesMeetingsCount: z.number().int().optional().describe("REAL attributed sales meetings booked (lead-service conversion tracker) for the brand — the Sales Meetings tile. 0 when none. ABSENT on a cold / pre-rollout payload; never a fabricated 0."),
+  formSubmissionsCount: z.number().int().optional().describe("REAL attributed form submissions (lead-service conversion tracker, event=form_submission, deduped, excludes 'ping') for the brand — the Form Submissions tile for a form_submissions brand (the visit-driven sibling of signups). 0 when none. ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0."),
   cpsCents: z.number().nullable().optional().describe("REAL cost per signup = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents) / signupsCount, USD cents. So cpsCents × signupsCount ≈ committed spend by construction. null when signupsCount is 0 (no denominator — never a false $0). ABSENT when signupsCount is absent. REPLACES the projected cps dropped in features-service#406 with the REAL tracked computation — no projection."),
   cpsmCents: z.number().nullable().optional().describe("REAL cost per sales meeting = totalSpentCents (COMMITTED) / salesMeetingsCount, USD cents. null when salesMeetingsCount is 0. ABSENT when salesMeetingsCount is absent. Real tracked data, not a projection."),
+  cpfsCents: z.number().nullable().optional().describe("REAL cost per form submission = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / formSubmissionsCount, USD cents. So cpfsCents × formSubmissionsCount ≈ committed spend by construction. null when formSubmissionsCount is 0 (no denominator — never a false $0). ABSENT when formSubmissionsCount is absent. Real tracked data, not a projection."),
 });
 
 const featureRevenueResponseSchema = z.object({
@@ -546,6 +548,10 @@ const pipelineSignupMetricSchema = pipelineMetricSchema.extend({
   conversionPct: z.number().nullable().describe("visitToSignupPct used for signup projection. Null when brand economics are unavailable."),
 });
 
+const pipelineFormSubmissionMetricSchema = pipelineMetricSchema.extend({
+  conversionPct: z.number().nullable().describe("visitToFormSubmissionPct used for form-submission projection. Null when brand economics are unavailable OR the brand does not carry a form-submission rate (non-form brand)."),
+});
+
 const pipelineActivityDaySchema = z.object({
   date: z.string().describe("Calendar date in the requested timezone (YYYY-MM-DD)."),
   isToday: z.boolean(),
@@ -554,6 +560,7 @@ const pipelineActivityDaySchema = z.object({
     opens: pipelineMetricSchema,
     clicks: pipelineMetricSchema,
     signups: pipelineSignupMetricSchema,
+    formSubmissions: pipelineFormSubmissionMetricSchema.describe("Form-submission daily bar — the visit-driven sibling of signups. actual (today) = today's clicks × visitToFormSubmissionPct/100; expected = expected clicks × the same rate. Null values when the brand has no form-submission rate."),
   }),
 });
 
@@ -567,6 +574,7 @@ const pipelineActivityResponseSchema = z.object({
     dailyBudgetUsd: z.number().nullable().describe("Brand daily budget from billing-service. Null when no daily budget is configured for this org + brand."),
     openRatePct: z.number().nullable().describe("Observed audience + workflow broadcast open rate used for expected opens. Null when producer evidence is unavailable."),
     clickToSignupPct: z.number().nullable().describe("Brand effective visit-to-signup conversion percent. Null when brand economics are unavailable."),
+    clickToFormSubmissionPct: z.number().nullable().describe("Brand effective visit-to-form-submission conversion percent (the form-submission projection rate). Null when brand economics are unavailable OR the brand does not carry a form-submission rate."),
   }),
 });
 
@@ -608,6 +616,7 @@ const audienceStatsEvidenceSchema = z.object({
   opened: z.number().describe("Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."),
   websiteClicks: z.number().describe("Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."),
   positiveReplies: z.number().describe("Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."),
+  formSubmissions: z.number().optional().describe("REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions."),
 });
 
 const audienceStatsRowSchema = z.object({
@@ -643,15 +652,16 @@ const audienceStatsRowSchema = z.object({
   metrics: z.object({
     cpcCents: z.number().nullable().describe("totalCostInUsdCents / websiteClicks. Null when websiteClicks is zero OR no spend is attributed (totalCostInUsdCents is zero) — never a false $0.00."),
     cpprCents: z.number().nullable().describe("totalCostInUsdCents / positiveReplies. Null when positiveReplies is zero OR no spend is attributed (totalCostInUsdCents is zero) — never a false $0.00."),
+    cpfsCents: z.number().nullable().describe("REAL cost per form submission (OBSERVED) = totalCostInUsdCents / formSubmissions. Null when formSubmissions is 0/absent (not the form_submissions goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (form_submissions sorts on cpc)."),
   }),
 });
 
 const audienceStatsResponseSchema = z.object({
   featureSlug: z.string(),
   brandId: z.string(),
-  goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"]),
+  goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply", "formSubmission"]),
   brandProfileId: z.string().nullable(),
-  sortMetric: z.enum(["cpc", "cppr"]).describe("signup sorts by CPC; meetingBooked and purchase sort by CPPR."),
+  sortMetric: z.enum(["cpc", "cppr"]).describe("signup / websiteVisit / formSubmission sort by CPC (visit-driven); meetingBooked / purchase / positiveReply sort by CPPR."),
   audiences: z.array(audienceStatsRowSchema).describe("Audience rows sorted ascending by sortMetric, with null metric values last."),
 });
 

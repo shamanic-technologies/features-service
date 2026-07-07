@@ -255,15 +255,19 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(today.metrics.clicks).toEqual({ actual: 1, expected: 5 });
     // signups expected = clicks 5 * 0.08; actual = clicks 1 * 0.08.
     expect(today.metrics.signups).toEqual({ actual: 0.08, expected: 0.4, conversionPct: 8 });
+    // this brand carries no visitToFormSubmissionPct → the form-submission series is all-null (never a false 0).
+    expect(today.metrics.formSubmissions).toEqual({ actual: null, expected: null, conversionPct: null });
 
     const tomorrow = res.body.days[1];
     expect(tomorrow.metrics.outreach).toEqual({ actual: null, expected: 10 });
     expect(tomorrow.metrics.signups).toEqual({ actual: null, expected: 0.4, conversionPct: 8 });
+    expect(tomorrow.metrics.formSubmissions).toEqual({ actual: null, expected: null, conversionPct: null });
 
     expect(res.body.summary).toEqual({
       dailyBudgetUsd: 50,
       openRatePct: 50,
       clickToSignupPct: 8,
+      clickToFormSubmissionPct: null,
     });
 
     // candidate set sourced from human-service active audiences (not brand personas).
@@ -330,6 +334,28 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(res.body.days[0].metrics.clicks).toEqual({ actual: 1, expected: null });
     expect(res.body.days[0].metrics.signups).toEqual({ actual: 0.08, expected: null, conversionPct: 8 });
     expect(res.body.summary.dailyBudgetUsd).toBeNull();
+  });
+
+  it("projects the form-submission series off clicks when the brand carries visitToFormSubmissionPct", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+    // Same brand as the happy path, but the effective economics now carries the visit→form rate (15%).
+    mockFetch({
+      economics: { ...ECONOMICS, visitToFormSubmissionPct: 15 },
+      dailyStats: [{ key: "2026-06-17", broadcast: { recipientStats: { contacted: 2, sent: 2, opened: 1, clicked: 1 } } }],
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York")
+      .set(AUTH)
+      .expect(200);
+
+    const today = res.body.days[0];
+    // clicks: actual 1, expected 5 (unchanged). form submissions = clicks × 0.15.
+    expect(today.metrics.formSubmissions).toEqual({ actual: 0.15, expected: 0.75, conversionPct: 15 });
+    const tomorrow = res.body.days[1];
+    expect(tomorrow.metrics.formSubmissions).toEqual({ actual: null, expected: 0.75, conversionPct: 15 });
+    expect(res.body.summary.clickToFormSubmissionPct).toBe(15);
   });
 
   it("projects expected values from brand daily budget, not campaign status", async () => {

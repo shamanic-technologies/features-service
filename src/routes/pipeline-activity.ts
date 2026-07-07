@@ -38,6 +38,9 @@ interface DayBucket {
     opens: MetricValue;
     clicks: MetricValue;
     signups: SignupMetricValue;
+    // Form-submission daily bar — the visit-driven sibling of signups. Projected off clicks the SAME
+    // way signups are (clicks × the brand's effective visit→form rate); conversionPct carries that rate.
+    formSubmissions: SignupMetricValue;
   };
 }
 
@@ -51,6 +54,7 @@ interface PipelineActivityResponse {
     dailyBudgetUsd: number | null;
     openRatePct: number | null;
     clickToSignupPct: number | null;
+    clickToFormSubmissionPct: number | null;
   };
 }
 
@@ -69,9 +73,13 @@ interface ExpectedActivity {
   opens: number | null;
   clicks: number | null;
   signups: number | null;
+  formSubmissions: number | null;
   dailyBudgetUsd: number | null;
   openRatePct: number | null;
   clickToSignupPct: number | null;
+  // Brand effective visit→form-submission percent (the form-submission projection rate). Null when
+  // brand economics are unavailable OR the brand does not carry the form-submission rate (non-form brand).
+  clickToFormSubmissionPct: number | null;
 }
 
 interface ForecastRates {
@@ -148,15 +156,20 @@ function ratio(num: number, den: number): number | null {
   return den > 0 ? num / den : null;
 }
 
-function emptyExpected(clickToSignupPct: number | null = null): ExpectedActivity {
+function emptyExpected(
+  clickToSignupPct: number | null = null,
+  clickToFormSubmissionPct: number | null = null,
+): ExpectedActivity {
   return {
     outreach: null,
     opens: null,
     clicks: null,
     signups: null,
+    formSubmissions: null,
     dailyBudgetUsd: null,
     openRatePct: null,
     clickToSignupPct,
+    clickToFormSubmissionPct,
   };
 }
 
@@ -540,11 +553,14 @@ async function computeExpectedActivity(
 
   const economics = effective.economics;
   const clickToSignupPct = economics?.visitToSignupPct ?? null;
-  if (dailyBudgetUsd === null || !economics) return emptyExpected(clickToSignupPct);
+  // Visit→form-submission rate (the form-submission projection rate). Present only when the brand's
+  // effective economics carry it (a form_submissions brand); a non-form brand → null → form series null.
+  const clickToFormSubmissionPct = economics?.visitToFormSubmissionPct ?? null;
+  if (dailyBudgetUsd === null || !economics) return emptyExpected(clickToSignupPct, clickToFormSubmissionPct);
 
   const units = await buildWorkflowActivityUnits(featureSlug, economics);
   const bestWorkflow = chooseBestSignupWorkflow(units);
-  if (!bestWorkflow || bestWorkflow.outreachUsd === null) return emptyExpected(clickToSignupPct);
+  if (!bestWorkflow || bestWorkflow.outreachUsd === null) return emptyExpected(clickToSignupPct, clickToFormSubmissionPct);
 
   const forecast = await fetchBestAudienceForecast(
     brandId,
@@ -560,6 +576,8 @@ async function computeExpectedActivity(
   const opens = openPerOutreach !== null ? outreach * openPerOutreach : null;
   const clicks = clickPerOutreach !== null ? outreach * clickPerOutreach : null;
   const signups = clicks !== null && clickToSignupPct !== null ? clicks * (clickToSignupPct / 100) : null;
+  const formSubmissions =
+    clicks !== null && clickToFormSubmissionPct !== null ? clicks * (clickToFormSubmissionPct / 100) : null;
   const openRatePct = openPerOutreach !== null ? openPerOutreach * 100 : null;
 
   return {
@@ -567,9 +585,11 @@ async function computeExpectedActivity(
     opens,
     clicks,
     signups,
+    formSubmissions,
     dailyBudgetUsd,
     openRatePct,
     clickToSignupPct,
+    clickToFormSubmissionPct,
   };
 }
 
@@ -585,6 +605,10 @@ function buildDayBuckets(
     const actualMetric = (metric: MetricName): number | null => (isToday ? actual[metric] : null);
     const signupActual =
       isToday && expected.clickToSignupPct !== null ? actual.clicks * (expected.clickToSignupPct / 100) : null;
+    const formSubmissionActual =
+      isToday && expected.clickToFormSubmissionPct !== null
+        ? actual.clicks * (expected.clickToFormSubmissionPct / 100)
+        : null;
 
     return {
       date,
@@ -597,6 +621,11 @@ function buildDayBuckets(
           actual: signupActual,
           expected: expected.signups,
           conversionPct: expected.clickToSignupPct,
+        },
+        formSubmissions: {
+          actual: formSubmissionActual,
+          expected: expected.formSubmissions,
+          conversionPct: expected.clickToFormSubmissionPct,
         },
       },
     };
@@ -644,6 +673,7 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
         dailyBudgetUsd: expected.dailyBudgetUsd,
         openRatePct: expected.openRatePct,
         clickToSignupPct: expected.clickToSignupPct,
+        clickToFormSubmissionPct: expected.clickToFormSubmissionPct,
       },
     };
       },
