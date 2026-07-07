@@ -722,6 +722,40 @@ open-overlay is BEST-EFFORT (an email-gateway failure degrades `opened` to 0 on 
 identically, while the lead fetch itself stays fail-loud). No OpenAPI change (same keys, same types).
 (Set 2026-06-25.)
 
+## `form_submissions` goal — outcome + attribution data mirrors signups across THREE surfaces (v0.80.1/.2)
+
+A `form_submissions` brand (visit-driven micro-conversion, the sibling of `signup`) now carries the
+SAME classes of outcome data features-service serves for signups/visits — do NOT re-borrow the signup
+display. All three sit alongside the signup/click equivalents:
+
+- **`/revenue` spend block** — `formSubmissionsCount` + `cpfsCents` (committed spend ÷ real count),
+  next to `signupsCount`/`cpsCents`. The count is ALREADY in hand (the conversion-counts client returns
+  `form_submission`); zero new producer dep. `cpfsCents` rides the COMMITTED denominator (like cps/cpsm)
+  → `cpfsCents × formSubmissionsCount ≈ committed`. null on 0 count, ABSENT when counts weren't served.
+- **`/pipeline-activity`** — a `formSubmissions` daily series (`metrics.formSubmissions`, +
+  `summary.clickToFormSubmissionPct`), PROJECTED off clicks × the brand's effective
+  `visitToFormSubmissionPct`, EXACTLY like the `signups` series (actual-today + forward projection).
+  All-null when the brand carries no form-submission rate (non-form brand) — never a false 0.
+- **`/audience-stats`** — per-audience `evidence.formSubmissions` + `metrics.cpfsCents` (OBSERVED,
+  accounting). REAL producer-side attribution: intersect each audience's member emails with the
+  brand's matched-lead form-submission conversion emails — the SAME membership join used for
+  per-audience clicks/replies, NEVER a split of the brand total. `cpfsCents` is NOT a ranking metric
+  (form_submissions ranks on `cpc`, visit-driven).
+
+**Per-audience attribution depends on lead-service `GET /internal/brands/:brandId/converted-lead-emails?event=`**
+(`src/lib/conversion-emails-client.ts`, service-auth) — the producer returns `{ event, emails }` where
+`emails` = DISTINCT matched-lead canonical emails (already lowercased) with ≥1 attributed conversion of
+`event`. features-service reads `emails` (ignores the echoed `event`) into a Set for O(1) membership
+intersection. It is fetched **ONLY for the `formSubmission` goal** (the hot ranking path for every other
+goal keeps its exact fan-out and never touches the conversion tracker) and is **fail-SOFT**
+(`fetchFormSubmissionEmailsSoft` → null → the per-audience form-submission column is ABSENT, never a
+false 0; the client itself is fail-loud). This is the SAME fail-soft-display pattern as the /revenue
+conversion-count tiles — a pre-rollout / down lead-service never 502s the ranking. Reuses the existing
+`LEAD_SERVICE_URL`/`LEAD_SERVICE_API_KEY` (already wired for conversion-counts). NOTE: the consumer was
+first written against a guessed path (`conversion-emails`) and CONFORMED to the producer's deployed
+`converted-lead-emails` in v0.80.2 — the producer owns its path/shape; conform the consumer, do not
+author it. (Set 2026-07-07.)
+
 ## Data layering — features-service owns a GOLD serving layer (CQRS read model)
 
 features-service is otherwise a **derive-on-read aggregator** (the API-Composition pattern, Richardson):
