@@ -104,9 +104,18 @@ function qualRows(quals: Qualifications): unknown[] {
 }
 
 /** Route fetch mock keyed by URL substring. effective economics (saved set + cross-brand average) + leads + status timestamps + manual quals + platform stats + cost overridable. */
-function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean } = {}): void {
+function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; purchase: number }; conversionCountsFail?: boolean } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+    // lead-service GET /internal/brands/:brandId/conversion-counts — REAL conversion counts (#455).
+    // Absent option → 500 so the soft wrapper degrades to absent (mirrors the pre-rollout window),
+    // preserving the "no cps/cpsm when counts unavailable" assertions.
+    if (url.includes("/conversion-counts")) {
+      if (opts.conversionCounts && !opts.conversionCountsFail) {
+        return new Response(JSON.stringify({ counts: opts.conversionCounts }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("not deployed", { status: 500, headers: { "Content-Type": "application/json" } });
+    }
     // email-gateway GET /orgs/stats?groupBy=day — the outreach-activity day series (#415). groupBy=day is
     // unique to this call (no other /revenue downstream reads a day grouping), so match it before the
     // substring branches below.
@@ -837,9 +846,62 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.totalCpcCents).toBe(7000);
     expect(res.body.spend.actualCpcCents).toBe(7000);
     expect(res.body.spend.provisionedCpcCents).toBeNull(); // 0 provisioned → null, never a false $0.00
-    // No projected cost-per-outcome fields on the spend block (cps/cpsm removed).
+    // No conversion counts served here (lead-service unavailable in this mock) → the conversion tiles
+    // are ABSENT, never a fabricated 0 (features-service#455). The projected cps/cpsm (dropped in #406)
+    // are NEVER re-introduced — cpsCents/cpsmCents only appear as the REAL computation with real counts.
+    expect(res.body.spend).not.toHaveProperty("signupsCount");
+    expect(res.body.spend).not.toHaveProperty("salesMeetingsCount");
     expect(res.body.spend).not.toHaveProperty("cpsCents");
     expect(res.body.spend).not.toHaveProperty("cpsmCents");
+  });
+
+  it("spend — REAL conversions: signupsCount/salesMeetingsCount + cpsCents/cpsmCents = COMMITTED spend ÷ real count (features-service#455)", async () => {
+    // Committed 10000c (= 6000 billed + 4000 holds). lead-service serves real counts: 4 signups, 2 meetings.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/conversion-counts")) return json({ counts: { signup: 4, meeting_booked: 2, form_submission: 7, purchase: 1 } });
+      if (url.includes("/stats/costs")) {
+        if (url.includes("startedAfter")) return json({ groups: [{ dimensions: {}, totalCostInUsdCents: "0", actualCostInUsdCents: "0", runCount: 0 }] });
+        return json({ groups: [{ dimensions: { costName: "email-send-step-1" }, totalCostInUsdCents: "10000", actualCostInUsdCents: "6000", runCount: 0 }] });
+      }
+      if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+      if (url.includes("/public/stats")) return json(PLATFORM_STATS);
+      if (url.includes("/orgs/leads")) return json({ leads: HAPPY_LEADS });
+      if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
+      if (url.includes("/orgs/status")) return json({ results: [] });
+      return json({});
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    // Real tracked counts, verbatim from lead-service.
+    expect(res.body.spend.signupsCount).toBe(4);
+    expect(res.body.spend.salesMeetingsCount).toBe(2);
+    // CPS/CPSM ride COMMITTED spend (10000c) — the SAME denominator as totalCpcCents, NOT actual.
+    expect(res.body.spend.cpsCents).toBe(10000 / 4);
+    expect(res.body.spend.cpsmCents).toBe(10000 / 2);
+    // Coherence AC: cpsCents × signupsCount == committed spend (totalSpentCents).
+    expect(res.body.spend.cpsCents * res.body.spend.signupsCount).toBe(res.body.spend.totalSpentCents);
+    expect(res.body.spend.cpsmCents * res.body.spend.salesMeetingsCount).toBe(res.body.spend.totalSpentCents);
+  });
+
+  it("spend — REAL conversions null-denominator: 0 signups/meetings → cpsCents/cpsmCents null (never a false $0), count still 0", async () => {
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000, conversionCounts: { signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 } });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.spend.signupsCount).toBe(0);
+    expect(res.body.spend.salesMeetingsCount).toBe(0);
+    expect(res.body.spend.cpsCents).toBeNull();
+    expect(res.body.spend.cpsmCents).toBeNull();
+  });
+
+  it("spend — lead-service unavailable (pre-rollout) → conversion tiles ABSENT, rest of spend block intact (fail-soft)", async () => {
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000, conversionCountsFail: true });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200); // the tiles degrade; the Overview never 502s on the counts read
+    expect(res.body.spend.totalSpentCents).toBe(7000);
+    expect(res.body.spend).not.toHaveProperty("signupsCount");
+    expect(res.body.spend).not.toHaveProperty("cpsCents");
   });
 
   it("spend — committed = actual + provisioned: total… includes holds, ROI stays on actual", async () => {

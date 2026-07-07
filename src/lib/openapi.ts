@@ -351,6 +351,10 @@ const spendSchema = z.object({
   totalCpcCents: z.number().nullable().describe("COMMITTED cost per website click = totalSpentCents / clicks (clicked.total). Null (renders '-'), never a false $0.00, when there are 0 clicks OR 0 committed spend."),
   actualCpcCents: z.number().nullable().describe("ACTUAL (billed) cost per website click = actualSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 actual spend."),
   provisionedCpcCents: z.number().nullable().describe("PROVISIONED cost per website click = provisionedSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 provisioned holds."),
+  signupsCount: z.number().int().optional().describe("REAL attributed signups (lead-service conversion tracker, deduped, excludes 'ping') for the brand — the Signups tile. 0 when none. ABSENT (undefined) on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (features-service#455)"),
+  salesMeetingsCount: z.number().int().optional().describe("REAL attributed sales meetings booked (lead-service conversion tracker) for the brand — the Sales Meetings tile. 0 when none. ABSENT on a cold / pre-rollout payload; never a fabricated 0."),
+  cpsCents: z.number().nullable().optional().describe("REAL cost per signup = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents) / signupsCount, USD cents. So cpsCents × signupsCount ≈ committed spend by construction. null when signupsCount is 0 (no denominator — never a false $0). ABSENT when signupsCount is absent. REPLACES the projected cps dropped in features-service#406 with the REAL tracked computation — no projection."),
+  cpsmCents: z.number().nullable().optional().describe("REAL cost per sales meeting = totalSpentCents (COMMITTED) / salesMeetingsCount, USD cents. null when salesMeetingsCount is 0. ABSENT when salesMeetingsCount is absent. Real tracked data, not a projection."),
 });
 
 const featureRevenueResponseSchema = z.object({
