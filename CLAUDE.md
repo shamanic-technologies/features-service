@@ -33,8 +33,15 @@ the ranking.
 | `audience-stats` `cpcCents`/`cpprCents` | **projected** (cascade audience→brand) | DONE (PR2) — ⚠️ campaign-service reads `cpcCents` byte-equal → flooring untracked-cost audiences to the brand parent CHANGES its ranking (intended) |
 | `/stats` `costPerRecipient*` (registry `type:"currency"`) | **observed** | DONE (PR3) — brand is the TOP grain here (no coarser grain fetched → no cascade), so observed (null on 0). Also killed a latent false-$0 (0 cost / >0 outcomes → was $0, now null). |
 | `/public/stats/cost-projection` | **projected** (already EV) | not yet routed through the module |
-| `pipeline-activity` cpc | **projected** (forecast) | not yet routed |
-| `/revenue` `spend` block (`total/actual/provisioned Cpc`) | **observed** (ACCOUNTING — real money) | keep observed |
+| `pipeline-activity` | n/a (no cost ratio) | It computes forecast **RATES** (`openPerOutreach`…) not costs; its local `ratio` returns `null` on 0-denom = correct for a displayed rate. Nothing to route. |
+| `/revenue` `spend` block (`total/actual/provisioned Cpc` + `cps`/`cpsm`) | **observed** (ACCOUNTING — real money) | DONE — routed through `observedCostPerOutcome` (removed the local `ratioCents` dupe; also fixed a latent false-$0 on `cps`/`cpsm` which guarded only `count>0`, not spend>0) |
+
+**Rate helpers are NOT part of the cost engine and legitimately differ by consumption — do NOT "homogenize" them.**
+`platform-rates-client.ratio` returns **0** on 0-denom because its rates are MULTIPLIED in the EV funnel
+(`funnel-registry.ts` `r.sentPerContacted * pCloseSent` …) — `null` would poison the product with NaN.
+`pipeline-activity.ratio` returns **null** on 0-denom because its rates are DISPLAYED (0 contacted → unknown
+rate, not 0%). Same observed/projected-style polymorphism as cost: a multiplied rate needs a number, a
+displayed rate needs null. Neither is buggy.
 
 **A surface uses `projected` only where it HAS a coarser grain to floor against inside the endpoint;
 a top-grain surface with no coarser grain fetched uses `observed`.** workflow-projection has the full
