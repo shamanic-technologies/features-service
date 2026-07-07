@@ -229,7 +229,7 @@ provisioned == Σ over `sources`; each `…CpcCents` = its OWN spend ÷ `clicked
 **PROJECTED** `cpsCents`/`cpsmCents` (EV-math cost-per-signup / -sales-meeting) were REMOVED from the
 block (PR #406, breaking) — do NOT re-add a PROJECTION here; cost-per-outcome projection lives in
 `workflow-projection` / `/public/stats/cost-projection`, not the `spend` block. **`cpsCents`/`cpsmCents`
-were RE-ADDED as the REAL tracked computation (PR #458, features-service#455) — NOT the #406 projection.**
+were RE-ADDED as the REAL tracked computation (PR #458, features-service#461) — NOT the #406 projection.**
 The block now also carries `signupsCount`/`salesMeetingsCount` (REAL attributed conversion counts, from
 lead-service `GET /internal/brands/{brandId}/conversion-counts`, service-auth x-api-key + x-service-name,
 via `conversion-counts-client.ts`), and `cpsCents = totalSpentCents (COMMITTED) / signupsCount`,

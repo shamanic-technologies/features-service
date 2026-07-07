@@ -99,7 +99,7 @@ export interface Spend {
   totalCpcCents: number | null;
   actualCpcCents: number | null;
   provisionedCpcCents: number | null;
-  // REAL tracked conversions from lead-service (features-service#455) — the Signups / Sales Meetings
+  // REAL tracked conversions from lead-service (features-service#461) — the Signups / Sales Meetings
   // tiles + their cost-per-conversion. Present when lead-service served the counts; ABSENT (undefined)
   // on a cold / pre-rollout payload (the endpoint unreachable → display tile degrades, never a fake 0).
   // These REPLACE the projected cps/cpsm dropped in features-service#406 with the REAL computation.
@@ -121,7 +121,7 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: Convers
 
   const ratioCents = (cents: number): number | null => (cents > 0 && clicks > 0 ? cents / clicks : null);
 
-  // REAL cost-per-conversion (features-service#455): committed spend ÷ the real tracked count. The
+  // REAL cost-per-conversion (features-service#461): committed spend ÷ the real tracked count. The
   // denominator is the COMMITTED total — the SAME basis the CPC card uses (totalCpcCents) — so
   // cpsCents × signupsCount ≈ committed spend by construction. null when the count is 0 (no
   // denominator), never a false $0. Absent entirely when lead-service didn't serve the counts.
@@ -277,7 +277,7 @@ function fetchSequencesSoft(
 
 /**
  * Fetch the brand's REAL attributed conversion counts (lead-service) for the OVERVIEW spend block —
- * the Signups / Sales Meetings tiles + their real cost-per-conversion (features-service#455).
+ * the Signups / Sales Meetings tiles + their real cost-per-conversion (features-service#461).
  * Fail-soft: a failure degrades to null (the tiles render "-" / the counts are ABSENT) rather than
  * 502-ing the whole /revenue response — these are display enrichment, not the pipeline total, exactly
  * like the sequences series above. Absent ≠ 0: a fake 0 would fabricate a count / a false CPS; null
