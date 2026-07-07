@@ -6,6 +6,7 @@ import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, type ProjectionEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
+import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, type SingleStepGoal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
@@ -275,7 +276,17 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     if (!feature) {
       return res.status(404).json({ error: "Feature not found" });
     }
+    // budgetUsd is accepted for back-compat but does not shape the body (grain ladder +
+    // recommendedBudgetUsd cover the projection) → excluded from the cache key.
+    void budgetUsd;
 
+    // Gold SWR: the heavy cross-org + brand + audience fan-out runs off the request path ~once per
+    // TTL; keyed on the inputs that shape the body (orgId + brand + goal). Response is byte-identical.
+    const response = await servedCached({
+      view: "workflow-projection",
+      scopeKey: buildScopeKey(featureSlug, { orgId, brandId, objective }),
+      orgId,
+      compute: async (): Promise<WorkflowProjectionResponse> => {
     const identity: Identity = { orgId, userId, runId, featureSlug: headerFeatureSlug };
 
     // The workflow list is needed by the crossOrg AND brand dynasty rollups, so fetch it first; the
@@ -445,7 +456,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     }
     const recommendedCost = recommended?.resolved.costPerOutcomeUsd ?? null;
 
-    const response: WorkflowProjectionResponse = {
+    return {
       featureSlug,
       objective,
       goal,
@@ -454,9 +465,8 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       recommendedWorkflowDynastySlug: recommended?.workflow.workflowDynastySlug ?? null,
       recommendedBudgetUsd: recommendedCost != null ? TARGET_OUTCOMES_PER_MONTH * recommendedCost : null,
     };
-    // budgetUsd is accepted for back-compat but no longer shapes a per-workflow projection block (the
-    // grain ladder + recommendedBudgetUsd cover the projection surface). Referenced to avoid unused-var.
-    void budgetUsd;
+      },
+    });
     res.json(response);
   } catch (error) {
     console.error("[features-service] Workflow projection error:", error);

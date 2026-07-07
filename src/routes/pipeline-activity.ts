@@ -4,6 +4,7 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
+import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { fetchCurrentBrandProfile } from "../lib/brand-client.js";
 import { fetchActiveAudiences, fetchAudienceMemberEmails, type Audience } from "../lib/human-client.js";
 import { fetchEmailOutcomes } from "../lib/email-status-client.js";
@@ -618,6 +619,14 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) return res.status(404).json({ error: "Feature not found" });
 
+    // Gold SWR: the ~7-read fan-out (budget, cost, audiences, membership, forecast) runs off the
+    // request path ~once per TTL, keyed on the inputs that shape the body (orgId + brand + timezone +
+    // days). `generatedAt` is frozen to the snapshot's compute time — the documented as-of semantic.
+    const response = await servedCached({
+      view: "pipeline-activity",
+      scopeKey: buildScopeKey(featureSlug, { orgId: auth.orgId, brandId, timezone, days }),
+      orgId: auth.orgId,
+      compute: async (): Promise<PipelineActivityResponse> => {
     const today = dateInTimeZone(new Date(), timezone);
     const dates = Array.from({ length: days }, (_, index) => addDays(today, index));
     const [expected, actualByDate] = await Promise.all([
@@ -625,7 +634,7 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
       fetchDailyBroadcastActivity(brandId, featureSlug, timezone, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }),
     ]);
 
-    const response: PipelineActivityResponse = {
+    return {
       featureSlug,
       brandId,
       timezone,
@@ -637,6 +646,8 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
         clickToSignupPct: expected.clickToSignupPct,
       },
     };
+      },
+    });
 
     res.json(response);
   } catch (error) {
