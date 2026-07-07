@@ -252,10 +252,28 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     // crossOrg meeting cost = 1/((1/10)·0.05 + (1/20)·0.40) = 1/0.025 = 40
     expect(a.estimatesByGrain.crossOrg.projected.costPerMeetingBookedUsd).toBeCloseTo(40, 3);
     expect(a.estimatesByGrain.crossOrg.projected.costPerSignupUsd).toBeCloseTo(250, 3); // 1/((1/10)·0.04)
-    // paid-client (purchase funnel): closesPerBudget = (1/10)·0.0347 + (1/20)·0.12 = 0.00947 → 105.5966
-    expect(a.estimatesByGrain.crossOrg.projected.costPerPaidClientUsd).toBeCloseTo(105.5966, 3);
-    expect(a.estimatesByGrain.crossOrg.projected.roiMultiple).toBeCloseTo(1000 / 105.5966, 3);
-    expect(a.estimatesByGrain.crossOrg.projected.cacPct).toBeCloseTo(100 / (1000 / 105.5966), 3);
+    // meeting-booked paid-client = the meeting→paid routes only = costPerMeetingBooked / m2c = 40 / 0.30 = 133.333.
+    // (NOT the purchase funnel's 105.60 — that includes the self-serve v2c route, which belongs to the purchase goal.)
+    // Coherent: 133.333 ≥ costPerMeetingBooked (40), a paid client is downstream of a booked meeting.
+    expect(a.estimatesByGrain.crossOrg.projected.costPerPaidClientUsd).toBeCloseTo(133.3333, 3);
+    expect(a.estimatesByGrain.crossOrg.projected.roiMultiple).toBeCloseTo(1000 / 133.3333, 3);
+    expect(a.estimatesByGrain.crossOrg.projected.cacPct).toBeCloseTo(100 / (1000 / 133.3333), 3);
+  });
+
+  it("SIGNUP goal: costPerPaidClient = costPerSignup / s2pc (coherent, ≥ costPerSignup), NOT the purchase funnel", async () => {
+    mockFetch();
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=signup`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.goal).toBe("signup");
+    const a = rowFor(res.body, "dyn-a");
+    const p = a.estimatesByGrain.crossOrg.projected;
+    // costPerSignup = 250 (1/((1/10)·0.04)); s2pc = 0.50 → paid = 250/0.50 = 500 = clickUsd/(v2s·s2pc) = 10/(0.04·0.50).
+    // This is ABOVE costPerSignup (a paid client requires a signup) and far above the old purchase-funnel 105.60 bug.
+    expect(p.costPerSignupUsd).toBeCloseTo(250, 3);
+    expect(p.costPerPaidClientUsd).toBeCloseTo(500, 3);
+    expect(p.costPerPaidClientUsd).toBeGreaterThanOrEqual(p.costPerSignupUsd);
+    expect(p.roiMultiple).toBeCloseTo(1000 / 500, 3); // 2.0×
+    expect(p.cacPct).toBeCloseTo(100 / (1000 / 500), 3); // 50%
   });
 
   it("economics echoed once (non-null); null at cold start with rows still emitted", async () => {

@@ -1,5 +1,34 @@
 # Features Service — CLAUDE.md
 
+## Per-goal `costPerPaidClient` chains through THAT goal's OWN funnel — coherent by construction (≥ the goal's outcome cost)
+
+`workflow-projection`'s displayed **cost / paid client** (drives `roiMultiple` + `cacPct`) MUST chain
+through the SAME funnel as the goal's outcome metric, so `costPerPaidClient ≥ costPerOutcome` ALWAYS —
+a paid client is downstream of the outcome (a signup, a booked meeting). `paidClientCostForGoal`
+(`src/routes/workflow-projection.ts`) routes by goal, single-sourced through `projectOutcomeCosts`
+(`src/lib/funnel-registry.ts`):
+
+- **signup / self-serve** → `costPerSignupPaidClientUsd = clickUsd/(v2s·s2pc) = costPerSignup / signupToPaid`
+  (visit → signup → paid, CLICK route only; `s2pc` = `signupToPaidClientPct`).
+- **meeting-booked** → `costPerMeetingPaidClientUsd = 1/[(1/clickUsd)·v2m·m2c + (1/replyUsd)·r2m·m2c] =
+  costPerMeetingBooked / m2c` (the two MEETING→paid routes only; `m2c` = `meetingToClosePct` = the card's
+  "Meeting → Paid client"). Does NOT include the direct self-serve `v2c` route.
+- **purchase** → `costPerPurchaseUsd` (the full self-serve + meeting close funnel, `orP(v2c, v2m·m2c)` +
+  reply route — self-serve `v2c` belongs HERE).
+- **websiteVisit / positiveReply** (single-step) → `v2pc` / `r2pc` (paid IS the outcome).
+- **form_submissions** → `costPerFormSubmissionPaidClientUsd = costPerFormSubmission / fs2pc`.
+
+**The bug this fixes (do NOT regress):** signup + meeting-booked used to fall through to
+`costPerPurchaseUsd` (the meeting/close funnel), whose rates are UNRELATED to the signup step — so for
+a signup-goal brand, cost/paid ($3.79) read BELOW cost/signup ($38.67), an internally-incoherent output
+(a paid client cheaper than a signup). Each goal's paid-client cost = `costPerOutcome / (outcome→paid
+rate)` keeps the invariant. A `0` outcome→paid rate (or 0 meeting routes) → null (renders "-"), never a
+false $0. Zero cross-repo: brand-service already serves `signupToPaidClientPct`/`meetingToClosePct` on
+its sales-economics + effective layers. campaign-service ranks on `costPerOutcomeUsd` (unchanged) and the
+recommended workflow rides `outcomeCostForGoal` (unchanged) — this touches ONLY the displayed cost/paid +
+ROI + CAC. `ProjectedOutcomeCosts` is an internal lib type (NOT a response schema) → no OpenAPI regen.
+(Set 2026-07-07.)
+
 ## SINGLE-STEP optimization goals — `websiteVisit` (visit→paid) + `positiveReply` (reply→paid)
 
 Two beta brand goals convert straight to a paid client in ONE step, NOT through the multi-step

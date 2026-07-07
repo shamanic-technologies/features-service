@@ -94,6 +94,10 @@ export interface ProjectionEconomics {
   m2c: number; // P(close | meeting)
   v2c: number; // P(close | click/visit) — direct, self-serve path
   v2s: number; // P(signup | click/visit) — self-serve signup (visitToClose = v2s × signupToPaidClient)
+  // Signup → paying-client rate (signupToPaidClientPct). Feeds the SIGNUP goal's cost-per-paid-client
+  // (visit → signup → paid). Optional: only the signup/self-serve goal reads it (see projectOutcomeCosts);
+  // undefined ⟹ that cost is null. m2c above doubles as the MEETING goal's meeting→paid rate.
+  s2pc?: number; // P(paid client | signup)
   // SINGLE-STEP paid-client rates for the website_visits / positive_replies goals. Optional: only the
   // single-step goals read them (see projectOutcomeCosts); undefined ⟹ that single-step cost is null.
   v2pc?: number; // P(paid client | click/visit) — direct single step (visitToPaidClientPct)
@@ -117,6 +121,20 @@ export interface ProjectedOutcomeCosts {
    * positive reply leads to a meeting → paying close (the "purchase" outcome), not a direct
    * signup, so the reply channel does not fund signups here. Null when there is no click cost. */
   costPerSignupUsd: number | null;
+  /** SIGNUP goal CLOSE metric: cost per paying client via the signup route (visit → signup → paid).
+   * A budget spent on clicks yields (1/clickUsd)·v2s·s2pc paid clients. costPerSignupPaidClientUsd =
+   * clickUsd / (v2s·s2pc) = costPerSignupUsd / s2pc, so it is ALWAYS ≥ costPerSignupUsd (a paid client
+   * is downstream of a signup). Drives costPerPaidClient + ROI for the signup goal — NOT the multi-step
+   * purchase funnel (which would incoherently read BELOW costPerSignup via the meeting/close routes).
+   * Null when there is no click cost OR v2s/s2pc is unset / 0 (zero-denominator gate). CLICK route only. */
+  costPerSignupPaidClientUsd: number | null;
+  /** MEETING-BOOKED goal CLOSE metric: cost per paying client via the MEETING routes only (no direct
+   * self-serve v2c). A budget yields (1/clickUsd)·v2m·m2c + (1/replyUsd)·r2m·m2c paid clients =
+   * m2c · meetingsPerBudget, so costPerMeetingPaidClientUsd = costPerMeetingBookedUsd / m2c ≥
+   * costPerMeetingBookedUsd (a paid client is downstream of a booked meeting). Drives costPerPaidClient
+   * + ROI for the meeting-booked goal. Null when neither channel funds a meeting-close (v2m·m2c and
+   * r2m·m2c both 0, or both unit costs null) — zero-denominator gate, never a false $0. */
+  costPerMeetingPaidClientUsd: number | null;
   /** SINGLE-STEP goal `website_visits`: cost per paid client via the visit→paid rate. A budget spent
    * on clicks yields (1/clickUsd)·v2pc paid clients. costPerVisitPaidClientUsd = clickUsd / v2pc.
    * Null when there is no click cost OR v2pc is unset / 0 (zero-denominator gate). ONLY the click
@@ -157,6 +175,20 @@ export function projectOutcomeCosts(
   // per click. The reply route closes via meetings (purchases), not direct signups.
   const signupsPerBudget = costs.clickUsd != null ? (1 / costs.clickUsd) * econ.v2s : 0;
 
+  // SIGNUP goal paid-client — chains the signup's OWN funnel (visit → signup → paid), CLICK route only:
+  //   paid clients per budget = (1/clickUsd)·v2s·s2pc   ⟹ costPerSignupPaidClient = costPerSignup / s2pc.
+  // Coherent BY CONSTRUCTION: always ≥ costPerSignup. Do NOT reuse costPerPurchase (meeting/close funnel)
+  // for the signup goal — its rates are unrelated to the signup step and can read incoherently below it.
+  const signupPaidPerBudget =
+    costs.clickUsd != null && econ.s2pc != null ? (1 / costs.clickUsd) * econ.v2s * econ.s2pc : 0;
+
+  // MEETING-BOOKED goal paid-client — the two MEETING routes only (visit→meeting→paid + reply→meeting→paid),
+  // NOT the direct self-serve v2c (that's the purchase goal). = m2c · meetingsPerBudget ⟹
+  // costPerMeetingPaidClient = costPerMeetingBooked / m2c, always ≥ costPerMeetingBooked.
+  const meetingPaidPerBudget =
+    (costs.clickUsd != null ? (1 / costs.clickUsd) * econ.v2m * econ.m2c : 0) +
+    (costs.replyUsd != null ? (1 / costs.replyUsd) * econ.r2m * econ.m2c : 0);
+
   // SINGLE-STEP goals — one rate applied to ONE channel (no funnel chaining):
   //   website_visits  → click channel only: (1/clickUsd)·v2pc paid clients per budget.
   //   positive_replies→ reply channel only: (1/replyUsd)·r2pc paid clients per budget.
@@ -179,6 +211,8 @@ export function projectOutcomeCosts(
     costPerPurchaseUsd: closesPerBudget > 0 ? 1 / closesPerBudget : null,
     costPerMeetingBookedUsd: meetingsPerBudget > 0 ? 1 / meetingsPerBudget : null,
     costPerSignupUsd: signupsPerBudget > 0 ? 1 / signupsPerBudget : null,
+    costPerSignupPaidClientUsd: signupPaidPerBudget > 0 ? 1 / signupPaidPerBudget : null,
+    costPerMeetingPaidClientUsd: meetingPaidPerBudget > 0 ? 1 / meetingPaidPerBudget : null,
     costPerVisitPaidClientUsd: visitPaidPerBudget > 0 ? 1 / visitPaidPerBudget : null,
     costPerReplyPaidClientUsd: replyPaidPerBudget > 0 ? 1 / replyPaidPerBudget : null,
     costPerFormSubmissionUsd: formSubmissionsPerBudget > 0 ? 1 / formSubmissionsPerBudget : null,
