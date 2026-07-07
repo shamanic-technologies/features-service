@@ -348,6 +348,50 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     expect(a.resolved.grain).toBe("crossOrg");
   });
 
+  it("cascade floor: crossOrg 0 clicks → cpc = own spend (no parent)", async () => {
+    // crossOrg wf-a $1000 / 0 clicks → floor to own spend $1000.
+    mockFetch({ crossOrgEmail: [emailGroup("wf-a", 0, 0), emailGroup("wf-b", 50, 10)] });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    const a = rowFor(res.body, "dyn-a");
+    expect(a.estimatesByGrain.crossOrg.unitCosts.costPerClickUsd).toBeCloseTo(1000, 6);
+  });
+
+  it("cascade floor: brand 0 clicks, spend BELOW crossOrg cpc → brand cpc = crossOrg cpc", async () => {
+    // crossOrg wf-a cpc = $1000/100 = $10. Brand wf-a: $5 spent, 0 clicks → max(5, 10) = $10.
+    mockFetch({ brandCost: [costGroup("wf-a", 500)], brandEmail: [emailGroup("wf-a", 0, 0, 100)] });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    const a = rowFor(res.body, "dyn-a");
+    expect(a.estimatesByGrain.crossOrg.unitCosts.costPerClickUsd).toBeCloseTo(10, 6);
+    expect(a.estimatesByGrain.brand.evidence.observedClicks).toBe(0);
+    expect(a.estimatesByGrain.brand.unitCosts.costPerClickUsd).toBeCloseTo(10, 6); // floored to crossOrg parent
+  });
+
+  it("cascade floor: brand 0 clicks, spend ABOVE crossOrg cpc → brand cpc = own spend", async () => {
+    // crossOrg cpc $10. Brand wf-a: $50 spent, 0 clicks → max(50, 10) = $50.
+    mockFetch({ brandCost: [costGroup("wf-a", 5000)], brandEmail: [emailGroup("wf-a", 0, 0, 100)] });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    const a = rowFor(res.body, "dyn-a");
+    expect(a.estimatesByGrain.brand.unitCosts.costPerClickUsd).toBeCloseTo(50, 6);
+  });
+
+  it("cascade floor is ITERATIVE: audience 0 clicks floors against BRAND (not crossOrg, not own spend)", async () => {
+    // crossOrg cpc $10, brand cpc $20 (default $500/25). Audience $10 spent, 0 clicks →
+    // max(10, brand $20) = $20 — proves it used the BRAND parent (finest coarser), not crossOrg ($10) or own spend ($10).
+    mockFetch({
+      audiences: [{ id: "aud-1" }],
+      audienceCost: [{ dimensions: { audienceId: "aud-1" }, totalCostInUsdCents: "1000", runCount: 8 }],
+      audienceCouples: [{ dimensions: { audienceId: "aud-1", workflowDynastySlug: "dyn-a" }, totalCostInUsdCents: "1000", runCount: 8 }],
+      membersByAudience: { "aud-1": ["m1@x.com"] },
+      outcomesByEmail: { "m1@x.com": { contacted: true } }, // 0 clicks
+    });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    const audRow = rowFor(res.body, "dyn-a", "aud-1");
+    expect(audRow.estimatesByGrain.crossOrg.unitCosts.costPerClickUsd).toBeCloseTo(10, 6);
+    expect(audRow.estimatesByGrain.brand.unitCosts.costPerClickUsd).toBeCloseTo(20, 6);
+    expect(audRow.estimatesByGrain.audience.evidence.observedClicks).toBe(0);
+    expect(audRow.estimatesByGrain.audience.unitCosts.costPerClickUsd).toBeCloseTo(20, 6); // floored to BRAND parent
+  });
+
   it("single-step website_visits: costPerPaidClientUsd = clickUsd / v2pc; costPerOutcomeUsd rides it", async () => {
     const SINGLE = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 20 };
     mockFetch({ economics: SINGLE });

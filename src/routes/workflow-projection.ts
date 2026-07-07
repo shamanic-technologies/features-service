@@ -5,6 +5,7 @@ import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, type ProjectionEconomics } from "../lib/funnel-registry.js";
+import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, type SingleStepGoal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
@@ -36,9 +37,17 @@ type GoalEcho = "meetingBooked" | "signup" | "purchase" | "websiteVisit" | "posi
 
 type GrainName = "crossOrg" | "brand" | "audience";
 
+/** The three per-outcome unit costs of a grain — also the shape passed as the PARENT floor for the
+ * next finer grain (crossOrg → brand → audience) via the projected cost-engine. */
+interface GrainUnitCosts {
+  costPerClickUsd: number;
+  costPerPositiveReplyUsd: number;
+  costPerContactedUsd: number;
+}
+
 interface GrainBlock {
   evidence: { spentUsd: number; observedContacted: number; observedClicks: number; observedPositiveReplies: number };
-  unitCosts: { costPerClickUsd: number; costPerPositiveReplyUsd: number; costPerContactedUsd: number };
+  unitCosts: GrainUnitCosts;
   projected: {
     costPerSignupUsd: number | null;
     costPerPaidClientUsd: number | null;
@@ -137,11 +146,12 @@ function outcomeCostForGoal(
 }
 
 /**
- * Build ONE grain block from a grain's raw evidence + the brand economics. Unit costs use the FLOOR
- * rule: costPerXUsd = spentUsd / max(observedX, 1) — a real ratio when observedX ≥ 1, the raw spend
- * when observedX = 0 (never null). projected is null ONLY when economics is null (cold start): the
- * floor guarantees unitCosts > 0 at any spent > 0 grain, so a zero-denominator never nulls projected.
- * Caller only invokes this when spentUsd > 0 (spent-0 grains are omitted, rule 3).
+ * Build ONE grain block from a grain's raw evidence + the brand economics. Unit costs run through the
+ * PROJECTED cost-engine (`projectedCostPerOutcome`): a real ratio when observedX ≥ 1, else the cascade
+ * floor `max(spentUsd, parentCost)` — the parent being the SAME unit cost on the next COARSER grain
+ * (crossOrg → brand → audience). `parentUnitCosts = null` for crossOrg (no parent → floor = own spend).
+ * Never null → projected goal costs are null ONLY when economics is null (cold start), never from a
+ * zero-denominator. Caller only invokes this when spentUsd > 0 (spent-0 grains are omitted, rule 3).
  */
 function buildGrainBlock(
   evidence: WorkflowGrainEvidence | AudienceGrainEvidence,
@@ -150,16 +160,17 @@ function buildGrainBlock(
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
+  parentUnitCosts: GrainUnitCosts | null = null,
 ): GrainBlock {
   const spentUsd = evidence.totalCostInUsdCents / 100;
   const observedContacted = evidence.contacted;
   const observedClicks = evidence.clicks;
   const observedPositiveReplies = evidence.replies;
 
-  // Floor rule: never null. observedX >= 1 → real ratio; observedX = 0 → floor = spentUsd.
-  const costPerClickUsd = spentUsd / Math.max(observedClicks, 1);
-  const costPerPositiveReplyUsd = spentUsd / Math.max(observedPositiveReplies, 1);
-  const costPerContactedUsd = spentUsd / Math.max(observedContacted, 1);
+  // Projected engine: observedX ≥ 1 → real ratio; observedX = 0 → cascade floor max(spentUsd, parentCost).
+  const costPerClickUsd = projectedCostPerOutcome(spentUsd, observedClicks, parentUnitCosts?.costPerClickUsd ?? null);
+  const costPerPositiveReplyUsd = projectedCostPerOutcome(spentUsd, observedPositiveReplies, parentUnitCosts?.costPerPositiveReplyUsd ?? null);
+  const costPerContactedUsd = projectedCostPerOutcome(spentUsd, observedContacted, parentUnitCosts?.costPerContactedUsd ?? null);
 
   let projected: GrainBlock["projected"];
   if (!econ) {
@@ -322,8 +333,11 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         }
       : null;
 
-    const buildBlock = (ev: WorkflowGrainEvidence | AudienceGrainEvidence): GrainBlock =>
-      buildGrainBlock(ev, econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal);
+    const buildBlock = (
+      ev: WorkflowGrainEvidence | AudienceGrainEvidence,
+      parentUnitCosts: GrainUnitCosts | null = null,
+    ): GrainBlock =>
+      buildGrainBlock(ev, econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal, parentUnitCosts);
     const resolve = (grains: Partial<Record<GrainName, GrainBlock>>): ResolvedBlock =>
       resolvePick(grains, econ, objective, singleStepGoal, formSubmissionGoal);
 
@@ -343,10 +357,14 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         replies: outcomes.recipientsRepliesPositive ?? 0,
       };
 
+      // Cascade: crossOrg (no parent) → brand floors against crossOrg. Build coarser-first so the
+      // finer grain can floor against the coarser grain's resolved unit costs.
       const estimatesByGrain: Partial<Record<GrainName, GrainBlock>> = {};
       if (crossOrgEvidence.totalCostInUsdCents > 0) estimatesByGrain.crossOrg = buildBlock(crossOrgEvidence);
       const brandEv = brandGrain.get(activeSlug);
-      if (brandEv && brandEv.totalCostInUsdCents > 0) estimatesByGrain.brand = buildBlock(brandEv);
+      if (brandEv && brandEv.totalCostInUsdCents > 0) {
+        estimatesByGrain.brand = buildBlock(brandEv, estimatesByGrain.crossOrg?.unitCosts ?? null);
+      }
 
       // crossOrg is (almost) always present, but if a dynasty had 0 crossOrg cost AND 0 brand cost there
       // is no grain to resolve — skip the row (nothing to project).
@@ -365,8 +383,11 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
 
     // ── Audience rows — one per (audienceId × workflowDynasty) couple that ran ──────────────────
     // crossOrg + brand grains resolve by the dynasty (keyed on the dynasty's active slug); the audience
-    // grain is audience-WIDE (same block across the audience's couple rows). Precedence audience > brand
-    // > crossOrg → these rows resolve at the audience grain when the audience has spend.
+    // grain's raw evidence is audience-WIDE (same numbers across the audience's couple rows), but the
+    // block is built PER COUPLE because its cascade-floor PARENT (brand → crossOrg) is per-dynasty — an
+    // audience with 0 observed outcomes floors against THIS couple's brand/crossOrg cost. When the
+    // audience has observed outcomes the ratio is identical across couples (parent unused).
+    // Precedence audience > brand > crossOrg → these rows resolve at the audience grain when it has spend.
     // Map dynastySlug → active workflow slug (for crossOrg/brand grain lookup keyed on active slug).
     const activeSlugByDynasty = new Map<string, string>();
     for (const [activeSlug, wf] of workflowBySlug) {
@@ -374,10 +395,10 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     }
 
     for (const ev of audienceEvidence) {
-      const audienceBlock = ev.totalCostInUsdCents > 0 ? buildBlock(ev) : null;
       for (const dynastySlug of ev.workflowDynastySlugs) {
         const activeSlug = activeSlugByDynasty.get(dynastySlug);
 
+        // Cascade: crossOrg (no parent) → brand (parent crossOrg) → audience (parent brand ?? crossOrg).
         const estimatesByGrain: Partial<Record<GrainName, GrainBlock>> = {};
         if (activeSlug) {
           const cost = costMap.get(activeSlug);
@@ -392,9 +413,12 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
             });
           }
           const brandEv = brandGrain.get(activeSlug);
-          if (brandEv && brandEv.totalCostInUsdCents > 0) estimatesByGrain.brand = buildBlock(brandEv);
+          if (brandEv && brandEv.totalCostInUsdCents > 0) {
+            estimatesByGrain.brand = buildBlock(brandEv, estimatesByGrain.crossOrg?.unitCosts ?? null);
+          }
         }
-        if (audienceBlock) estimatesByGrain.audience = audienceBlock;
+        const audienceParent = estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null;
+        if (ev.totalCostInUsdCents > 0) estimatesByGrain.audience = buildBlock(ev, audienceParent);
 
         // A couple with no grain at all (no crossOrg/brand/audience spend) has nothing to project.
         if (!estimatesByGrain.crossOrg && !estimatesByGrain.brand && !estimatesByGrain.audience) continue;
