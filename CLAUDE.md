@@ -1,5 +1,48 @@
 # Features Service — CLAUDE.md
 
+## `cost-engine.ts` — TWO named engines are the SINGLE source of truth for "cost per outcome"; default = projected everywhere except accounting
+
+Every stats surface computes "cost per outcome" through ONE of TWO named functions in `src/lib/cost-engine.ts` —
+never an inline `spent / count`. This keeps the 0-outcome decision homogeneous across endpoints.
+
+- **`observedCostPerOutcome(spentUsd, observedCount) → number | null`** — "what actually happened"
+  (ACCOUNTING / real spend). `null` (renders "-") when 0 spend OR 0 outcomes; NEVER fabricates a number
+  that wasn't measured. Use ONLY for real-money / bookkeeping surfaces.
+- **`projectedCostPerOutcome(spentUsd, observedCount, parentCost?) → number`** — "rankable estimate"
+  (the DEFAULT). Real ratio when `observedCount > 0`; else the CASCADE FLOOR `max(spentUsd, parentCost)`.
+  NEVER null when there is spend — a rankable surface must always yield a comparable number. `parentCost`
+  = the same unit cost on the next COARSER grain (crossOrg → brand → audience), iterative; omit when the
+  surface has no coarser grain → floor degrades to own spend (`max(spentUsd, 0)`), the cascade's base case.
+
+**DEFAULT RULE (product, Kevin 2026-07-07): projection is the default for the dashboard and EVERYWHERE,
+EXCEPT accounting (real spend / bookkeeping), which takes observed.** If the front wants raw observed cost
+on a projection surface, that is a DEDICATED observed endpoint — NOT a flag/tag on this one. Naming must be
+clear: accounting fields carry accounting names (`spent`, `actual`); projection is the unnamed default.
+
+**Cascade rationale (projected):** with 0 observed outcomes the true cost is unknown but ≥ the spend so
+far; the coarser grain's cost is the prior. So `spent < parentCost` → assume the parent (not yet proven
+worse); `spent > parentCost` → own spend is the higher conservative floor (already outspent the parent
+with nothing to show). This stops a barely-spent 0-outcome grain from looking artificially free and winning
+the ranking.
+
+**Surface classification (target — migrate one at a time, verify the consumer each time):**
+
+| Surface | Engine | Consumer to verify before flipping |
+|---|---|---|
+| `workflow-projection` (unit costs → projected goal costs) | **projected** (cascade, has the grain ladder) | — (DONE, PR1) |
+| `audience-stats` `cpcCents`/`cpprCents` | **projected** | ⚠️ campaign-service reads `cpcCents` byte-equal → flooring changes its ranking |
+| `/public/stats/cost-projection` | **projected** (already EV) | — |
+| `pipeline-activity` cpc | **projected** (forecast) | — |
+| `/stats` `costPerRecipient*` (registry) | **projected** | brand-only → needs a global parent fetch for true cascade |
+| `/revenue` `spend` block (`total/actual/provisioned Cpc`) | **observed** (ACCOUNTING — real money) | dashboard "Total spent" |
+
+**PR1 (shipped) wired ONLY `workflow-projection`** to `projectedCostPerOutcome` with the crossOrg→brand→audience
+cascade (`buildGrainBlock` takes a `parentUnitCosts`; the assembly builds coarser-first and threads each
+grain's unit costs as the next finer grain's parent; audience blocks are built PER COUPLE so the floor uses
+that couple's brand/crossOrg parent). The other surfaces still compute inline and are migrated in follow-up
+PRs, each gated on its consumer. `ProjectedOutcomeCosts`/unit-cost shapes unchanged → no OpenAPI change.
+(Set 2026-07-07.)
+
 ## Per-goal `costPerPaidClient` chains through THAT goal's OWN funnel — coherent by construction (≥ the goal's outcome cost)
 
 `workflow-projection`'s displayed **cost / paid client** (drives `roiMultiple` + `cacPct`) MUST chain
@@ -47,9 +90,10 @@ valid zero-denominator gate → null cost (renders "-"), never a false $0; a gen
 fails loud via `singleStepRateDecimal` (502), never NaN / zero-collapse.
 
 **Surfaces wired (each keyed on the goal):**
-- `workflow-projection` (`objective`): `costPerCloseUsd` rides the single-step cost (NOT
-  `costPerPurchaseUsd`) → non-null `roiMultiple` + positive `recommendedBudgetUsd`, no zero-collapse.
-- `candidates` + `audience-stats` (`goal`): `costPerOutcomeUsd` / sort-metric per goal
+- `workflow-projection` (`objective`): the single-step cost rides each grain's `projected` +
+  `resolved.costPerOutcomeUsd` (NOT `costPerPurchaseUsd`) → non-null `roiMultiple` + positive
+  `recommendedBudgetUsd`, no zero-collapse.
+- `audience-stats` (`goal`): `costPerOutcomeUsd` / sort-metric per goal
   (`websiteVisit`→CPC, `positiveReply`→CPPR); `conversion.rate` = the single-step rate.
 - `revenue` (`lens=website_visits`/`positive_replies`): per-lead EV = rate × LTR via `lensProbability`
   (mirrors the existing `signups`/`booked-meetings` lens, single-step).
@@ -73,57 +117,32 @@ npm run db:migrate:prod  # Run migrations on prod (tsx scripts/migrate-prod.ts)
 npm run generate:openapi # Regenerate openapi.json from Zod schemas
 ```
 
-## `GET /features/:slug/candidates` — audience grain is LIVE (audience rung emits real per-audience evidence)
+## `GET /features/:slug/workflow-projection` — 3-grain cost-per-outcome LADDER (`/candidates` DELETED, folded in; PR #449)
 
-The candidate-evidence endpoint (`src/routes/candidates.ts`, PR #299/#298; audience grain wired in)
-serves the `(audienceId, workflow)` candidate SET for campaign-service's runtime per-couple selection
-(uncertainty-aware / Thompson). Each candidate carries its own `costPerOutcomeUsd`, separate
-`conversion`/`cost` evidence, and a labelled `grain` ladder (`audience` → `brand-goal` →
-`goal-global`). The coarse rungs reuse the workflow-projection data path
-(`buildUpgradeChains`/`aggregateAcrossChains` + `fetchEffectiveEconomics` + `projectOutcomeCosts`).
+`GET /features/:slug/workflow-projection?brandId=&audienceId?=&goal=` returns a **3-grain
+cost-per-outcome ladder** (`crossOrg` → `brand` → `audience`) keyed per `(audienceId?,
+workflowDynasty)` in a top-level **`rows[]`** array, plus a `resolved` pick per row. The legacy
+`GET /features/:slug/candidates` endpoint + `src/routes/candidates.ts` + `src/lib/candidates-audience.ts`
+are **DELETED** — folded into this endpoint. campaign-service (the consumer) now reads
+`/workflow-projection` `rows[]` + `resolved.costPerOutcomeUsd`; the api-service proxy was reshaped and
+the candidates proxy removed.
 
-**Sample size lives WITH the cost evidence, NOT at the candidate top level (data-honesty fix).** A
-coarse row resolves its CONVERSION at brand level (`conversion.grain:"brand-goal"`, the brand's own
-saved economics) but its COST from the cross-org workflow population (`cost.grain:"goal-global"`). The
-sample (runs/contacted/clicks/replies) is ENTIRELY a cost-side artifact, so it lives at
-`cost.sampleSize` labelled by `cost.grain` — there is NO top-level `sampleSize`. This prevents the
-Pocket-CMO trap: a brand that signed up today (saved 8% signup economics, sent 4 emails, 0 clicks)
-returned coarse rows whose single top-level `grain:"brand-goal"` sat next to a single `sampleSize`
-showing `contacted` in the thousands / `runs` ~80k — the cross-org cost sample mis-read as the brand's
-own. Now `cost.sampleSize` + `cost.grain:"goal-global"` make the cost provenance/size legible
-SEPARATELY from `conversion.grain`. The top-level `grain` is a SUMMARY label only (finest grain across
-components); it does not describe the sample, and the two components can resolve at different grains.
-`conversion.sampleSize` is ALWAYS null — the rate comes from brand-service saved economics, which
-carry no per-grain observation count (brand-service#242). campaign-service (the only consumer) ranks
-on `costPerOutcomeUsd` and never read top-level `sampleSize`, so the move is zero-blast.
+**Row shape.** Each row `{ audienceId, workflow:{workflowDynastySlug, workflowDynastyName},
+estimatesByGrain:{crossOrg?, brand?, audience?}, resolved }`. `economics` (brand effective, **no
+`source` field**) is shown ONCE at the top level, not per row.
 
-**Null `costPerOutcomeUsd` on a thin cross-org sample is INTENDED — it's a zero-denominator gate, not
-a thinness threshold.** `costPerOutcomeUsd` needs a `clickUsd` (and/or `replyUsd`) denominator; a
-workflow with `contacted>0` but 0 clicks/replies yields `cost.costPerLeadUsd` present (contacted
-denominator) yet `clickUsd`/`replyUsd` null → `projectOutcomeCosts` returns null. Can't project
-cost-per-signup without a per-click cost. Do NOT add a smoothing/floor to force a number.
+**Grain rules (per grain in `estimatesByGrain`):**
+- `unitCosts.costPerXUsd = spentUsd / max(observedX, 1)` — **NEVER null**. A 0-outcome grain that has
+  spend yields a FLOOR = `spentUsd` (the front renders `">$X"`); this is deliberate, NOT a bug.
+- A grain with `spentUsd == 0` is **OMITTED** entirely.
+- `projected` per grain = `projectOutcomeCosts(brandEcon, unitCosts)` (null ONLY at cold start).
+- crossOrg + brand grains reuse `fetchPublicCosts` (version-grain) + `aggregateAcrossChains` local
+  dynasty rollup; the brand grain adds a `brandId` filter. The audience grain is audience-WIDE — NOT
+  split per-workflow (send/engagement is not workflow-tagged; fleet gap #366/#367).
 
-**The `audience` rung is LIVE.** For each ACTIVE human-service audience that has runs-attributed
-`(audienceId × workflowDynastySlug)` couples, the endpoint emits one audience candidate per couple via
-`src/lib/candidates-audience.ts` `fetchAudienceCandidateEvidence` — `audienceId` non-null,
-`grain:"audience"`, `cost.grain:"audience"`. Evidence is **audience-grain (single coherent grain per
-row)**: cost from runs `groupBy=audienceId` (byte-identical numerator to `/audience-stats`), outcomes
-from read-time membership (`fetchAudienceMemberEmails` → `fetchEmailOutcomes`, explicit provenance, no
-send-tagging). A second runs call `groupBy=audienceId,workflowDynastySlug` enumerates WHICH workflows
-ran for the audience (the couple keys; runs `GET /v1/stats/costs` does `groupBy.split(",")` +
-dynasty-rollup). **Per-workflow OUTCOME splitting does NOT exist in the fleet** (send/engagement is not
-workflow-tagged — staging gap notes #366/#367, workflow-service#321), so each of an audience's couple
-rows carries the SAME audience slice; per-workflow cost discrimination stays on the coarse
-`audienceId:null` rows. `conversion.rate` stays brand-goal/goal-global on audience rows too —
-brand-service has no per-audience economics (**brand-service#242**) — so the audience's empirical tally
-rides in `sampleSize` for the consumer.
-
-**Do NOT mix grains within an audience row** (option-A trap, rejected): couple-exact cost ÷ audience-grain
-clicks is arithmetically incoherent when an audience ran >1 workflow. Cost ratios + sampleSize are all
-audience-grain. Couples with no audience-level evidence keep `audienceId:null` and fall through the
-coarse ladder unchanged — additive, no shape change for existing per-workflow consumers (campaign-service
-already handles `audienceId:null`). `customerProfileId` is fully purged from this endpoint (audience
-grain replaced it). Does NOT touch `workflow-projection` / `stats/ranked`. (Set 2026-06-21.)
+**`resolved`.** `resolved.grain` = the FINEST grain present with spend, precedence
+`audience > brand > crossOrg`. `resolved.costPerOutcomeUsd` is the goal metric campaign-service ranks
+on. The `recommended` selection ranks on `resolved.costPerOutcomeUsd`. (Set 2026-07-06.)
 
 ## `GET /features/:slug/audience-stats` — ranked human-service AUDIENCES (persona-stats alias DELETED, PR #351→ removal)
 
@@ -222,8 +241,9 @@ Counting reserved-but-unbilled holds as cost-spent would understate ROI on money
   `actualCostInUsdCents` raw key, to which **every `costPer*Cents` derived numerator points** (incl.
   `costPerOutletCents`). **Already** convention-compliant (actual = billed, total = committed) — NOT
   renamed by #403.
-- `workflow-projection` `roiMultiple = LTR / costPerCloseUsd` (budget-independent, = 100/cacPct) — the
-  dashboard renders it instead of inverting `cacPct` client-side.
+- `workflow-projection` `roiMultiple = LTR / resolved.costPerOutcomeUsd` (budget-independent,
+  = 100/cacPct; the `resolved` pick is the finest-grain cost-per-outcome from the 3-grain ladder) —
+  the dashboard renders it instead of inverting `cacPct` client-side.
 
 Null-safe convention (mirrors per-audience `metrics.cpcCents`): a ratio is **null** (renders "-"), never
 a false **$0.00**, when its denominator OR the attributed spend is 0. Do NOT add a smoothing/floor to
