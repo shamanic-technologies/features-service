@@ -7,6 +7,7 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { fetchCurrentBrandProfile } from "./brand-client.js";
 import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, type AudienceFilters, type AudienceStatus } from "./human-client.js";
 import { fetchEmailOutcomes } from "./email-status-client.js";
+import { observedCostPerOutcome, projectedCostPerOutcome } from "./cost-engine.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, type Goal } from "./goals.js";
 
 export type SortMetric = "cpc" | "cppr";
@@ -86,12 +87,6 @@ function emptyCost(): AudienceCostEvidence {
 
 function emptyOutcomes(): AudienceOutcomeEvidence {
   return { contacted: 0, opened: 0, websiteClicks: 0, positiveReplies: 0 };
-}
-
-function ratioCents(costCents: number, denominator: number): number | null {
-  // Null (renders "-") when there is no attributed spend OR no denominator — never a false $0.00.
-  // A click with zero attributed spend is "no cost evidence", not "$0 cost".
-  return costCents > 0 && denominator > 0 ? costCents / denominator : null;
 }
 
 function readFiniteNumber(value: unknown, field: string): number {
@@ -216,7 +211,7 @@ async function fetchAudienceOutcomes(
   brandId: string,
   audiences: Audience[],
   identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
-): Promise<Map<string, AudienceOutcomeEvidence>> {
+): Promise<{ perAudience: Map<string, AudienceOutcomeEvidence>; brandGrain: AudienceOutcomeEvidence }> {
   const perAudience = await Promise.all(
     audiences.map(async (a) => ({ audienceId: a.id, emails: await fetchAudienceMemberEmails(a.id, identity) })),
   );
@@ -237,7 +232,21 @@ async function fetchAudienceOutcomes(
     }
     result.set(audienceId, agg);
   }
-  return result;
+
+  // Brand-grain aggregate = DISTINCT union members (allEmails is already deduped), SAME membership-based
+  // definition as the per-audience counts (no grain mix). Serves as the PARENT for the projected cascade:
+  // an audience with 0 observed outcomes floors to the brand's cost-per-outcome (audience → brand).
+  const brandGrain = emptyOutcomes();
+  for (const email of allEmails) {
+    const o = outcomesByEmail.get(email);
+    if (!o) continue;
+    if (o.contacted) brandGrain.contacted += 1;
+    if (o.opened) brandGrain.opened += 1;
+    if (o.clicked) brandGrain.websiteClicks += 1;
+    if (o.positiveReply) brandGrain.positiveReplies += 1;
+  }
+
+  return { perAudience: result, brandGrain };
 }
 
 /**
@@ -293,10 +302,19 @@ export async function computeAudienceStats(req: Request): Promise<ComputeResult>
   ]);
   const brandProfileId = explicitBrandProfileId ?? currentProfile?.id ?? null;
 
-  const [costs, outcomes] = await Promise.all([
+  const [costs, outcomesResult] = await Promise.all([
     fetchAudienceCosts(brandId, featureSlug, identity),
     fetchAudienceOutcomes(brandId, audiences, identity),
   ]);
+  const outcomes = outcomesResult.perAudience;
+
+  // Brand-grain PARENT cost-per-outcome for the projected cascade (audience → brand). Numerator = the
+  // brand's total audience-tagged cost (runs are tagged to ONE audience, so summing does not double-count);
+  // denominator = the brand-grain DISTINCT-union outcome counts. observed (real ratio, null when the brand
+  // has no clicks/replies → then the audience metric falls back to observed null, never a false $0).
+  const brandTotalCostCents = [...costs.values()].reduce((sum, c) => sum + c.totalCostInUsdCents, 0);
+  const brandParentCpc = observedCostPerOutcome(brandTotalCostCents, outcomesResult.brandGrain.websiteClicks);
+  const brandParentCppr = observedCostPerOutcome(brandTotalCostCents, outcomesResult.brandGrain.positiveReplies);
 
   const audienceMap = new Map(audiences.map((audience) => [audience.id, audience]));
   const ids = new Set([...costs.keys(), ...outcomes.keys()]);
@@ -321,9 +339,18 @@ export async function computeAudienceStats(req: Request): Promise<ComputeResult>
         ...cost,
         ...outcome,
       },
+      // PROJECTED engine (default): a real ratio when the audience has outcomes; else the cascade floor
+      // max(audience cost, brand parent). When the brand has no parent (0 brand clicks/replies) → observed
+      // (null, sorts last) rather than a false $0. An audience with outcomes is unchanged (parent ignored).
       metrics: {
-        cpcCents: ratioCents(cost.totalCostInUsdCents, outcome.websiteClicks),
-        cpprCents: ratioCents(cost.totalCostInUsdCents, outcome.positiveReplies),
+        cpcCents:
+          brandParentCpc != null
+            ? projectedCostPerOutcome(cost.totalCostInUsdCents, outcome.websiteClicks, brandParentCpc)
+            : observedCostPerOutcome(cost.totalCostInUsdCents, outcome.websiteClicks),
+        cpprCents:
+          brandParentCppr != null
+            ? projectedCostPerOutcome(cost.totalCostInUsdCents, outcome.positiveReplies, brandParentCppr)
+            : observedCostPerOutcome(cost.totalCostInUsdCents, outcome.positiveReplies),
       },
     });
   }

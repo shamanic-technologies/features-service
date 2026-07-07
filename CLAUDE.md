@@ -27,21 +27,30 @@ the ranking.
 
 **Surface classification (target — migrate one at a time, verify the consumer each time):**
 
-| Surface | Engine | Consumer to verify before flipping |
+| Surface | Engine | Notes |
 |---|---|---|
-| `workflow-projection` (unit costs → projected goal costs) | **projected** (cascade, has the grain ladder) | — (DONE, PR1) |
-| `audience-stats` `cpcCents`/`cpprCents` | **projected** | ⚠️ campaign-service reads `cpcCents` byte-equal → flooring changes its ranking |
-| `/public/stats/cost-projection` | **projected** (already EV) | — |
-| `pipeline-activity` cpc | **projected** (forecast) | — |
-| `/stats` `costPerRecipient*` (registry) | **projected** | brand-only → needs a global parent fetch for true cascade |
-| `/revenue` `spend` block (`total/actual/provisioned Cpc`) | **observed** (ACCOUNTING — real money) | dashboard "Total spent" |
+| `workflow-projection` (unit costs → projected goal costs) | **projected** (cascade crossOrg→brand→audience) | DONE (PR1) |
+| `audience-stats` `cpcCents`/`cpprCents` | **projected** (cascade audience→brand) | DONE (PR2) — ⚠️ campaign-service reads `cpcCents` byte-equal → flooring untracked-cost audiences to the brand parent CHANGES its ranking (intended) |
+| `/stats` `costPerRecipient*` (registry `type:"currency"`) | **observed** | DONE (PR3) — brand is the TOP grain here (no coarser grain fetched → no cascade), so observed (null on 0). Also killed a latent false-$0 (0 cost / >0 outcomes → was $0, now null). |
+| `/public/stats/cost-projection` | **projected** (already EV) | not yet routed through the module |
+| `pipeline-activity` cpc | **projected** (forecast) | not yet routed |
+| `/revenue` `spend` block (`total/actual/provisioned Cpc`) | **observed** (ACCOUNTING — real money) | keep observed |
 
-**PR1 (shipped) wired ONLY `workflow-projection`** to `projectedCostPerOutcome` with the crossOrg→brand→audience
-cascade (`buildGrainBlock` takes a `parentUnitCosts`; the assembly builds coarser-first and threads each
-grain's unit costs as the next finer grain's parent; audience blocks are built PER COUPLE so the floor uses
-that couple's brand/crossOrg parent). The other surfaces still compute inline and are migrated in follow-up
-PRs, each gated on its consumer. `ProjectedOutcomeCosts`/unit-cost shapes unchanged → no OpenAPI change.
-(Set 2026-07-07.)
+**A surface uses `projected` only where it HAS a coarser grain to floor against inside the endpoint;
+a top-grain surface with no coarser grain fetched uses `observed`.** workflow-projection has the full
+crossOrg→brand→audience ladder; audience-stats floors audience→brand (the brand parent is computed from
+audience-stats' OWN data — total tagged cost / distinct-union membership outcomes, no extra fetch, no
+grain mix); `/stats` is brand-only (no fleet parent fetched) → observed.
+
+**Engine guard:** `projectedCostPerOutcome` returns a real ratio ONLY when BOTH spend > 0 AND outcomes > 0;
+a 0-spend / >0-outcomes cell (cost un-attributed but outcomes tracked — the ~3% audienceId cost-tag gap)
+would be a false $0 as `spent/count`, so it floors to the parent instead (or null via `observed` when the
+parent is absent). workflow-projection never hits this (grains built only at spend > 0).
+
+**PR1** wired `workflow-projection` (parent = coarser grain's unit costs; audience blocks built PER COUPLE).
+**PR2** wired `audience-stats` (audience→brand; when the brand has no parent cpc, falls back to `observed`
+null — never a false $0). **PR3** wired `/stats` currency keys → `observed`. Response shapes unchanged
+across all three → no OpenAPI change. (Set 2026-07-07.)
 
 ## Per-goal `costPerPaidClient` chains through THAT goal's OWN funnel — coherent by construction (≥ the goal's outcome cost)
 

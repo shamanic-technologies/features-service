@@ -8,6 +8,7 @@ import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
 import { fetchEngagementSnapshotCounts, SNAPSHOT_ENGAGEMENT_KEYS } from "../lib/engagement-snapshot.js";
+import { observedCostPerOutcome } from "../lib/cost-engine.js";
 
 const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL!;
 const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY!;
@@ -107,7 +108,12 @@ function computeAllDerivedStats(rawStats: Record<string, number>): Record<string
     } else if (def.kind === "derived") {
       const num = rawStats[def.numerator];
       const den = rawStats[def.denominator];
-      if (num != null && den != null && den > 0) {
+      if (def.type === "currency") {
+        // cost-per-outcome via the shared engine. /stats is a top-grain (brand) surface with no coarser
+        // grain fetched → OBSERVED (real ratio, null on 0 — never a false $0, incl. the 0-cost / >0-outcome
+        // case the old `num/den` guard returned as $0.00). A projected fleet-parent floor is a follow-up.
+        result[key] = num != null && den != null ? observedCostPerOutcome(num, den) : null;
+      } else if (num != null && den != null && den > 0) {
         result[key] = num / den;
       } else {
         result[key] = null;
