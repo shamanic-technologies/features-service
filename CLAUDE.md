@@ -476,15 +476,24 @@ tests from `src` ONLY. Previously CI ran `pnpm build` (emits `dist/*.test.js`) b
 and removes the flake at the source. If a teardown error ever recurs despite this, confirm no
 new `include`/dist glob crept back in (`pnpm exec vitest list` must show only `src/` files).
 
-## Issue-tag in code comments — NEVER reuse the brief's *sibling* issue number for THIS work
+## Issue-tag in code comments — NEVER bake an UNCONFIRMED `features-service#NNN` (sibling OR guessed-next)
 
-This repo tags features in code/OpenAPI describe strings with `features-service#NNN`. When a brief
-references a sibling issue (e.g. "#388 is reconciling /stats — stay out of it"), that number is NOT
-this work's tag. Do NOT bake a specific `#NNN` into comments before confirming the number belongs to
-the current change — create the work's own issue first (or use the PR number) and tag with THAT.
-Baking the sibling's number in forces a doc-fix follow-up PR. Cost 2026-06-25 (repliedPositive series,
-PR #389): tagged the new series `features-service#388` (the /stats sibling) before #390 existed →
-needed PR #391 to correct the OpenAPI describe strings #388→#390.
+This repo tags features in code/OpenAPI describe strings with `features-service#NNN`. The number you
+bake in MUST be confirmed to belong to THIS work before you write it — two ways it goes wrong:
+1. **Reusing a sibling's number** the brief mentions (e.g. "#388 is reconciling /stats — stay out of it").
+2. **Guessing the next sequential number** (`HEAD PR is #472, so mine is ~#473`) — the actual next
+   number is often an unrelated sync/hotfix/docs PR that lands between your guess and your push.
+
+Do NOT bake a specific `#NNN` before confirming it. Options, cheapest first: **(a)** run
+`gh issue view <n>` / `gh pr view <n>` to confirm the number is FREE or already yours; **(b)** create the
+work's own issue FIRST and tag with it; **(c)** open the PR, read its number from `gh pr create`'s output,
+THEN `sed` the tag into the code + regen OpenAPI in a follow-up commit ON THE SAME BRANCH *before* it merges.
+Baking a wrong number forces a doc-fix follow-up PR (and if the first PR auto-merged on fast CI, a whole
+new branch, since you can't push to a merged PR's branch). Cost 2026-06-25 (repliedPositive, PR #389):
+tagged `#388` (a /stats sibling) → needed PR #391 to fix. **Recurrence 2026-07-07 (per-lead signup/form
+outcomes, PR #476): guessed `#473` from the branch HEAD — but #473 was an unrelated merged "sync hotfix
+v0.80.2 to staging" PR; the feature PR auto-merged before I noticed, forcing a fresh branch + retag PR
+#477 across 19 refs. A 5-second `gh pr view 473` at tag time would have shown it was taken.**
 
 ## Key Files
 
