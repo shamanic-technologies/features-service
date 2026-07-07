@@ -118,12 +118,27 @@ export interface Spend {
   // as cpsCents/totalCpcCents → cpfsCents × formSubmissionsCount ≈ committed spend). null when the count
   // is 0; ABSENT when the counts weren't served.
   cpfsCents?: number | null;
+  // REAL attributed positive replies for the brand — the single-step positive_replies goal's outcome,
+  // the reply-goal sibling of signups/meetings/form-submissions. A positive reply is an email
+  // engagement signal (NOT a lead-service conversion event), so it is sourced from the SAME deduped
+  // leads[] snapshot as recipientsRepliesPositive.total (coherent by construction — same predicate the
+  // Overview positive-replies actual series uses). ALWAYS present (leads are a fail-loud core input),
+  // unlike the conversion-counts tiles which are ABSENT when that soft read fails. (features-service#475)
+  positiveRepliesCount: number;
+  // REAL cost per positive reply = COMMITTED spend ÷ positiveRepliesCount (same COMMITTED denominator
+  // as totalCpcCents/cpsCents → cpprCents × positiveRepliesCount ≈ committed spend). null when the
+  // count is 0 (no denominator — never a false $0.00).
+  cpprCents: number | null;
 }
 
 function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: ConversionCounts | null = null): Spend {
   // clicks use the SAME per-lead predicate as the clicked SignalSeries, so the CPC denominator equals
   // the card's displayed "clicks" (clicked.total) — coherent by construction.
   const clicks = leads.reduce((n, l) => n + (l.clicked ? 1 : 0), 0);
+  // Positive replies use the SAME per-lead predicate as recipientsRepliesPositive (the Overview
+  // positive-replies actual series), so cpprCents's denominator equals that card's displayed count —
+  // coherent by construction. The single-step positive_replies goal's real outcome economics.
+  const positiveReplies = leads.reduce((n, l) => n + (l.repliedPositive ? 1 : 0), 0);
   const committed = breakdown.totalSpentCents;
   const actual = breakdown.actualSpentCents;
   const provisioned = breakdown.provisionedSpentCents;
@@ -155,6 +170,10 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: Convers
     totalCpcCents: observedCostPerOutcome(committed, clicks),
     actualCpcCents: observedCostPerOutcome(actual, clicks),
     provisionedCpcCents: observedCostPerOutcome(provisioned, clicks),
+    // REAL positive-reply outcome economics (ACCOUNTING → observed): committed spend ÷ the real count
+    // from the leads snapshot. Always present (leads always fetched); null cost when 0 (never a false $0).
+    positiveRepliesCount: positiveReplies,
+    cpprCents: observedCostPerOutcome(committed, positiveReplies),
     ...conversion,
   };
 }
