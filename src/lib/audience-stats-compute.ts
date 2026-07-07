@@ -8,6 +8,7 @@ import { fetchCurrentBrandProfile } from "./brand-client.js";
 import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, type AudienceFilters, type AudienceStatus } from "./human-client.js";
 import { fetchEmailOutcomes } from "./email-status-client.js";
 import { observedCostPerOutcome, projectedCostPerOutcome } from "./cost-engine.js";
+import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, type Goal } from "./goals.js";
 
 export type SortMetric = "cpc" | "cppr";
@@ -24,6 +25,13 @@ interface AudienceOutcomeEvidence {
   opened: number;
   websiteClicks: number;
   positiveReplies: number;
+  // REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by
+  // intersecting the audience's member emails with the brand's matched-lead conversion emails — the
+  // SAME membership join used for clicks/replies. Present ONLY for the form_submissions goal (the only
+  // surface that renders it); ABSENT (undefined) otherwise, and absent when lead-service didn't serve
+  // the conversion emails (a fake 0 would fabricate a false cost-per-form-submission). Never scoped by
+  // brand-profile; a conversion is attributed to whichever audience produced the matched lead.
+  formSubmissions?: number;
 }
 
 /**
@@ -43,6 +51,11 @@ export interface AudienceStatsRow {
   metrics: {
     cpcCents: number | null;
     cpprCents: number | null;
+    // REAL cost per form submission = audience-scoped spend / formSubmissions. OBSERVED (accounting —
+    // real spend ÷ real tracked conversions): null when 0 form submissions OR 0 attributed spend (never
+    // a false $0.00), and null (not present) for any goal other than form_submissions or when the
+    // conversion emails weren't served. Not part of the ranking (form_submissions ranks on cpc).
+    cpfsCents: number | null;
   };
 }
 
@@ -87,6 +100,21 @@ function emptyCost(): AudienceCostEvidence {
 
 function emptyOutcomes(): AudienceOutcomeEvidence {
   return { contacted: 0, opened: 0, websiteClicks: 0, positiveReplies: 0 };
+}
+
+/**
+ * Fetch the brand's matched-lead form-submission conversion emails, degrading to null (per-audience
+ * form-submission column ABSENT) on any failure — display enrichment, like the /revenue conversion-count
+ * tiles, so a pre-rollout / down lead-service never 502s the ranking. The client itself is fail-loud;
+ * this wrapper decides the degradation. Absent ≠ 0: a fake 0 would fabricate a false cost-per-form-submission.
+ */
+function fetchFormSubmissionEmailsSoft(brandId: string): Promise<Set<string> | null> {
+  return fetchConversionEmails(brandId, "form_submission").catch((err) => {
+    console.warn(
+      `[features-service] conversion-emails enrichment failed (degrading per-audience form submissions to absent): ${(err as Error).message}`,
+    );
+    return null;
+  });
 }
 
 function readFiniteNumber(value: unknown, field: string): number {
@@ -211,6 +239,10 @@ async function fetchAudienceOutcomes(
   brandId: string,
   audiences: Audience[],
   identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
+  // The brand's matched-lead form-submission conversion emails (lowercased), for the per-audience
+  // form-submission count via membership intersection. null when NOT the form_submissions goal, or when
+  // lead-service didn't serve them → each audience's formSubmissions stays ABSENT (never a false 0).
+  formSubmissionEmails: Set<string> | null = null,
 ): Promise<{ perAudience: Map<string, AudienceOutcomeEvidence>; brandGrain: AudienceOutcomeEvidence }> {
   const perAudience = await Promise.all(
     audiences.map(async (a) => ({ audienceId: a.id, emails: await fetchAudienceMemberEmails(a.id, identity) })),
@@ -222,14 +254,27 @@ async function fetchAudienceOutcomes(
   const result = new Map<string, AudienceOutcomeEvidence>();
   for (const { audienceId, emails } of perAudience) {
     const agg = emptyOutcomes();
+    // DISTINCT-member form-submission tally: count each member email at most once (mirrors the
+    // clicked/replied member-grain counts). Only when we have the conversion-email set.
+    let formSubmissions = formSubmissionEmails ? 0 : undefined;
+    const seenSubmitters = new Set<string>();
     for (const email of emails) {
       const o = outcomesByEmail.get(email);
-      if (!o) continue;
-      if (o.contacted) agg.contacted += 1;
-      if (o.opened) agg.opened += 1;
-      if (o.clicked) agg.websiteClicks += 1;
-      if (o.positiveReply) agg.positiveReplies += 1;
+      if (o) {
+        if (o.contacted) agg.contacted += 1;
+        if (o.opened) agg.opened += 1;
+        if (o.clicked) agg.websiteClicks += 1;
+        if (o.positiveReply) agg.positiveReplies += 1;
+      }
+      if (formSubmissionEmails) {
+        const key = email.trim().toLowerCase();
+        if (formSubmissionEmails.has(key) && !seenSubmitters.has(key)) {
+          seenSubmitters.add(key);
+          formSubmissions = (formSubmissions ?? 0) + 1;
+        }
+      }
     }
+    if (formSubmissions !== undefined) agg.formSubmissions = formSubmissions;
     result.set(audienceId, agg);
   }
 
@@ -302,9 +347,15 @@ export async function computeAudienceStats(req: Request): Promise<ComputeResult>
   ]);
   const brandProfileId = explicitBrandProfileId ?? currentProfile?.id ?? null;
 
+  // Per-audience form-submission attribution is fetched ONLY for the form_submissions goal (the only
+  // surface that renders it), so the hot ranking path for every other goal keeps its exact fan-out and
+  // never depends on the conversion tracker. Fail-soft → null → the column is absent, never a false 0.
+  const formSubmissionEmails =
+    normalizedGoal === "formSubmission" ? await fetchFormSubmissionEmailsSoft(brandId) : null;
+
   const [costs, outcomesResult] = await Promise.all([
     fetchAudienceCosts(brandId, featureSlug, identity),
-    fetchAudienceOutcomes(brandId, audiences, identity),
+    fetchAudienceOutcomes(brandId, audiences, identity, formSubmissionEmails),
   ]);
   const outcomes = outcomesResult.perAudience;
 
@@ -351,6 +402,13 @@ export async function computeAudienceStats(req: Request): Promise<ComputeResult>
           brandParentCppr != null
             ? projectedCostPerOutcome(cost.totalCostInUsdCents, outcome.positiveReplies, brandParentCppr)
             : observedCostPerOutcome(cost.totalCostInUsdCents, outcome.positiveReplies),
+        // OBSERVED (accounting): audience spend ÷ its real form submissions. null when the count is
+        // absent (not the form_submissions goal / emails not served) OR 0 (no denominator / no attributed
+        // spend) — never a false $0.00. Not used in ranking (form_submissions sorts on cpc).
+        cpfsCents:
+          outcome.formSubmissions !== undefined
+            ? observedCostPerOutcome(cost.totalCostInUsdCents, outcome.formSubmissions)
+            : null,
       },
     });
   }

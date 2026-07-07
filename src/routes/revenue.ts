@@ -106,10 +106,18 @@ export interface Spend {
   // These REPLACE the projected cps/cpsm dropped in features-service#406 with the REAL computation.
   signupsCount?: number;
   salesMeetingsCount?: number;
+  // REAL tracked form submissions (lead-service conversion tracker, event="form_submission") — the
+  // visit-driven micro-conversion, sibling of signups. The Form Submissions tile for a form_submissions
+  // brand. 0 when none; ABSENT when lead-service didn't serve the counts (never a fabricated 0).
+  formSubmissionsCount?: number;
   // REAL cost-per-conversion = COMMITTED spend (actual + provisioned, the same denominator the CPC
   // card uses) ÷ the real count. null when the count is 0 (no denominator — never a false $0.00).
   cpsCents?: number | null;
   cpsmCents?: number | null;
+  // REAL cost per form submission = committed spend ÷ formSubmissionsCount (same COMMITTED denominator
+  // as cpsCents/totalCpcCents → cpfsCents × formSubmissionsCount ≈ committed spend). null when the count
+  // is 0; ABSENT when the counts weren't served.
+  cpfsCents?: number | null;
 }
 
 function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: ConversionCounts | null = null): Spend {
@@ -129,8 +137,10 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: Convers
     ? {
         signupsCount: counts.signup,
         salesMeetingsCount: counts.meeting_booked,
+        formSubmissionsCount: counts.form_submission,
         cpsCents: observedCostPerOutcome(committed, counts.signup),
         cpsmCents: observedCostPerOutcome(committed, counts.meeting_booked),
+        cpfsCents: observedCostPerOutcome(committed, counts.form_submission),
       }
     : {};
 

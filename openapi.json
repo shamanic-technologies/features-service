@@ -717,6 +717,10 @@
                 "type": "integer",
                 "description": "REAL attributed sales meetings booked (lead-service conversion tracker) for the brand — the Sales Meetings tile. 0 when none. ABSENT on a cold / pre-rollout payload; never a fabricated 0."
               },
+              "formSubmissionsCount": {
+                "type": "integer",
+                "description": "REAL attributed form submissions (lead-service conversion tracker, event=form_submission, deduped, excludes 'ping') for the brand — the Form Submissions tile for a form_submissions brand (the visit-driven sibling of signups). 0 when none. ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0."
+              },
               "cpsCents": {
                 "type": "number",
                 "nullable": true,
@@ -726,6 +730,11 @@
                 "type": "number",
                 "nullable": true,
                 "description": "REAL cost per sales meeting = totalSpentCents (COMMITTED) / salesMeetingsCount, USD cents. null when salesMeetingsCount is 0. ABSENT when salesMeetingsCount is absent. Real tracked data, not a projection."
+              },
+              "cpfsCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "REAL cost per form submission = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / formSubmissionsCount, USD cents. So cpfsCents × formSubmissionsCount ≈ committed spend by construction. null when formSubmissionsCount is 0 (no denominator — never a false $0). ABSENT when formSubmissionsCount is absent. Real tracked data, not a projection."
               }
             },
             "required": [
@@ -2067,13 +2076,40 @@
                         "expected",
                         "conversionPct"
                       ]
+                    },
+                    "formSubmissions": {
+                      "type": "object",
+                      "properties": {
+                        "actual": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                        },
+                        "expected": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected daily value from brand daily budget, recommended workflow cost/contact, and audience/workflow evidence. Null when required producer inputs are unavailable."
+                        },
+                        "conversionPct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "visitToFormSubmissionPct used for form-submission projection. Null when brand economics are unavailable OR the brand does not carry a form-submission rate (non-form brand)."
+                        }
+                      },
+                      "required": [
+                        "actual",
+                        "expected",
+                        "conversionPct"
+                      ],
+                      "description": "Form-submission daily bar — the visit-driven sibling of signups. actual (today) = today's clicks × visitToFormSubmissionPct/100; expected = expected clicks × the same rate. Null values when the brand has no form-submission rate."
                     }
                   },
                   "required": [
                     "outreach",
                     "opens",
                     "clicks",
-                    "signups"
+                    "signups",
+                    "formSubmissions"
                   ]
                 }
               },
@@ -2101,12 +2137,18 @@
                 "type": "number",
                 "nullable": true,
                 "description": "Brand effective visit-to-signup conversion percent. Null when brand economics are unavailable."
+              },
+              "clickToFormSubmissionPct": {
+                "type": "number",
+                "nullable": true,
+                "description": "Brand effective visit-to-form-submission conversion percent (the form-submission projection rate). Null when brand economics are unavailable OR the brand does not carry a form-submission rate."
               }
             },
             "required": [
               "dailyBudgetUsd",
               "openRatePct",
-              "clickToSignupPct"
+              "clickToSignupPct",
+              "clickToFormSubmissionPct"
             ]
           }
         },
@@ -2135,7 +2177,8 @@
               "meetingBooked",
               "purchase",
               "websiteVisit",
-              "positiveReply"
+              "positiveReply",
+              "formSubmission"
             ]
           },
           "brandProfileId": {
@@ -2148,7 +2191,7 @@
               "cpc",
               "cppr"
             ],
-            "description": "signup sorts by CPC; meetingBooked and purchase sort by CPPR."
+            "description": "signup / websiteVisit / formSubmission sort by CPC (visit-driven); meetingBooked / purchase / positiveReply sort by CPPR."
           },
           "audiences": {
             "type": "array",
@@ -2322,6 +2365,10 @@
                     "positiveReplies": {
                       "type": "number",
                       "description": "Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."
+                    },
+                    "formSubmissions": {
+                      "type": "number",
+                      "description": "REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions."
                     }
                   },
                   "required": [
@@ -2347,11 +2394,17 @@
                       "type": "number",
                       "nullable": true,
                       "description": "totalCostInUsdCents / positiveReplies. Null when positiveReplies is zero OR no spend is attributed (totalCostInUsdCents is zero) — never a false $0.00."
+                    },
+                    "cpfsCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "REAL cost per form submission (OBSERVED) = totalCostInUsdCents / formSubmissions. Null when formSubmissions is 0/absent (not the form_submissions goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (form_submissions sorts on cpc)."
                     }
                   },
                   "required": [
                     "cpcCents",
-                    "cpprCents"
+                    "cpprCents",
+                    "cpfsCents"
                   ]
                 }
               },
@@ -4834,13 +4887,40 @@
                                   "expected",
                                   "conversionPct"
                                 ]
+                              },
+                              "formSubmissions": {
+                                "type": "object",
+                                "properties": {
+                                  "actual": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                                  },
+                                  "expected": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Expected daily value from brand daily budget, recommended workflow cost/contact, and audience/workflow evidence. Null when required producer inputs are unavailable."
+                                  },
+                                  "conversionPct": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "visitToFormSubmissionPct used for form-submission projection. Null when brand economics are unavailable OR the brand does not carry a form-submission rate (non-form brand)."
+                                  }
+                                },
+                                "required": [
+                                  "actual",
+                                  "expected",
+                                  "conversionPct"
+                                ],
+                                "description": "Form-submission daily bar — the visit-driven sibling of signups. actual (today) = today's clicks × visitToFormSubmissionPct/100; expected = expected clicks × the same rate. Null values when the brand has no form-submission rate."
                               }
                             },
                             "required": [
                               "outreach",
                               "opens",
                               "clicks",
-                              "signups"
+                              "signups",
+                              "formSubmissions"
                             ]
                           }
                         },
@@ -4868,12 +4948,18 @@
                           "type": "number",
                           "nullable": true,
                           "description": "Brand effective visit-to-signup conversion percent. Null when brand economics are unavailable."
+                        },
+                        "clickToFormSubmissionPct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Brand effective visit-to-form-submission conversion percent (the form-submission projection rate). Null when brand economics are unavailable OR the brand does not carry a form-submission rate."
                         }
                       },
                       "required": [
                         "dailyBudgetUsd",
                         "openRatePct",
-                        "clickToSignupPct"
+                        "clickToSignupPct",
+                        "clickToFormSubmissionPct"
                       ]
                     }
                   },
@@ -5084,7 +5170,8 @@
                         "meetingBooked",
                         "purchase",
                         "websiteVisit",
-                        "positiveReply"
+                        "positiveReply",
+                        "formSubmission"
                       ]
                     },
                     "brandProfileId": {
@@ -5097,7 +5184,7 @@
                         "cpc",
                         "cppr"
                       ],
-                      "description": "signup sorts by CPC; meetingBooked and purchase sort by CPPR."
+                      "description": "signup / websiteVisit / formSubmission sort by CPC (visit-driven); meetingBooked / purchase / positiveReply sort by CPPR."
                     },
                     "audiences": {
                       "type": "array",
@@ -5271,6 +5358,10 @@
                               "positiveReplies": {
                                 "type": "number",
                                 "description": "Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."
+                              },
+                              "formSubmissions": {
+                                "type": "number",
+                                "description": "REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions."
                               }
                             },
                             "required": [
@@ -5296,11 +5387,17 @@
                                 "type": "number",
                                 "nullable": true,
                                 "description": "totalCostInUsdCents / positiveReplies. Null when positiveReplies is zero OR no spend is attributed (totalCostInUsdCents is zero) — never a false $0.00."
+                              },
+                              "cpfsCents": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "REAL cost per form submission (OBSERVED) = totalCostInUsdCents / formSubmissions. Null when formSubmissions is 0/absent (not the form_submissions goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (form_submissions sorts on cpc)."
                               }
                             },
                             "required": [
                               "cpcCents",
-                              "cpprCents"
+                              "cpprCents",
+                              "cpfsCents"
                             ]
                           }
                         },
