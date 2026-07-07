@@ -181,7 +181,7 @@ export interface LeadRow {
    *     anchors to). NO date: lead-service exposes WHICH lead converted but NOT when — the conversion
    *     timestamp exists internally (dedupe buckets by calendar-day) but no endpoint surfaces it, so
    *     `signupAt`/`formSubmissionAt` stay null (never the outreach date — that would be the wrong
-   *     signal). Auto-populates when lead-service exposes the conversion date. features-service#473.
+   *     signal). Auto-populates when lead-service exposes the conversion date. features-service#476.
    */
   opened: boolean;
   openedAt: string | null;

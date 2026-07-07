@@ -120,7 +120,7 @@ export interface Spend {
   // is 0; ABSENT when the counts weren't served.
   cpfsCents?: number | null;
   // REAL attributed PURCHASES (lead-service conversion tracker, event="purchase") for the brand — the
-  // Purchases tile's brand-level aggregate (features-service#473). Equivalent to signupsCount /
+  // Purchases tile's brand-level aggregate (features-service#476). Equivalent to signupsCount /
   // salesMeetingsCount / formSubmissionsCount; the purchase count previously had no aggregate here
   // (per-lead purchased only). 0 when none; ABSENT when lead-service didn't serve the counts.
   purchasesCount?: number;
@@ -215,7 +215,7 @@ interface RevenueResponse {
    *     conversion tracker, attributed per lead by matched-email). These carry a REAL total (leads we
    *     can confirm converted) but an EMPTY `daily` with `undatedCount === total`, because lead-service
    *     exposes WHICH lead converted, not WHEN — the per-day trend populates once lead-service surfaces
-   *     the conversion date (features-service#473). Distinct from recipientsClicked (the visit PROXY).
+   *     the conversion date (features-service#476). Distinct from recipientsClicked (the visit PROXY).
    */
   recipientsOpened: SignalSeries;
   recipientsClicked: SignalSeries;
@@ -338,7 +338,7 @@ function fetchConversionCountsSoft(brandId: string): Promise<ConversionCounts | 
  * — these are per-lead display enrichment, exactly like the conversion-counts tiles + the sequences
  * series. Loud log, never a silent swallow. NOTE: lead-service exposes the matched lead (email) but
  * not the conversion timestamp, so this yields WHICH leads converted, not WHEN — the daily trend for
- * these outcomes populates only once lead-service surfaces the conversion date (features-service#473).
+ * these outcomes populates only once lead-service surfaces the conversion date (features-service#476).
  */
 interface ConversionOutcomeEmails {
   signup: Set<string> | null;
@@ -668,7 +668,7 @@ export async function computeFeatureRevenue(
   // them) — pure per-lead display outcomes, like meetingBooked/purchased. NO date is set: lead-service
   // exposes the matched lead but not the conversion timestamp, so signalDates.signup/formSubmission
   // stay null (borrowing the outreach date would be the wrong signal) → the daily series reports these
-  // leads as undated. Set BEFORE computeRevenue so the engine maps them onto leads[] (features-service#473).
+  // leads as undated. Set BEFORE computeRevenue so the engine maps them onto leads[] (features-service#476).
   for (const person of persons) {
     const email = person.email?.trim().toLowerCase();
     if (!email) continue;
