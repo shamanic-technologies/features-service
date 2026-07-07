@@ -744,6 +744,15 @@
                 "type": "number",
                 "nullable": true,
                 "description": "REAL cost per purchase = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / purchasesCount, USD cents. So cppCents × purchasesCount ≈ committed spend by construction. null when purchasesCount is 0 (no denominator — never a false $0). ABSENT when purchasesCount is absent. Real tracked data, not a projection. features-service#476."
+              },
+              "positiveRepliesCount": {
+                "type": "integer",
+                "description": "REAL attributed positive replies for the brand — the single-step positive_replies goal's outcome (reply-goal sibling of signups/meetings/form-submissions), the Positive Replies tile. Deduped by lead from the SAME leads[] snapshot as recipientsRepliesPositive.total (a positive reply is an email engagement signal, NOT a lead-service conversion event), so ALWAYS present (leads are a fail-loud core input) — never absent, unlike the conversion-counts tiles. 0 when none. (features-service#482)"
+              },
+              "cpprCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "REAL cost per positive reply = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents/cpsCents) / positiveRepliesCount, USD cents. So cpprCents × positiveRepliesCount ≈ committed spend by construction. null when positiveRepliesCount is 0 (no denominator — never a false $0). Real tracked data, not a projection. (features-service#482)"
               }
             },
             "required": [
@@ -756,7 +765,9 @@
               "sources",
               "totalCpcCents",
               "actualCpcCents",
-              "provisionedCpcCents"
+              "provisionedCpcCents",
+              "positiveRepliesCount",
+              "cpprCents"
             ],
             "description": "Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"
           },

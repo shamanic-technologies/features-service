@@ -133,7 +133,7 @@ export interface Spend {
   // engagement signal (NOT a lead-service conversion event), so it is sourced from the SAME deduped
   // leads[] snapshot as recipientsRepliesPositive.total (coherent by construction — same predicate the
   // Overview positive-replies actual series uses). ALWAYS present (leads are a fail-loud core input),
-  // unlike the conversion-counts tiles which are ABSENT when that soft read fails. (features-service#475)
+  // unlike the conversion-counts tiles which are ABSENT when that soft read fails. (features-service#482)
   positiveRepliesCount: number;
   // REAL cost per positive reply = COMMITTED spend ÷ positiveRepliesCount (same COMMITTED denominator
   // as totalCpcCents/cpsCents → cpprCents × positiveRepliesCount ≈ committed spend). null when the

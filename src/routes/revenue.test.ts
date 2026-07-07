@@ -951,7 +951,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.cppCents * res.body.spend.purchasesCount).toBe(res.body.spend.totalSpentCents);
     // Positive replies (single-step positive_replies goal outcome): HAPPY_LEADS carries 1 positive
     // reply (== recipientsRepliesPositive.total), sourced from the leads snapshot (NOT conversion-counts)
-    // → always present; cppr = committed 10000 ÷ 1. features-service#475.
+    // → always present; cppr = committed 10000 ÷ 1. features-service#482.
     expect(res.body.spend.positiveRepliesCount).toBe(1);
     expect(res.body.spend.positiveRepliesCount).toBe(res.body.recipientsRepliesPositive.total);
     expect(res.body.spend.cpprCents).toBe(10000 / 1);
@@ -977,7 +977,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.cpprCents).toBe(7000 / 1);
   });
 
-  it("spend — positive replies null-denominator: 0 positive replies → positiveRepliesCount 0 + cpprCents null (never a false $0) (features-service#475)", async () => {
+  it("spend — positive replies null-denominator: 0 positive replies → positiveRepliesCount 0 + cpprCents null (never a false $0) (features-service#482)", async () => {
     // No leads carry a positive reply → count 0, cost null even though there IS committed spend.
     mockFetch({ economics: ECONOMICS, leads: [], costCents: 8000 });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
@@ -988,7 +988,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.cpprCents).toBeNull();
   });
 
-  it("spend — positive-reply outcome present even when lead-service conversion-counts unavailable (leads-sourced) (features-service#475)", async () => {
+  it("spend — positive-reply outcome present even when lead-service conversion-counts unavailable (leads-sourced) (features-service#482)", async () => {
     // conversion tiles (signups/meetings) degrade to ABSENT, but the positive-reply outcome rides the
     // leads snapshot (a fail-loud core input), so it stays present.
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000, conversionCountsFail: true });
