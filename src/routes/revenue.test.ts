@@ -949,6 +949,13 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.purchasesCount).toBe(1);
     expect(res.body.spend.cppCents).toBe(10000 / 1);
     expect(res.body.spend.cppCents * res.body.spend.purchasesCount).toBe(res.body.spend.totalSpentCents);
+    // Positive replies (single-step positive_replies goal outcome): HAPPY_LEADS carries 1 positive
+    // reply (== recipientsRepliesPositive.total), sourced from the leads snapshot (NOT conversion-counts)
+    // → always present; cppr = committed 10000 ÷ 1. features-service#475.
+    expect(res.body.spend.positiveRepliesCount).toBe(1);
+    expect(res.body.spend.positiveRepliesCount).toBe(res.body.recipientsRepliesPositive.total);
+    expect(res.body.spend.cpprCents).toBe(10000 / 1);
+    expect(res.body.spend.cpprCents * res.body.spend.positiveRepliesCount).toBe(res.body.spend.totalSpentCents);
   });
 
   it("spend — REAL conversions null-denominator: 0 signups/meetings → cpsCents/cpsmCents null (never a false $0), count still 0", async () => {
@@ -965,6 +972,31 @@ describe("GET /features/:featureSlug/revenue", () => {
     // 0 purchases → count 0 but cpp null (no denominator), never a false $0 (#476).
     expect(res.body.spend.purchasesCount).toBe(0);
     expect(res.body.spend.cppCents).toBeNull();
+    // HAPPY_LEADS still carries 1 positive reply (leads-sourced, independent of conversion-counts).
+    expect(res.body.spend.positiveRepliesCount).toBe(1);
+    expect(res.body.spend.cpprCents).toBe(7000 / 1);
+  });
+
+  it("spend — positive replies null-denominator: 0 positive replies → positiveRepliesCount 0 + cpprCents null (never a false $0) (features-service#475)", async () => {
+    // No leads carry a positive reply → count 0, cost null even though there IS committed spend.
+    mockFetch({ economics: ECONOMICS, leads: [], costCents: 8000 });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.spend.totalSpentCents).toBe(8000);
+    expect(res.body.spend.positiveRepliesCount).toBe(0);
+    expect(res.body.spend.positiveRepliesCount).toBe(res.body.recipientsRepliesPositive.total);
+    expect(res.body.spend.cpprCents).toBeNull();
+  });
+
+  it("spend — positive-reply outcome present even when lead-service conversion-counts unavailable (leads-sourced) (features-service#475)", async () => {
+    // conversion tiles (signups/meetings) degrade to ABSENT, but the positive-reply outcome rides the
+    // leads snapshot (a fail-loud core input), so it stays present.
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000, conversionCountsFail: true });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.spend).not.toHaveProperty("signupsCount");
+    expect(res.body.spend.positiveRepliesCount).toBe(1);
+    expect(res.body.spend.cpprCents).toBe(7000 / 1);
   });
 
   it("spend — lead-service unavailable (pre-rollout) → conversion tiles ABSENT, rest of spend block intact (fail-soft)", async () => {
