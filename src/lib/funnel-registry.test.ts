@@ -139,6 +139,8 @@ describe("projectOutcomeCosts — expected cost per purchase / meeting", () => {
       costPerPurchaseUsd: null,
       costPerMeetingBookedUsd: null,
       costPerSignupUsd: null,
+      costPerSignupPaidClientUsd: null,
+      costPerMeetingPaidClientUsd: null,
       costPerVisitPaidClientUsd: null,
       costPerReplyPaidClientUsd: null,
       costPerFormSubmissionUsd: null,
@@ -147,11 +149,13 @@ describe("projectOutcomeCosts — expected cost per purchase / meeting", () => {
   });
 
   it("zero conversion rates → perBudget 0 → all null", () => {
-    const dead = { r2m: 0, v2m: 0, m2c: 0, v2c: 0, v2s: 0, v2pc: 0, r2pc: 0, v2fs: 0, fs2pc: 0 };
+    const dead = { r2m: 0, v2m: 0, m2c: 0, v2c: 0, v2s: 0, s2pc: 0, v2pc: 0, r2pc: 0, v2fs: 0, fs2pc: 0 };
     expect(projectOutcomeCosts(dead, { clickUsd: 10, replyUsd: 5 })).toEqual({
       costPerPurchaseUsd: null,
       costPerMeetingBookedUsd: null,
       costPerSignupUsd: null,
+      costPerSignupPaidClientUsd: null,
+      costPerMeetingPaidClientUsd: null,
       costPerVisitPaidClientUsd: null,
       costPerReplyPaidClientUsd: null,
       costPerFormSubmissionUsd: null,
@@ -167,6 +171,50 @@ describe("projectOutcomeCosts — expected cost per purchase / meeting", () => {
   it("signup cost null when there is no click cost (replies do not fund signups)", () => {
     const { costPerSignupUsd } = projectOutcomeCosts(econ, { clickUsd: null, replyUsd: 5 });
     expect(costPerSignupUsd).toBeNull();
+  });
+});
+
+describe("projectOutcomeCosts — per-goal paid-client cost is COHERENT with the goal's outcome cost", () => {
+  // s2pc = 0.20 (signup→paid 20%) added to the legacy econ.
+  const econ = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04, s2pc: 0.2 };
+
+  it("SIGNUP paid-client = costPerSignup / s2pc, and is ALWAYS ≥ costPerSignup", () => {
+    const { costPerSignupUsd, costPerSignupPaidClientUsd } = projectOutcomeCosts(econ, { clickUsd: 10, replyUsd: 5 });
+    // clickUsd/(v2s·s2pc) = 10/(0.04·0.2) = 1250; costPerSignup = 10/0.04 = 250; 1250 = 250/0.2 ✓
+    expect(costPerSignupPaidClientUsd).toBeCloseTo(10 / (econ.v2s * econ.s2pc));
+    expect(costPerSignupPaidClientUsd!).toBeCloseTo(costPerSignupUsd! / econ.s2pc);
+    expect(costPerSignupPaidClientUsd!).toBeGreaterThanOrEqual(costPerSignupUsd!);
+  });
+
+  it("SIGNUP paid-client null when there is no click cost (replies do not fund signups)", () => {
+    const { costPerSignupPaidClientUsd } = projectOutcomeCosts(econ, { clickUsd: null, replyUsd: 5 });
+    expect(costPerSignupPaidClientUsd).toBeNull();
+  });
+
+  it("SIGNUP paid-client null when s2pc is unset (legacy econ without the rate) — zero-denom gate", () => {
+    const noS2pc = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04 };
+    expect(projectOutcomeCosts(noS2pc, { clickUsd: 10, replyUsd: 5 }).costPerSignupPaidClientUsd).toBeNull();
+  });
+
+  it("MEETING-BOOKED paid-client = the two meeting→paid routes = costPerMeetingBooked / m2c, ≥ it", () => {
+    const clickUsd = 10;
+    const replyUsd = 5;
+    const meetingPaidPerBudget = (1 / clickUsd) * econ.v2m * econ.m2c + (1 / replyUsd) * econ.r2m * econ.m2c;
+    const { costPerMeetingBookedUsd, costPerMeetingPaidClientUsd } = projectOutcomeCosts(econ, { clickUsd, replyUsd });
+    expect(costPerMeetingPaidClientUsd).toBeCloseTo(1 / meetingPaidPerBudget);
+    expect(costPerMeetingPaidClientUsd!).toBeCloseTo(costPerMeetingBookedUsd! / econ.m2c);
+    expect(costPerMeetingPaidClientUsd!).toBeGreaterThanOrEqual(costPerMeetingBookedUsd!);
+  });
+
+  it("MEETING-BOOKED paid-client does NOT include the self-serve v2c route (that is the purchase goal)", () => {
+    // costPerPurchase includes orP(v2c, v2m·m2c) → strictly cheaper (more routes) than the meeting-only cost.
+    const { costPerPurchaseUsd, costPerMeetingPaidClientUsd } = projectOutcomeCosts(econ, { clickUsd: 10, replyUsd: 5 });
+    expect(costPerMeetingPaidClientUsd!).toBeGreaterThan(costPerPurchaseUsd!);
+  });
+
+  it("MEETING-BOOKED paid-client null when both meeting routes are 0 (r2m=v2m=0) — never a false $0", () => {
+    const noMeetings = { r2m: 0, v2m: 0, m2c: 0.3, v2c: 0.02, v2s: 0.04, s2pc: 0.2 };
+    expect(projectOutcomeCosts(noMeetings, { clickUsd: 10, replyUsd: 5 }).costPerMeetingPaidClientUsd).toBeNull();
   });
 });
 

@@ -97,6 +97,7 @@ interface WorkflowProjectionResponse {
 function paidClientCostForGoal(
   econ: ProjectionEconomics,
   unitCosts: { clickUsd: number | null; replyUsd: number | null },
+  objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
 ): number | null {
@@ -104,7 +105,13 @@ function paidClientCostForGoal(
   if (singleStepGoal === "websiteVisit") return p.costPerVisitPaidClientUsd;
   if (singleStepGoal === "positiveReply") return p.costPerReplyPaidClientUsd;
   if (formSubmissionGoal) return p.costPerFormSubmissionPaidClientUsd;
-  return p.costPerPurchaseUsd;
+  // Each goal's paid-client cost chains through ITS OWN funnel (coherent: always ≥ that goal's outcome
+  // cost). signup/self-serve → visit→signup→paid; meeting-booked → the meeting→paid routes; purchase →
+  // the full self-serve+meeting close funnel. Do NOT collapse signup/meeting onto costPerPurchase — its
+  // rates are unrelated to their step and read incoherently below the goal's own outcome cost.
+  if (objective === "purchase") return p.costPerPurchaseUsd;
+  if (objective === "meeting-booked") return p.costPerMeetingPaidClientUsd;
+  return p.costPerSignupPaidClientUsd; // signup / self-serve
 }
 
 /**
@@ -140,6 +147,7 @@ function buildGrainBlock(
   evidence: WorkflowGrainEvidence | AudienceGrainEvidence,
   econ: ProjectionEconomics | null,
   ltrUsd: number | null,
+  objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
 ): GrainBlock {
@@ -165,7 +173,7 @@ function buildGrainBlock(
   } else {
     const unitCosts = { clickUsd: costPerClickUsd, replyUsd: costPerPositiveReplyUsd };
     const p = projectOutcomeCosts(econ, unitCosts);
-    const costPerPaidClientUsd = paidClientCostForGoal(econ, unitCosts, singleStepGoal, formSubmissionGoal);
+    const costPerPaidClientUsd = paidClientCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal);
     const roiMultiple = ltrUsd != null && costPerPaidClientUsd != null && costPerPaidClientUsd > 0 ? ltrUsd / costPerPaidClientUsd : null;
     const cacPct = roiMultiple != null && roiMultiple > 0 ? 100 / roiMultiple : null;
     projected = {
@@ -285,6 +293,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
           m2c: economics.meetingToClosePct / 100,
           v2c: economics.visitToClosePct / 100,
           v2s: economics.visitToSignupPct / 100,
+          s2pc: economics.signupToPaidClientPct / 100,
           ...(singleStepGoal === "websiteVisit" ? { v2pc: singleStepRateDecimal(economics, "websiteVisit") } : {}),
           ...(singleStepGoal === "positiveReply" ? { r2pc: singleStepRateDecimal(economics, "positiveReply") } : {}),
           ...(formSubmissionGoal ? formSubmissionRatesDecimal(economics) : {}),
@@ -314,7 +323,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       : null;
 
     const buildBlock = (ev: WorkflowGrainEvidence | AudienceGrainEvidence): GrainBlock =>
-      buildGrainBlock(ev, econ, ltrUsd, singleStepGoal, formSubmissionGoal);
+      buildGrainBlock(ev, econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal);
     const resolve = (grains: Partial<Record<GrainName, GrainBlock>>): ResolvedBlock =>
       resolvePick(grains, econ, objective, singleStepGoal, formSubmissionGoal);
 
