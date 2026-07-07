@@ -12,10 +12,11 @@ import { fetchWithRetry } from "./fetch-retry.js";
  * (real producer-side attribution — NOT a split of the brand total, NOT hashing).
  *
  * Contract ownership: lead-service OWNS the endpoint path, query param, and response shape. This
- * reader conforms to the deployed shape (verified via the API registry — live > source). It reads a
- * `{ emails: string[] }` body and normalises (lowercase + trim) so the membership intersection is
- * case-insensitive regardless of how either side stores addresses. If lead-service ships a different
- * field name, conform HERE (the caller degrades to absent until then — see the soft wrapper).
+ * reader conforms to the DEPLOYED shape — lead-service v0.41.0 serves it as
+ * `GET /internal/brands/:brandId/converted-lead-emails?event=<type>` returning `{ event, emails }`,
+ * where `emails` is the DISTINCT set of matched-lead canonical (primary) emails, already lowercased.
+ * We read `emails` (ignore the echoed `event`) and re-normalise (lowercase + trim) so the membership
+ * intersection is case-insensitive regardless of how either side stores addresses.
  *
  * Fail-loud: a swallowed error would fabricate "zero form submissions" for an audience → a false
  * cost-per-form-submission. Any missing config / transport / non-OK / malformed response throws; the
@@ -40,22 +41,22 @@ export async function fetchConversionEmails(brandId: string, event: ConversionEv
 
   const params = new URLSearchParams({ event });
   const response = await fetchWithRetry(
-    `${url}/internal/brands/${encodeURIComponent(brandId)}/conversion-emails?${params}`,
+    `${url}/internal/brands/${encodeURIComponent(brandId)}/converted-lead-emails?${params}`,
     { headers: { "x-api-key": apiKey, "x-service-name": "features-service" } },
   );
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`lead-service /internal/brands/:brandId/conversion-emails failed (${response.status}): ${text}`);
+    throw new Error(`lead-service /internal/brands/:brandId/converted-lead-emails failed (${response.status}): ${text}`);
   }
 
   const data = (await response.json()) as { emails?: unknown };
   if (!Array.isArray(data.emails)) {
-    throw new Error("lead-service /internal/brands/:brandId/conversion-emails returned no emails array");
+    throw new Error("lead-service /internal/brands/:brandId/converted-lead-emails returned no emails array");
   }
   const result = new Set<string>();
   for (const raw of data.emails) {
     if (typeof raw !== "string") {
-      throw new Error("lead-service /internal/brands/:brandId/conversion-emails returned a non-string email");
+      throw new Error("lead-service /internal/brands/:brandId/converted-lead-emails returned a non-string email");
     }
     const normalized = raw.trim().toLowerCase();
     if (normalized) result.add(normalized);

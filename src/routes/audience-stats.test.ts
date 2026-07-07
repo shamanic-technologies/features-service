@@ -268,7 +268,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     const CONVERSION_EMAILS = ["a1", "a3", "b2"];
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = urlOf(input);
-      if (url.includes("lead:3000/internal/brands/brand-1/conversion-emails")) {
+      if (url.includes("lead:3000/internal/brands/brand-1/converted-lead-emails")) {
         expect(new URL(url).searchParams.get("event")).toBe("form_submission");
         return new Response(JSON.stringify({ emails: CONVERSION_EMAILS }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
@@ -313,7 +313,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
   });
 
   it("goal=formSubmission degrades to absent form submissions (null cpfs, never $0) when lead-service is unavailable", async () => {
-    // Default mock returns {} for conversion-emails → client throws → soft-degrades to absent.
+    // Default mock returns {} for converted-lead-emails → client throws → soft-degrades to absent.
     fetchSpy = mockFetch();
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=formSubmission")
@@ -323,13 +323,13 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(res.body.audiences.every((r: any) => r.metrics.cpfsCents === null)).toBe(true);
   });
 
-  it("non-form goals never call the conversion-emails read and carry null cpfs", async () => {
+  it("non-form goals never call the converted-lead-emails read and carry null cpfs", async () => {
     fetchSpy = mockFetch();
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup")
       .set(AUTH);
     expect(res.status).toBe(200);
-    const calledLead = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).some((u: string) => u.includes("conversion-emails"));
+    const calledLead = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).some((u: string) => u.includes("converted-lead-emails"));
     expect(calledLead).toBe(false);
     expect(res.body.audiences.every((r: any) => r.metrics.cpfsCents === null)).toBe(true);
     expect(res.body.audiences.every((r: any) => r.evidence.formSubmissions === undefined)).toBe(true);
