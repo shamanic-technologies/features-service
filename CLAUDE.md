@@ -494,6 +494,11 @@ tagged `#388` (a /stats sibling) → needed PR #391 to fix. **Recurrence 2026-07
 outcomes, PR #476): guessed `#473` from the branch HEAD — but #473 was an unrelated merged "sync hotfix
 v0.80.2 to staging" PR; the feature PR auto-merged before I noticed, forcing a fresh branch + retag PR
 #477 across 19 refs. A 5-second `gh pr view 473` at tag time would have shown it was taken.**
+**THIRD recurrence 2026-07-07 (positive-reply spend fields, PR #481): guessed `#475` from HEAD PR #474
+— but #475 was the unrelated form_submissions GitHub ISSUE; forced retag PR #483. Three strikes, all
+same-day, all on the `spend`-block parallel-workspace cluster → the guess reflex is the failure. HARD
+RULE going forward: do NOT type any `features-service#NNN` from memory/arithmetic — create the issue
+(or open the PR) FIRST, then paste the REAL number. `gh {issue,pr} view <n>` before baking is mandatory.**
 
 ## Key Files
 
