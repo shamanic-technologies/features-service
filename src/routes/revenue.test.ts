@@ -853,6 +853,8 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend).not.toHaveProperty("salesMeetingsCount");
     expect(res.body.spend).not.toHaveProperty("cpsCents");
     expect(res.body.spend).not.toHaveProperty("cpsmCents");
+    expect(res.body.spend).not.toHaveProperty("formSubmissionsCount");
+    expect(res.body.spend).not.toHaveProperty("cpfsCents");
   });
 
   it("spend — REAL conversions: signupsCount/salesMeetingsCount + cpsCents/cpsmCents = COMMITTED spend ÷ real count (features-service#461)", async () => {
@@ -883,6 +885,10 @@ describe("GET /features/:featureSlug/revenue", () => {
     // Coherence AC: cpsCents × signupsCount == committed spend (totalSpentCents).
     expect(res.body.spend.cpsCents * res.body.spend.signupsCount).toBe(res.body.spend.totalSpentCents);
     expect(res.body.spend.cpsmCents * res.body.spend.salesMeetingsCount).toBe(res.body.spend.totalSpentCents);
+    // Form submissions (visit-driven sibling of signups): 7 tracked → cpfs = committed 10000 ÷ 7.
+    expect(res.body.spend.formSubmissionsCount).toBe(7);
+    expect(res.body.spend.cpfsCents).toBe(10000 / 7);
+    expect(res.body.spend.cpfsCents * res.body.spend.formSubmissionsCount).toBe(res.body.spend.totalSpentCents);
   });
 
   it("spend — REAL conversions null-denominator: 0 signups/meetings → cpsCents/cpsmCents null (never a false $0), count still 0", async () => {
@@ -893,6 +899,9 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.salesMeetingsCount).toBe(0);
     expect(res.body.spend.cpsCents).toBeNull();
     expect(res.body.spend.cpsmCents).toBeNull();
+    // 0 form submissions → count 0 but cpfs null (no denominator), never a false $0.
+    expect(res.body.spend.formSubmissionsCount).toBe(0);
+    expect(res.body.spend.cpfsCents).toBeNull();
   });
 
   it("spend — lead-service unavailable (pre-rollout) → conversion tiles ABSENT, rest of spend block intact (fail-soft)", async () => {
