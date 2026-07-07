@@ -393,12 +393,15 @@ describe("GET /features/:featureSlug/audience-stats", () => {
 
     expect(res.status).toBe(200);
     const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
-    // audience-a: clicks > 0 but no attributed spend → CPC null (renders "-"), NOT $0.00.
+    // audience-a: clicks > 0 but no attributed spend (cost un-attributed) → PROJECTED floors to the brand
+    // parent cpc (audience→brand), NOT a false $0 and NOT null. brand parent = brand total tagged cost 1000
+    // / distinct union clicks 30 (10 in a + 20 in b, all clicked) = 33.33¢.
     expect(byId["audience-a"].evidence.websiteClicks).toBeGreaterThan(0);
     expect(byId["audience-a"].evidence.totalCostInUsdCents).toBe(0);
-    expect(byId["audience-a"].metrics.cpcCents).toBeNull();
-    // audience-b: real spend → real CPC, and sorts ahead of the null-CPC audience.
+    expect(byId["audience-a"].metrics.cpcCents).toBeCloseTo(1000 / 30, 6);
+    // audience-b: real spend → real CPC (parent ignored), unchanged.
     expect(byId["audience-b"].metrics.cpcCents).toBe(50);
-    expect(res.body.audiences[0].audienceId).toBe("audience-b");
+    // audience-a (33.33¢, brand-floored) now sorts ahead of audience-b (50¢, real).
+    expect(res.body.audiences[0].audienceId).toBe("audience-a");
   });
 });
