@@ -45,13 +45,18 @@ export function __resetPublicStatsCache(): void {
   publicWorkflowLatencyCache.clear();
 }
 
-function getPublicCache<T>(cache: Map<string, { payload: unknown; expiresAt: number }>, key: string): T | null {
+// The ONE in-memory memo primitive shared by EVERY cross-org /public/* + /internal/stats/* endpoint
+// (these have no per-org scope_key, so they don't use the Gold `feature_view_snapshots` layer). Every
+// cache is a `PublicCache` (uniform shape) → one get/set/TTL, the caller names the payload type via <T>.
+type PublicCache = Map<string, { payload: unknown; expiresAt: number }>;
+
+function getPublicCache<T>(cache: PublicCache, key: string): T | null {
   const cached = cache.get(key);
   if (!cached || cached.expiresAt <= Date.now()) return null;
   return cached.payload as T;
 }
 
-function setPublicCache<T>(cache: Map<string, { payload: unknown; expiresAt: number }>, key: string, payload: T): void {
+function setPublicCache<T>(cache: PublicCache, key: string, payload: T): void {
   cache.set(key, { payload, expiresAt: Date.now() + PUBLIC_STATS_TTL_MS });
 }
 
@@ -479,8 +484,6 @@ export async function handleBest(
 // dashboard. The compute is heavy (one engine pass per (org, brand)), so the assembled
 // response is cached in-memory for a short TTL — it is the same for every public caller.
 
-const REVENUE_TTL_MS = 60_000;
-
 interface PublicRevenueResult {
   brand: { id: string; name: string | null; domain: string | null };
   headline: { totalPipelineUsd: number | null };
@@ -493,7 +496,7 @@ interface PublicRevenuePayload {
   results: PublicRevenueResult[];
 }
 
-const revenueCache = new Map<string, { payload: PublicRevenuePayload; expiresAt: number }>();
+const revenueCache: PublicCache = new Map();
 
 /** Test seam — reset the in-memory public-revenue cache. */
 export function __resetPublicRevenueCache(): void {
@@ -537,9 +540,9 @@ export async function handlePublicRevenue(
   }
 
   const cacheKey = `${featureSlug}:${groupBy}`;
-  const cached = revenueCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    res.json(rollup ? revenueRollup(cached.payload) : cached.payload);
+  const cached = getPublicCache<PublicRevenuePayload>(revenueCache, cacheKey);
+  if (cached) {
+    res.json(rollup ? revenueRollup(cached) : cached);
     return;
   }
 
@@ -631,7 +634,7 @@ export async function handlePublicRevenue(
   });
 
   const payload: PublicRevenuePayload = { featureSlug, groupBy: "brand", results };
-  revenueCache.set(cacheKey, { payload, expiresAt: Date.now() + REVENUE_TTL_MS });
+  setPublicCache(revenueCache, cacheKey, payload);
   res.json(rollup ? revenueRollup(payload) : payload);
 }
 
@@ -744,8 +747,6 @@ export async function handlePublicWorkflowEngagementLatency(
 // no auth. brand-service owns the null→cross-brand-average economics defaulting; a brand with no usable
 // economics contributes nothing. One economics fetch per brand → cached in-memory briefly.
 
-const COST_PROJECTION_TTL_MS = 60_000;
-
 interface PublicCostProjectionPayload {
   featureSlug: string;
   avgCostPerMeetingBooked: number | null;
@@ -753,7 +754,7 @@ interface PublicCostProjectionPayload {
   brandCount: number;
 }
 
-const costProjectionCache = new Map<string, { payload: PublicCostProjectionPayload; expiresAt: number }>();
+const costProjectionCache: PublicCache = new Map();
 
 /** Test seam — reset the in-memory cost-projection cache. */
 export function __resetPublicCostProjectionCache(): void {
@@ -775,9 +776,9 @@ export async function handlePublicCostProjection(
     return;
   }
 
-  const cached = costProjectionCache.get(featureSlug);
-  if (cached && cached.expiresAt > Date.now()) {
-    res.json(cached.payload);
+  const cached = getPublicCache<PublicCostProjectionPayload>(costProjectionCache, featureSlug);
+  if (cached) {
+    res.json(cached);
     return;
   }
 
@@ -858,7 +859,7 @@ export async function handlePublicCostProjection(
     avgCostPerPurchase: mean(usable.map((b) => b.bestPurchase).filter((v): v is number => v !== null)),
     brandCount: usable.length,
   };
-  costProjectionCache.set(featureSlug, { payload, expiresAt: Date.now() + COST_PROJECTION_TTL_MS });
+  setPublicCache(costProjectionCache, featureSlug, payload);
   res.json(payload);
 }
 
@@ -873,7 +874,7 @@ interface SendForecastPayload {
   summary: SendForecastSummary;
 }
 
-const sendForecastCache = new Map<string, { payload: SendForecastPayload; expiresAt: number }>();
+const sendForecastCache: PublicCache = new Map();
 
 /** Test seam — reset the in-memory send-forecast cache. */
 export function __resetSendForecastCache(): void {
@@ -891,9 +892,9 @@ export async function handleSendForecast(daysParam: string | undefined, res: imp
   const days = Number.isFinite(parsed) && parsed >= 1 ? Math.min(parsed, MAX_FORECAST_DAYS) : DEFAULT_FORECAST_DAYS;
 
   const cacheKey = `send-forecast:${days}`;
-  const cached = sendForecastCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    res.json(cached.payload);
+  const cached = getPublicCache<SendForecastPayload>(sendForecastCache, cacheKey);
+  if (cached) {
+    res.json(cached);
     return;
   }
 
@@ -927,17 +928,18 @@ export async function handleSendForecast(daysParam: string | undefined, res: imp
     },
   });
 
-  sendForecastCache.set(cacheKey, { payload, expiresAt: Date.now() + PUBLIC_STATS_TTL_MS });
+  setPublicCache(sendForecastCache, cacheKey, payload);
   res.json(payload);
 }
 
 // ── GET /internal/stats/accounts ─────────────────────────────────────────────
 
-let accountsCache: { payload: AccountsAudit; expiresAt: number } | null = null;
+// Single global (cross-org) result → a 1-key Map so it uses the SAME shared memo helper as the others.
+const accountsCache: PublicCache = new Map();
 
 /** Test seam — reset the in-memory accounts-audit cache. */
 export function __resetAccountsCache(): void {
-  accountsCache = null;
+  accountsCache.clear();
 }
 
 /**
@@ -948,8 +950,9 @@ export function __resetAccountsCache(): void {
  * accounts-compute.ts. 60s in-memory cache, same pattern as the other /internal/stats/* audits.
  */
 export async function handleAccounts(res: import("express").Response): Promise<void> {
-  if (accountsCache && accountsCache.expiresAt > Date.now()) {
-    res.json(accountsCache.payload);
+  const cached = getPublicCache<AccountsAudit>(accountsCache, "accounts");
+  if (cached) {
+    res.json(cached);
     return;
   }
 
@@ -958,7 +961,7 @@ export async function handleAccounts(res: import("express").Response): Promise<v
 
   const payload = await buildAccountsAudit(coldCsv, new Date());
 
-  accountsCache = { payload, expiresAt: Date.now() + PUBLIC_STATS_TTL_MS };
+  setPublicCache(accountsCache, "accounts", payload);
   res.json(payload);
 }
 
