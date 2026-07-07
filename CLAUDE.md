@@ -226,10 +226,19 @@ provisioned = total − actual. The block exposes nine fields, each `total… = 
 `{total,actual,provisioned}CpcCents`. `sources[]{totalSpentCents,actualSpentCents,provisionedSpentCents,
 sharePct}` (sharePct = share of committed). Reconciled BY CONSTRUCTION: each top-level total/actual/
 provisioned == Σ over `sources`; each `…CpcCents` = its OWN spend ÷ `clicked.total`; null-safe. The
-projected `cpsCents`/`cpsmCents` (cost-per-signup / -sales-meeting) were REMOVED from the block (PR #406,
-breaking) — do NOT re-add them here; cost-per-outcome projection lives in `workflow-projection` /
-`/public/stats/cost-projection`, not the `spend` block. `spend` is on the OVERVIEW only (null on
-`?lens=`, absent on `?groupBy=campaignId` groups). fail-loud.
+**PROJECTED** `cpsCents`/`cpsmCents` (EV-math cost-per-signup / -sales-meeting) were REMOVED from the
+block (PR #406, breaking) — do NOT re-add a PROJECTION here; cost-per-outcome projection lives in
+`workflow-projection` / `/public/stats/cost-projection`, not the `spend` block. **`cpsCents`/`cpsmCents`
+were RE-ADDED as the REAL tracked computation (PR #458, features-service#455) — NOT the #406 projection.**
+The block now also carries `signupsCount`/`salesMeetingsCount` (REAL attributed conversion counts, from
+lead-service `GET /internal/brands/{brandId}/conversion-counts`, service-auth x-api-key + x-service-name,
+via `conversion-counts-client.ts`), and `cpsCents = totalSpentCents (COMMITTED) / signupsCount`,
+`cpsmCents = committed / salesMeetingsCount` (SAME denominator as `totalCpcCents`, so `cps × count ≈
+committed` by construction). null when the count is 0 (no denominator, never a false $0); ABSENT (never a
+fabricated 0) when lead-service didn't serve the counts. The counts read is **fail-SOFT** on the Overview
+(`fetchConversionCountsSoft` → absent + loud log, never 502s — display enrichment, like `sequences`),
+while the client itself is fail-loud. features-service CONSUMES the counts verbatim — it does NOT own or
+default them. `spend` is on the OVERVIEW only (null on `?lens=`, absent on `?groupBy=campaignId` groups).
 
 **ROI/CAC + `costEconomics` ride REALIZED (ACTUAL) spend, NOT committed.** `fetchRunsCostCents`
 (revenue.ts) sums `actualCostInUsdCents` → `costEconomics.actualCostUsd` (renamed from the ambiguous
