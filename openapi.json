@@ -735,6 +735,15 @@
                 "type": "number",
                 "nullable": true,
                 "description": "REAL cost per form submission = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / formSubmissionsCount, USD cents. So cpfsCents × formSubmissionsCount ≈ committed spend by construction. null when formSubmissionsCount is 0 (no denominator — never a false $0). ABSENT when formSubmissionsCount is absent. Real tracked data, not a projection."
+              },
+              "purchasesCount": {
+                "type": "integer",
+                "description": "REAL attributed purchases (lead-service conversion tracker, event=purchase, deduped, excludes 'ping') for the brand — the Purchases tile's brand-level aggregate. Equivalent to signupsCount / salesMeetingsCount / formSubmissionsCount (the purchase count previously had no aggregate here — only per-lead purchased). 0 when none; ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. features-service#473."
+              },
+              "cppCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "REAL cost per purchase = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / purchasesCount, USD cents. So cppCents × purchasesCount ≈ committed spend by construction. null when purchasesCount is 0 (no denominator — never a false $0). ABSENT when purchasesCount is absent. Real tracked data, not a projection. features-service#473."
               }
             },
             "required": [
@@ -990,6 +999,86 @@
               "undatedCount"
             ],
             "description": "Purchase-goal outcome ACTUAL series (instantly manual-qualification closedAt), server-computed from the SAME leads[] snapshot. features-service#377."
+          },
+          "signups": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "Signup-goal outcome ACTUAL series (lead-service conversion tracker, attributed per lead by matched email). `total` is the REAL count of leads we can confirm signed up, but `daily` is EMPTY with `undatedCount === total`: lead-service exposes WHICH lead converted, not WHEN (the conversion timestamp exists internally but no endpoint surfaces it). The per-day trend populates automatically once lead-service exposes the conversion date. Distinct from recipientsClicked (the visit PROXY the funnel EV anchors to). features-service#473."
+          },
+          "formSubmissions": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "Form-submission-goal outcome ACTUAL series (lead-service conversion tracker, event=form_submission, attributed per lead by matched email). Same shape + same date-gap caveat as `signups`: `total` real, `daily` empty / `undatedCount === total` until lead-service surfaces the conversion date. features-service#473."
           },
           "sequences": {
             "type": "object",
@@ -1311,6 +1400,24 @@
                   "nullable": true,
                   "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
                 },
+                "signup": {
+                  "type": "boolean",
+                  "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#473."
+                },
+                "signupAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#473."
+                },
+                "formSubmission": {
+                  "type": "boolean",
+                  "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#473."
+                },
+                "formSubmissionAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#473."
+                },
                 "conversionProbabilityPct": {
                   "type": "number",
                   "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
@@ -1344,7 +1451,11 @@
                 "meetingBooked",
                 "meetingBookedAt",
                 "purchased",
-                "purchasedAt"
+                "purchasedAt",
+                "signup",
+                "signupAt",
+                "formSubmission",
+                "formSubmissionAt"
               ]
             }
           },
@@ -1395,6 +1506,8 @@
           "recipientsRepliesPositive",
           "meetingsBooked",
           "purchased",
+          "signups",
+          "formSubmissions",
           "sequences",
           "headline",
           "costEconomics",
