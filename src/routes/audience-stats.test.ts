@@ -15,6 +15,8 @@ vi.mock("@sentry/node", () => ({
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.RUNS_SERVICE_URL = "http://runs:3000";
+process.env.FEATURE_VIEW_CACHE_ENABLED = "false"; // exercise the pure live-compute path here
+
 process.env.RUNS_SERVICE_API_KEY = "runs-key";
 process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
