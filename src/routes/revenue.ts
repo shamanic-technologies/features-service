@@ -9,6 +9,7 @@ import { fetchEffectiveEconomics, type EffectiveEconomics } from "../lib/sales-e
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
 import { fetchSpendBreakdown, type SpendBreakdown, type SpendSource } from "../lib/spend-client.js";
+import { fetchConversionCounts, type ConversionCounts } from "../lib/conversion-counts-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { fetchSequencesByDay } from "../lib/sequences-client.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
@@ -98,9 +99,19 @@ export interface Spend {
   totalCpcCents: number | null;
   actualCpcCents: number | null;
   provisionedCpcCents: number | null;
+  // REAL tracked conversions from lead-service (features-service#455) — the Signups / Sales Meetings
+  // tiles + their cost-per-conversion. Present when lead-service served the counts; ABSENT (undefined)
+  // on a cold / pre-rollout payload (the endpoint unreachable → display tile degrades, never a fake 0).
+  // These REPLACE the projected cps/cpsm dropped in features-service#406 with the REAL computation.
+  signupsCount?: number;
+  salesMeetingsCount?: number;
+  // REAL cost-per-conversion = COMMITTED spend (actual + provisioned, the same denominator the CPC
+  // card uses) ÷ the real count. null when the count is 0 (no denominator — never a false $0.00).
+  cpsCents?: number | null;
+  cpsmCents?: number | null;
 }
 
-function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[]): Spend {
+function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: ConversionCounts | null = null): Spend {
   // clicks use the SAME per-lead predicate as the clicked SignalSeries, so the CPC denominator equals
   // the card's displayed "clicks" (clicked.total) — coherent by construction.
   const clicks = leads.reduce((n, l) => n + (l.clicked ? 1 : 0), 0);
@@ -109,6 +120,19 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[]): Spend {
   const provisioned = breakdown.provisionedSpentCents;
 
   const ratioCents = (cents: number): number | null => (cents > 0 && clicks > 0 ? cents / clicks : null);
+
+  // REAL cost-per-conversion (features-service#455): committed spend ÷ the real tracked count. The
+  // denominator is the COMMITTED total — the SAME basis the CPC card uses (totalCpcCents) — so
+  // cpsCents × signupsCount ≈ committed spend by construction. null when the count is 0 (no
+  // denominator), never a false $0. Absent entirely when lead-service didn't serve the counts.
+  const conversion: Partial<Spend> = counts
+    ? {
+        signupsCount: counts.signup,
+        salesMeetingsCount: counts.meeting_booked,
+        cpsCents: counts.signup > 0 ? committed / counts.signup : null,
+        cpsmCents: counts.meeting_booked > 0 ? committed / counts.meeting_booked : null,
+      }
+    : {};
 
   return {
     totalSpentCents: committed,
@@ -121,6 +145,7 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[]): Spend {
     totalCpcCents: ratioCents(committed),
     actualCpcCents: ratioCents(actual),
     provisionedCpcCents: ratioCents(provisioned),
+    ...conversion,
   };
 }
 
@@ -245,6 +270,24 @@ function fetchSequencesSoft(
   return fetchSequencesByDay(brandId, campaignId, featureSlug, headers).catch((err) => {
     console.warn(
       `[features-service] sequences enrichment failed (degrading to null): ${(err as Error).message}`,
+    );
+    return null;
+  });
+}
+
+/**
+ * Fetch the brand's REAL attributed conversion counts (lead-service) for the OVERVIEW spend block —
+ * the Signups / Sales Meetings tiles + their real cost-per-conversion (features-service#455).
+ * Fail-soft: a failure degrades to null (the tiles render "-" / the counts are ABSENT) rather than
+ * 502-ing the whole /revenue response — these are display enrichment, not the pipeline total, exactly
+ * like the sequences series above. Absent ≠ 0: a fake 0 would fabricate a count / a false CPS; null
+ * carries "unknown". Loud log, never a silent swallow. On the pre-rollout window (lead-service's
+ * endpoint not yet deployed) this degrades cleanly to absent instead of blocking the Overview.
+ */
+function fetchConversionCountsSoft(brandId: string): Promise<ConversionCounts | null> {
+  return fetchConversionCounts(brandId).catch((err) => {
+    console.warn(
+      `[features-service] conversion-counts enrichment failed (degrading to absent): ${(err as Error).message}`,
     );
     return null;
   });
@@ -428,12 +471,13 @@ export async function computeFeatureRevenue(
     if (includeSpend) {
       // Overview: fetch spend (fail-loud) + sequences (fail-soft) in parallel. Outreach activity
       // is independent of the funnel — a no-funnel feature still launches campaigns worth graphing.
-      const [breakdown, sequences] = await Promise.all([
+      const [breakdown, sequences, counts] = await Promise.all([
         fetchSpendBreakdown(brandId, campaignId, featureSlug, headers),
         fetchSequencesSoft(brandId, campaignId, featureSlug, headers),
+        fetchConversionCountsSoft(brandId),
       ]);
       // ROI/CAC ride ACTUAL spend; the `spend` block carries the committed total separately.
-      return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, []), sequences);
+      return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, [], counts), sequences);
     }
     const actualCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers);
     return emptyBody(null, actualCostInUsdCents, null);
@@ -450,7 +494,7 @@ export async function computeFeatureRevenue(
   // All four are fail-loud (Promise.all rejects → the endpoint 502s): each is a core input to the
   // pipeline total / cost / ROI; a swallowed error would fake a number. The economics===null
   // cold-start path below over-fetches rates+leads — accepted for the common-path win.
-  const [costResult, { economics, source }, platformRates, persons, sequences] = await Promise.all([
+  const [costResult, { economics, source }, platformRates, persons, sequences, counts] = await Promise.all([
     includeSpend
       ? fetchSpendBreakdown(brandId, campaignId, featureSlug, headers)
       : fetchRunsCostCents(brandId, campaignId, featureSlug, headers),
@@ -462,6 +506,9 @@ export async function computeFeatureRevenue(
     includeSpend
       ? fetchSequencesSoft(brandId, campaignId, featureSlug, headers)
       : Promise.resolve<SignalSeries | null>(null),
+    // Overview-only REAL conversion counts (lead-service) for the Signups / Sales Meetings tiles +
+    // cost-per-conversion. Pre-caught → null on failure (never rejects fail-loud Wave A). Off-overview null.
+    includeSpend ? fetchConversionCountsSoft(brandId) : Promise.resolve<ConversionCounts | null>(null),
   ]);
   const breakdown: SpendBreakdown | null = typeof costResult === "number" ? null : costResult;
   // ROI/CAC + costEconomics ride ACTUAL (billed) spend; the `spend` block (buildSpend) carries the
@@ -469,7 +516,7 @@ export async function computeFeatureRevenue(
   const actualCostInUsdCents = typeof costResult === "number" ? costResult : costResult.actualSpentCents;
 
   if (economics === null) {
-    return emptyBody(null, actualCostInUsdCents, breakdown ? buildSpend(breakdown, []) : null, sequences);
+    return emptyBody(null, actualCostInUsdCents, breakdown ? buildSpend(breakdown, [], counts) : null, sequences);
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
 
@@ -550,7 +597,7 @@ export async function computeFeatureRevenue(
     recipientsContacted: buildContactedSeries(result.leads),
     ...buildOutcomeSeries(result.leads),
     sequences,
-    spend: breakdown ? buildSpend(breakdown, result.leads) : null,
+    spend: breakdown ? buildSpend(breakdown, result.leads, counts) : null,
   };
 }
 
