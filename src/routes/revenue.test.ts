@@ -107,7 +107,7 @@ function qualRows(quals: Qualifications): unknown[] {
 function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; purchase: number }; conversionCountsFail?: boolean } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-    // lead-service GET /internal/brands/:brandId/conversion-counts — REAL conversion counts (#455).
+    // lead-service GET /internal/brands/:brandId/conversion-counts — REAL conversion counts (#461).
     // Absent option → 500 so the soft wrapper degrades to absent (mirrors the pre-rollout window),
     // preserving the "no cps/cpsm when counts unavailable" assertions.
     if (url.includes("/conversion-counts")) {
@@ -847,7 +847,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.actualCpcCents).toBe(7000);
     expect(res.body.spend.provisionedCpcCents).toBeNull(); // 0 provisioned → null, never a false $0.00
     // No conversion counts served here (lead-service unavailable in this mock) → the conversion tiles
-    // are ABSENT, never a fabricated 0 (features-service#455). The projected cps/cpsm (dropped in #406)
+    // are ABSENT, never a fabricated 0 (features-service#461). The projected cps/cpsm (dropped in #406)
     // are NEVER re-introduced — cpsCents/cpsmCents only appear as the REAL computation with real counts.
     expect(res.body.spend).not.toHaveProperty("signupsCount");
     expect(res.body.spend).not.toHaveProperty("salesMeetingsCount");
@@ -855,7 +855,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend).not.toHaveProperty("cpsmCents");
   });
 
-  it("spend — REAL conversions: signupsCount/salesMeetingsCount + cpsCents/cpsmCents = COMMITTED spend ÷ real count (features-service#455)", async () => {
+  it("spend — REAL conversions: signupsCount/salesMeetingsCount + cpsCents/cpsmCents = COMMITTED spend ÷ real count (features-service#461)", async () => {
     // Committed 10000c (= 6000 billed + 4000 holds). lead-service serves real counts: 4 signups, 2 meetings.
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;

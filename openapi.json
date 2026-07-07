@@ -711,7 +711,7 @@
               },
               "signupsCount": {
                 "type": "integer",
-                "description": "REAL attributed signups (lead-service conversion tracker, deduped, excludes 'ping') for the brand — the Signups tile. 0 when none. ABSENT (undefined) on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (features-service#455)"
+                "description": "REAL attributed signups (lead-service conversion tracker, deduped, excludes 'ping') for the brand — the Signups tile. 0 when none. ABSENT (undefined) on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (features-service#461)"
               },
               "salesMeetingsCount": {
                 "type": "integer",

@@ -49,6 +49,9 @@ export function projectedCostPerOutcome(
   observedCount: number,
   parentCost: number | null = null,
 ): number {
-  if (observedCount > 0) return spentUsd / observedCount;
+  // A real ratio needs BOTH real spend AND real outcomes. With 0 spend, `spent/count` would be a false
+  // $0 even when outcomes exist (e.g. outcomes tracked but cost un-attributed) — so that case floors to
+  // the parent, exactly like the 0-outcome case.
+  if (spentUsd > 0 && observedCount > 0) return spentUsd / observedCount;
   return Math.max(spentUsd, parentCost ?? 0);
 }
