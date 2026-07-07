@@ -174,6 +174,14 @@ export interface LeadRow {
    *     reply is the meeting-goal engagement signal, the booked meeting is its downstream outcome).
    *   - meetingBooked  ← instantly manual-qualification `meetingBookedAt` (the meeting-goal outcome)
    *   - purchased      ← instantly manual-qualification `closedAt`        (the purchase-goal outcome)
+   *   - signup / formSubmission ← lead-service conversion tracker: the DISTINCT matched-lead email set
+   *     (`converted-lead-emails?event=signup|form_submission`) intersected with this lead's email —
+   *     REAL producer-side attribution (lead-service runs the match waterfall), the SAME identity join
+   *     audience-stats uses. Distinct from `clicked` (the website-visit signup PROXY the funnel EV math
+   *     anchors to). NO date: lead-service exposes WHICH lead converted but NOT when — the conversion
+   *     timestamp exists internally (dedupe buckets by calendar-day) but no endpoint surfaces it, so
+   *     `signupAt`/`formSubmissionAt` stay null (never the outreach date — that would be the wrong
+   *     signal). Auto-populates when lead-service exposes the conversion date. features-service#473.
    */
   opened: boolean;
   openedAt: string | null;
@@ -185,6 +193,10 @@ export interface LeadRow {
   meetingBookedAt: string | null;
   purchased: boolean;
   purchasedAt: string | null;
+  signup: boolean;
+  signupAt: string | null;
+  formSubmission: boolean;
+  formSubmissionAt: string | null;
   /**
    * Lens-only: the lead's conversion probability (0–100) for the requested outcome lens. Present
    * ONLY on a lensed `?lens=` response; ABSENT on the default/grouped responses (keeps them
@@ -517,6 +529,10 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     meetingBookedAt: person.signalDates?.meeting ?? null,
     purchased: Boolean(person.signals.closeWin),
     purchasedAt: person.signalDates?.closeWin ?? null,
+    signup: Boolean(person.signals.signup),
+    signupAt: person.signalDates?.signup ?? null,
+    formSubmission: Boolean(person.signals.formSubmission),
+    formSubmissionAt: person.signalDates?.formSubmission ?? null,
   }));
   // Default sort: most-advanced status first, then most-recent conversion date, then EV (deterministic).
   leads.sort((a, b) => {

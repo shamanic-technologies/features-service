@@ -625,6 +625,7 @@ describe("buildContactedSeries — server-computed Outreach aggregates (features
       opened: false, openedAt: null, clicked: false, clickedAt: null,
       repliedPositive: false, repliedPositiveAt: null,
       meetingBooked: false, meetingBookedAt: null, purchased: false, purchasedAt: null,
+      signup: false, signupAt: null, formSubmission: false, formSubmissionAt: null,
       ...over,
     };
   }
@@ -772,6 +773,7 @@ describe("buildSignalSeries — generic per-signal aggregator (features-service#
       opened: false, openedAt: null, clicked: false, clickedAt: null,
       repliedPositive: false, repliedPositiveAt: null,
       meetingBooked: false, meetingBookedAt: null, purchased: false, purchasedAt: null,
+      signup: false, signupAt: null, formSubmission: false, formSubmissionAt: null,
       ...over,
     };
   }
