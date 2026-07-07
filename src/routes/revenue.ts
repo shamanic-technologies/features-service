@@ -14,6 +14,7 @@ import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { fetchSequencesByDay } from "../lib/sequences-client.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
 import { fetchPlatformEmailRates } from "../lib/platform-rates-client.js";
+import { observedCostPerOutcome } from "../lib/cost-engine.js";
 import {
   computeRevenue,
   dedupPersonsByLead,
@@ -119,18 +120,17 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: Convers
   const actual = breakdown.actualSpentCents;
   const provisioned = breakdown.provisionedSpentCents;
 
-  const ratioCents = (cents: number): number | null => (cents > 0 && clicks > 0 ? cents / clicks : null);
-
   // REAL cost-per-conversion (features-service#461): committed spend ÷ the real tracked count. The
   // denominator is the COMMITTED total — the SAME basis the CPC card uses (totalCpcCents) — so
-  // cpsCents × signupsCount ≈ committed spend by construction. null when the count is 0 (no
-  // denominator), never a false $0. Absent entirely when lead-service didn't serve the counts.
+  // cpsCents × signupsCount ≈ committed spend by construction. Via the shared OBSERVED cost engine:
+  // null (never a false $0) when the count is 0 OR there is no committed spend. Absent entirely when
+  // lead-service didn't serve the counts. (This block is ACCOUNTING → observed, not projected.)
   const conversion: Partial<Spend> = counts
     ? {
         signupsCount: counts.signup,
         salesMeetingsCount: counts.meeting_booked,
-        cpsCents: counts.signup > 0 ? committed / counts.signup : null,
-        cpsmCents: counts.meeting_booked > 0 ? committed / counts.meeting_booked : null,
+        cpsCents: observedCostPerOutcome(committed, counts.signup),
+        cpsmCents: observedCostPerOutcome(committed, counts.meeting_booked),
       }
     : {};
 
@@ -142,9 +142,9 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: Convers
     actualSpentTodayCents: breakdown.actualSpentTodayCents,
     provisionedSpentTodayCents: breakdown.provisionedSpentTodayCents,
     sources: breakdown.sources,
-    totalCpcCents: ratioCents(committed),
-    actualCpcCents: ratioCents(actual),
-    provisionedCpcCents: ratioCents(provisioned),
+    totalCpcCents: observedCostPerOutcome(committed, clicks),
+    actualCpcCents: observedCostPerOutcome(actual, clicks),
+    provisionedCpcCents: observedCostPerOutcome(provisioned, clicks),
     ...conversion,
   };
 }
