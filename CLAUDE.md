@@ -1,5 +1,48 @@
 # Features Service — CLAUDE.md
 
+## `cost-engine.ts` — TWO named engines are the SINGLE source of truth for "cost per outcome"; default = projected everywhere except accounting
+
+Every stats surface computes "cost per outcome" through ONE of TWO named functions in `src/lib/cost-engine.ts` —
+never an inline `spent / count`. This keeps the 0-outcome decision homogeneous across endpoints.
+
+- **`observedCostPerOutcome(spentUsd, observedCount) → number | null`** — "what actually happened"
+  (ACCOUNTING / real spend). `null` (renders "-") when 0 spend OR 0 outcomes; NEVER fabricates a number
+  that wasn't measured. Use ONLY for real-money / bookkeeping surfaces.
+- **`projectedCostPerOutcome(spentUsd, observedCount, parentCost?) → number`** — "rankable estimate"
+  (the DEFAULT). Real ratio when `observedCount > 0`; else the CASCADE FLOOR `max(spentUsd, parentCost)`.
+  NEVER null when there is spend — a rankable surface must always yield a comparable number. `parentCost`
+  = the same unit cost on the next COARSER grain (crossOrg → brand → audience), iterative; omit when the
+  surface has no coarser grain → floor degrades to own spend (`max(spentUsd, 0)`), the cascade's base case.
+
+**DEFAULT RULE (product, Kevin 2026-07-07): projection is the default for the dashboard and EVERYWHERE,
+EXCEPT accounting (real spend / bookkeeping), which takes observed.** If the front wants raw observed cost
+on a projection surface, that is a DEDICATED observed endpoint — NOT a flag/tag on this one. Naming must be
+clear: accounting fields carry accounting names (`spent`, `actual`); projection is the unnamed default.
+
+**Cascade rationale (projected):** with 0 observed outcomes the true cost is unknown but ≥ the spend so
+far; the coarser grain's cost is the prior. So `spent < parentCost` → assume the parent (not yet proven
+worse); `spent > parentCost` → own spend is the higher conservative floor (already outspent the parent
+with nothing to show). This stops a barely-spent 0-outcome grain from looking artificially free and winning
+the ranking.
+
+**Surface classification (target — migrate one at a time, verify the consumer each time):**
+
+| Surface | Engine | Consumer to verify before flipping |
+|---|---|---|
+| `workflow-projection` (unit costs → projected goal costs) | **projected** (cascade, has the grain ladder) | — (DONE, PR1) |
+| `audience-stats` `cpcCents`/`cpprCents` | **projected** | ⚠️ campaign-service reads `cpcCents` byte-equal → flooring changes its ranking |
+| `/public/stats/cost-projection` | **projected** (already EV) | — |
+| `pipeline-activity` cpc | **projected** (forecast) | — |
+| `/stats` `costPerRecipient*` (registry) | **projected** | brand-only → needs a global parent fetch for true cascade |
+| `/revenue` `spend` block (`total/actual/provisioned Cpc`) | **observed** (ACCOUNTING — real money) | dashboard "Total spent" |
+
+**PR1 (shipped) wired ONLY `workflow-projection`** to `projectedCostPerOutcome` with the crossOrg→brand→audience
+cascade (`buildGrainBlock` takes a `parentUnitCosts`; the assembly builds coarser-first and threads each
+grain's unit costs as the next finer grain's parent; audience blocks are built PER COUPLE so the floor uses
+that couple's brand/crossOrg parent). The other surfaces still compute inline and are migrated in follow-up
+PRs, each gated on its consumer. `ProjectedOutcomeCosts`/unit-cost shapes unchanged → no OpenAPI change.
+(Set 2026-07-07.)
+
 ## Per-goal `costPerPaidClient` chains through THAT goal's OWN funnel — coherent by construction (≥ the goal's outcome cost)
 
 `workflow-projection`'s displayed **cost / paid client** (drives `roiMultiple` + `cacPct`) MUST chain
