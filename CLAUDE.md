@@ -749,8 +749,12 @@ Databricks medallion Gold, Kleppmann derived-data).
   audience-stats caches its whole deterministic `ComputeResult` union, since its validation lives inside
   the compute lib; transient downstream failures THROW and bypass the cache). `pipeline-activity`'s
   `generatedAt` is frozen to the snapshot's compute time (the as-of semantic). The CROSS-ORG `/public/*`
-  + `/internal/stats/*` endpoints do NOT use this (no per-org `scope_key`); they keep short in-memory
-  caches (consolidation into one shared memo helper is the deferred #2-Wave-2 cleanup).
+  + `/internal/stats/*` endpoints do NOT use the Gold layer (no per-org `scope_key`); they ALL go through
+  ONE shared in-memory memo primitive in `public.ts` — `type PublicCache = Map<string, {payload:unknown,
+  expiresAt}>` + `getPublicCache<T>` / `setPublicCache<T>` (single 60s `PUBLIC_STATS_TTL_MS`). Every
+  cache (ranked, best, workflow-latency, public-revenue, cost-projection, send-forecast, accounts) is a
+  `PublicCache`; the per-endpoint `__reset*` test seams stay (each clears its own Map). Do NOT re-add a
+  per-cache bespoke get/set/TTL — route new public caches through the shared helper.
 
 **It is DERIVED + rebuildable** — dropping every row is safe (next read recomputes); siblings stay SoT.
 **Eventual-consistency is the accepted CQRS tradeoff**: a served body is "as-of `computed_at`", at most
