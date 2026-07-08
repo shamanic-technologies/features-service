@@ -3,7 +3,41 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
 
-const { fetchBrandInfoBatch } = await import("./public-stats-clients.js");
+const { fetchBrandInfoBatch, fetchFleetSpendByDay } = await import("./public-stats-clients.js");
+
+describe("fetchFleetSpendByDay", () => {
+  beforeEach(() => {
+    process.env.RUNS_SERVICE_URL = "http://runs:3000";
+    process.env.RUNS_SERVICE_API_KEY = "runs-key";
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("calls the timeseries endpoint (interval=day) and maps period → spentUsd (cents/100)", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        interval: "day", timezone: "UTC",
+        buckets: [
+          { period: "2026-07-01", totalCostInUsdCents: "300.0000000000", actualCostInUsdCents: "300", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0", runCount: 2 },
+          { period: "2026-07-02", totalCostInUsdCents: "150.0000000000", actualCostInUsdCents: "150", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0", runCount: 1 },
+        ],
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+
+    const map = await fetchFleetSpendByDay("sales-cold-email-outreach");
+
+    const url = spy.mock.calls[0][0] as string;
+    expect(url).toContain("/v1/stats/public/costs/timeseries");
+    expect(url).toContain("interval=day");
+    expect(url).toContain("featureSlug=sales-cold-email-outreach");
+    expect(map.get("2026-07-01")).toBeCloseTo(3, 6); // 300 cents = $3
+    expect(map.get("2026-07-02")).toBeCloseTo(1.5, 6);
+  });
+
+  it("throws (fail-loud) on non-OK response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("boom", { status: 500 }));
+    await expect(fetchFleetSpendByDay("x")).rejects.toThrow(/costs\/timeseries failed: 500/);
+  });
+});
 
 describe("fetchBrandInfoBatch", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;

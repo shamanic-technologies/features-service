@@ -83,6 +83,40 @@ export async function fetchPublicCosts(
   return data.groups;
 }
 
+/**
+ * Fleet-wide (cross-org) spend per UTC day for a feature — runs-service
+ * `GET /v1/stats/public/costs/timeseries?interval=day` (dated buckets by run started_at). Returns a
+ * Map<YYYY-MM-DD, spentUsd> (spentUsd = totalCostInUsdCents / 100, committed = actual + provisioned).
+ * Feeds the cross-org cost-per-outcome trend join against dated outcome counts. api-key only, no org
+ * identity. Fail loud (essential input, not optional enrichment).
+ */
+export async function fetchFleetSpendByDay(featureSlug: string): Promise<Map<string, number>> {
+  const params = new URLSearchParams({ interval: "day", featureSlug });
+  const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs/timeseries?${params}`;
+  const response = await fetchWithRetry(url, {
+    headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY! },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`[features-service] runs-service /v1/stats/public/costs/timeseries failed: ${response.status} — ${body}`);
+  }
+
+  const data = (await response.json()) as { buckets?: Array<{ period?: string; totalCostInUsdCents?: string }> };
+  if (!Array.isArray(data.buckets)) {
+    throw new Error("[features-service] runs-service costs/timeseries returned no buckets array");
+  }
+
+  const byDay = new Map<string, number>();
+  for (const b of data.buckets) {
+    if (typeof b.period !== "string" || typeof b.totalCostInUsdCents !== "string") {
+      throw new Error(`[features-service] runs-service costs/timeseries bucket missing period/totalCostInUsdCents`);
+    }
+    byDay.set(b.period.slice(0, 10), (byDay.get(b.period.slice(0, 10)) ?? 0) + Number(b.totalCostInUsdCents) / 100);
+  }
+  return byDay;
+}
+
 // ── Email stats (email-gateway) ──────────────────────────────────────────────
 
 export async function fetchPublicEmailStats(

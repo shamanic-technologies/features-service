@@ -6,6 +6,7 @@ import { STATS_REGISTRY } from "../lib/stats-registry.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
+  fetchFleetSpendByDay,
   fetchPublicEmailStats,
   fetchPublicWorkflowEngagementLatency,
   fetchPublicJournalistsStats,
@@ -893,25 +894,6 @@ export function __resetCostPerOutcomeTrendCache(): void {
   costPerOutcomeTrendCache.clear();
 }
 
-/**
- * Extract the UTC day (YYYY-MM-DD) a runs-service day-grouped cost group belongs to. runs-service owns
- * the exact dimension key for its `groupBy=day` design — read the day-shaped dimension value, falling
- * back to the group's earliest run timestamp. (Consumer stays tolerant to the deployed shape per the
- * live>source rule; conform once runs-service ships.)
- */
-function dayKeyFromCostGroup(group: {
-  dimensions: Record<string, string | null>;
-  minStartedAt?: string | null;
-}): string | null {
-  for (const v of Object.values(group.dimensions)) {
-    if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
-  }
-  if (typeof group.minStartedAt === "string" && group.minStartedAt.length >= 10) {
-    return group.minStartedAt.slice(0, 10);
-  }
-  return null;
-}
-
 export async function handleCostPerOutcomeTrend(
   featureSlug: string | undefined,
   objectiveParam: string | undefined,
@@ -948,18 +930,11 @@ export async function handleCostPerOutcomeTrend(
     return;
   }
 
-  const [spendGroups, dayOutcomeMap, perBrandEconomics] = await Promise.all([
-    fetchPublicCosts(featureSlug, "day"),
+  const [spendByDay, dayOutcomeMap, perBrandEconomics] = await Promise.all([
+    fetchFleetSpendByDay(featureSlug),
     fetchPublicEmailStats(featureSlug, "day"),
     fetchFleetBrandEconomics(featureSlug),
   ]);
-
-  const spendByDay = new Map<string, number>();
-  for (const g of spendGroups) {
-    const day = dayKeyFromCostGroup(g);
-    if (!day) continue;
-    spendByDay.set(day, (spendByDay.get(day) ?? 0) + Number(g.totalCostInUsdCents) / 100);
-  }
 
   const outcomesByDay = new Map<string, DayOutcome>();
   for (const [day, fields] of dayOutcomeMap) {
