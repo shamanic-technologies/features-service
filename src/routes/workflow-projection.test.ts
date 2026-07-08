@@ -79,7 +79,7 @@ const BRAND_EMAIL = [emailGroup("wf-a", 25, 5, 100)];
 // runs /v1/stats/costs is distinguished by the groupBy param:
 //   groupBy=workflowSlug (+ brandId) → brand grain
 //   groupBy=audienceId               → audience cost totals
-//   groupBy=audienceId,workflowDynastySlug → audience couples
+//   groupBy=audienceId,workflowSlug  → audience (audience × workflowSlug) couples
 interface MockOpts {
   workflows?: unknown[];
   crossOrgCost?: unknown[];
@@ -112,7 +112,7 @@ function mockFetch(opts: MockOpts = {}): void {
     if (url.includes("/v1/stats/costs")) {
       const groupBy = u.searchParams.get("groupBy") ?? "";
       if (groupBy === "audienceId") return json({ groups: opts.audienceCost ?? [] });
-      if (groupBy === "audienceId,workflowDynastySlug") return json({ groups: opts.audienceCouples ?? [] });
+      if (groupBy === "audienceId,workflowSlug") return json({ groups: opts.audienceCouples ?? [] });
       // groupBy=workflowSlug + brandId → brand grain
       return json({ groups: opts.brandCost ?? BRAND_COST });
     }
@@ -312,7 +312,7 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
       audiences: [{ id: "aud-1" }],
       // aud-1 cost: $400 / (from couples we learn it ran dyn-a). groupBy=audienceId total.
       audienceCost: [{ dimensions: { audienceId: "aud-1" }, totalCostInUsdCents: "40000", runCount: 8 }],
-      audienceCouples: [{ dimensions: { audienceId: "aud-1", workflowDynastySlug: "dyn-a" }, totalCostInUsdCents: "40000", runCount: 8 }],
+      audienceCouples: [{ dimensions: { audienceId: "aud-1", workflowSlug: "wf-a" }, totalCostInUsdCents: "40000", runCount: 8 }],
       membersByAudience: { "aud-1": ["m1@x.com", "m2@x.com", "m3@x.com", "m4@x.com"] },
       outcomesByEmail: {
         "m1@x.com": { contacted: true, clicked: true },
@@ -338,6 +338,44 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     // resolved at the FINEST grain present → audience.
     expect(audRow.resolved.grain).toBe("audience");
     expect(audRow.resolved.costPerClickUsd).toBeCloseTo(200, 6);
+  });
+
+  it("set-completeness: EVERY active audience with cost surfaces an audience grain, even when they share ONE dynasty", async () => {
+    // The bug this guards: two audiences whose runs both belong to dyn-a. runs-service's
+    // workflowDynastySlug regroup merges by dynasty ALONE, collapsing them to one audience → only 1 of 2
+    // surfaced. Grouping on the raw workflowSlug (both here run wf-a) keeps the per-audience split, so
+    // BOTH surface with their OWN distinct cost-per-visit (matching /audience-stats' set + numbers).
+    mockFetch({
+      audiences: [{ id: "aud-1" }, { id: "aud-2" }],
+      audienceCost: [
+        { dimensions: { audienceId: "aud-1" }, totalCostInUsdCents: "40000", runCount: 8 }, // $400
+        { dimensions: { audienceId: "aud-2" }, totalCostInUsdCents: "60000", runCount: 12 }, // $600
+      ],
+      // BOTH audiences ran ONLY wf-a (→ dyn-a): the exact same-dynasty collapse scenario.
+      audienceCouples: [
+        { dimensions: { audienceId: "aud-1", workflowSlug: "wf-a" }, totalCostInUsdCents: "40000", runCount: 8 },
+        { dimensions: { audienceId: "aud-2", workflowSlug: "wf-a" }, totalCostInUsdCents: "60000", runCount: 12 },
+      ],
+      membersByAudience: { "aud-1": ["m1@x.com", "m2@x.com"], "aud-2": ["n1@x.com"] },
+      outcomesByEmail: {
+        "m1@x.com": { contacted: true, clicked: true },
+        "m2@x.com": { contacted: true, clicked: true }, // aud-1: 2 clicks → $400/2 = $200
+        "n1@x.com": { contacted: true, clicked: true }, // aud-2: 1 click  → $600/1 = $600
+      },
+    });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    expect(res.status).toBe(200);
+
+    const a1 = rowFor(res.body, "dyn-a", "aud-1");
+    const a2 = rowFor(res.body, "dyn-a", "aud-2");
+    // BOTH audiences present at the audience grain (pre-fix, one was dropped by the dynasty collapse).
+    expect(a1?.estimatesByGrain.audience).toBeTruthy();
+    expect(a2?.estimatesByGrain.audience).toBeTruthy();
+    // Each carries its OWN cost-per-visit (spent/clicks) — differentiated, matching /audience-stats.
+    expect(a1.estimatesByGrain.audience.unitCosts.costPerClickUsd).toBeCloseTo(200, 6);
+    expect(a2.estimatesByGrain.audience.unitCosts.costPerClickUsd).toBeCloseTo(600, 6);
+    expect(a1.resolved.grain).toBe("audience");
+    expect(a2.resolved.grain).toBe("audience");
   });
 
   it("grain omission: a grain with spentUsd = 0 is absent from estimatesByGrain", async () => {
@@ -382,7 +420,7 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     mockFetch({
       audiences: [{ id: "aud-1" }],
       audienceCost: [{ dimensions: { audienceId: "aud-1" }, totalCostInUsdCents: "1000", runCount: 8 }],
-      audienceCouples: [{ dimensions: { audienceId: "aud-1", workflowDynastySlug: "dyn-a" }, totalCostInUsdCents: "1000", runCount: 8 }],
+      audienceCouples: [{ dimensions: { audienceId: "aud-1", workflowSlug: "wf-a" }, totalCostInUsdCents: "1000", runCount: 8 }],
       membersByAudience: { "aud-1": ["m1@x.com"] },
       outcomesByEmail: { "m1@x.com": { contacted: true } }, // 0 clicks
     });
