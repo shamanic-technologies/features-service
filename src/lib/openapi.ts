@@ -1005,11 +1005,51 @@ registry.registerPath({
 
 // ── GET /public/stats/cost-projection ─────────────────────────────────────────
 
+const objectiveAveragesSchema = z.object({
+  websiteVisit: z.number().nullable().describe("Fleet-average cost per website visit (CPC = cost per click)."),
+  positiveReply: z.number().nullable().describe("Fleet-average cost per positive reply (CPPR)."),
+  signup: z.number().nullable().describe("Fleet-average projected cost per self-serve signup."),
+  formSubmission: z.number().nullable().describe("Fleet-average projected cost per form submission."),
+  meetingBooked: z.number().nullable().describe("Fleet-average projected cost per meeting booked."),
+  purchase: z.number().nullable().describe("Fleet-average projected cost per purchase/close."),
+}).describe("Fleet-average cost-per-outcome per optimization objective. Each = mean across client brands of that brand's best-workflow value; null when no brand is backed for the objective.");
+
 const publicCostProjectionResponseSchema = z.object({
   featureSlug: z.string(),
-  avgCostPerMeetingBooked: z.number().nullable().describe("Feature-wide average EXPECTED USD cost per meeting booked (mean across client brands of each brand's best-workflow projection). Null when no brand has usable economics."),
-  avgCostPerPurchase: z.number().nullable().describe("Feature-wide average EXPECTED USD cost per purchase/close. Null when no brand has usable economics."),
+  avgCostPerMeetingBooked: z.number().nullable().describe("Legacy (Wave 1) alias of avgCostPerOutcomeByObjective.meetingBooked. Null when no brand has usable economics."),
+  avgCostPerPurchase: z.number().nullable().describe("Legacy (Wave 1) alias of avgCostPerOutcomeByObjective.purchase. Null when no brand has usable economics."),
+  avgCostPerOutcomeByObjective: objectiveAveragesSchema,
   brandCount: z.number().int().describe("Number of client brands with usable economics that contributed to the averages."),
+});
+
+const objectiveQueryParam = z
+  .string()
+  .describe("Optimization objective — one of websiteVisit / positiveReply / signup / formSubmission / meetingBooked / purchase (snake / camel / kebab spellings accepted; self-serve aliases signup).");
+
+const costPerOutcomeTrendResponseSchema = z.object({
+  featureSlug: z.string(),
+  objective: z.string().describe("Canonical camelCase objective the series is for."),
+  windowOutcomes: z.number().int().describe("Target number of base outcomes each trailing moving-average window spans."),
+  points: z.array(z.object({
+    date: z.string().describe("UTC day (YYYY-MM-DD) this moving-average point is anchored to."),
+    costPerOutcomeUsd: z.number().nullable().describe("Moving-average cost-per-outcome over the trailing window ending at date. Null when the window is unbacked — never a false $0."),
+    windowOutcomeCount: z.number().describe("Count of the objective's base outcomes (clicks / replies / clicks+replies) inside the window."),
+    windowSpentUsd: z.number().describe("Total fleet spend (USD) over the window's days."),
+    windowStartDate: z.string().describe("First UTC day included in the trailing window."),
+  })).describe("Dense dated series (one point per trailing display day)."),
+});
+
+const workflowCostPerOutcomeResponseSchema = z.object({
+  featureSlug: z.string(),
+  objective: z.string().describe("Canonical camelCase objective the ratios are for."),
+  workflows: z.array(z.object({
+    workflowDynastySlug: z.string(),
+    workflowDynastyName: z.string(),
+    spentUsd: z.number().describe("Cross-org fleet spend (USD) attributed to this workflow dynasty."),
+    observedClicks: z.number(),
+    observedPositiveReplies: z.number(),
+    costPerOutcomeUsd: z.number().nullable().describe("Populated cost-per-outcome (projected cascade floor: max(spent, fleet unit cost) when the outcome denominator is 0), so non-null whenever the workflow has spend and fleet economics exist."),
+  })).describe("One row per workflow dynasty, sorted by spend desc."),
 });
 
 registry.registerPath({
@@ -1029,6 +1069,52 @@ registry.registerPath({
   responses: {
     200: { description: "Feature-wide expected cost-per-outcome", content: { "application/json": { schema: publicCostProjectionResponseSchema } } },
     400: { description: "Missing parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/cost-per-outcome-trend ─────────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/cost-per-outcome-trend",
+  summary: "Dated moving-average cost-per-outcome series per objective (public, no auth)",
+  description:
+    "Cross-org (fleet-wide) trend of a feature's cost-per-outcome for ONE objective over time. Each display day anchors a trailing window that walks backward until it holds ~windowOutcomes of the objective's base outcomes; the point = that window's fleet spend ÷ outcomes (projected objectives push the window unit costs through the fleet-mean economics). Joins runs-service dated fleet spend against email-gateway dated outcomes. Cost points are null where the window is unbacked — never a false $0.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string().describe("Feature slug (required)."),
+      objective: objectiveQueryParam,
+      days: z.string().optional().describe("Number of trailing display days to emit (default 30, max 180)."),
+      windowOutcomes: z.string().optional().describe("Target outcomes per moving-average window (default 100)."),
+    }),
+  },
+  responses: {
+    200: { description: "Dated moving-average cost-per-outcome series", content: { "application/json": { schema: costPerOutcomeTrendResponseSchema } } },
+    400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/workflow-cost-per-outcome ──────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/workflow-cost-per-outcome",
+  summary: "Per-workflow cross-org cost-per-outcome for an objective (public, no auth)",
+  description:
+    "Cross-org (fleet-wide) per-workflow-dynasty cost-per-outcome for ONE objective, guaranteed to populate when the workflow has spend: unit costs run through the projected cost-engine, flooring to max(spent, fleet unit cost) when the outcome denominator is 0. Same crossOrg dynasty rollup as /public/stats/best. Sorted by spend desc.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string().describe("Feature slug (required)."),
+      objective: objectiveQueryParam,
+    }),
+  },
+  responses: {
+    200: { description: "Per-workflow cross-org cost-per-outcome", content: { "application/json": { schema: workflowCostPerOutcomeResponseSchema } } },
+    400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
   },
 });
