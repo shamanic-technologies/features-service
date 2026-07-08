@@ -592,6 +592,43 @@ across client brands; null only when no brand has usable economics. No forced or
 costs — high self-serve `v2c` lets purchases bypass meetings, so cost-per-meeting CAN exceed
 cost-per-purchase (correct, not a bug). (#274, PR #275.)
 
+## Cross-org cost-per-outcome trio — ALL objectives, dated trend, per-workflow ratio (features-service#485)
+
+Three PLATFORM-WIDE (all-org, no-auth) cost-per-outcome surfaces for the staff admin analytics page,
+all single-sourced through `src/lib/cross-org-cost-per-outcome.ts` — ONE objective vocabulary
+(`OBJECTIVES` = the brand optimization-goal set) + ONE objective→cost mapping
+(`objectiveCostPerOutcome`), so the three surfaces never disagree on what an objective's cost means.
+**websiteVisit / positiveReply map to the RAW unit cost (CPC / CPPR — the visit / reply IS the outcome,
+matching audience-stats' sort metric); signup / formSubmission / meetingBooked / purchase project
+through `projectOutcomeCosts`.** Objective params accept every fleet spelling via `normalizeObjective`
+(camel / snake / kebab; `self-serve` aliases signup).
+
+- **Gap #1 — `GET /public/stats/cost-projection` EXTENDED** with `avgCostPerOutcomeByObjective`
+  (`{websiteVisit, positiveReply, signup, formSubmission, meetingBooked, purchase}`, null where no brand
+  is backed). Additive: legacy `avgCostPerMeetingBooked`/`avgCostPerPurchase` stay as byte-equal aliases
+  of `.meetingBooked`/`.purchase` (Wave 1 admin cards unbroken). Same per-brand-best → mean-across-brands
+  methodology as before (`buildObjectiveAverages`). brandCount = brands contributing ≥1 non-null objective.
+- **Gap #2 — `GET /public/stats/cost-per-outcome-trend?featureSlug=&objective=&days=&windowOutcomes=`**
+  (NEW). Dated moving-average series: each display day anchors a trailing window that walks backward until
+  it holds ~`windowOutcomes` (default 100) of the objective's base outcomes; the point = that window's
+  fleet spend ÷ outcomes (projected objectives push the window unit costs through the fleet-MEAN economics
+  `meanFleetEconomics`). `buildCostPerOutcomeTrend` is pure. **DEPENDS on runs-service serving dated
+  cross-org spend** — the public cost aggregation had NO time dimension (only groupBy=brand/workflow/…),
+  so this joins runs `groupBy=day` (spawned as a producer change, tracked with the consumer) against
+  email-gateway `groupBy=day` outcomes. `dayKeyFromCostGroup` reads the day-shaped dimension tolerantly;
+  CONFORM to runs-service's deployed shape (live>source) once it ships. Cost points null where the window
+  is unbacked — never a false $0.
+- **Gap #3 — `GET /public/stats/workflow-cost-per-outcome?featureSlug=&objective=`** (NEW). Per-workflow
+  (dynasty) cross-org ratio, guaranteed to POPULATE when the workflow has spend: unit costs run through
+  the PROJECTED cost-engine (`projectedCostPerOutcome`), flooring to `max(spent, fleet-parent unit cost)`
+  when the outcome denominator is 0 (the fix for `ranked` reading null cross-org). Same crossOrg dynasty
+  rollup as `/public/stats/best`. Sorted by spend desc. `buildWorkflowCostPerOutcome` is pure.
+
+Each surface uses the shared `PublicCache` memo (60s), `__reset*Cache` test seams. The api-service
+gateway forwards `/public/*` transparently under `/v1/public/features/*` — confirm the two new paths are
+reachable once shipped. Triage: STAGING (staff-internal analytics, dormant until distribute.you #2486
+conforms). (Set 2026-07-08.)
+
 ## Revenue close-paths — combine via independent-OR (`orP`), NEVER `max`; ranking is objective-agnostic
 
 A lead reaches a close through MULTIPLE non-exclusive paths and they must be COMBINED, not MAX'd —

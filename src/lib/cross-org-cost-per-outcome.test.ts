@@ -1,0 +1,233 @@
+import { describe, it, expect } from "vitest";
+import {
+  normalizeObjective,
+  buildLenientProjectionEconomics,
+  objectiveCostPerOutcome,
+  windowBaseOutcome,
+  buildObjectiveAverages,
+  buildCostPerOutcomeTrend,
+  buildWorkflowCostPerOutcome,
+  meanFleetEconomics,
+  OBJECTIVES,
+  type DayOutcome,
+} from "./cross-org-cost-per-outcome.js";
+import { projectedCostPerOutcome } from "./cost-engine.js";
+import { projectOutcomeCosts, type SalesEconomics } from "./funnel-registry.js";
+
+const FULL_ECON: SalesEconomics = {
+  lifetimeRevenueUsd: 1000,
+  replyToMeetingPct: 40,
+  visitToMeetingPct: 5,
+  meetingToClosePct: 30,
+  visitToSignupPct: 20,
+  signupToPaidClientPct: 10,
+  visitToClosePct: 2,
+  visitToPaidClientPct: 3,
+  replyToPaidClientPct: 8,
+  visitToFormSubmissionPct: 12,
+  formSubmissionToPaidClientPct: 25,
+};
+
+describe("normalizeObjective", () => {
+  it("accepts every fleet spelling and canonicalises to camelCase", () => {
+    expect(normalizeObjective("websiteVisit")).toBe("websiteVisit");
+    expect(normalizeObjective("website_visits")).toBe("websiteVisit");
+    expect(normalizeObjective("website-visits")).toBe("websiteVisit");
+    expect(normalizeObjective("positive_replies")).toBe("positiveReply");
+    expect(normalizeObjective("form_submissions")).toBe("formSubmission");
+    expect(normalizeObjective("meeting-booked")).toBe("meetingBooked");
+    expect(normalizeObjective("meetingBooked")).toBe("meetingBooked");
+    expect(normalizeObjective("self-serve")).toBe("signup");
+    expect(normalizeObjective("signup")).toBe("signup");
+    expect(normalizeObjective("purchase")).toBe("purchase");
+  });
+  it("returns null for unknown / missing", () => {
+    expect(normalizeObjective(undefined)).toBeNull();
+    expect(normalizeObjective("nonsense")).toBeNull();
+  });
+});
+
+describe("objectiveCostPerOutcome", () => {
+  const econ = buildLenientProjectionEconomics(FULL_ECON);
+  const unit = { clickUsd: 1, replyUsd: 2 };
+
+  it("websiteVisit = CPC (raw click unit cost), positiveReply = CPPR (raw reply unit cost)", () => {
+    expect(objectiveCostPerOutcome("websiteVisit", unit, econ)).toBe(1);
+    expect(objectiveCostPerOutcome("positiveReply", unit, econ)).toBe(2);
+  });
+  it("projected objectives match projectOutcomeCosts", () => {
+    const p = projectOutcomeCosts(econ, unit);
+    expect(objectiveCostPerOutcome("signup", unit, econ)).toBe(p.costPerSignupUsd);
+    expect(objectiveCostPerOutcome("formSubmission", unit, econ)).toBe(p.costPerFormSubmissionUsd);
+    expect(objectiveCostPerOutcome("meetingBooked", unit, econ)).toBe(p.costPerMeetingBookedUsd);
+    expect(objectiveCostPerOutcome("purchase", unit, econ)).toBe(p.costPerPurchaseUsd);
+  });
+  it("CPC/CPPR are null when the corresponding unit cost is null", () => {
+    expect(objectiveCostPerOutcome("websiteVisit", { clickUsd: null, replyUsd: 2 }, econ)).toBeNull();
+    expect(objectiveCostPerOutcome("positiveReply", { clickUsd: 1, replyUsd: null }, econ)).toBeNull();
+  });
+});
+
+describe("windowBaseOutcome", () => {
+  it("sizes by clicks for visit-driven, replies for positiveReply, both for close goals", () => {
+    expect(windowBaseOutcome("websiteVisit", 10, 3)).toBe(10);
+    expect(windowBaseOutcome("signup", 10, 3)).toBe(10);
+    expect(windowBaseOutcome("formSubmission", 10, 3)).toBe(10);
+    expect(windowBaseOutcome("positiveReply", 10, 3)).toBe(3);
+    expect(windowBaseOutcome("meetingBooked", 10, 3)).toBe(13);
+    expect(windowBaseOutcome("purchase", 10, 3)).toBe(13);
+  });
+});
+
+describe("buildObjectiveAverages", () => {
+  it("means each brand's best-workflow cost across brands; cheapest workflow wins per objective", () => {
+    const unitCostList = [
+      { clickUsd: 1, replyUsd: 2 }, // cheap → best
+      { clickUsd: 5, replyUsd: 9 }, // expensive → never best
+    ];
+    const e2: SalesEconomics = { ...FULL_ECON, lifetimeRevenueUsd: 2000, replyToMeetingPct: 20, visitToMeetingPct: 10, meetingToClosePct: 50, visitToClosePct: 5 };
+    const { objectives, brandCount } = buildObjectiveAverages(unitCostList, [FULL_ECON, e2]);
+
+    expect(brandCount).toBe(2);
+    // CPC / CPPR are brand-invariant (min unit cost) → the value itself.
+    expect(objectives.websiteVisit).toBe(1);
+    expect(objectives.positiveReply).toBe(2);
+    // meetingBooked = mean of each brand's best (cheapest workflow) projection.
+    const p1 = projectOutcomeCosts(buildLenientProjectionEconomics(FULL_ECON), { clickUsd: 1, replyUsd: 2 });
+    const p2 = projectOutcomeCosts(buildLenientProjectionEconomics(e2), { clickUsd: 1, replyUsd: 2 });
+    expect(objectives.meetingBooked!).toBeCloseTo((p1.costPerMeetingBookedUsd! + p2.costPerMeetingBookedUsd!) / 2, 6);
+    expect(objectives.purchase!).toBeCloseTo((p1.costPerPurchaseUsd! + p2.costPerPurchaseUsd!) / 2, 6);
+    // every objective present in the map
+    for (const g of OBJECTIVES) expect(g in objectives).toBe(true);
+  });
+
+  it("null + brandCount 0 when no brand supplied", () => {
+    const { objectives, brandCount } = buildObjectiveAverages([{ clickUsd: 1, replyUsd: 2 }], []);
+    expect(brandCount).toBe(0);
+    for (const g of OBJECTIVES) expect(objectives[g]).toBeNull();
+  });
+
+  it("an objective with no backing rate across brands averages to null (never a false 0)", () => {
+    // economics with NO form-submission rate → formSubmission unbacked → null; CPC still backed.
+    const noForm: SalesEconomics = { ...FULL_ECON, visitToFormSubmissionPct: undefined, formSubmissionToPaidClientPct: undefined };
+    const { objectives, brandCount } = buildObjectiveAverages([{ clickUsd: 1, replyUsd: 2 }], [noForm]);
+    expect(brandCount).toBe(1);
+    expect(objectives.websiteVisit).toBe(1);
+    expect(objectives.formSubmission).toBeNull();
+  });
+});
+
+describe("meanFleetEconomics", () => {
+  it("returns null on empty; means each rate across brands", () => {
+    expect(meanFleetEconomics([])).toBeNull();
+    const a: SalesEconomics = { ...FULL_ECON, replyToMeetingPct: 40 };
+    const b: SalesEconomics = { ...FULL_ECON, replyToMeetingPct: 20 };
+    const m = meanFleetEconomics([a, b])!;
+    expect(m.r2m).toBeCloseTo(0.3, 6); // (0.4 + 0.2)/2
+  });
+  it("an optional rate no brand carries stays undefined", () => {
+    const noReplyPaid: SalesEconomics = { ...FULL_ECON, replyToPaidClientPct: undefined };
+    const m = meanFleetEconomics([noReplyPaid])!;
+    expect(m.r2pc).toBeUndefined();
+  });
+});
+
+describe("buildCostPerOutcomeTrend", () => {
+  const fleetEcon = buildLenientProjectionEconomics(FULL_ECON);
+  // 5 days of history, 2 clicks/day, $2 spend/day → CPC steady at $1.
+  const spendByDay = new Map<string, number>([
+    ["2026-07-04", 2], ["2026-07-05", 2], ["2026-07-06", 2], ["2026-07-07", 2], ["2026-07-08", 2],
+  ]);
+  const outcomesByDay = new Map<string, DayOutcome>([
+    ["2026-07-04", { clicks: 2, replies: 1 }],
+    ["2026-07-05", { clicks: 2, replies: 1 }],
+    ["2026-07-06", { clicks: 2, replies: 1 }],
+    ["2026-07-07", { clicks: 2, replies: 1 }],
+    ["2026-07-08", { clicks: 2, replies: 1 }],
+  ]);
+
+  it("emits one dense point per display day, anchored newest-last", () => {
+    const points = buildCostPerOutcomeTrend({
+      objective: "websiteVisit", todayIso: "2026-07-08", days: 3, windowOutcomes: 4,
+      maxLookbackDays: 30, spendByDay, outcomesByDay, fleetEcon,
+    });
+    expect(points).toHaveLength(3);
+    expect(points.map((p) => p.date)).toEqual(["2026-07-06", "2026-07-07", "2026-07-08"]);
+  });
+
+  it("CPC moving average = window spend / window clicks; window spans ~windowOutcomes clicks", () => {
+    const points = buildCostPerOutcomeTrend({
+      objective: "websiteVisit", todayIso: "2026-07-08", days: 1, windowOutcomes: 4,
+      maxLookbackDays: 30, spendByDay, outcomesByDay, fleetEcon,
+    });
+    const p = points[0];
+    // window needs ≥4 clicks: 2026-07-08 (2) + 2026-07-07 (2) = 4 → spans 2 days, spend $4, clicks 4 → CPC $1.
+    expect(p.windowOutcomeCount).toBe(4);
+    expect(p.windowSpentUsd).toBe(4);
+    expect(p.windowStartDate).toBe("2026-07-07");
+    expect(p.costPerOutcomeUsd).toBeCloseTo(1, 6);
+  });
+
+  it("projected objective (signup) trend = fleet-econ projection of the window unit cost", () => {
+    const points = buildCostPerOutcomeTrend({
+      objective: "signup", todayIso: "2026-07-08", days: 1, windowOutcomes: 4,
+      maxLookbackDays: 30, spendByDay, outcomesByDay, fleetEcon,
+    });
+    // base outcome = clicks → window spans 2 days: spend $4, clicks 4 (clickUsd $1), replies 2 (replyUsd $2).
+    const expected = projectOutcomeCosts(fleetEcon, { clickUsd: 1, replyUsd: 2 }).costPerSignupUsd;
+    expect(points[0].costPerOutcomeUsd).toBeCloseTo(expected!, 6);
+  });
+
+  it("cost is null on a day whose window has zero outcomes (never a false $0)", () => {
+    const points = buildCostPerOutcomeTrend({
+      objective: "websiteVisit", todayIso: "2026-07-08", days: 1, windowOutcomes: 4,
+      maxLookbackDays: 30, spendByDay: new Map(), outcomesByDay: new Map(), fleetEcon,
+    });
+    expect(points[0].costPerOutcomeUsd).toBeNull();
+    expect(points[0].windowOutcomeCount).toBe(0);
+  });
+
+  it("null economics → all points null cost", () => {
+    const points = buildCostPerOutcomeTrend({
+      objective: "signup", todayIso: "2026-07-08", days: 2, windowOutcomes: 4,
+      maxLookbackDays: 30, spendByDay, outcomesByDay, fleetEcon: null,
+    });
+    expect(points.every((p) => p.costPerOutcomeUsd === null)).toBe(true);
+  });
+});
+
+describe("buildWorkflowCostPerOutcome", () => {
+  const fleetEcon = buildLenientProjectionEconomics(FULL_ECON);
+
+  it("populates cost even when the outcome denominator is 0 (projected floor), sorts by spend desc", () => {
+    const rows = buildWorkflowCostPerOutcome({
+      objective: "websiteVisit",
+      rows: [
+        { workflowDynastySlug: "small", workflowDynastyName: "Small", spentUsd: 10, clicks: 5, replies: 0 },
+        { workflowDynastySlug: "big-noclicks", workflowDynastyName: "Big", spentUsd: 100, clicks: 0, replies: 0 },
+      ],
+      fleetParentClickUsd: 2,
+      fleetParentReplyUsd: 4,
+      fleetEcon,
+      projectedFloor: projectedCostPerOutcome,
+    });
+    // sorted by spend desc → big first
+    expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["big-noclicks", "small"]);
+    // big has 0 clicks → CPC floored to max(spent=100, parent=2) = 100 (never null)
+    expect(rows[0].costPerOutcomeUsd).toBe(100);
+    // small has 5 clicks / $10 → CPC = $2
+    expect(rows[1].costPerOutcomeUsd).toBe(2);
+  });
+
+  it("null economics → costPerOutcomeUsd null (cold start)", () => {
+    const rows = buildWorkflowCostPerOutcome({
+      objective: "signup",
+      rows: [{ workflowDynastySlug: "w", workflowDynastyName: "W", spentUsd: 10, clicks: 5, replies: 1 }],
+      fleetParentClickUsd: null,
+      fleetParentReplyUsd: null,
+      fleetEcon: null,
+      projectedFloor: projectedCostPerOutcome,
+    });
+    expect(rows[0].costPerOutcomeUsd).toBeNull();
+  });
+});

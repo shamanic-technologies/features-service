@@ -13,7 +13,21 @@ import {
   type WorkflowMetadata,
   type EngagementLatencyMetric,
 } from "../lib/public-stats-clients.js";
-import { getFunnel, projectOutcomeCosts } from "../lib/funnel-registry.js";
+import { getFunnel, type SalesEconomics } from "../lib/funnel-registry.js";
+import { projectedCostPerOutcome } from "../lib/cost-engine.js";
+import {
+  buildObjectiveAverages,
+  buildCostPerOutcomeTrend,
+  buildWorkflowCostPerOutcome,
+  fetchFleetBrandEconomics,
+  meanFleetEconomics,
+  normalizeObjective,
+  type ObjectiveAverages,
+  type TrendPoint,
+  type DayOutcome,
+  type WorkflowCostRow,
+  type WorkflowGrainInput,
+} from "../lib/cross-org-cost-per-outcome.js";
 import { fetchFeatureMemberships } from "../lib/feature-memberships-client.js";
 import { fetchFleetEmailsSentByDay, fetchFleetSendingForecast } from "../lib/send-forecast-client.js";
 import { aggregateFleetNewSequences } from "../lib/send-forecast-aggregate.js";
@@ -749,8 +763,13 @@ export async function handlePublicWorkflowEngagementLatency(
 
 interface PublicCostProjectionPayload {
   featureSlug: string;
+  /** Legacy top-level fields (Wave 1 admin cards) — kept byte-equal to
+   * avgCostPerOutcomeByObjective.meetingBooked / .purchase. */
   avgCostPerMeetingBooked: number | null;
   avgCostPerPurchase: number | null;
+  /** Fleet-average cost-per-outcome for EVERY optimization objective (null where no brand is backed).
+   * websiteVisit / positiveReply = CPC / CPPR; the rest project through the funnel. Gap #1 (#485). */
+  avgCostPerOutcomeByObjective: ObjectiveAverages;
   brandCount: number;
 }
 
@@ -807,17 +826,17 @@ export async function handlePublicCostProjection(
   }
 
   // One economics fetch per DISTINCT brand (forward any owning org — the /orgs/* tier needs only x-org-id).
+  // A stale membership (BrandOwnershipError) or a brand with no economics contributes nothing.
   const brandToOrg = new Map<string, string>();
   for (const m of memberships) {
     if (!brandToOrg.has(m.brandId)) brandToOrg.set(m.brandId, m.orgId);
   }
 
-  const perBrand = await Promise.all(
+  const perBrandEconomicsRaw = await Promise.all(
     [...brandToOrg.entries()].map(async ([brandId, orgId]) => {
-      let economics;
       try {
         const effective = await fetchEffectiveEconomics(brandId, { orgId, featureSlug });
-        economics = effective.economics;
+        return effective.economics;
       } catch (error) {
         if (error instanceof BrandOwnershipError) {
           console.log(
@@ -827,39 +846,253 @@ export async function handlePublicCostProjection(
         }
         throw error;
       }
-      if (!economics) return null;
-
-      const econ = {
-        r2m: economics.replyToMeetingPct / 100,
-        v2m: economics.visitToMeetingPct / 100,
-        m2c: economics.meetingToClosePct / 100,
-        v2c: economics.visitToClosePct / 100,
-        v2s: economics.visitToSignupPct / 100,
-      };
-
-      // Best (lowest) projected cost per metric across this brand's workflows — picked independently per metric.
-      let bestMeeting: number | null = null;
-      let bestPurchase: number | null = null;
-      for (const unitCosts of unitCostList) {
-        const { costPerMeetingBookedUsd, costPerPurchaseUsd } = projectOutcomeCosts(econ, unitCosts);
-        if (costPerMeetingBookedUsd != null && (bestMeeting == null || costPerMeetingBookedUsd < bestMeeting)) bestMeeting = costPerMeetingBookedUsd;
-        if (costPerPurchaseUsd != null && (bestPurchase == null || costPerPurchaseUsd < bestPurchase)) bestPurchase = costPerPurchaseUsd;
-      }
-      if (bestMeeting == null && bestPurchase == null) return null;
-      return { bestMeeting, bestPurchase };
     }),
   );
+  const perBrandEconomics = perBrandEconomicsRaw.filter((e): e is SalesEconomics => e != null);
 
-  const usable = perBrand.filter((b): b is { bestMeeting: number | null; bestPurchase: number | null } => b !== null);
-  const mean = (vals: number[]): number | null => (vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null);
+  // Fleet averages across ALL objectives (per-brand best across the fleet unit costs → mean over brands).
+  const { objectives, brandCount } = buildObjectiveAverages(unitCostList, perBrandEconomics);
 
   const payload: PublicCostProjectionPayload = {
     featureSlug,
-    avgCostPerMeetingBooked: mean(usable.map((b) => b.bestMeeting).filter((v): v is number => v !== null)),
-    avgCostPerPurchase: mean(usable.map((b) => b.bestPurchase).filter((v): v is number => v !== null)),
-    brandCount: usable.length,
+    avgCostPerMeetingBooked: objectives.meetingBooked,
+    avgCostPerPurchase: objectives.purchase,
+    avgCostPerOutcomeByObjective: objectives,
+    brandCount,
   };
   setPublicCache(costProjectionCache, featureSlug, payload);
+  res.json(payload);
+}
+
+// ── GET /public/stats/cost-per-outcome-trend ─────────────────────────────────
+//
+// Gap #2 (#485). Dated moving-average cost-per-outcome series for ONE objective, cross-org: each display
+// day anchors a trailing window that accumulates backward until it holds ~`windowOutcomes` of the
+// objective's base outcomes, then reports that window's fleet-spend ÷ outcomes (projected objectives push
+// the window unit costs through the fleet-mean economics). Joins runs-service dated fleet spend (public
+// costs groupBy=day) against email-gateway dated outcomes (public stats groupBy=day). null cost points
+// where the window is unbacked — never a false $0.
+
+const DEFAULT_TREND_DAYS = 30;
+const MAX_TREND_DAYS = 180;
+const DEFAULT_WINDOW_OUTCOMES = 100;
+const MAX_WINDOW_OUTCOMES = 100_000;
+const MAX_TREND_LOOKBACK_DAYS = 365;
+
+interface CostPerOutcomeTrendPayload {
+  featureSlug: string;
+  objective: string;
+  windowOutcomes: number;
+  points: TrendPoint[];
+}
+
+const costPerOutcomeTrendCache: PublicCache = new Map();
+
+/** Test seam — reset the in-memory cost-per-outcome-trend cache. */
+export function __resetCostPerOutcomeTrendCache(): void {
+  costPerOutcomeTrendCache.clear();
+}
+
+/**
+ * Extract the UTC day (YYYY-MM-DD) a runs-service day-grouped cost group belongs to. runs-service owns
+ * the exact dimension key for its `groupBy=day` design — read the day-shaped dimension value, falling
+ * back to the group's earliest run timestamp. (Consumer stays tolerant to the deployed shape per the
+ * live>source rule; conform once runs-service ships.)
+ */
+function dayKeyFromCostGroup(group: {
+  dimensions: Record<string, string | null>;
+  minStartedAt?: string | null;
+}): string | null {
+  for (const v of Object.values(group.dimensions)) {
+    if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+  }
+  if (typeof group.minStartedAt === "string" && group.minStartedAt.length >= 10) {
+    return group.minStartedAt.slice(0, 10);
+  }
+  return null;
+}
+
+export async function handleCostPerOutcomeTrend(
+  featureSlug: string | undefined,
+  objectiveParam: string | undefined,
+  daysParam: string | undefined,
+  windowParam: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  if (!featureSlug) {
+    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
+    return;
+  }
+  const objective = normalizeObjective(objectiveParam);
+  if (!objective) {
+    res.status(400).json({ error: "Query parameter 'objective' is required (one of the optimization goals)" });
+    return;
+  }
+
+  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
+  if (!feature) {
+    res.status(404).json({ error: "Feature not found" });
+    return;
+  }
+
+  const parsedDays = parseInt(daysParam ?? "", 10);
+  const days = Number.isFinite(parsedDays) && parsedDays >= 1 ? Math.min(parsedDays, MAX_TREND_DAYS) : DEFAULT_TREND_DAYS;
+  const parsedWindow = parseInt(windowParam ?? "", 10);
+  const windowOutcomes =
+    Number.isFinite(parsedWindow) && parsedWindow >= 1 ? Math.min(parsedWindow, MAX_WINDOW_OUTCOMES) : DEFAULT_WINDOW_OUTCOMES;
+
+  const cacheKey = `trend:${featureSlug}:${objective}:${days}:${windowOutcomes}`;
+  const cached = getPublicCache<CostPerOutcomeTrendPayload>(costPerOutcomeTrendCache, cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  const [spendGroups, dayOutcomeMap, perBrandEconomics] = await Promise.all([
+    fetchPublicCosts(featureSlug, "day"),
+    fetchPublicEmailStats(featureSlug, "day"),
+    fetchFleetBrandEconomics(featureSlug),
+  ]);
+
+  const spendByDay = new Map<string, number>();
+  for (const g of spendGroups) {
+    const day = dayKeyFromCostGroup(g);
+    if (!day) continue;
+    spendByDay.set(day, (spendByDay.get(day) ?? 0) + Number(g.totalCostInUsdCents) / 100);
+  }
+
+  const outcomesByDay = new Map<string, DayOutcome>();
+  for (const [day, fields] of dayOutcomeMap) {
+    if (day === "__total__") continue;
+    outcomesByDay.set(day, {
+      clicks: fields.recipientsClicked ?? 0,
+      replies: fields.recipientsRepliesPositive ?? 0,
+    });
+  }
+
+  const fleetEcon = meanFleetEconomics(perBrandEconomics);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const points = buildCostPerOutcomeTrend({
+    objective,
+    todayIso,
+    days,
+    windowOutcomes,
+    maxLookbackDays: MAX_TREND_LOOKBACK_DAYS,
+    spendByDay,
+    outcomesByDay,
+    fleetEcon,
+  });
+
+  const payload: CostPerOutcomeTrendPayload = { featureSlug, objective, windowOutcomes, points };
+  setPublicCache(costPerOutcomeTrendCache, cacheKey, payload);
+  res.json(payload);
+}
+
+// ── GET /public/stats/workflow-cost-per-outcome ──────────────────────────────
+//
+// Gap #3 (#485). Per-workflow (dynasty) cross-org cost-per-outcome for ONE objective, guaranteed to
+// POPULATE when the workflow has spend: unit costs run through the PROJECTED cost-engine, flooring to
+// max(spent, fleet-parent unit cost) when the outcome denominator is 0. Same crossOrg dynasty rollup as
+// /public/stats/best. Sorted by spend desc.
+
+interface WorkflowCostPerOutcomePayload {
+  featureSlug: string;
+  objective: string;
+  workflows: WorkflowCostRow[];
+}
+
+const workflowCostPerOutcomeCache: PublicCache = new Map();
+
+/** Test seam — reset the in-memory workflow-cost-per-outcome cache. */
+export function __resetWorkflowCostPerOutcomeCache(): void {
+  workflowCostPerOutcomeCache.clear();
+}
+
+export async function handleWorkflowCostPerOutcome(
+  featureSlug: string | undefined,
+  objectiveParam: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  if (!featureSlug) {
+    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
+    return;
+  }
+  const objective = normalizeObjective(objectiveParam);
+  if (!objective) {
+    res.status(400).json({ error: "Query parameter 'objective' is required (one of the optimization goals)" });
+    return;
+  }
+
+  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
+  if (!feature) {
+    res.status(404).json({ error: "Feature not found" });
+    return;
+  }
+
+  const cacheKey = `wf-cpo:${featureSlug}:${objective}`;
+  const cached = getPublicCache<WorkflowCostPerOutcomePayload>(workflowCostPerOutcomeCache, cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  const [workflows, costGroups, emailStats, perBrandEconomics] = await Promise.all([
+    fetchPublicWorkflows(featureSlug, "all"),
+    fetchPublicCosts(featureSlug, "workflowSlug"),
+    fetchPublicEmailStats(featureSlug, "workflowSlug"),
+    fetchFleetBrandEconomics(featureSlug),
+  ]);
+
+  const chains = buildUpgradeChains(workflows);
+  const { costMap, aggregatedOutcomes } = aggregateAcrossChains(chains, costGroups, emailStats, "workflowSlug");
+  const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
+
+  // Roll each active-workflow chain up to its dynasty (two active heads sharing a dynasty merge).
+  const byDynasty = new Map<string, WorkflowGrainInput>();
+  for (const [slug, cost] of costMap) {
+    const wf = workflowBySlug.get(slug);
+    if (!wf) continue;
+    const outcomes = aggregatedOutcomes.get(slug) ?? {};
+    const spentUsd = cost.totalCostInUsdCents / 100;
+    const clicks = outcomes.recipientsClicked ?? 0;
+    const replies = outcomes.recipientsRepliesPositive ?? 0;
+    const existing = byDynasty.get(wf.workflowDynastySlug);
+    if (existing) {
+      existing.spentUsd += spentUsd;
+      existing.clicks += clicks;
+      existing.replies += replies;
+    } else {
+      byDynasty.set(wf.workflowDynastySlug, {
+        workflowDynastySlug: wf.workflowDynastySlug,
+        workflowDynastyName: wf.workflowDynastyName,
+        spentUsd,
+        clicks,
+        replies,
+      });
+    }
+  }
+
+  // Fleet parent unit costs (crossOrg CPC / CPPR) — the cascade floor the projected engine falls back to.
+  let totalSpent = 0, totalClicks = 0, totalReplies = 0;
+  for (const r of byDynasty.values()) {
+    totalSpent += r.spentUsd;
+    totalClicks += r.clicks;
+    totalReplies += r.replies;
+  }
+  const fleetParentClickUsd = totalClicks > 0 && totalSpent > 0 ? totalSpent / totalClicks : null;
+  const fleetParentReplyUsd = totalReplies > 0 && totalSpent > 0 ? totalSpent / totalReplies : null;
+
+  const rows = buildWorkflowCostPerOutcome({
+    objective,
+    rows: [...byDynasty.values()],
+    fleetParentClickUsd,
+    fleetParentReplyUsd,
+    fleetEcon: meanFleetEconomics(perBrandEconomics),
+    projectedFloor: projectedCostPerOutcome,
+  });
+
+  const payload: WorkflowCostPerOutcomePayload = { featureSlug, objective, workflows: rows };
+  setPublicCache(workflowCostPerOutcomeCache, cacheKey, payload);
   res.json(payload);
 }
 
@@ -1034,6 +1267,38 @@ router.get("/public/stats/cost-projection", async (req, res) => {
     await handlePublicCostProjection(req.query.featureSlug as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public stats cost-projection error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/cost-per-outcome-trend ─────────────────────────────────
+
+router.get("/public/stats/cost-per-outcome-trend", async (req, res) => {
+  try {
+    await handleCostPerOutcomeTrend(
+      req.query.featureSlug as string | undefined,
+      req.query.objective as string | undefined,
+      req.query.days as string | undefined,
+      req.query.windowOutcomes as string | undefined,
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] Public stats cost-per-outcome-trend error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/workflow-cost-per-outcome ──────────────────────────────
+
+router.get("/public/stats/workflow-cost-per-outcome", async (req, res) => {
+  try {
+    await handleWorkflowCostPerOutcome(
+      req.query.featureSlug as string | undefined,
+      req.query.objective as string | undefined,
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] Public stats workflow-cost-per-outcome error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
