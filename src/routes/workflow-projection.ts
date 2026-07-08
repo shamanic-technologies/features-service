@@ -292,12 +292,16 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // The workflow list is needed by the crossOrg AND brand dynasty rollups, so fetch it first; the
     // brand grain then fans out in parallel with the remaining reads.
     const workflows = await fetchPublicWorkflows(featureSlug, "all");
+    // Same slug → dynasty map the crossOrg/brand rollups use — passed to the audience grain so its
+    // per-audience dynasty attachment aligns with the dynasty-keyed rows (and skips runs-service's
+    // lossy workflowDynastySlug regroup, which collapses the co-grouped audienceId).
+    const slugToDynasty = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
     const [costGroups, emailStats, effective, brandGrain, audienceEvidence] = await Promise.all([
       fetchPublicCosts(featureSlug, "workflowSlug"),
       fetchPublicEmailStats(featureSlug, "workflowSlug"),
       fetchEffectiveEconomics(brandId, identity),
       fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity),
-      fetchAudienceGrainEvidence(brandId, featureSlug, identity),
+      fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty),
     ]);
     const economics = effective.economics;
 
