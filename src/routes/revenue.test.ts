@@ -104,9 +104,20 @@ function qualRows(quals: Qualifications): unknown[] {
 }
 
 /** Route fetch mock keyed by URL substring. effective economics (saved set + cross-brand average) + leads + status timestamps + manual quals + platform stats + cost overridable. */
-function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; purchase: number }; conversionCountsFail?: boolean } = {}): void {
+function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; purchase: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+    // lead-service GET /internal/brands/:brandId/converted-lead-emails?event=<type> — per-lead SIGNUP /
+    // FORM-SUBMISSION attribution email sets (#476). Match BEFORE /conversion-counts (distinct path) and
+    // before the generic branches. conversionEmailsFail → 500 so the soft wrapper degrades to no flags.
+    if (url.includes("/converted-lead-emails")) {
+      if (opts.conversionEmailsFail) {
+        return new Response("not deployed", { status: 500, headers: { "Content-Type": "application/json" } });
+      }
+      const event = url.includes("event=form_submission") ? "form_submission" : "signup";
+      const emails = opts.conversionEmails?.[event] ?? [];
+      return new Response(JSON.stringify({ event, emails }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     // lead-service GET /internal/brands/:brandId/conversion-counts — REAL conversion counts (#461).
     // Absent option → 500 so the soft wrapper degrades to absent (mirrors the pre-rollout window),
     // preserving the "no cps/cpsm when counts unavailable" assertions.
@@ -344,7 +355,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    const { recipientsContacted: oc, recipientsOpened: opened, recipientsClicked: clicked, recipientsRepliesPositive: repliedPositive, meetingsBooked, purchased } = res.body;
+    const { recipientsContacted: oc, recipientsOpened: opened, recipientsClicked: clicked, recipientsRepliesPositive: repliedPositive, meetingsBooked, purchased, signups, formSubmissions } = res.body;
     // Each series carries the same shape as recipientsContacted.
     expect(opened.total).toBe(2); // both opened
     expect(opened.daily).toEqual([{ date: day, count: 2 }]);
@@ -356,11 +367,14 @@ describe("GET /features/:featureSlug/revenue", () => {
     // No meeting/close qualifications in this payload → empty goal-outcome series (no synthesis).
     expect(meetingsBooked).toEqual({ total: 0, daily: [], undatedCount: 0 });
     expect(purchased).toEqual({ total: 0, daily: [], undatedCount: 0 });
+    // No conversionEmails supplied → no signup / form-submission attribution → empty outcome series.
+    expect(signups).toEqual({ total: 0, daily: [], undatedCount: 0 });
+    expect(formSubmissions).toEqual({ total: 0, daily: [], undatedCount: 0 });
     // COHERENCE: no actual series exceeds the contacted snapshot; each reconciles to its own total.
     expect(opened.total).toBeLessThanOrEqual(oc.total);
     expect(clicked.total).toBeLessThanOrEqual(opened.total);
     expect(repliedPositive.total).toBeLessThanOrEqual(oc.total);
-    for (const s of [oc, opened, clicked, repliedPositive, meetingsBooked, purchased]) {
+    for (const s of [oc, opened, clicked, repliedPositive, meetingsBooked, purchased, signups, formSubmissions]) {
       const sumDaily = s.daily.reduce((a: number, b: any) => a + b.count, 0);
       expect(sumDaily + s.undatedCount).toBe(s.total);
     }
@@ -368,6 +382,45 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.leads.filter((l: any) => l.opened).length).toBe(opened.total);
     expect(res.body.leads.filter((l: any) => l.clicked).length).toBe(clicked.total);
     expect(res.body.leads.filter((l: any) => l.repliedPositive).length).toBe(repliedPositive.total);
+  });
+
+  it("per-lead signup / form-submission attribution (lead-service converted-lead-emails) — flags + dateless series (#476)", async () => {
+    // lead-service matched click@x.com to a SIGNUP and reply@y.com to a FORM_SUBMISSION (by email).
+    mockFetch({
+      economics: ECONOMICS,
+      leads: HAPPY_LEADS, // click@x.com + reply@y.com
+      conversionEmails: { signup: ["click@x.com"], form_submission: ["reply@y.com"] },
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    const leads = res.body.leads as Array<{ leadId: string; signup: boolean; signupAt: string | null; formSubmission: boolean; formSubmissionAt: string | null }>;
+    const l1 = leads.find((l) => l.leadId === "l1")!; // click@x.com
+    const l2 = leads.find((l) => l.leadId === "l2")!; // reply@y.com
+    // (a) WHICH leads reached each outcome — real per-lead attribution by matched email.
+    expect(l1.signup).toBe(true);
+    expect(l1.formSubmission).toBe(false);
+    expect(l2.formSubmission).toBe(true);
+    expect(l2.signup).toBe(false);
+    // (b) The per-lead date is ABSENT — lead-service exposes the matched lead but not the conversion
+    // timestamp (documented constraint #476). No synthesis (never borrows the outreach date).
+    expect(l1.signupAt).toBeNull();
+    expect(l2.formSubmissionAt).toBeNull();
+    // (c) The daily series carries the REAL total but an empty daily / undatedCount === total (the
+    // per-day trend is unplottable until lead-service surfaces the conversion date).
+    expect(res.body.signups).toEqual({ total: 1, daily: [], undatedCount: 1 });
+    expect(res.body.formSubmissions).toEqual({ total: 1, daily: [], undatedCount: 1 });
+    // Reconciles with the table: count(leads with signal) === series total.
+    expect(leads.filter((l) => l.signup).length).toBe(res.body.signups.total);
+    expect(leads.filter((l) => l.formSubmission).length).toBe(res.body.formSubmissions.total);
+  });
+
+  it("degrades (still 200, per-lead conversion flags false) when converted-lead-emails fails (#476)", async () => {
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, conversionEmailsFail: true });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.leads.every((l: any) => l.signup === false && l.formSubmission === false)).toBe(true);
+    expect(res.body.signups).toEqual({ total: 0, daily: [], undatedCount: 0 });
+    expect(res.body.formSubmissions).toEqual({ total: 0, daily: [], undatedCount: 0 });
   });
 
   it("cross-brand-average fallback — no saved economics but average exists → computed + tagged estimate", async () => {
@@ -855,6 +908,8 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend).not.toHaveProperty("cpsmCents");
     expect(res.body.spend).not.toHaveProperty("formSubmissionsCount");
     expect(res.body.spend).not.toHaveProperty("cpfsCents");
+    expect(res.body.spend).not.toHaveProperty("purchasesCount");
+    expect(res.body.spend).not.toHaveProperty("cppCents");
   });
 
   it("spend — REAL conversions: signupsCount/salesMeetingsCount + cpsCents/cpsmCents = COMMITTED spend ÷ real count (features-service#461)", async () => {
@@ -889,6 +944,18 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.formSubmissionsCount).toBe(7);
     expect(res.body.spend.cpfsCents).toBe(10000 / 7);
     expect(res.body.spend.cpfsCents * res.body.spend.formSubmissionsCount).toBe(res.body.spend.totalSpentCents);
+    // Purchases brand-level aggregate (#476) — the count tile purchases previously lacked. 1 tracked
+    // → cpp = committed 10000 ÷ 1, same COMMITTED denominator as the others.
+    expect(res.body.spend.purchasesCount).toBe(1);
+    expect(res.body.spend.cppCents).toBe(10000 / 1);
+    expect(res.body.spend.cppCents * res.body.spend.purchasesCount).toBe(res.body.spend.totalSpentCents);
+    // Positive replies (single-step positive_replies goal outcome): HAPPY_LEADS carries 1 positive
+    // reply (== recipientsRepliesPositive.total), sourced from the leads snapshot (NOT conversion-counts)
+    // → always present; cppr = committed 10000 ÷ 1. features-service#482.
+    expect(res.body.spend.positiveRepliesCount).toBe(1);
+    expect(res.body.spend.positiveRepliesCount).toBe(res.body.recipientsRepliesPositive.total);
+    expect(res.body.spend.cpprCents).toBe(10000 / 1);
+    expect(res.body.spend.cpprCents * res.body.spend.positiveRepliesCount).toBe(res.body.spend.totalSpentCents);
   });
 
   it("spend — REAL conversions null-denominator: 0 signups/meetings → cpsCents/cpsmCents null (never a false $0), count still 0", async () => {
@@ -902,6 +969,34 @@ describe("GET /features/:featureSlug/revenue", () => {
     // 0 form submissions → count 0 but cpfs null (no denominator), never a false $0.
     expect(res.body.spend.formSubmissionsCount).toBe(0);
     expect(res.body.spend.cpfsCents).toBeNull();
+    // 0 purchases → count 0 but cpp null (no denominator), never a false $0 (#476).
+    expect(res.body.spend.purchasesCount).toBe(0);
+    expect(res.body.spend.cppCents).toBeNull();
+    // HAPPY_LEADS still carries 1 positive reply (leads-sourced, independent of conversion-counts).
+    expect(res.body.spend.positiveRepliesCount).toBe(1);
+    expect(res.body.spend.cpprCents).toBe(7000 / 1);
+  });
+
+  it("spend — positive replies null-denominator: 0 positive replies → positiveRepliesCount 0 + cpprCents null (never a false $0) (features-service#482)", async () => {
+    // No leads carry a positive reply → count 0, cost null even though there IS committed spend.
+    mockFetch({ economics: ECONOMICS, leads: [], costCents: 8000 });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.spend.totalSpentCents).toBe(8000);
+    expect(res.body.spend.positiveRepliesCount).toBe(0);
+    expect(res.body.spend.positiveRepliesCount).toBe(res.body.recipientsRepliesPositive.total);
+    expect(res.body.spend.cpprCents).toBeNull();
+  });
+
+  it("spend — positive-reply outcome present even when lead-service conversion-counts unavailable (leads-sourced) (features-service#482)", async () => {
+    // conversion tiles (signups/meetings) degrade to ABSENT, but the positive-reply outcome rides the
+    // leads snapshot (a fail-loud core input), so it stays present.
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000, conversionCountsFail: true });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.spend).not.toHaveProperty("signupsCount");
+    expect(res.body.spend.positiveRepliesCount).toBe(1);
+    expect(res.body.spend.cpprCents).toBe(7000 / 1);
   });
 
   it("spend — lead-service unavailable (pre-rollout) → conversion tiles ABSENT, rest of spend block intact (fail-soft)", async () => {

@@ -476,15 +476,29 @@ tests from `src` ONLY. Previously CI ran `pnpm build` (emits `dist/*.test.js`) b
 and removes the flake at the source. If a teardown error ever recurs despite this, confirm no
 new `include`/dist glob crept back in (`pnpm exec vitest list` must show only `src/` files).
 
-## Issue-tag in code comments — NEVER reuse the brief's *sibling* issue number for THIS work
+## Issue-tag in code comments — NEVER bake an UNCONFIRMED `features-service#NNN` (sibling OR guessed-next)
 
-This repo tags features in code/OpenAPI describe strings with `features-service#NNN`. When a brief
-references a sibling issue (e.g. "#388 is reconciling /stats — stay out of it"), that number is NOT
-this work's tag. Do NOT bake a specific `#NNN` into comments before confirming the number belongs to
-the current change — create the work's own issue first (or use the PR number) and tag with THAT.
-Baking the sibling's number in forces a doc-fix follow-up PR. Cost 2026-06-25 (repliedPositive series,
-PR #389): tagged the new series `features-service#388` (the /stats sibling) before #390 existed →
-needed PR #391 to correct the OpenAPI describe strings #388→#390.
+This repo tags features in code/OpenAPI describe strings with `features-service#NNN`. The number you
+bake in MUST be confirmed to belong to THIS work before you write it — two ways it goes wrong:
+1. **Reusing a sibling's number** the brief mentions (e.g. "#388 is reconciling /stats — stay out of it").
+2. **Guessing the next sequential number** (`HEAD PR is #472, so mine is ~#473`) — the actual next
+   number is often an unrelated sync/hotfix/docs PR that lands between your guess and your push.
+
+Do NOT bake a specific `#NNN` before confirming it. Options, cheapest first: **(a)** run
+`gh issue view <n>` / `gh pr view <n>` to confirm the number is FREE or already yours; **(b)** create the
+work's own issue FIRST and tag with it; **(c)** open the PR, read its number from `gh pr create`'s output,
+THEN `sed` the tag into the code + regen OpenAPI in a follow-up commit ON THE SAME BRANCH *before* it merges.
+Baking a wrong number forces a doc-fix follow-up PR (and if the first PR auto-merged on fast CI, a whole
+new branch, since you can't push to a merged PR's branch). Cost 2026-06-25 (repliedPositive, PR #389):
+tagged `#388` (a /stats sibling) → needed PR #391 to fix. **Recurrence 2026-07-07 (per-lead signup/form
+outcomes, PR #476): guessed `#473` from the branch HEAD — but #473 was an unrelated merged "sync hotfix
+v0.80.2 to staging" PR; the feature PR auto-merged before I noticed, forcing a fresh branch + retag PR
+#477 across 19 refs. A 5-second `gh pr view 473` at tag time would have shown it was taken.**
+**THIRD recurrence 2026-07-07 (positive-reply spend fields, PR #481): guessed `#475` from HEAD PR #474
+— but #475 was the unrelated form_submissions GitHub ISSUE; forced retag PR #483. Three strikes, all
+same-day, all on the `spend`-block parallel-workspace cluster → the guess reflex is the failure. HARD
+RULE going forward: do NOT type any `features-service#NNN` from memory/arithmetic — create the issue
+(or open the PR) FIRST, then paste the REAL number. `gh {issue,pr} view <n>` before baking is mandatory.**
 
 ## Key Files
 
@@ -721,6 +735,40 @@ boolean — a known email-gateway open timestamp IS the signal (mirrors revenue.
 open-overlay is BEST-EFFORT (an email-gateway failure degrades `opened` to 0 on BOTH endpoints
 identically, while the lead fetch itself stays fail-loud). No OpenAPI change (same keys, same types).
 (Set 2026-06-25.)
+
+## `form_submissions` goal — outcome + attribution data mirrors signups across THREE surfaces (v0.80.1/.2)
+
+A `form_submissions` brand (visit-driven micro-conversion, the sibling of `signup`) now carries the
+SAME classes of outcome data features-service serves for signups/visits — do NOT re-borrow the signup
+display. All three sit alongside the signup/click equivalents:
+
+- **`/revenue` spend block** — `formSubmissionsCount` + `cpfsCents` (committed spend ÷ real count),
+  next to `signupsCount`/`cpsCents`. The count is ALREADY in hand (the conversion-counts client returns
+  `form_submission`); zero new producer dep. `cpfsCents` rides the COMMITTED denominator (like cps/cpsm)
+  → `cpfsCents × formSubmissionsCount ≈ committed`. null on 0 count, ABSENT when counts weren't served.
+- **`/pipeline-activity`** — a `formSubmissions` daily series (`metrics.formSubmissions`, +
+  `summary.clickToFormSubmissionPct`), PROJECTED off clicks × the brand's effective
+  `visitToFormSubmissionPct`, EXACTLY like the `signups` series (actual-today + forward projection).
+  All-null when the brand carries no form-submission rate (non-form brand) — never a false 0.
+- **`/audience-stats`** — per-audience `evidence.formSubmissions` + `metrics.cpfsCents` (OBSERVED,
+  accounting). REAL producer-side attribution: intersect each audience's member emails with the
+  brand's matched-lead form-submission conversion emails — the SAME membership join used for
+  per-audience clicks/replies, NEVER a split of the brand total. `cpfsCents` is NOT a ranking metric
+  (form_submissions ranks on `cpc`, visit-driven).
+
+**Per-audience attribution depends on lead-service `GET /internal/brands/:brandId/converted-lead-emails?event=`**
+(`src/lib/conversion-emails-client.ts`, service-auth) — the producer returns `{ event, emails }` where
+`emails` = DISTINCT matched-lead canonical emails (already lowercased) with ≥1 attributed conversion of
+`event`. features-service reads `emails` (ignores the echoed `event`) into a Set for O(1) membership
+intersection. It is fetched **ONLY for the `formSubmission` goal** (the hot ranking path for every other
+goal keeps its exact fan-out and never touches the conversion tracker) and is **fail-SOFT**
+(`fetchFormSubmissionEmailsSoft` → null → the per-audience form-submission column is ABSENT, never a
+false 0; the client itself is fail-loud). This is the SAME fail-soft-display pattern as the /revenue
+conversion-count tiles — a pre-rollout / down lead-service never 502s the ranking. Reuses the existing
+`LEAD_SERVICE_URL`/`LEAD_SERVICE_API_KEY` (already wired for conversion-counts). NOTE: the consumer was
+first written against a guessed path (`conversion-emails`) and CONFORMED to the producer's deployed
+`converted-lead-emails` in v0.80.2 — the producer owns its path/shape; conform the consumer, do not
+author it. (Set 2026-07-07.)
 
 ## Data layering — features-service owns a GOLD serving layer (CQRS read model)
 

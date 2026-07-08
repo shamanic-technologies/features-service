@@ -10,6 +10,7 @@ import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
 import { fetchSpendBreakdown, type SpendBreakdown, type SpendSource } from "../lib/spend-client.js";
 import { fetchConversionCounts, type ConversionCounts } from "../lib/conversion-counts-client.js";
+import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { fetchSequencesByDay } from "../lib/sequences-client.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
@@ -118,12 +119,36 @@ export interface Spend {
   // as cpsCents/totalCpcCents → cpfsCents × formSubmissionsCount ≈ committed spend). null when the count
   // is 0; ABSENT when the counts weren't served.
   cpfsCents?: number | null;
+  // REAL attributed PURCHASES (lead-service conversion tracker, event="purchase") for the brand — the
+  // Purchases tile's brand-level aggregate (features-service#476). Equivalent to signupsCount /
+  // salesMeetingsCount / formSubmissionsCount; the purchase count previously had no aggregate here
+  // (per-lead purchased only). 0 when none; ABSENT when lead-service didn't serve the counts.
+  purchasesCount?: number;
+  // REAL cost per purchase = committed spend ÷ purchasesCount (same COMMITTED denominator as the other
+  // cost-per-conversion figures → cppCents × purchasesCount ≈ committed spend). null when the count is
+  // 0 (no denominator — never a false $0); ABSENT when the counts weren't served.
+  cppCents?: number | null;
+  // REAL attributed positive replies for the brand — the single-step positive_replies goal's outcome,
+  // the reply-goal sibling of signups/meetings/form-submissions. A positive reply is an email
+  // engagement signal (NOT a lead-service conversion event), so it is sourced from the SAME deduped
+  // leads[] snapshot as recipientsRepliesPositive.total (coherent by construction — same predicate the
+  // Overview positive-replies actual series uses). ALWAYS present (leads are a fail-loud core input),
+  // unlike the conversion-counts tiles which are ABSENT when that soft read fails. (features-service#482)
+  positiveRepliesCount: number;
+  // REAL cost per positive reply = COMMITTED spend ÷ positiveRepliesCount (same COMMITTED denominator
+  // as totalCpcCents/cpsCents → cpprCents × positiveRepliesCount ≈ committed spend). null when the
+  // count is 0 (no denominator — never a false $0.00).
+  cpprCents: number | null;
 }
 
 function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: ConversionCounts | null = null): Spend {
   // clicks use the SAME per-lead predicate as the clicked SignalSeries, so the CPC denominator equals
   // the card's displayed "clicks" (clicked.total) — coherent by construction.
   const clicks = leads.reduce((n, l) => n + (l.clicked ? 1 : 0), 0);
+  // Positive replies use the SAME per-lead predicate as recipientsRepliesPositive (the Overview
+  // positive-replies actual series), so cpprCents's denominator equals that card's displayed count —
+  // coherent by construction. The single-step positive_replies goal's real outcome economics.
+  const positiveReplies = leads.reduce((n, l) => n + (l.repliedPositive ? 1 : 0), 0);
   const committed = breakdown.totalSpentCents;
   const actual = breakdown.actualSpentCents;
   const provisioned = breakdown.provisionedSpentCents;
@@ -138,9 +163,11 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: Convers
         signupsCount: counts.signup,
         salesMeetingsCount: counts.meeting_booked,
         formSubmissionsCount: counts.form_submission,
+        purchasesCount: counts.purchase,
         cpsCents: observedCostPerOutcome(committed, counts.signup),
         cpsmCents: observedCostPerOutcome(committed, counts.meeting_booked),
         cpfsCents: observedCostPerOutcome(committed, counts.form_submission),
+        cppCents: observedCostPerOutcome(committed, counts.purchase),
       }
     : {};
 
@@ -155,6 +182,10 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: Convers
     totalCpcCents: observedCostPerOutcome(committed, clicks),
     actualCpcCents: observedCostPerOutcome(actual, clicks),
     provisionedCpcCents: observedCostPerOutcome(provisioned, clicks),
+    // REAL positive-reply outcome economics (ACCOUNTING → observed): committed spend ÷ the real count
+    // from the leads snapshot. Always present (leads always fetched); null cost when 0 (never a false $0).
+    positiveRepliesCount: positiveReplies,
+    cpprCents: observedCostPerOutcome(committed, positiveReplies),
     ...conversion,
   };
 }
@@ -199,12 +230,19 @@ interface RevenueResponse {
    *     graph; distinct from meetingsBooked (the reply is the signal, the booked meeting the outcome).
    *   - meetingsBooked → the meeting-goal outcome (instantly manual-qualification meetingBookedAt).
    *   - purchased      → the purchase-goal outcome (instantly manual-qualification closedAt).
+   *   - signups / formSubmissions → the signup / form-submission conversion outcomes (lead-service
+   *     conversion tracker, attributed per lead by matched-email). These carry a REAL total (leads we
+   *     can confirm converted) but an EMPTY `daily` with `undatedCount === total`, because lead-service
+   *     exposes WHICH lead converted, not WHEN — the per-day trend populates once lead-service surfaces
+   *     the conversion date (features-service#476). Distinct from recipientsClicked (the visit PROXY).
    */
   recipientsOpened: SignalSeries;
   recipientsClicked: SignalSeries;
   recipientsRepliesPositive: SignalSeries;
   meetingsBooked: SignalSeries;
   purchased: SignalSeries;
+  signups: SignalSeries;
+  formSubmissions: SignalSeries;
   /**
    * OUTREACH ACTIVITY daily series for the Overview graph — instantly campaigns-created per day (via
    * email-gateway groupBy=day), NOT the lead snapshot (features-service#415). Answers "how much outreach
@@ -231,13 +269,18 @@ interface RevenueResponse {
  * The Opens / Clicks / meeting / purchase ACTUAL series, each built from the SAME `leads[]` snapshot
  * (mirrors `buildContactedSeries`). Coherent-by-construction with `recipientsContacted` + the table.
  */
-function buildOutcomeSeries(leads: LeadRow[]): Pick<RevenueBody, "recipientsOpened" | "recipientsClicked" | "recipientsRepliesPositive" | "meetingsBooked" | "purchased"> {
+function buildOutcomeSeries(leads: LeadRow[]): Pick<RevenueBody, "recipientsOpened" | "recipientsClicked" | "recipientsRepliesPositive" | "meetingsBooked" | "purchased" | "signups" | "formSubmissions"> {
   return {
     recipientsOpened: buildSignalSeries(leads, (l) => l.opened, (l) => l.openedAt),
     recipientsClicked: buildSignalSeries(leads, (l) => l.clicked, (l) => l.clickedAt),
     recipientsRepliesPositive: buildSignalSeries(leads, (l) => l.repliedPositive, (l) => l.repliedPositiveAt),
     meetingsBooked: buildSignalSeries(leads, (l) => l.meetingBooked, (l) => l.meetingBookedAt),
     purchased: buildSignalSeries(leads, (l) => l.purchased, (l) => l.purchasedAt),
+    // signup / formSubmission dates are always null today (lead-service exposes the matched lead but
+    // not the conversion date) → every attributed lead lands in undatedCount, daily is empty, total is
+    // the real attributed count. Populates the per-day trend automatically once the producer date lands.
+    signups: buildSignalSeries(leads, (l) => l.signup, (l) => l.signupAt),
+    formSubmissions: buildSignalSeries(leads, (l) => l.formSubmission, (l) => l.formSubmissionAt),
   };
 }
 
@@ -302,6 +345,40 @@ function fetchConversionCountsSoft(brandId: string): Promise<ConversionCounts | 
     return null;
   });
 }
+
+/**
+ * The DISTINCT matched-lead email sets for the two per-lead website conversions (signup +
+ * form_submission) from the lead-service conversion tracker, used to flag which leads[] reached each
+ * outcome (real producer-side attribution — the SAME email-membership join audience-stats uses).
+ *
+ * Fetched only on the OVERVIEW path (where leads[] is surfaced); brand-scoped (identical across the
+ * brand's campaigns). Each read is fail-SOFT per event → a failure degrades that outcome's per-lead
+ * flags to `false` (the column reads "not converted") rather than 502-ing the whole /revenue response
+ * — these are per-lead display enrichment, exactly like the conversion-counts tiles + the sequences
+ * series. Loud log, never a silent swallow. NOTE: lead-service exposes the matched lead (email) but
+ * not the conversion timestamp, so this yields WHICH leads converted, not WHEN — the daily trend for
+ * these outcomes populates only once lead-service surfaces the conversion date (features-service#476).
+ */
+interface ConversionOutcomeEmails {
+  signup: Set<string> | null;
+  formSubmission: Set<string> | null;
+}
+
+function fetchConversionOutcomeEmailsSoft(brandId: string): Promise<ConversionOutcomeEmails> {
+  const soft = (event: "signup" | "form_submission") =>
+    fetchConversionEmails(brandId, event).catch((err) => {
+      console.warn(
+        `[features-service] converted-lead-emails (${event}) enrichment failed (degrading to no per-lead ${event} flags): ${(err as Error).message}`,
+      );
+      return null;
+    });
+  return Promise.all([soft("signup"), soft("form_submission")]).then(([signup, formSubmission]) => ({
+    signup,
+    formSubmission,
+  }));
+}
+
+const EMPTY_CONVERSION_OUTCOME_EMAILS: ConversionOutcomeEmails = { signup: null, formSubmission: null };
 
 // ── Outcome lenses (dashboard Signups / Booked Meetings / Sales tabs) ─────────
 //
@@ -409,6 +486,12 @@ function buildLensBody(
       meetingBookedAt: person.signalDates?.meeting ?? null,
       purchased: Boolean(person.signals.closeWin),
       purchasedAt: person.signalDates?.closeWin ?? null,
+      // Lens short-circuits before the Wave B conversion-email merge (a brand-total concept), so these
+      // stay false/null on a lensed row — same as meetingBooked/purchased, which the lens also omits.
+      signup: Boolean(person.signals.signup),
+      signupAt: person.signalDates?.signup ?? null,
+      formSubmission: Boolean(person.signals.formSubmission),
+      formSubmissionAt: person.signalDates?.formSubmission ?? null,
       conversionProbabilityPct: p * 100,
     });
   }
@@ -504,7 +587,7 @@ export async function computeFeatureRevenue(
   // All four are fail-loud (Promise.all rejects → the endpoint 502s): each is a core input to the
   // pipeline total / cost / ROI; a swallowed error would fake a number. The economics===null
   // cold-start path below over-fetches rates+leads — accepted for the common-path win.
-  const [costResult, { economics, source }, platformRates, persons, sequences, counts] = await Promise.all([
+  const [costResult, { economics, source }, platformRates, persons, sequences, counts, conversionEmails] = await Promise.all([
     includeSpend
       ? fetchSpendBreakdown(brandId, campaignId, featureSlug, headers)
       : fetchRunsCostCents(brandId, campaignId, featureSlug, headers),
@@ -519,6 +602,9 @@ export async function computeFeatureRevenue(
     // Overview-only REAL conversion counts (lead-service) for the Signups / Sales Meetings tiles +
     // cost-per-conversion. Pre-caught → null on failure (never rejects fail-loud Wave A). Off-overview null.
     includeSpend ? fetchConversionCountsSoft(brandId) : Promise.resolve<ConversionCounts | null>(null),
+    // Overview-only per-lead SIGNUP / FORM-SUBMISSION attribution email sets (lead-service conversion
+    // tracker). Fail-soft per event → never rejects fail-loud Wave A; brand-scoped. Off-overview null.
+    includeSpend ? fetchConversionOutcomeEmailsSoft(brandId) : Promise.resolve<ConversionOutcomeEmails>(EMPTY_CONVERSION_OUTCOME_EMAILS),
   ]);
   const breakdown: SpendBreakdown | null = typeof costResult === "number" ? null : costResult;
   // ROI/CAC + costEconomics ride ACTUAL (billed) spend; the `spend` block (buildSpend) carries the
@@ -591,6 +677,22 @@ export async function computeFeatureRevenue(
         person.signalDates.closeWin = q.closedAt;
       }
     }
+  }
+
+  // Per-lead SIGNUP / FORM-SUBMISSION outcome attribution (lead-service conversion tracker). The
+  // producer matches each website conversion back to a lead we emailed and exposes the DISTINCT
+  // matched-lead email set per event; a person whose (lowercased) email is in that set reached the
+  // outcome — the SAME email-membership join audience-stats uses (real producer attribution, not a
+  // split of the brand total). These signals do NOT feed the EV funnel (no funnel path triggers on
+  // them) — pure per-lead display outcomes, like meetingBooked/purchased. NO date is set: lead-service
+  // exposes the matched lead but not the conversion timestamp, so signalDates.signup/formSubmission
+  // stay null (borrowing the outreach date would be the wrong signal) → the daily series reports these
+  // leads as undated. Set BEFORE computeRevenue so the engine maps them onto leads[] (features-service#476).
+  for (const person of persons) {
+    const email = person.email?.trim().toLowerCase();
+    if (!email) continue;
+    if (conversionEmails.signup?.has(email)) person.signals.signup = true;
+    if (conversionEmails.formSubmission?.has(email)) person.signals.formSubmission = true;
   }
 
   // closeValueUsd = LTR — the per-lead cap for combining independent engagement routes (click +
