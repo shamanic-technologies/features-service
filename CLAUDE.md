@@ -612,22 +612,22 @@ through `projectOutcomeCosts`.** Objective params accept every fleet spelling vi
   (NEW). Dated moving-average series: each display day anchors a trailing window that walks backward until
   it holds ~`windowOutcomes` (default 100) of the objective's base outcomes; the point = that window's
   fleet spend ÷ outcomes (projected objectives push the window unit costs through the fleet-MEAN economics
-  `meanFleetEconomics`). `buildCostPerOutcomeTrend` is pure. **DEPENDS on runs-service serving dated
-  cross-org spend** — the public cost aggregation had NO time dimension (only groupBy=brand/workflow/…),
-  so this joins runs `groupBy=day` (spawned as a producer change, tracked with the consumer) against
-  email-gateway `groupBy=day` outcomes. `dayKeyFromCostGroup` reads the day-shaped dimension tolerantly;
-  CONFORM to runs-service's deployed shape (live>source) once it ships. Cost points null where the window
-  is unbacked — never a false $0.
+  `meanFleetEconomics`). `buildCostPerOutcomeTrend` is pure. **DEPENDS on runs-service dated cross-org
+  spend** — the public cost aggregation had NO time dimension, so runs-service shipped a NEW
+  `GET /v1/stats/public/costs/timeseries?interval=day` (dated buckets by run started_at, `buckets[].period`
+  = YYYY-MM-DD; runs-service#177). features reads it via `fetchFleetSpendByDay` and joins it to
+  email-gateway `groupBy=day` outcomes. Cost points null where the window is unbacked — never a false $0.
 - **Gap #3 — `GET /public/stats/workflow-cost-per-outcome?featureSlug=&objective=`** (NEW). Per-workflow
   (dynasty) cross-org ratio, guaranteed to POPULATE when the workflow has spend: unit costs run through
   the PROJECTED cost-engine (`projectedCostPerOutcome`), flooring to `max(spent, fleet-parent unit cost)`
   when the outcome denominator is 0 (the fix for `ranked` reading null cross-org). Same crossOrg dynasty
   rollup as `/public/stats/best`. Sorted by spend desc. `buildWorkflowCostPerOutcome` is pure.
 
-Each surface uses the shared `PublicCache` memo (60s), `__reset*Cache` test seams. The api-service
-gateway forwards `/public/*` transparently under `/v1/public/features/*` — confirm the two new paths are
-reachable once shipped. Triage: STAGING (staff-internal analytics, dormant until distribute.you #2486
-conforms). (Set 2026-07-08.)
+Each surface uses the shared `PublicCache` memo (60s), `__reset*Cache` test seams. **The api-service
+gateway forwards `/public/stats/X` → `/v1/public/features/X` via EXPLICIT per-route proxies, NOT a
+wildcard — any NEW `/public/stats/*` endpoint needs a matching api-service proxy route or it 404s at the
+gateway.** The two new paths got their proxies in api-service#686. Triage: STAGING (staff-internal
+analytics, dormant until distribute.you #2486 conforms). (Set 2026-07-08.)
 
 ## Revenue close-paths — combine via independent-OR (`orP`), NEVER `max`; ranking is objective-agnostic
 
