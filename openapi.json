@@ -6530,12 +6530,56 @@
                     "avgCostPerMeetingBooked": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Feature-wide average EXPECTED USD cost per meeting booked (mean across client brands of each brand's best-workflow projection). Null when no brand has usable economics."
+                      "description": "Legacy (Wave 1) alias of avgCostPerOutcomeByObjective.meetingBooked. Null when no brand has usable economics."
                     },
                     "avgCostPerPurchase": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Feature-wide average EXPECTED USD cost per purchase/close. Null when no brand has usable economics."
+                      "description": "Legacy (Wave 1) alias of avgCostPerOutcomeByObjective.purchase. Null when no brand has usable economics."
+                    },
+                    "avgCostPerOutcomeByObjective": {
+                      "type": "object",
+                      "properties": {
+                        "websiteVisit": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average cost per website visit (CPC = cost per click)."
+                        },
+                        "positiveReply": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average cost per positive reply (CPPR)."
+                        },
+                        "signup": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average projected cost per self-serve signup."
+                        },
+                        "formSubmission": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average projected cost per form submission."
+                        },
+                        "meetingBooked": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average projected cost per meeting booked."
+                        },
+                        "purchase": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average projected cost per purchase/close."
+                        }
+                      },
+                      "required": [
+                        "websiteVisit",
+                        "positiveReply",
+                        "signup",
+                        "formSubmission",
+                        "meetingBooked",
+                        "purchase"
+                      ],
+                      "description": "Fleet-average cost-per-outcome per optimization objective. Each = mean across client brands of that brand's best-workflow value; null when no brand is backed for the objective."
                     },
                     "brandCount": {
                       "type": "integer",
@@ -6546,6 +6590,7 @@
                     "featureSlug",
                     "avgCostPerMeetingBooked",
                     "avgCostPerPurchase",
+                    "avgCostPerOutcomeByObjective",
                     "brandCount"
                   ]
                 }
@@ -6554,6 +6599,292 @@
           },
           "400": {
             "description": "Missing parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/stats/cost-per-outcome-trend": {
+      "get": {
+        "summary": "Dated moving-average cost-per-outcome series per objective (public, no auth)",
+        "description": "Cross-org (fleet-wide) trend of a feature's cost-per-outcome for ONE objective over time. Each display day anchors a trailing window that walks backward until it holds ~windowOutcomes of the objective's base outcomes; the point = that window's fleet spend ÷ outcomes (projected objectives push the window unit costs through the fleet-mean economics). Joins runs-service dated fleet spend against email-gateway dated outcomes. Cost points are null where the window is unbacked — never a false $0.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature slug (required)."
+            },
+            "required": true,
+            "description": "Feature slug (required).",
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Optimization objective — one of websiteVisit / positiveReply / signup / formSubmission / meetingBooked / purchase (snake / camel / kebab spellings accepted; self-serve aliases signup)."
+            },
+            "required": true,
+            "description": "Optimization objective — one of websiteVisit / positiveReply / signup / formSubmission / meetingBooked / purchase (snake / camel / kebab spellings accepted; self-serve aliases signup).",
+            "name": "objective",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Number of trailing display days to emit (default 30, max 180)."
+            },
+            "required": false,
+            "description": "Number of trailing display days to emit (default 30, max 180).",
+            "name": "days",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Target outcomes per moving-average window (default 100)."
+            },
+            "required": false,
+            "description": "Target outcomes per moving-average window (default 100).",
+            "name": "windowOutcomes",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dated moving-average cost-per-outcome series",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "objective": {
+                      "type": "string",
+                      "description": "Canonical camelCase objective the series is for."
+                    },
+                    "windowOutcomes": {
+                      "type": "integer",
+                      "description": "Target number of base outcomes each trailing moving-average window spans."
+                    },
+                    "points": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "date": {
+                            "type": "string",
+                            "description": "UTC day (YYYY-MM-DD) this moving-average point is anchored to."
+                          },
+                          "costPerOutcomeUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Moving-average cost-per-outcome over the trailing window ending at date. Null when the window is unbacked — never a false $0."
+                          },
+                          "windowOutcomeCount": {
+                            "type": "number",
+                            "description": "Count of the objective's base outcomes (clicks / replies / clicks+replies) inside the window."
+                          },
+                          "windowSpentUsd": {
+                            "type": "number",
+                            "description": "Total fleet spend (USD) over the window's days."
+                          },
+                          "windowStartDate": {
+                            "type": "string",
+                            "description": "First UTC day included in the trailing window."
+                          }
+                        },
+                        "required": [
+                          "date",
+                          "costPerOutcomeUsd",
+                          "windowOutcomeCount",
+                          "windowSpentUsd",
+                          "windowStartDate"
+                        ]
+                      },
+                      "description": "Dense dated series (one point per trailing display day)."
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "objective",
+                    "windowOutcomes",
+                    "points"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/stats/workflow-cost-per-outcome": {
+      "get": {
+        "summary": "Per-workflow cross-org cost-per-outcome for an objective (public, no auth)",
+        "description": "Cross-org (fleet-wide) per-workflow-dynasty cost-per-outcome for ONE objective, guaranteed to populate when the workflow has spend: unit costs run through the projected cost-engine, flooring to max(spent, fleet unit cost) when the outcome denominator is 0. Same crossOrg dynasty rollup as /public/stats/best. Sorted by spend desc.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature slug (required)."
+            },
+            "required": true,
+            "description": "Feature slug (required).",
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Optimization objective — one of websiteVisit / positiveReply / signup / formSubmission / meetingBooked / purchase (snake / camel / kebab spellings accepted; self-serve aliases signup)."
+            },
+            "required": true,
+            "description": "Optimization objective — one of websiteVisit / positiveReply / signup / formSubmission / meetingBooked / purchase (snake / camel / kebab spellings accepted; self-serve aliases signup).",
+            "name": "objective",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-workflow cross-org cost-per-outcome",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "objective": {
+                      "type": "string",
+                      "description": "Canonical camelCase objective the ratios are for."
+                    },
+                    "workflows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "workflowDynastySlug": {
+                            "type": "string"
+                          },
+                          "workflowDynastyName": {
+                            "type": "string"
+                          },
+                          "spentUsd": {
+                            "type": "number",
+                            "description": "Cross-org fleet spend (USD) attributed to this workflow dynasty."
+                          },
+                          "observedClicks": {
+                            "type": "number"
+                          },
+                          "observedPositiveReplies": {
+                            "type": "number"
+                          },
+                          "costPerOutcomeUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Populated cost-per-outcome (projected cascade floor: max(spent, fleet unit cost) when the outcome denominator is 0), so non-null whenever the workflow has spend and fleet economics exist."
+                          }
+                        },
+                        "required": [
+                          "workflowDynastySlug",
+                          "workflowDynastyName",
+                          "spentUsd",
+                          "observedClicks",
+                          "observedPositiveReplies",
+                          "costPerOutcomeUsd"
+                        ]
+                      },
+                      "description": "One row per workflow dynasty, sorted by spend desc."
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "objective",
+                    "workflows"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid parameters",
             "content": {
               "application/json": {
                 "schema": {

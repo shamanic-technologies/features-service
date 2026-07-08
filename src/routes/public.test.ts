@@ -71,7 +71,7 @@ vi.mock("../lib/send-forecast-aggregate.js", () => ({
 }));
 
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
@@ -973,6 +973,11 @@ describe("GET /public/stats/cost-projection", () => {
     const p2 = projectOutcomeCosts(e2, WF1);
     expect(res.body.avgCostPerMeetingBooked).toBeCloseTo((p1.costPerMeetingBookedUsd! + p2.costPerMeetingBookedUsd!) / 2, 5);
     expect(res.body.avgCostPerPurchase).toBeCloseTo((p1.costPerPurchaseUsd! + p2.costPerPurchaseUsd!) / 2, 5);
+    // Gap #1: all-objective averages; legacy top-level fields are byte-equal aliases + CPC/CPPR = min unit cost.
+    expect(res.body.avgCostPerOutcomeByObjective.meetingBooked).toBe(res.body.avgCostPerMeetingBooked);
+    expect(res.body.avgCostPerOutcomeByObjective.purchase).toBe(res.body.avgCostPerPurchase);
+    expect(res.body.avgCostPerOutcomeByObjective.websiteVisit).toBeCloseTo(1, 5); // cheapest clickUsd = $10/10
+    expect(res.body.avgCostPerOutcomeByObjective.positiveReply).toBeCloseTo(2, 5); // cheapest replyUsd = $10/5
   });
 
   it("skips a brand with no economics (excluded from brandCount and the means)", async () => {
@@ -1049,6 +1054,62 @@ describe("GET /public/stats/cost-projection", () => {
     expect(r1.status).toBe(200);
     expect(r2.body).toEqual(r1.body);
     expect(fetchSpy.mock.calls.length).toBe(callsAfterFirst); // no extra downstream calls on cache hit
+  });
+});
+
+// ── GET /public/stats/cost-per-outcome-trend + /workflow-cost-per-outcome ──────
+
+describe("GET /public/stats/cost-per-outcome-trend", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    __resetCostPerOutcomeTrendCache();
+  });
+
+  it("400 when featureSlug is missing", async () => {
+    const res = await request(app).get("/public/stats/cost-per-outcome-trend?objective=signup");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/featureSlug/i);
+  });
+
+  it("400 when objective is missing or unknown", async () => {
+    const missing = await request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=sales-cold-email-outreach");
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toMatch(/objective/i);
+    const bad = await request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=nope");
+    expect(bad.status).toBe(400);
+  });
+
+  it("404 when feature not found", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    const res = await request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=nope&objective=signup");
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /public/stats/workflow-cost-per-outcome", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    __resetWorkflowCostPerOutcomeCache();
+  });
+
+  it("400 when featureSlug is missing", async () => {
+    const res = await request(app).get("/public/stats/workflow-cost-per-outcome?objective=websiteVisit");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/featureSlug/i);
+  });
+
+  it("400 when objective is missing or unknown", async () => {
+    const missing = await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=sales-cold-email-outreach");
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toMatch(/objective/i);
+  });
+
+  it("404 when feature not found", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    const res = await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=nope&objective=websiteVisit");
+    expect(res.status).toBe(404);
   });
 });
 
