@@ -160,6 +160,22 @@ estimatesByGrain:{crossOrg?, brand?, audience?}, resolved }`. `economics` (brand
 `audience > brand > crossOrg`. `resolved.costPerOutcomeUsd` is the goal metric campaign-service ranks
 on. The `recommended` selection ranks on `resolved.costPerOutcomeUsd`. (Set 2026-07-06.)
 
+**Audience-grain SET must equal `/audience-stats`' set — enumerate the `groupBy=audienceId` cost
+universe, NEVER the `groupBy=audienceId,workflowDynastySlug` couples.** `fetchAudienceGrainEvidence`
+(`workflow-projection-grains.ts`) enumerates active audiences by their `groupBy=audienceId,workflowSlug`
+cost couples (raw `workflowSlug` column) and maps each slug → dynasty LOCALLY via the same workflow
+metadata the crossOrg/brand grains roll up through. Do NOT revert to `groupBy=audienceId,workflowDynastySlug`:
+runs-service resolves `workflowDynastySlug` by grouping on `workflow_slug` then merging with `regroupByDynasty`
+whose merge key is DYNASTY ALONE — it DROPS the co-grouped `audienceId`, collapsing every audience that
+shares a dynasty into the single highest-spend one (only ~2 of 15 audiences survived → the Strategy
+"Estimates by audience" table flattened the rest to the brand number). The raw-`workflowSlug` groupBy is
+correctly multi-dim split; this makes the audience set + per-audience cost-per-visit agree with
+`/audience-stats` by construction (identical `groupBy=audienceId` numerator + membership clicks; for
+clicks>0 both return `spent/clicks`). General lesson: when a consumer needs a `(X × derivedDim)` split
+from a producer, group on the RAW column + derive locally — a producer's derived-dimension regroup can
+silently collapse the co-grouped `X`. Producer fix tracked in runs-service#174; features-service#488.
+(Set 2026-07-08, PR #487.)
+
 ## `GET /features/:slug/audience-stats` — ranked human-service AUDIENCES (persona-stats alias DELETED, PR #351→ removal)
 
 The ranking endpoint is `audience-stats` (`src/routes/audience-stats.ts` → shared compute
