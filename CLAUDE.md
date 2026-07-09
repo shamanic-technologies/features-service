@@ -387,7 +387,7 @@ orgActualBalanceUsd > dailyBudgetUsd)` → `"active"`; (3) else `"inactive"`. Th
 **ACTUAL** balance (credited − ACTUALIZED usage), **NOT the spendable** figure — a provisioned hold is
 in-flight ACTIVE spend, so subtracting it wrongly read the busiest accounts "inactive" (the bug this
 fixed, features-service#502). An **auto-topup** org never runs dry → active regardless of the momentary
-balance (`has_auto_topup` is OPTIONAL on the balance read — absent ⇒ not-enabled, so the actual-balance
+balance (`auto_topup_enabled` is OPTIONAL on the balance read — absent ⇒ not-enabled, so the actual-balance
 path already corrects the verdict and auto-topup activates once billing ships it). A PAUSED brand keeps
 its budget but campaigns are HELD — so it is neither active nor plain-inactive (paused wins even over a
 funded budget). **All rows (active + paused + inactive) are LISTED — never dropped.**
@@ -409,8 +409,8 @@ per-(org,brand); brand name/domain is one batched brand-service call. Fail loud 
   autoTopupEnabled }`. `orgBalanceUsd` = `balance_cents/100` (SPENDABLE, incl. provisioned holds —
   DISPLAY only); `orgActualBalanceUsd` = `actual_balance_cents/100` (credited − ACTUALIZED usage — the
   figure the ACTIVE verdict gates on, since a provisioned hold is in-flight active spend);
-  `autoTopupEnabled` = `has_auto_topup` (OPTIONAL — billing may not have shipped it on this read yet;
-  absent ⇒ false). The ONE mapped status: billing **404 "billing account not found" → zero balances / no
+  `autoTopupEnabled` = `auto_topup_enabled` (the DEPLOYED name on this balance read — verified live via
+  api-registry, NOT the `has_auto_topup` name used on `/v1/accounts`; OPTIONAL, absent ⇒ false). The ONE mapped status: billing **404 "billing account not found" → zero balances / no
   auto-topup** (an org that never funded a wallet is inactive by the rule). That is a documented billing
   semantic, NOT a swallowed error — do NOT "fix" it to fail-loud (it would 500 the whole fleet audit on
   one unfunded org). Any OTHER non-OK fails loud.
