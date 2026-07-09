@@ -666,6 +666,32 @@ totalClicks, totalPositiveReplies, brandCount }`. Cached via the shared `PublicC
 `/public/stats/X` → `/v1/public/features/X` per-route pattern). Triage: STAGING → promoted to main
 (features-service v0.84.0 / api-service v0.83.0). (Set 2026-07-09, PR #496.)
 
+### Trend + lifetime are GOAL-BUCKETED — each objective sums ONLY the brands whose goal is relevant
+
+`cost-per-outcome-trend` + `cost-per-outcome-lifetime` DO NOT sum fleet-wide spend/outcomes anymore —
+each objective's spend + clicks/replies come from ONLY the brands whose `optimizationGoal` sits in that
+objective's bucket, so a meeting/reply-optimizing brand no longer dilutes the CPC card. Buckets
+(`OBJECTIVE_GOAL_BUCKET`, `cross-org-cost-per-outcome.ts`): **cpc(websiteVisit) = {websiteVisit, signup,
+formSubmission}** (every click-driven goal except reply/meeting — purchase closes via a meeting so it is
+NOT here); **positiveReply/signup/formSubmission/purchase = own goal only**; **meetingBooked =
+{meetingBooked, purchase}**. A brand may fall in several buckets (a signup brand feeds cpc AND
+cost-per-signup) — intended; each card is a distinct ratio over a distinct denominator.
+
+**Bucketing is CONSUMER-SIDE composition, not a read-side derivation of a missing tag** — runs/email cost
+rows carry NO goal tag (0 of ~42k), so features-service enumerates the feature's brands
+(`fetchGoalBucketDataset`), resolves each brand's goal + saved economics from brand-service INTERNAL
+`GET /internal/brands/:id/sales-economics` (`optimizationGoal` mapped via `matchOptimizationGoal` — the
+STORED enum `signups|booked_meetings|sales|website_visits|positive_replies|form_submissions`, whose
+multi-step spellings differ from the runtime CurrentGoal), then fetches each brand's dated spend (runs
+timeseries, `brandId`-filtered — runs filters `= ANY(r.brand_ids)`, NOT comma-split, so ONE brand per
+call) + dated clicks/replies (email-gateway `/public/stats`, comma-`brandId`), and aggregates per bucket
+(`bucketBrandsForObjective` + `mergeSpendByDay`/`mergeOutcomesByDay`; `buildBucketedLifetimeAverages` is
+pure). A brand with no saved goal/economics is OMITTED (can't be bucketed). The objective-INDEPENDENT
+per-brand dataset is cached feature-level (`__resetGoalBucketDatasetCache`) so trend (per-objective) +
+lifetime share ONE fan-out. Response shapes UNCHANGED (same fields, only the numbers narrow to the
+bucket) → no OpenAPI regen. cost-projection (Gap#1 projection avg) + workflow-cost-per-outcome are NOT
+bucketed (different methodology/axis). Triage: HOTFIX → main (shape-stable, staff-internal). (Set 2026-07-09.)
+
 ## Revenue close-paths — combine via independent-OR (`orP`), NEVER `max`; ranking is objective-agnostic
 
 A lead reaches a close through MULTIPLE non-exclusive paths and they must be COMBINED, not MAX'd —

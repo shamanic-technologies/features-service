@@ -90,8 +90,10 @@ export async function fetchPublicCosts(
  * Feeds the cross-org cost-per-outcome trend join against dated outcome counts. api-key only, no org
  * identity. Fail loud (essential input, not optional enrichment).
  */
-export async function fetchFleetSpendByDay(featureSlug: string): Promise<Map<string, number>> {
+export async function fetchFleetSpendByDay(featureSlug: string, brandId?: string): Promise<Map<string, number>> {
   const params = new URLSearchParams({ interval: "day", featureSlug });
+  // runs filters brandId as a single `= ANY(r.brand_ids)` (NOT comma-split) — pass ONE brand per call.
+  if (brandId) params.set("brandId", brandId);
   const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs/timeseries?${params}`;
   const response = await fetchWithRetry(url, {
     headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY! },
@@ -122,8 +124,11 @@ export async function fetchFleetSpendByDay(featureSlug: string): Promise<Map<str
 export async function fetchPublicEmailStats(
   featureSlugs: string,
   groupBy: string,
+  brandIds?: string[],
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
+  // email-gateway accepts a comma-separated brandId filter (per its public /stats contract).
+  if (brandIds && brandIds.length > 0) params.set("brandId", brandIds.join(","));
 
   const url = `${process.env.EMAIL_GATEWAY_SERVICE_URL}/public/stats?${params}`;
   const response = await fetchWithRetry(url, {
