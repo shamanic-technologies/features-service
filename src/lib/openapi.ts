@@ -965,7 +965,7 @@ const accountRowSchema = z.object({
   dailyBudgetUsd: z.number().nullable().describe("Brand's configured daily spend ceiling in USD. Null when unset/paused."),
   orgBalanceUsd: z.number().describe("Org SPENDABLE credit balance in USD (billing balance_cents/100; committed usage incl. provisioned holds subtracted; 0 if no funded wallet). Display only."),
   orgActualBalanceUsd: z.number().describe("Org ACTUAL credit balance in USD (billing actual_balance_cents/100; only ACTUALIZED usage subtracted). The figure the active verdict gates on."),
-  autoTopupEnabled: z.boolean().describe("Whether the org has auto-topup enabled (billing has_auto_topup). An auto-topup org never runs dry → active regardless of momentary balance. false when billing hasn't shipped the field yet."),
+  autoTopupEnabled: z.boolean().describe("Whether the org has auto-topup enabled (billing auto_topup_enabled). An auto-topup org never runs dry → active regardless of momentary balance. false when absent."),
   status: z.enum(["active", "paused", "inactive"]).describe("Precedence paused > active > inactive: 'paused' iff campaign-service brand pause=true; else 'active' iff dailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>dailyBudgetUsd); else 'inactive'."),
 });
 
