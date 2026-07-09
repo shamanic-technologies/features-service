@@ -229,6 +229,41 @@ export function buildObjectiveAverages(
   return { objectives, brandCount };
 }
 
+// ── Lifetime (all-history) pooled averages — the trend's window→∞ limit ───────
+//
+// The staff admin table's "All-time avg" column. A TRUE lifetime average cannot be recovered from the
+// moving-average trend (avg-of-windows ≠ lifetime avg), so it is a backend-owned field. It is the pooled
+// all-history cost-per-outcome: total fleet spend ÷ total fleet outcomes (over ALL dated days), the exact
+// value the trend's cost line converges to as its window grows unbounded (window unit cost
+// windowSpend/windowOutcomes → totalSpend/totalOutcomes). Computing it the SAME way as a trend point —
+// projected objectives push the pooled unit costs through the fleet-mean economics — keeps the column and
+// the trend coherent by construction (the all-time number IS where the trend converges). Extends #485.
+
+/**
+ * Pooled lifetime cost-per-outcome for EVERY objective, from all-history fleet totals: `clickUsd =
+ * totalSpentUsd / totalClicks`, `replyUsd = totalSpentUsd / totalPositiveReplies`, then per objective
+ * `objectiveCostPerOutcome` (websiteVisit / positiveReply = pooled CPC / CPPR; the rest project through
+ * the fleet-mean economics). Null (never a false $0) when the denominator is 0 or the objective's rate is
+ * absent — mirrors a trend point exactly, so the lifetime average is the window→∞ limit of the trend.
+ */
+export function buildLifetimeObjectiveAverages(params: {
+  totalSpentUsd: number;
+  totalClicks: number;
+  totalPositiveReplies: number;
+  fleetEcon: ProjectionEconomics | null;
+}): ObjectiveAverages {
+  const { totalSpentUsd, totalClicks, totalPositiveReplies, fleetEcon } = params;
+  const unitCosts: ProjectionUnitCosts = {
+    clickUsd: totalClicks > 0 && totalSpentUsd > 0 ? totalSpentUsd / totalClicks : null,
+    replyUsd: totalPositiveReplies > 0 && totalSpentUsd > 0 ? totalSpentUsd / totalPositiveReplies : null,
+  };
+  const objectives = {} as ObjectiveAverages;
+  for (const goal of OBJECTIVES) {
+    objectives[goal] = fleetEcon ? objectiveCostPerOutcome(goal, unitCosts, fleetEcon) : null;
+  }
+  return objectives;
+}
+
 // ── Gap #2 — dated moving-average trend ──────────────────────────────────────
 
 export interface TrendPoint {

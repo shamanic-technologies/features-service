@@ -5,6 +5,7 @@ import {
   objectiveCostPerOutcome,
   windowBaseOutcome,
   buildObjectiveAverages,
+  buildLifetimeObjectiveAverages,
   buildCostPerOutcomeTrend,
   buildWorkflowCostPerOutcome,
   meanFleetEconomics,
@@ -129,6 +130,59 @@ describe("meanFleetEconomics", () => {
     const noReplyPaid: SalesEconomics = { ...FULL_ECON, replyToPaidClientPct: undefined };
     const m = meanFleetEconomics([noReplyPaid])!;
     expect(m.r2pc).toBeUndefined();
+  });
+});
+
+describe("buildLifetimeObjectiveAverages", () => {
+  const fleetEcon = buildLenientProjectionEconomics(FULL_ECON);
+
+  it("pools total spend ÷ total outcomes; websiteVisit = CPC, positiveReply = CPPR, projected via econ", () => {
+    const objectives = buildLifetimeObjectiveAverages({
+      totalSpentUsd: 400, totalClicks: 200, totalPositiveReplies: 100, fleetEcon,
+    });
+    // pooled CPC = 400/200 = $2, pooled CPPR = 400/100 = $4
+    expect(objectives.websiteVisit).toBeCloseTo(2, 6);
+    expect(objectives.positiveReply).toBeCloseTo(4, 6);
+    const p = projectOutcomeCosts(fleetEcon, { clickUsd: 2, replyUsd: 4 });
+    expect(objectives.signup).toBeCloseTo(p.costPerSignupUsd!, 6);
+    expect(objectives.meetingBooked).toBeCloseTo(p.costPerMeetingBookedUsd!, 6);
+    expect(objectives.purchase).toBeCloseTo(p.costPerPurchaseUsd!, 6);
+    for (const g of OBJECTIVES) expect(g in objectives).toBe(true);
+  });
+
+  it("IS the window→∞ limit of the trend — matches a single trend point whose window spans all history", () => {
+    // 3 days, 2 clicks + 1 reply + $2/day → pooled 6 clicks / 3 replies / $6.
+    const spendByDay = new Map<string, number>([["2026-07-06", 2], ["2026-07-07", 2], ["2026-07-08", 2]]);
+    const outcomesByDay = new Map<string, DayOutcome>([
+      ["2026-07-06", { clicks: 2, replies: 1 }],
+      ["2026-07-07", { clicks: 2, replies: 1 }],
+      ["2026-07-08", { clicks: 2, replies: 1 }],
+    ]);
+    // A trend window large enough to swallow ALL history (windowOutcomes above the total).
+    const trend = buildCostPerOutcomeTrend({
+      objective: "signup", todayIso: "2026-07-08", days: 1, windowOutcomes: 1_000_000,
+      maxLookbackDays: 30, spendByDay, outcomesByDay, fleetEcon,
+    });
+    const lifetime = buildLifetimeObjectiveAverages({
+      totalSpentUsd: 6, totalClicks: 6, totalPositiveReplies: 3, fleetEcon,
+    });
+    expect(lifetime.signup).toBeCloseTo(trend[0].costPerOutcomeUsd!, 6);
+  });
+
+  it("null (never a false $0) when a denominator is 0", () => {
+    const objectives = buildLifetimeObjectiveAverages({
+      totalSpentUsd: 100, totalClicks: 0, totalPositiveReplies: 0, fleetEcon,
+    });
+    expect(objectives.websiteVisit).toBeNull();
+    expect(objectives.positiveReply).toBeNull();
+    expect(objectives.signup).toBeNull();
+  });
+
+  it("null economics → all objectives null (cold start)", () => {
+    const objectives = buildLifetimeObjectiveAverages({
+      totalSpentUsd: 400, totalClicks: 200, totalPositiveReplies: 100, fleetEcon: null,
+    });
+    for (const g of OBJECTIVES) expect(objectives[g]).toBeNull();
   });
 });
 

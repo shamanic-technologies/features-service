@@ -71,7 +71,7 @@ vi.mock("../lib/send-forecast-aggregate.js", () => ({
 }));
 
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __resetCostPerOutcomeLifetimeCache } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
@@ -1169,6 +1169,111 @@ function mockCostProjectionFetch(opts: {
   });
   return spy as unknown as ReturnType<typeof vi.fn>;
 }
+
+// ── GET /public/stats/cost-per-outcome-lifetime ───────────────────────────────
+
+/** Mocks the lifetime endpoint's data sources: dated fleet spend (runs timeseries), dated outcomes
+ * (email day stats), and per-brand economics (memberships + sales-economics-effective). */
+function mockLifetimeFetch(opts: {
+  memberships: Array<{ orgId: string; brandId: string; workflowSlug: string }>;
+  economicsByBrand: Record<string, MockEconomics | null>;
+  spendBuckets: Array<{ period: string; totalCostInUsdCents: string }>;
+  dayOutcomes: Array<{ key: string; clicked: number; repliesPositive: number }>;
+}): ReturnType<typeof vi.fn> {
+  const spy = vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
+      return new Response(JSON.stringify({ memberships: opts.memberships }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) {
+      return new Response(JSON.stringify({ buckets: opts.spendBuckets }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.startsWith("http://email:3000/public/stats")) {
+      const groups = opts.dayOutcomes.map((d) => ({ key: d.key, broadcast: { recipientStats: { clicked: d.clicked, repliesPositive: d.repliesPositive } } }));
+      return new Response(JSON.stringify({ groups }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const econMatch = url.match(/http:\/\/brand:3000\/orgs\/brands\/([^/]+)\/sales-economics-effective/);
+    if (econMatch) {
+      const econ = opts.economicsByBrand[econMatch[1]];
+      if (econ == null) {
+        return new Response(JSON.stringify({ economics: null, source: null }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ economics: econ, source: "user" }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+  });
+  return spy as unknown as ReturnType<typeof vi.fn>;
+}
+
+describe("GET /public/stats/cost-per-outcome-lifetime", () => {
+  const ECON_1 = { lifetimeRevenueUsd: 1000, replyToMeetingPct: 40, visitToMeetingPct: 5, meetingToClosePct: 30, visitToClosePct: 2, visitToSignupPct: 20 };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    __resetCostPerOutcomeLifetimeCache();
+  });
+
+  it("pools all-history spend ÷ outcomes → CPC/CPPR exact, projected objectives non-null, totals summed", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockLifetimeFetch({
+      memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }],
+      economicsByBrand: { "brand-1": ECON_1 },
+      // 2 days: $200 + $200 = $400; clicks 100+100=200; replies 50+50=100 → CPC $2, CPPR $4.
+      spendBuckets: [
+        { period: "2026-07-07", totalCostInUsdCents: "20000" },
+        { period: "2026-07-08", totalCostInUsdCents: "20000" },
+      ],
+      dayOutcomes: [
+        { key: "2026-07-07", clicked: 100, repliesPositive: 50 },
+        { key: "2026-07-08", clicked: 100, repliesPositive: 50 },
+      ],
+    });
+
+    const res = await request(app).get("/public/stats/cost-per-outcome-lifetime?featureSlug=sales-cold-email-outreach");
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalSpentUsd).toBeCloseTo(400, 6);
+    expect(res.body.totalClicks).toBe(200);
+    expect(res.body.totalPositiveReplies).toBe(100);
+    expect(res.body.brandCount).toBe(1);
+    expect(res.body.avgCostPerOutcomeByObjective.websiteVisit).toBeCloseTo(2, 6); // 400/200
+    expect(res.body.avgCostPerOutcomeByObjective.positiveReply).toBeCloseTo(4, 6); // 400/100
+    // projected objective populated (backed economics) — coherence math covered in the lib test.
+    expect(res.body.avgCostPerOutcomeByObjective.signup).toBeGreaterThan(0);
+    expect(res.body.avgCostPerOutcomeByObjective.meetingBooked).toBeGreaterThan(0);
+  });
+
+  it("null (never a false $0) per objective when there are zero outcomes", async () => {
+    mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
+    mockLifetimeFetch({
+      memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }],
+      economicsByBrand: { "brand-1": ECON_1 },
+      spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }],
+      dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 0 }],
+    });
+
+    const res = await request(app).get("/public/stats/cost-per-outcome-lifetime?featureSlug=sales-cold-email-outreach");
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalSpentUsd).toBeCloseTo(200, 6);
+    expect(res.body.avgCostPerOutcomeByObjective.websiteVisit).toBeNull();
+    expect(res.body.avgCostPerOutcomeByObjective.positiveReply).toBeNull();
+    expect(res.body.avgCostPerOutcomeByObjective.signup).toBeNull();
+  });
+
+  it("400 when featureSlug is missing", async () => {
+    const res = await request(app).get("/public/stats/cost-per-outcome-lifetime");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/featureSlug/i);
+  });
+
+  it("404 when feature not found", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    const res = await request(app).get("/public/stats/cost-per-outcome-lifetime?featureSlug=nope");
+    expect(res.status).toBe(404);
+  });
+});
 
 describe("GET /internal/stats/send-forecast", () => {
   const KEY = { "x-api-key": "test-key" };
