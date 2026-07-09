@@ -18,6 +18,7 @@ import { getFunnel, type SalesEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import {
   buildObjectiveAverages,
+  buildLifetimeObjectiveAverages,
   buildCostPerOutcomeTrend,
   buildWorkflowCostPerOutcome,
   fetchFleetBrandEconomics,
@@ -1071,6 +1072,97 @@ export async function handleWorkflowCostPerOutcome(
   res.json(payload);
 }
 
+// ── GET /public/stats/cost-per-outcome-lifetime ──────────────────────────────
+//
+// The staff admin table's "All-time avg" column (extends #485). Cross-org (fleet-wide) LIFETIME pooled
+// average cost-per-outcome for EVERY objective in ONE call: total all-history fleet spend ÷ total
+// all-history fleet outcomes, projected objectives pushed through the fleet-mean economics. This is the
+// window→∞ limit of /public/stats/cost-per-outcome-trend — it reuses the SAME data sources (runs-service
+// dated fleet spend + email-gateway dated outcomes) summed over ALL days, so the "All-time avg" is exactly
+// where each objective's trend line converges. A true lifetime average can NOT be recovered from the
+// moving-average windows (avg-of-windows ≠ lifetime avg), so it is a backend-owned field. Null (never a
+// false $0) when the objective's denominator is 0 or its rate is absent.
+
+interface CostPerOutcomeLifetimePayload {
+  featureSlug: string;
+  /** Pooled all-history cost-per-outcome per objective (websiteVisit / positiveReply = pooled CPC / CPPR;
+   * the rest project through the fleet-mean economics). Null where the objective is unbacked. */
+  avgCostPerOutcomeByObjective: ObjectiveAverages;
+  /** Total cross-org fleet spend (USD, committed) over all dated history. */
+  totalSpentUsd: number;
+  /** Total cross-org clicks (website visits) over all dated history — the CPC denominator. */
+  totalClicks: number;
+  /** Total cross-org positive replies over all dated history — the CPPR denominator. */
+  totalPositiveReplies: number;
+  /** Number of client brands with usable economics that backed the fleet-mean projection. */
+  brandCount: number;
+}
+
+const costPerOutcomeLifetimeCache: PublicCache = new Map();
+
+/** Test seam — reset the in-memory cost-per-outcome-lifetime cache. */
+export function __resetCostPerOutcomeLifetimeCache(): void {
+  costPerOutcomeLifetimeCache.clear();
+}
+
+export async function handleCostPerOutcomeLifetime(
+  featureSlug: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  if (!featureSlug) {
+    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
+    return;
+  }
+
+  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
+  if (!feature) {
+    res.status(404).json({ error: "Feature not found" });
+    return;
+  }
+
+  const cached = getPublicCache<CostPerOutcomeLifetimePayload>(costPerOutcomeLifetimeCache, featureSlug);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  // SAME data sources as the trend, summed over ALL days → the window→∞ limit.
+  const [spendByDay, dayOutcomeMap, perBrandEconomics] = await Promise.all([
+    fetchFleetSpendByDay(featureSlug),
+    fetchPublicEmailStats(featureSlug, "day"),
+    fetchFleetBrandEconomics(featureSlug),
+  ]);
+
+  let totalSpentUsd = 0;
+  for (const v of spendByDay.values()) totalSpentUsd += v;
+
+  let totalClicks = 0;
+  let totalPositiveReplies = 0;
+  for (const [day, fields] of dayOutcomeMap) {
+    if (day === "__total__") continue;
+    totalClicks += fields.recipientsClicked ?? 0;
+    totalPositiveReplies += fields.recipientsRepliesPositive ?? 0;
+  }
+
+  const objectives = buildLifetimeObjectiveAverages({
+    totalSpentUsd,
+    totalClicks,
+    totalPositiveReplies,
+    fleetEcon: meanFleetEconomics(perBrandEconomics),
+  });
+
+  const payload: CostPerOutcomeLifetimePayload = {
+    featureSlug,
+    avgCostPerOutcomeByObjective: objectives,
+    totalSpentUsd,
+    totalClicks,
+    totalPositiveReplies,
+    brandCount: perBrandEconomics.length,
+  };
+  setPublicCache(costPerOutcomeLifetimeCache, featureSlug, payload);
+  res.json(payload);
+}
+
 // ── GET /internal/stats/send-forecast ─────────────────────────────────────────
 
 const PAST_WINDOW_DAYS = 7;
@@ -1274,6 +1366,17 @@ router.get("/public/stats/workflow-cost-per-outcome", async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] Public stats workflow-cost-per-outcome error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/cost-per-outcome-lifetime ──────────────────────────────
+
+router.get("/public/stats/cost-per-outcome-lifetime", async (req, res) => {
+  try {
+    await handleCostPerOutcomeLifetime(req.query.featureSlug as string | undefined, res);
+  } catch (error) {
+    console.error("[features-service] Public stats cost-per-outcome-lifetime error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

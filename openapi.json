@@ -6922,6 +6922,148 @@
         }
       }
     },
+    "/public/stats/cost-per-outcome-lifetime": {
+      "get": {
+        "summary": "Lifetime (all-history) cross-org average cost-per-outcome per objective (public, no auth)",
+        "description": "Cross-org (fleet-wide) LIFETIME pooled average cost-per-outcome for EVERY optimization objective in one call: total all-history fleet spend ÷ total all-history fleet outcomes, projected objectives pushed through the fleet-mean economics. This is the window→∞ limit of /public/stats/cost-per-outcome-trend (same runs-service dated spend + email-gateway dated outcomes, summed over all days), so each objective's all-time average is exactly where its trend line converges. A true lifetime average cannot be recovered from the moving-average windows (avg-of-windows ≠ lifetime avg), so it is a backend-owned field. Null per objective when its denominator is 0 or its rate is absent — never a false $0.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature slug (required)."
+            },
+            "required": true,
+            "description": "Feature slug (required).",
+            "name": "featureSlug",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lifetime cross-org average cost-per-outcome per objective",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "avgCostPerOutcomeByObjective": {
+                      "type": "object",
+                      "properties": {
+                        "websiteVisit": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average cost per website visit (CPC = cost per click)."
+                        },
+                        "positiveReply": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average cost per positive reply (CPPR)."
+                        },
+                        "signup": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average projected cost per self-serve signup."
+                        },
+                        "formSubmission": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average projected cost per form submission."
+                        },
+                        "meetingBooked": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average projected cost per meeting booked."
+                        },
+                        "purchase": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average projected cost per purchase/close."
+                        }
+                      },
+                      "required": [
+                        "websiteVisit",
+                        "positiveReply",
+                        "signup",
+                        "formSubmission",
+                        "meetingBooked",
+                        "purchase"
+                      ],
+                      "description": "Pooled LIFETIME (all-history) cost-per-outcome per objective — total fleet spend ÷ total fleet outcomes, projected objectives through the fleet-mean economics. The window→∞ limit of cost-per-outcome-trend. Null where the objective is unbacked; never a false $0."
+                    },
+                    "totalSpentUsd": {
+                      "type": "number",
+                      "description": "Total cross-org fleet spend (USD, committed) over all dated history."
+                    },
+                    "totalClicks": {
+                      "type": "number",
+                      "description": "Total cross-org clicks (website visits) over all dated history — the CPC denominator."
+                    },
+                    "totalPositiveReplies": {
+                      "type": "number",
+                      "description": "Total cross-org positive replies over all dated history — the CPPR denominator."
+                    },
+                    "brandCount": {
+                      "type": "integer",
+                      "description": "Number of client brands with usable economics that backed the fleet-mean projection."
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "avgCostPerOutcomeByObjective",
+                    "totalSpentUsd",
+                    "totalClicks",
+                    "totalPositiveReplies",
+                    "brandCount"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/public/stats/workflow-engagement-latency": {
       "get": {
         "summary": "Average and median time-to-engagement per workflow (public, no auth)",
