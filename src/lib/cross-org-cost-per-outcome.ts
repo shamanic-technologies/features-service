@@ -21,7 +21,12 @@ import {
   type SalesEconomics,
 } from "./funnel-registry.js";
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
-import { fetchEffectiveEconomics, BrandOwnershipError } from "./sales-economics-client.js";
+import {
+  fetchEffectiveEconomics,
+  fetchBrandSavedEconomicsWithGoal,
+  BrandOwnershipError,
+} from "./sales-economics-client.js";
+import { fetchFleetSpendByDay, fetchPublicEmailStats } from "./public-stats-clients.js";
 
 /** The objective family the admin page charts, = the brand optimization-goal set. */
 export const OBJECTIVES: readonly Goal[] = GOALS;
@@ -417,4 +422,150 @@ export function addUtcDays(iso: string, delta: number): string {
   const d = new Date(`${iso}T00:00:00.000Z`);
   d.setUTCDate(d.getUTCDate() + delta);
   return d.toISOString().slice(0, 10);
+}
+
+// ── Goal-bucketed cost per outcome (per-brand-goal scoping) ───────────────────
+//
+// A brand's spend + outcomes count toward a cost-per-outcome CARD only when the brand's optimization
+// goal is RELEVANT to that card — otherwise a brand that optimizes for meetings/replies dilutes the
+// fleet CPC. So each objective's fleet spend + outcomes are summed over ONLY the brands whose declared
+// `optimizationGoal` sits in that objective's bucket below. Because runs/email cost rows are NOT
+// goal-tagged (0 of ~42k carry a non-null goal), the bucketing is done consumer-side: enumerate the
+// feature's brands, resolve each brand's goal (brand-service saved economics), fetch each brand's dated
+// spend (runs, brandId-filtered) + dated outcomes (email-gateway, brandId-filtered), then aggregate per
+// bucket. This is composition of data the fleet already owns, NOT a read-side derivation of a missing tag.
+
+/**
+ * Which `optimizationGoal`s contribute to each objective's cost-per-outcome bucket.
+ *
+ * - **websiteVisit (CPC)** — every click-driven goal EXCEPT the reply-driven + meeting-driven ones
+ *   (purchase closes via a meeting, so it belongs to the meeting bucket, not CPC).
+ * - **positiveReply / signup / formSubmission** — their own goal only.
+ * - **meetingBooked** — meetingBooked + purchase (a purchase closes partly through a booked meeting).
+ * - **purchase** — its own goal only.
+ *
+ * A brand may fall in SEVERAL buckets (a `signup` brand feeds both CPC and cost-per-signup) — intended:
+ * each card is a distinct ratio over a distinct denominator, and the same spend legitimately produced
+ * clicks AND signups.
+ */
+export const OBJECTIVE_GOAL_BUCKET: Record<Goal, readonly Goal[]> = {
+  websiteVisit: ["websiteVisit", "signup", "formSubmission"],
+  positiveReply: ["positiveReply"],
+  signup: ["signup"],
+  formSubmission: ["formSubmission"],
+  meetingBooked: ["meetingBooked", "purchase"],
+  purchase: ["purchase"],
+};
+
+/** True when a brand whose optimization goal is `goal` contributes to `objective`'s cost bucket. */
+export function goalInObjectiveBucket(objective: Goal, goal: Goal): boolean {
+  return OBJECTIVE_GOAL_BUCKET[objective].includes(goal);
+}
+
+/** One feature brand's goal + saved economics + its dated spend / outcome evidence (cross-org). */
+export interface BucketedBrand {
+  brandId: string;
+  goal: Goal;
+  economics: SalesEconomics;
+  /** Dated fleet spend for THIS brand (USD per UTC day). */
+  spendByDay: Map<string, number>;
+  /** Dated clicks / positive replies for THIS brand (per UTC day). */
+  outcomesByDay: Map<string, DayOutcome>;
+}
+
+/** The brands of a feature that belong to `objective`'s cost bucket. */
+export function bucketBrandsForObjective(brands: BucketedBrand[], objective: Goal): BucketedBrand[] {
+  return brands.filter((b) => goalInObjectiveBucket(objective, b.goal));
+}
+
+/** Sum a set of brands' dated spend into one day→USD map. */
+export function mergeSpendByDay(brands: BucketedBrand[]): Map<string, number> {
+  const merged = new Map<string, number>();
+  for (const b of brands) {
+    for (const [day, spend] of b.spendByDay) merged.set(day, (merged.get(day) ?? 0) + spend);
+  }
+  return merged;
+}
+
+/** Sum a set of brands' dated clicks + replies into one day→{clicks,replies} map. */
+export function mergeOutcomesByDay(brands: BucketedBrand[]): Map<string, DayOutcome> {
+  const merged = new Map<string, DayOutcome>();
+  for (const b of brands) {
+    for (const [day, o] of b.outcomesByDay) {
+      const prev = merged.get(day) ?? { clicks: 0, replies: 0 };
+      merged.set(day, { clicks: prev.clicks + o.clicks, replies: prev.replies + o.replies });
+    }
+  }
+  return merged;
+}
+
+/**
+ * Pooled all-history cost-per-outcome for EVERY objective, each summed over ITS OWN goal bucket:
+ * per objective, sum the bucket brands' total spend + total clicks / replies (over all days), form the
+ * pooled unit costs, and push through `objectiveCostPerOutcome` (websiteVisit / positiveReply = pooled
+ * CPC / CPPR; the rest project through the bucket's fleet-mean economics). Null (never a false $0) when a
+ * bucket has 0 spend, a 0 denominator, or no economics. Same math as a trend point, so each objective's
+ * lifetime average is the window→∞ limit of its (bucketed) trend.
+ */
+export function buildBucketedLifetimeAverages(brands: BucketedBrand[]): ObjectiveAverages {
+  const objectives = {} as ObjectiveAverages;
+  for (const goal of OBJECTIVES) {
+    const bucket = bucketBrandsForObjective(brands, goal);
+    let totalSpentUsd = 0;
+    let totalClicks = 0;
+    let totalReplies = 0;
+    for (const b of bucket) {
+      for (const spend of b.spendByDay.values()) totalSpentUsd += spend;
+      for (const o of b.outcomesByDay.values()) {
+        totalClicks += o.clicks;
+        totalReplies += o.replies;
+      }
+    }
+    const fleetEcon = meanFleetEconomics(bucket.map((b) => b.economics));
+    const unitCosts: ProjectionUnitCosts = {
+      clickUsd: totalClicks > 0 && totalSpentUsd > 0 ? totalSpentUsd / totalClicks : null,
+      replyUsd: totalReplies > 0 && totalSpentUsd > 0 ? totalSpentUsd / totalReplies : null,
+    };
+    objectives[goal] = fleetEcon ? objectiveCostPerOutcome(goal, unitCosts, fleetEcon) : null;
+  }
+  return objectives;
+}
+
+/**
+ * Fetch the goal-bucketed per-brand dataset for a feature (cross-org): enumerate the feature's distinct
+ * brands, resolve each brand's saved economics + optimization goal, and fetch each brand's dated spend
+ * (runs) + dated clicks / positive replies (email-gateway). A brand with no saved goal/economics is
+ * OMITTED (it cannot be bucketed). One fetch per brand, run concurrently. Feature-level (objective-
+ * independent) so the trend + lifetime surfaces can share ONE cached dataset. Fails loud on any
+ * transport / non-OK error (essential input, not optional enrichment); a stale membership
+ * (BrandOwnershipError) is skipped, mirroring `fetchFleetBrandEconomics`.
+ */
+export async function fetchGoalBucketDataset(featureSlug: string): Promise<BucketedBrand[]> {
+  const memberships = await fetchFeatureMemberships(featureSlug);
+  const brandIds = [...new Set(memberships.map((m) => m.brandId))];
+
+  const perBrand = await Promise.all(
+    brandIds.map(async (brandId): Promise<BucketedBrand | null> => {
+      const { economics, goal } = await fetchBrandSavedEconomicsWithGoal(brandId);
+      if (!economics || !goal) return null;
+
+      const [spendByDay, dayOutcomeMap] = await Promise.all([
+        fetchFleetSpendByDay(featureSlug, brandId),
+        fetchPublicEmailStats(featureSlug, "day", [brandId]),
+      ]);
+
+      const outcomesByDay = new Map<string, DayOutcome>();
+      for (const [day, fields] of dayOutcomeMap) {
+        if (day === "__total__") continue;
+        outcomesByDay.set(day, {
+          clicks: fields.recipientsClicked ?? 0,
+          replies: fields.recipientsRepliesPositive ?? 0,
+        });
+      }
+
+      return { brandId, goal, economics, spendByDay, outcomesByDay };
+    }),
+  );
+
+  return perBrand.filter((b): b is BucketedBrand => b != null);
 }

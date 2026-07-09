@@ -285,3 +285,124 @@ describe("buildWorkflowCostPerOutcome", () => {
     expect(rows[0].costPerOutcomeUsd).toBeNull();
   });
 });
+
+// ── Goal-bucketed cost per outcome ───────────────────────────────────────────
+
+import {
+  OBJECTIVE_GOAL_BUCKET,
+  goalInObjectiveBucket,
+  bucketBrandsForObjective,
+  mergeSpendByDay,
+  mergeOutcomesByDay,
+  buildBucketedLifetimeAverages,
+  type BucketedBrand,
+} from "./cross-org-cost-per-outcome.js";
+import { matchOptimizationGoal, type Goal } from "./goals.js";
+
+function brand(brandId: string, goal: Goal, spend: number, clicks: number, replies: number): BucketedBrand {
+  return {
+    brandId,
+    goal,
+    economics: FULL_ECON,
+    spendByDay: new Map([["2026-07-08", spend]]),
+    outcomesByDay: new Map([["2026-07-08", { clicks, replies }]]),
+  };
+}
+
+describe("matchOptimizationGoal (brand-service stored enum → Goal)", () => {
+  it("maps every stored OptimizationGoal spelling", () => {
+    expect(matchOptimizationGoal("signups")).toBe("signup");
+    expect(matchOptimizationGoal("booked_meetings")).toBe("meetingBooked");
+    expect(matchOptimizationGoal("sales")).toBe("purchase");
+    expect(matchOptimizationGoal("website_visits")).toBe("websiteVisit");
+    expect(matchOptimizationGoal("positive_replies")).toBe("positiveReply");
+    expect(matchOptimizationGoal("form_submissions")).toBe("formSubmission");
+  });
+  it("also tolerates the runtime camel spellings", () => {
+    expect(matchOptimizationGoal("signup")).toBe("signup");
+    expect(matchOptimizationGoal("meetingBooked")).toBe("meetingBooked");
+    expect(matchOptimizationGoal("purchase")).toBe("purchase");
+  });
+  it("returns null for an unrecognised value", () => {
+    expect(matchOptimizationGoal("nonsense")).toBeNull();
+    expect(matchOptimizationGoal("")).toBeNull();
+  });
+});
+
+describe("OBJECTIVE_GOAL_BUCKET", () => {
+  it("cpc = every click-driven goal except reply-driven + meeting-driven", () => {
+    expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).toEqual(["websiteVisit", "signup", "formSubmission"]);
+    expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).not.toContain("positiveReply");
+    expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).not.toContain("meetingBooked");
+    expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).not.toContain("purchase");
+  });
+  it("each single-outcome objective is its own goal only", () => {
+    expect(OBJECTIVE_GOAL_BUCKET.positiveReply).toEqual(["positiveReply"]);
+    expect(OBJECTIVE_GOAL_BUCKET.signup).toEqual(["signup"]);
+    expect(OBJECTIVE_GOAL_BUCKET.formSubmission).toEqual(["formSubmission"]);
+    expect(OBJECTIVE_GOAL_BUCKET.purchase).toEqual(["purchase"]);
+  });
+  it("meeting bucket = meetingBooked + purchase (purchase closes via meeting)", () => {
+    expect(OBJECTIVE_GOAL_BUCKET.meetingBooked).toEqual(["meetingBooked", "purchase"]);
+  });
+  it("goalInObjectiveBucket agrees with the table", () => {
+    expect(goalInObjectiveBucket("websiteVisit", "signup")).toBe(true);
+    expect(goalInObjectiveBucket("websiteVisit", "positiveReply")).toBe(false);
+    expect(goalInObjectiveBucket("meetingBooked", "purchase")).toBe(true);
+    expect(goalInObjectiveBucket("signup", "purchase")).toBe(false);
+  });
+});
+
+describe("bucketBrandsForObjective + merge", () => {
+  const brands = [
+    brand("b-visit", "websiteVisit", 100, 50, 0),
+    brand("b-signup", "signup", 200, 40, 0),
+    brand("b-reply", "positiveReply", 300, 5, 20),
+    brand("b-meeting", "meetingBooked", 400, 10, 3),
+    brand("b-purchase", "purchase", 500, 8, 2),
+  ];
+
+  it("cpc bucket excludes reply + meeting + purchase brands", () => {
+    const bucket = bucketBrandsForObjective(brands, "websiteVisit");
+    expect(bucket.map((b) => b.brandId).sort()).toEqual(["b-signup", "b-visit"]);
+    // spend + clicks summed over ONLY the click-driven brands
+    expect(mergeSpendByDay(bucket).get("2026-07-08")).toBe(300); // 100 + 200
+    expect(mergeOutcomesByDay(bucket).get("2026-07-08")).toEqual({ clicks: 90, replies: 0 });
+  });
+
+  it("signup bucket = signup brand only (purchase excluded)", () => {
+    const bucket = bucketBrandsForObjective(brands, "signup");
+    expect(bucket.map((b) => b.brandId)).toEqual(["b-signup"]);
+  });
+
+  it("meeting bucket = meeting + purchase brands", () => {
+    const bucket = bucketBrandsForObjective(brands, "meetingBooked");
+    expect(bucket.map((b) => b.brandId).sort()).toEqual(["b-meeting", "b-purchase"]);
+    expect(mergeSpendByDay(bucket).get("2026-07-08")).toBe(900); // 400 + 500
+  });
+
+  it("positiveReply bucket sums replies only from reply brands", () => {
+    const bucket = bucketBrandsForObjective(brands, "positiveReply");
+    expect(mergeOutcomesByDay(bucket).get("2026-07-08")).toEqual({ clicks: 5, replies: 20 });
+  });
+});
+
+describe("buildBucketedLifetimeAverages", () => {
+  it("cost-per-click uses ONLY click-driven brands' pooled spend/clicks", () => {
+    const brands = [
+      brand("b-visit", "websiteVisit", 100, 50, 0),
+      brand("b-reply", "positiveReply", 900, 0, 30),
+    ];
+    const avgs = buildBucketedLifetimeAverages(brands);
+    // websiteVisit = pooled CPC over the visit brand only: 100 / 50 = 2 (reply brand's $900 excluded)
+    expect(avgs.websiteVisit).toBeCloseTo(2, 5);
+    // positiveReply = pooled CPPR over the reply brand only: 900 / 30 = 30
+    expect(avgs.positiveReply).toBeCloseTo(30, 5);
+  });
+
+  it("empty bucket → null cost, never a false $0", () => {
+    const brands = [brand("b-visit", "websiteVisit", 100, 50, 0)];
+    const avgs = buildBucketedLifetimeAverages(brands);
+    expect(avgs.positiveReply).toBeNull(); // no reply-goal brand
+  });
+});
