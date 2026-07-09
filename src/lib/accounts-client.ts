@@ -13,10 +13,10 @@
  * billing's user-less `/internal/accounts/by-org/:orgId/balance`).
  *
  * Fail loud on any transport / non-OK error (these own the displayed money + active determination —
- * not optional enrichment). The ONE mapped status is billing 404 "billing account not found" → 0
- * spendable: an org that never funded a wallet has zero spendable credit, which is the correct
- * financial reading for the active rule (balance > budget is then false → inactive). That is a
- * documented billing semantic (see api-registry), not a swallowed error.
+ * not optional enrichment). The ONE mapped status is billing 404 "billing account not found" → zero
+ * balances / no auto-topup: an org that never funded a wallet has zero credit, which is the correct
+ * financial reading for the active rule (inactive). That is a documented billing semantic (see
+ * api-registry), not a swallowed error.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 
@@ -32,6 +32,24 @@ export interface OrgIdentity {
 export interface BrandBasic {
   name: string | null;
   domain: string | null;
+}
+
+export interface OrgBalance {
+  /** Spendable funds in USD (balance_cents/100 — credited minus committed usage, incl. provisioned holds). */
+  spendableUsd: number;
+  /**
+   * ACTUAL credit balance in USD (actual_balance_cents/100 — credited minus ACTUALIZED usage only,
+   * provisioned holds NOT subtracted). This is the figure the ACTIVE verdict gates on: an in-flight
+   * provisioned hold is active spend, so subtracting it (spendable) wrongly reads a busy account "inactive".
+   */
+  actualUsd: number;
+  /**
+   * Whether the org has auto-topup enabled (billing `has_auto_topup`). An auto-topup org never runs dry
+   * (it tops up on dip), so it is ACTIVE regardless of the momentary balance. OPTIONAL on the balance
+   * read — billing may not have shipped the field yet; ABSENT ⇒ treated as not-enabled (fail-open to the
+   * actual-balance path, which already corrects the verdict).
+   */
+  autoTopupEnabled: boolean;
 }
 
 function billingConfig(): { url: string; apiKey: string } {
@@ -91,29 +109,39 @@ export async function fetchBrandPaused(brandId: string, orgId: string): Promise<
 }
 
 /**
- * Org spendable credit balance in USD, from billing-service `GET /internal/accounts/by-org/:orgId/balance`
- * (user-less internal read — api-key only, org in path). Uses `balance_cents` (spendable funds incl.
- * provisioned holds — the authorization/runway value), NOT `actual_balance_cents`. 404 (no billing
- * account) → 0 (see module doc).
+ * Org balance snapshot for the active verdict, from billing-service
+ * `GET /internal/accounts/by-org/:orgId/balance` (user-less internal read — api-key only, org in path).
+ * Reads `balance_cents` (spendable, display), `actual_balance_cents` (credited − ACTUALIZED usage; the
+ * active-verdict figure), and the OPTIONAL `has_auto_topup` (absent ⇒ false). 404 (no billing account)
+ * → zero balances / no auto-topup (see module doc).
  */
-export async function fetchOrgBalanceUsd(orgId: string): Promise<number> {
+export async function fetchOrgBalance(orgId: string): Promise<OrgBalance> {
   const { url, apiKey } = billingConfig();
   const response = await fetchWithRetry(`${url}/internal/accounts/by-org/${encodeURIComponent(orgId)}/balance`, {
     headers: { "x-api-key": apiKey },
   });
 
-  if (response.status === 404) return 0;
+  if (response.status === 404) return { spendableUsd: 0, actualUsd: 0, autoTopupEnabled: false };
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`[features-service] billing-service /internal/accounts/by-org/:orgId/balance failed (${response.status}): ${body}`);
   }
 
-  const data = (await response.json()) as { balance_cents?: string | number };
-  const cents = Number(data.balance_cents);
-  if (!Number.isFinite(cents)) {
-    throw new Error(`[features-service] billing-service /internal/accounts/by-org/:orgId/balance returned non-numeric balance_cents: ${JSON.stringify(data.balance_cents)}`);
+  const data = (await response.json()) as {
+    balance_cents?: string | number;
+    actual_balance_cents?: string | number;
+    has_auto_topup?: boolean;
+  };
+  const spendableCents = Number(data.balance_cents);
+  if (!Number.isFinite(spendableCents)) {
+    throw new Error(`[features-service] billing-service balance returned non-numeric balance_cents: ${JSON.stringify(data.balance_cents)}`);
   }
-  return cents / 100;
+  const actualCents = Number(data.actual_balance_cents);
+  if (!Number.isFinite(actualCents)) {
+    throw new Error(`[features-service] billing-service balance returned non-numeric actual_balance_cents: ${JSON.stringify(data.actual_balance_cents)}`);
+  }
+  // has_auto_topup is OPTIONAL (billing may not have shipped it on this read yet) — absent ⇒ not-enabled.
+  return { spendableUsd: spendableCents / 100, actualUsd: actualCents / 100, autoTopupEnabled: data.has_auto_topup === true };
 }
 
 /**

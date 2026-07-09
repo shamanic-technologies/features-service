@@ -5,7 +5,7 @@ process.env.CLIENT_SERVICE_API_KEY = "client-key";
 process.env.BILLING_SERVICE_URL = "http://billing:3000";
 process.env.BILLING_SERVICE_API_KEY = "billing-key";
 
-const { fetchOrgIdentity, fetchOrgBalanceUsd } = await import("./accounts-client.js");
+const { fetchOrgIdentity, fetchOrgBalance } = await import("./accounts-client.js");
 
 function jsonRes(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -47,21 +47,28 @@ describe("fetchOrgIdentity", () => {
   });
 });
 
-describe("fetchOrgBalanceUsd", () => {
+describe("fetchOrgBalance", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("returns balance_cents/100 (spendable)", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonRes({ balance_cents: "12345", actual_balance_cents: "1", depleted: false }));
-    expect(await fetchOrgBalanceUsd("o1")).toBe(123.45);
+  it("returns spendable + actual balances and the has_auto_topup flag", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonRes({ balance_cents: "1397", actual_balance_cents: "5317", has_auto_topup: true, depleted: false }),
+    );
+    expect(await fetchOrgBalance("o1")).toEqual({ spendableUsd: 13.97, actualUsd: 53.17, autoTopupEnabled: true });
   });
 
-  it("maps billing 404 (no funded wallet) to 0", async () => {
+  it("treats a MISSING has_auto_topup (billing hasn't shipped it) as not-enabled", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonRes({ balance_cents: "5000", actual_balance_cents: "5000", depleted: false }));
+    expect(await fetchOrgBalance("o1")).toEqual({ spendableUsd: 50, actualUsd: 50, autoTopupEnabled: false });
+  });
+
+  it("maps billing 404 (no funded wallet) to zero balances / no auto-topup", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonRes({ error: "Billing account not found" }, 404));
-    expect(await fetchOrgBalanceUsd("o1")).toBe(0);
+    expect(await fetchOrgBalance("o1")).toEqual({ spendableUsd: 0, actualUsd: 0, autoTopupEnabled: false });
   });
 
   it("fails loud on a non-404 billing error", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonRes({ error: "boom" }, 500));
-    await expect(fetchOrgBalanceUsd("o1")).rejects.toThrow(/balance failed \(500\)/);
+    await expect(fetchOrgBalance("o1")).rejects.toThrow(/balance failed \(500\)/);
   });
 });

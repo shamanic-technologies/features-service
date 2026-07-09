@@ -963,8 +963,10 @@ const accountRowSchema = z.object({
   brandName: z.string().nullable(),
   brandDomain: z.string().nullable(),
   dailyBudgetUsd: z.number().nullable().describe("Brand's configured daily spend ceiling in USD. Null when unset/paused."),
-  orgBalanceUsd: z.number().describe("Org spendable credit balance in USD (billing balance_cents/100; 0 if no funded wallet)."),
-  status: z.enum(["active", "paused", "inactive"]).describe("Precedence paused > active > inactive: 'paused' iff campaign-service brand pause=true; else 'active' iff dailyBudgetUsd>0 && orgBalanceUsd>dailyBudgetUsd; else 'inactive'."),
+  orgBalanceUsd: z.number().describe("Org SPENDABLE credit balance in USD (billing balance_cents/100; committed usage incl. provisioned holds subtracted; 0 if no funded wallet). Display only."),
+  orgActualBalanceUsd: z.number().describe("Org ACTUAL credit balance in USD (billing actual_balance_cents/100; only ACTUALIZED usage subtracted). The figure the active verdict gates on."),
+  autoTopupEnabled: z.boolean().describe("Whether the org has auto-topup enabled (billing has_auto_topup). An auto-topup org never runs dry → active regardless of momentary balance. false when billing hasn't shipped the field yet."),
+  status: z.enum(["active", "paused", "inactive"]).describe("Precedence paused > active > inactive: 'paused' iff campaign-service brand pause=true; else 'active' iff dailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>dailyBudgetUsd); else 'inactive'."),
 });
 
 const accountsStatsSchema = z.object({
@@ -993,7 +995,8 @@ registry.registerPath({
     "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with its daily budget, the org's spendable credit balance, " +
     "and a 3-way status, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). " +
     "Status precedence paused > active > inactive: 'paused' iff the campaign-service brand pause is set (campaigns HELD, budget kept); " +
-    "else 'active' iff dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd; else 'inactive'. All rows (active + paused + inactive) are LISTED, never dropped. " +
+    "else 'active' iff dailyBudgetUsd > 0 && (autoTopupEnabled || orgActualBalanceUsd > dailyBudgetUsd) — the ACTUAL balance (actualized usage only), " +
+    "NOT the spendable balance (which subtracts in-flight provisioned holds); else 'inactive'. All rows (active + paused + inactive) are LISTED, never dropped. " +
     "Stats sum ACTIVE rows only (a paused brand is not spending). All money + the status determination are computed here; the dashboard renders only.",
   tags: ["Internal"],
   responses: {

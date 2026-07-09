@@ -377,16 +377,22 @@ injectable deps), new cross-org reads in `src/lib/accounts-client.ts`. 60s in-me
 the active determination + MRR/ARR are computed HERE; the dashboard renders only.**
 
 Each row: `{ orgId, orgExternalId, ownerEmail, brandId, brandName, brandDomain, dailyBudgetUsd,
-orgBalanceUsd, status }`. Response also carries `stats { totalDailyBudgetUsd, mrrUsd, arrUsd,
-activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
+orgBalanceUsd, orgActualBalanceUsd, autoTopupEnabled, status }`. Response also carries `stats {
+totalDailyBudgetUsd, mrrUsd, arrUsd, activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
 
-**STATUS rule (exact, single source `accountStatus()` — do NOT re-litigate). Precedence paused >
-active > inactive:** (1) `paused === true` (campaign-service brand pause) → `"paused"`; (2) else
-`dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd` → `"active"`; (3) else
-`"inactive"`. A PAUSED brand keeps its budget but campaigns are HELD — so it is neither active nor
-plain-inactive (paused wins even over a funded budget). **All rows (active + paused + inactive) are
-LISTED — never dropped.** `stats.totalDailyBudgetUsd`/MRR(×30)/ARR(×365) sum ACTIVE rows ONLY (a paused
-brand is not spending). send-forecast's série-3 gate reuses `accountStatus` and counts only `"active"`.
+**STATUS rule (exact, single source `accountStatus(dailyBudget, actualBalance, autoTopup, paused)` — do
+NOT re-litigate). Precedence paused > active > inactive:** (1) `paused === true` (campaign-service brand
+pause) → `"paused"`; (2) else `dailyBudgetUsd != null && dailyBudgetUsd > 0 && (autoTopupEnabled ||
+orgActualBalanceUsd > dailyBudgetUsd)` → `"active"`; (3) else `"inactive"`. The credit test uses the
+**ACTUAL** balance (credited − ACTUALIZED usage), **NOT the spendable** figure — a provisioned hold is
+in-flight ACTIVE spend, so subtracting it wrongly read the busiest accounts "inactive" (the bug this
+fixed, features-service#502). An **auto-topup** org never runs dry → active regardless of the momentary
+balance (`has_auto_topup` is OPTIONAL on the balance read — absent ⇒ not-enabled, so the actual-balance
+path already corrects the verdict and auto-topup activates once billing ships it). A PAUSED brand keeps
+its budget but campaigns are HELD — so it is neither active nor plain-inactive (paused wins even over a
+funded budget). **All rows (active + paused + inactive) are LISTED — never dropped.**
+`stats.totalDailyBudgetUsd`/MRR(×30)/ARR(×365) sum ACTIVE rows ONLY (a paused brand is not spending).
+send-forecast's série-3 gate reuses `accountStatus` and counts only `"active"`.
 
 **Account universe = the SAME source send-forecast uses** — lead-service `/internal/feature-memberships`
 over the cold-email slugs (`coldEmailOutreachSlugs`), deduped to distinct (org, brand). Org-level reads
@@ -397,13 +403,17 @@ per-(org,brand); brand name/domain is one batched brand-service call. Fail loud 
   user/run). The brand pause lives in campaign-service (NOT brand/billing): a brand can be paused while
   keeping a non-zero daily budget. No pause row → `paused:false` (active by default). Fail loud.
 
-- **orgBalanceUsd** = billing **`GET /internal/accounts/by-org/:orgId/balance`** (user-less internal
-  read — api-key only, org in path; NOT the user-required `/v1/accounts/balance`) → `balance_cents/100`
-  (SPENDABLE, incl. provisioned holds — the authorization/runway value), **NOT `actual_balance_cents`**.
-  The ONE mapped status: billing **404 "billing account not found" → 0** (an org that never funded a
-  wallet has zero spendable → inactive by the rule). That is a documented billing semantic, NOT a
-  swallowed error — do NOT "fix" it to fail-loud (it would 500 the whole fleet audit on one unfunded
-  org). Any OTHER non-OK fails loud.
+- **orgBalanceUsd / orgActualBalanceUsd / autoTopupEnabled** = billing **`GET
+  /internal/accounts/by-org/:orgId/balance`** (user-less internal read — api-key only, org in path; NOT
+  the user-required `/v1/accounts/balance`), read via `fetchOrgBalance` → `{ spendableUsd, actualUsd,
+  autoTopupEnabled }`. `orgBalanceUsd` = `balance_cents/100` (SPENDABLE, incl. provisioned holds —
+  DISPLAY only); `orgActualBalanceUsd` = `actual_balance_cents/100` (credited − ACTUALIZED usage — the
+  figure the ACTIVE verdict gates on, since a provisioned hold is in-flight active spend);
+  `autoTopupEnabled` = `has_auto_topup` (OPTIONAL — billing may not have shipped it on this read yet;
+  absent ⇒ false). The ONE mapped status: billing **404 "billing account not found" → zero balances / no
+  auto-topup** (an org that never funded a wallet is inactive by the rule). That is a documented billing
+  semantic, NOT a swallowed error — do NOT "fix" it to fail-loud (it would 500 the whole fleet audit on
+  one unfunded org). Any OTHER non-OK fails loud.
 - **dailyBudgetUsd** = billing `GET /internal/brands/:brandId/daily-budget` (reuses
   `fetchBrandDailyBudgetUsd`); `dailyBudgetCents:null` = unset/paused → row inactive.
 - **orgExternalId** (Clerk `org_...`) = client-service `GET /internal/orgs/:orgId` (NEW producer read,
@@ -628,6 +638,33 @@ gateway forwards `/public/stats/X` → `/v1/public/features/X` via EXPLICIT per-
 wildcard — any NEW `/public/stats/*` endpoint needs a matching api-service proxy route or it 404s at the
 gateway.** The two new paths got their proxies in api-service#686. Triage: STAGING (staff-internal
 analytics, dormant until distribute.you #2486 conforms). (Set 2026-07-08.)
+
+## Lifetime (all-history) cross-org avg cost-per-outcome — the trend's window→∞ limit, NOT a 4th methodology
+
+`GET /public/stats/cost-per-outcome-lifetime?featureSlug=` (extends #485) serves the staff admin table's
+**"All-time avg"** column: cross-org (no-auth) LIFETIME pooled average cost-per-outcome for ALL 6
+objectives in ONE call (`buildLifetimeObjectiveAverages`, `cross-org-cost-per-outcome.ts`). It is a
+BACKEND-owned field because a true lifetime average can NOT be recovered from the moving-average trend
+windows (avg-of-windows ≠ lifetime avg) — do NOT push this to the consumer.
+
+**It is DEFINED as the window→∞ limit of `cost-per-outcome-trend` — same data sources, summed over ALL
+days.** The handler reuses `fetchFleetSpendByDay` (runs-service dated fleet spend) + `fetchPublicEmailStats(_, "day")`
+(dated outcomes), sums every day → pooled `clickUsd = totalSpentUsd/totalClicks`,
+`replyUsd = totalSpentUsd/totalPositiveReplies`, then per objective `objectiveCostPerOutcome` (websiteVisit /
+positiveReply = pooled CPC / CPPR; the rest project through `meanFleetEconomics`). So each objective's
+all-time number is EXACTLY where its trend line converges — coherent by construction. Null (never a false
+$0) per objective when its denominator is 0 or its rate is absent (mirrors a trend point).
+
+**Do NOT reuse `cost-projection`'s `avgCostPerOutcomeByObjective` for the all-time column, and do NOT add a
+differently-computed lifetime field.** `cost-projection` uses per-brand-best→mean-across-brands (a distinct
+projection methodology); the "All-time avg" must be the POOLED total-spend/total-outcomes value so it agrees
+with the trend it terminates. Two different "averages" on the same page that don't converge is an
+internally-incoherent output. Response: `{ featureSlug, avgCostPerOutcomeByObjective{6}, totalSpentUsd,
+totalClicks, totalPositiveReplies, brandCount }`. Cached via the shared `PublicCache`
+(`__resetCostPerOutcomeLifetimeCache` seam). api-service gateway proxy
+`GET /v1/public/features/cost-per-outcome-lifetime` shipped in api-service#688 (mirror of the sibling
+`/public/stats/X` → `/v1/public/features/X` per-route pattern). Triage: STAGING → promoted to main
+(features-service v0.84.0 / api-service v0.83.0). (Set 2026-07-09, PR #496.)
 
 ### Trend + lifetime are GOAL-BUCKETED — each objective sums ONLY the brands whose goal is relevant
 
