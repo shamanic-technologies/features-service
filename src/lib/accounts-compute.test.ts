@@ -14,7 +14,12 @@ const COLD = "sales-cold-email-outreach,pr-cold-email-outreach";
 
 function deps(fixture: {
   memberships: Array<{ orgId: string; brandId: string }>;
+  // ACTUAL balance per org — the figure the active verdict gates on.
   balanceUsd: Record<string, number>;
+  // Optional SPENDABLE balance per org (display); defaults to the actual balance when unset.
+  spendableUsd?: Record<string, number>;
+  // Optional auto-topup flag per org; defaults to false.
+  autoTopup?: Record<string, boolean>;
   identity?: Record<string, OrgIdentity>;
   budgetUsd: Record<string, number | null>; // keyed by brandId
   paused?: Record<string, boolean>; // keyed by brandId
@@ -22,7 +27,11 @@ function deps(fixture: {
 }): AccountsDeps {
   return {
     featureMemberships: async () => fixture.memberships,
-    orgBalanceUsd: async (orgId) => fixture.balanceUsd[orgId] ?? 0,
+    orgBalance: async (orgId) => ({
+      spendableUsd: fixture.spendableUsd?.[orgId] ?? fixture.balanceUsd[orgId] ?? 0,
+      actualUsd: fixture.balanceUsd[orgId] ?? 0,
+      autoTopupEnabled: fixture.autoTopup?.[orgId] ?? false,
+    }),
     orgIdentity: async (orgId) => fixture.identity?.[orgId] ?? { orgExternalId: null, ownerEmail: null },
     brandDailyBudgetUsd: async (brandId) => fixture.budgetUsd[brandId] ?? null,
     brandPaused: async (brandId) => fixture.paused?.[brandId] ?? false,
@@ -30,19 +39,38 @@ function deps(fixture: {
   };
 }
 
+// accountStatus(dailyBudgetUsd, actualBalanceUsd, autoTopupEnabled, paused)
 describe("accountStatus — the exact status rule (paused > active > inactive)", () => {
-  it("paused wins over everything, even a funded budget", () => {
-    expect(accountStatus(10, 100, true)).toBe("paused"); // would be active, but paused
-    expect(accountStatus(0, 100, true)).toBe("paused");
-    expect(accountStatus(null, 0, true)).toBe("paused");
+  it("paused wins over everything, even a funded budget or auto-topup", () => {
+    expect(accountStatus(10, 100, false, true)).toBe("paused"); // would be active, but paused
+    expect(accountStatus(10, 1, true, true)).toBe("paused"); // auto-topup + paused → paused
+    expect(accountStatus(0, 100, false, true)).toBe("paused");
+    expect(accountStatus(null, 0, false, true)).toBe("paused");
   });
-  it("active only when not paused, budget non-null/positive, balance strictly exceeds it", () => {
-    expect(accountStatus(10, 100, false)).toBe("active"); // balance 100 > budget 10
-    expect(accountStatus(10, 10, false)).toBe("inactive"); // balance == budget → cannot cover next day
-    expect(accountStatus(10, 9, false)).toBe("inactive"); // balance < budget
-    expect(accountStatus(0, 100, false)).toBe("inactive"); // $0 budget → budget-paused
-    expect(accountStatus(null, 100, false)).toBe("inactive"); // no budget
-    expect(accountStatus(-5, 100, false)).toBe("inactive"); // negative budget guarded by > 0
+
+  it("auto-topup enabled + budget>0 → active even when the actual balance is below one day's budget", () => {
+    // The concrete failing case: distribute.you — budget 20, actual 53.17, auto-topup ON.
+    expect(accountStatus(20, 53.17, true, false)).toBe("active");
+    // Auto-topup covers even a near-empty balance (never runs dry).
+    expect(accountStatus(20, 1, true, false)).toBe("active");
+    expect(accountStatus(20, 0, true, false)).toBe("active");
+  });
+
+  it("actual balance > budget + auto-topup OFF → active", () => {
+    expect(accountStatus(10, 100, false, false)).toBe("active"); // actual 100 > budget 10
+    expect(accountStatus(20, 53.17, false, false)).toBe("active"); // actual 53.17 > budget 20
+  });
+
+  it("budget = 0 (or null/negative) → inactive regardless of balance or auto-topup", () => {
+    expect(accountStatus(0, 100, false, false)).toBe("inactive"); // $0 budget → budget-paused
+    expect(accountStatus(0, 100, true, false)).toBe("inactive"); // auto-topup does not rescue a 0 budget
+    expect(accountStatus(null, 100, true, false)).toBe("inactive"); // no budget
+    expect(accountStatus(-5, 100, true, false)).toBe("inactive"); // negative budget guarded by > 0
+  });
+
+  it("actual balance <= budget AND auto-topup OFF → inactive", () => {
+    expect(accountStatus(10, 10, false, false)).toBe("inactive"); // actual == budget → cannot cover next day
+    expect(accountStatus(10, 9, false, false)).toBe("inactive"); // actual < budget
   });
 });
 
@@ -83,6 +111,8 @@ describe("buildAccountsAudit", () => {
     expect(byBrand.b1.brandName).toBe("Brand One");
     expect(byBrand.b1.brandDomain).toBe("one.com");
     expect(byBrand.b1.orgBalanceUsd).toBe(100);
+    expect(byBrand.b1.orgActualBalanceUsd).toBe(100);
+    expect(byBrand.b1.autoTopupEnabled).toBe(false);
     expect(byBrand.b1.dailyBudgetUsd).toBe(10);
     // Missing identity / brand info → null, still listed.
     expect(byBrand.b3.orgExternalId).toBeNull();
@@ -96,6 +126,38 @@ describe("buildAccountsAudit", () => {
     expect(r.stats.pausedCount).toBe(1);
     expect(r.stats.inactiveCount).toBe(3);
     expect(r.stats.totalCount).toBe(6);
+  });
+
+  it("flips an auto-topup account with low spendable balance to ACTIVE (the distribute.you case)", async () => {
+    // distribute.you: budget 20, spendable 13.97 (< budget), actual 53.17, auto-topup ON.
+    // Old spendable-only rule → inactive; new rule (auto-topup OR actual>budget) → active.
+    const d = deps({
+      memberships: [
+        { orgId: "o_dy", brandId: "b_dy" }, // auto-topup ON, spendable < budget
+        { orgId: "o_actual", brandId: "b_actual" }, // auto-topup OFF, spendable < budget but actual > budget
+        { orgId: "o_dry", brandId: "b_dry" }, // auto-topup OFF, actual <= budget → inactive
+      ],
+      balanceUsd: { o_dy: 53.17, o_actual: 25, o_dry: 5 }, // ACTUAL balances
+      spendableUsd: { o_dy: 13.97, o_actual: 8, o_dry: 5 }, // spendable (holds subtracted)
+      autoTopup: { o_dy: true },
+      budgetUsd: { b_dy: 20, b_actual: 20, b_dry: 20 },
+    });
+    const r = await buildAccountsAudit(COLD, NOW, d);
+    const byBrand = Object.fromEntries(r.rows.map((row) => [row.brandId, row]));
+
+    expect(byBrand.b_dy.status).toBe("active"); // auto-topup rescues the low spendable balance
+    expect(byBrand.b_dy.orgBalanceUsd).toBe(13.97); // spendable (display)
+    expect(byBrand.b_dy.orgActualBalanceUsd).toBe(53.17); // actual (verdict basis)
+    expect(byBrand.b_dy.autoTopupEnabled).toBe(true);
+
+    expect(byBrand.b_actual.status).toBe("active"); // actual 25 > budget 20 despite spendable 8 < budget
+    expect(byBrand.b_dry.status).toBe("inactive"); // actual 5 <= budget 20, no auto-topup
+
+    // Fleet stats count only the two active budgets (20 + 20 = 40); the dry account is excluded.
+    expect(r.stats.totalDailyBudgetUsd).toBe(40);
+    expect(r.stats.activeCount).toBe(2);
+    expect(r.stats.inactiveCount).toBe(1);
+    expect(r.stats.mrrUsd).toBe(1200);
   });
 
   it("dedupes (org,brand) pairs that appear under multiple workflows/features", async () => {
