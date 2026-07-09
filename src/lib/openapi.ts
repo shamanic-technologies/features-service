@@ -1052,6 +1052,17 @@ const workflowCostPerOutcomeResponseSchema = z.object({
   })).describe("One row per workflow dynasty, sorted by spend desc."),
 });
 
+const costPerOutcomeLifetimeResponseSchema = z.object({
+  featureSlug: z.string(),
+  avgCostPerOutcomeByObjective: objectiveAveragesSchema.describe(
+    "Pooled LIFETIME (all-history) cost-per-outcome per objective — total fleet spend ÷ total fleet outcomes, projected objectives through the fleet-mean economics. The window→∞ limit of cost-per-outcome-trend. Null where the objective is unbacked; never a false $0.",
+  ),
+  totalSpentUsd: z.number().describe("Total cross-org fleet spend (USD, committed) over all dated history."),
+  totalClicks: z.number().describe("Total cross-org clicks (website visits) over all dated history — the CPC denominator."),
+  totalPositiveReplies: z.number().describe("Total cross-org positive replies over all dated history — the CPPR denominator."),
+  brandCount: z.number().int().describe("Number of client brands with usable economics that backed the fleet-mean projection."),
+});
+
 registry.registerPath({
   method: "get",
   path: "/public/stats/cost-projection",
@@ -1115,6 +1126,27 @@ registry.registerPath({
   responses: {
     200: { description: "Per-workflow cross-org cost-per-outcome", content: { "application/json": { schema: workflowCostPerOutcomeResponseSchema } } },
     400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/cost-per-outcome-lifetime ──────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/cost-per-outcome-lifetime",
+  summary: "Lifetime (all-history) cross-org average cost-per-outcome per objective (public, no auth)",
+  description:
+    "Cross-org (fleet-wide) LIFETIME pooled average cost-per-outcome for EVERY optimization objective in one call: total all-history fleet spend ÷ total all-history fleet outcomes, projected objectives pushed through the fleet-mean economics. This is the window→∞ limit of /public/stats/cost-per-outcome-trend (same runs-service dated spend + email-gateway dated outcomes, summed over all days), so each objective's all-time average is exactly where its trend line converges. A true lifetime average cannot be recovered from the moving-average windows (avg-of-windows ≠ lifetime avg), so it is a backend-owned field. Null per objective when its denominator is 0 or its rate is absent — never a false $0.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string().describe("Feature slug (required)."),
+    }),
+  },
+  responses: {
+    200: { description: "Lifetime cross-org average cost-per-outcome per objective", content: { "application/json": { schema: costPerOutcomeLifetimeResponseSchema } } },
+    400: { description: "Missing parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
   },
 });
