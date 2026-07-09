@@ -15,7 +15,8 @@ function deps(fixture: {
   outreachUsd: Record<string, number | null>;
   memberships: Record<string, Array<{ orgId: string; brandId: string }>>;
   budgetUsd: Record<string, number | null>;
-  balanceUsd?: Record<string, number>;
+  balanceUsd?: Record<string, number>; // ACTUAL balance per org (the gate figure)
+  autoTopup?: Record<string, boolean>;
   paused?: Record<string, boolean>;
   spentTodayUsd?: Record<string, number>;
 }): FleetDeps {
@@ -23,7 +24,10 @@ function deps(fixture: {
     featureOutreachUsd: async (slug) => fixture.outreachUsd[slug] ?? null,
     featureMemberships: async (slug) => fixture.memberships[slug] ?? [],
     brandDailyBudgetUsd: async (brandId) => fixture.budgetUsd[brandId] ?? null,
-    orgBalanceUsd: async (orgId) => fixture.balanceUsd?.[orgId] ?? 1_000_000,
+    orgBalance: async (orgId) => {
+      const actualUsd = fixture.balanceUsd?.[orgId] ?? 1_000_000;
+      return { spendableUsd: actualUsd, actualUsd, autoTopupEnabled: fixture.autoTopup?.[orgId] ?? false };
+    },
     brandPaused: async (brandId) => fixture.paused?.[brandId] ?? false,
     brandSpentTodayUsd: async (brandId) => fixture.spentTodayUsd?.[brandId] ?? 0,
   };
@@ -129,6 +133,19 @@ describe("aggregateFleetNewSequences", () => {
       expect(r.totalNewPerDay).toBe(0);
     });
 
+    it("INCLUDES an auto-topup brand whose actual balance is below its daily budget", async () => {
+      const d = deps({
+        outreachUsd: { "sales-cold-email-outreach": 2 },
+        memberships: { "sales-cold-email-outreach": [{ orgId: "o1", brandId: "b1" }] },
+        budgetUsd: { b1: 100 },
+        balanceUsd: { o1: 50 }, // 50 < 100 → would be inactive on balance alone...
+        autoTopup: { o1: true }, // ...but auto-topup never runs dry → active
+      });
+      const r = await aggregateFleetNewSequences(COLD, NOW, d);
+      expect(r.activeBrandCount).toBe(1);
+      expect(r.totalNewPerDay).toBe(50);
+    });
+
     it("excludes $0 / null budget brands (unset / budget-paused)", async () => {
       const d = deps({
         outreachUsd: { "sales-cold-email-outreach": 2 },
@@ -191,9 +208,9 @@ describe("aggregateFleetNewSequences", () => {
             ]
           : [],
       brandDailyBudgetUsd: async () => 100,
-      orgBalanceUsd: async (orgId) => {
+      orgBalance: async (orgId) => {
         balanceCalls.push(orgId);
-        return 500;
+        return { spendableUsd: 500, actualUsd: 500, autoTopupEnabled: false };
       },
       brandPaused: async () => false,
       brandSpentTodayUsd: async () => 0,

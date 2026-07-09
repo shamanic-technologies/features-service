@@ -5,10 +5,14 @@
  *
  * STATUS rule (exact, precedence order):
  *   1. paused === true (campaign-service brand pause)                                  → "paused"
- *   2. else dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd → "active"
+ *   2. else dailyBudgetUsd != null && dailyBudgetUsd > 0 && (autoTopupEnabled ||
+ *          actualBalanceUsd > dailyBudgetUsd)                                          → "active"
  *   3. else                                                                            → "inactive"
  * PAUSED wins over everything — a paused brand keeps its budget but campaigns are HELD, so it is
- * neither active nor plain-inactive. All rows are LISTED (active + paused + inactive), never dropped.
+ * neither active nor plain-inactive. The credit test uses the ACTUAL balance (credited − actualized
+ * usage), NOT the spendable balance: a provisioned hold is in-flight ACTIVE spend, so subtracting it
+ * would wrongly read the busiest accounts "inactive". An auto-topup org never runs dry, so it is active
+ * regardless of the momentary balance. All rows are LISTED (active + paused + inactive), never dropped.
  * `stats.totalDailyBudgetUsd`/MRR/ARR sum ACTIVE rows ONLY (a paused brand is not spending).
  *
  * The account universe is the SAME source series-3 of the send-forecast uses: lead-service
@@ -21,10 +25,11 @@
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { fetchBrandDailyBudgetUsd } from "../routes/pipeline-activity.js";
 import {
-  fetchOrgBalanceUsd,
+  fetchOrgBalance,
   fetchOrgIdentity,
   fetchBrandsBasic,
   fetchBrandPaused,
+  type OrgBalance,
   type OrgIdentity,
   type BrandBasic,
 } from "./accounts-client.js";
@@ -39,7 +44,12 @@ export interface AccountRow {
   brandName: string | null;
   brandDomain: string | null;
   dailyBudgetUsd: number | null;
+  /** Org SPENDABLE balance in USD (billing balance_cents/100; committed usage incl. holds subtracted). Display. */
   orgBalanceUsd: number;
+  /** Org ACTUAL balance in USD (billing actual_balance_cents/100; only actualized usage subtracted). The active-verdict figure. */
+  orgActualBalanceUsd: number;
+  /** Whether the org has auto-topup enabled (billing has_auto_topup; false when billing hasn't shipped the field). */
+  autoTopupEnabled: boolean;
   status: AccountStatus;
 }
 
@@ -62,7 +72,7 @@ export interface AccountsAudit {
 /** Injectable client bundle (defaults to the real clients; overridden in tests). */
 export interface AccountsDeps {
   featureMemberships: (featureSlugsCsv: string) => Promise<Array<{ orgId: string; brandId: string }>>;
-  orgBalanceUsd: (orgId: string) => Promise<number>;
+  orgBalance: (orgId: string) => Promise<OrgBalance>;
   orgIdentity: (orgId: string) => Promise<OrgIdentity>;
   brandDailyBudgetUsd: (brandId: string, orgId: string) => Promise<number | null>;
   brandPaused: (brandId: string, orgId: string) => Promise<boolean>;
@@ -71,7 +81,7 @@ export interface AccountsDeps {
 
 const REAL_DEPS: AccountsDeps = {
   featureMemberships: async (csv) => (await fetchFeatureMemberships(csv)).map((m) => ({ orgId: m.orgId, brandId: m.brandId })),
-  orgBalanceUsd: fetchOrgBalanceUsd,
+  orgBalance: fetchOrgBalance,
   orgIdentity: fetchOrgIdentity,
   // Org-only reads: billing daily-budget + campaign pause authorize on x-org-id; user/run omitted (no sentinel).
   brandDailyBudgetUsd: (brandId, orgId) => fetchBrandDailyBudgetUsd(brandId, "", { orgId }),
@@ -82,10 +92,19 @@ const REAL_DEPS: AccountsDeps = {
 /**
  * The exact status rule (single source, used by the accounts row builder, the send-forecast active
  * gate, and asserted directly in tests). Precedence: PAUSED > active > inactive.
+ *
+ * The credit test uses the ACTUAL balance (credited − actualized usage), not the spendable balance
+ * (which subtracts in-flight provisioned holds and so wrongly reads busy accounts inactive), OR the
+ * org has auto-topup enabled (never runs dry → active regardless of momentary balance).
  */
-export function accountStatus(dailyBudgetUsd: number | null, orgBalanceUsd: number, paused: boolean): AccountStatus {
+export function accountStatus(
+  dailyBudgetUsd: number | null,
+  actualBalanceUsd: number,
+  autoTopupEnabled: boolean,
+  paused: boolean,
+): AccountStatus {
   if (paused) return "paused";
-  if (dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd) return "active";
+  if (dailyBudgetUsd != null && dailyBudgetUsd > 0 && (autoTopupEnabled || actualBalanceUsd > dailyBudgetUsd)) return "active";
   return "inactive";
 }
 
@@ -105,9 +124,9 @@ export async function buildAccountsAudit(
   // 2. Org-level reads once per org (balance + identity); brand name/domain in one batched call.
   const [orgInfoEntries, brandInfo] = await Promise.all([
     Promise.all(
-      orgIds.map(async (orgId): Promise<[string, { balanceUsd: number; identity: OrgIdentity }]> => {
-        const [balanceUsd, identity] = await Promise.all([deps.orgBalanceUsd(orgId), deps.orgIdentity(orgId)]);
-        return [orgId, { balanceUsd, identity }];
+      orgIds.map(async (orgId): Promise<[string, { balance: OrgBalance; identity: OrgIdentity }]> => {
+        const [balance, identity] = await Promise.all([deps.orgBalance(orgId), deps.orgIdentity(orgId)]);
+        return [orgId, { balance, identity }];
       }),
     ),
     deps.brandsBasic(brandIds),
@@ -124,7 +143,7 @@ export async function buildAccountsAudit(
         deps.brandPaused(p.brandId, p.orgId),
       ]);
       const brand = brandInfo.get(p.brandId);
-      const orgBalanceUsd = info.balanceUsd;
+      const { balance } = info;
       return {
         orgId: p.orgId,
         orgExternalId: info.identity.orgExternalId,
@@ -133,8 +152,10 @@ export async function buildAccountsAudit(
         brandName: brand?.name ?? null,
         brandDomain: brand?.domain ?? null,
         dailyBudgetUsd,
-        orgBalanceUsd,
-        status: accountStatus(dailyBudgetUsd, orgBalanceUsd, paused),
+        orgBalanceUsd: balance.spendableUsd,
+        orgActualBalanceUsd: balance.actualUsd,
+        autoTopupEnabled: balance.autoTopupEnabled,
+        status: accountStatus(dailyBudgetUsd, balance.actualUsd, balance.autoTopupEnabled, paused),
       };
     }),
   );
