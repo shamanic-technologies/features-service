@@ -6,7 +6,6 @@ import { STATS_REGISTRY } from "../lib/stats-registry.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
-  fetchFleetSpendByDay,
   fetchPublicEmailStats,
   fetchPublicWorkflowEngagementLatency,
   fetchPublicJournalistsStats,
@@ -18,15 +17,19 @@ import { getFunnel, type SalesEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import {
   buildObjectiveAverages,
-  buildLifetimeObjectiveAverages,
+  buildBucketedLifetimeAverages,
   buildCostPerOutcomeTrend,
   buildWorkflowCostPerOutcome,
   fetchFleetBrandEconomics,
+  fetchGoalBucketDataset,
+  bucketBrandsForObjective,
+  mergeSpendByDay,
+  mergeOutcomesByDay,
   meanFleetEconomics,
   normalizeObjective,
   type ObjectiveAverages,
   type TrendPoint,
-  type DayOutcome,
+  type BucketedBrand,
   type WorkflowCostRow,
   type WorkflowGrainInput,
 } from "../lib/cross-org-cost-per-outcome.js";
@@ -74,6 +77,25 @@ function getPublicCache<T>(cache: PublicCache, key: string): T | null {
 
 function setPublicCache<T>(cache: PublicCache, key: string, payload: T): void {
   cache.set(key, { payload, expiresAt: Date.now() + PUBLIC_STATS_TTL_MS });
+}
+
+// The goal-bucketed per-brand dataset (spend + outcomes + goal + economics per brand) is objective-
+// INDEPENDENT and expensive (one brand fan-out), so both the trend (per-objective) and lifetime
+// surfaces share ONE cached copy. Cached in-memory (holds Maps) under the same 60s TTL as the other
+// public caches. Fail-loud: a fetch error propagates (no stale-serve on a hard failure).
+const goalBucketDatasetCache: PublicCache = new Map();
+
+/** Test seam — reset the shared goal-bucketed dataset cache. */
+export function __resetGoalBucketDatasetCache(): void {
+  goalBucketDatasetCache.clear();
+}
+
+async function getGoalBucketDatasetCached(featureSlug: string): Promise<BucketedBrand[]> {
+  const cached = getPublicCache<BucketedBrand[]>(goalBucketDatasetCache, featureSlug);
+  if (cached) return cached;
+  const dataset = await fetchGoalBucketDataset(featureSlug);
+  setPublicCache(goalBucketDatasetCache, featureSlug, dataset);
+  return dataset;
 }
 
 // ── GET /public/features — List active features (landing page) ──────────────
@@ -931,22 +953,15 @@ export async function handleCostPerOutcomeTrend(
     return;
   }
 
-  const [spendByDay, dayOutcomeMap, perBrandEconomics] = await Promise.all([
-    fetchFleetSpendByDay(featureSlug),
-    fetchPublicEmailStats(featureSlug, "day"),
-    fetchFleetBrandEconomics(featureSlug),
-  ]);
+  // Goal-bucketed: sum spend + outcomes over ONLY the brands whose optimization goal is relevant to
+  // this objective (e.g. CPC excludes reply-driven + meeting-driven brands) so the moving average is
+  // not diluted by off-goal spend.
+  const dataset = await getGoalBucketDatasetCached(featureSlug);
+  const bucket = bucketBrandsForObjective(dataset, objective);
+  const spendByDay = mergeSpendByDay(bucket);
+  const outcomesByDay = mergeOutcomesByDay(bucket);
 
-  const outcomesByDay = new Map<string, DayOutcome>();
-  for (const [day, fields] of dayOutcomeMap) {
-    if (day === "__total__") continue;
-    outcomesByDay.set(day, {
-      clicks: fields.recipientsClicked ?? 0,
-      replies: fields.recipientsRepliesPositive ?? 0,
-    });
-  }
-
-  const fleetEcon = meanFleetEconomics(perBrandEconomics);
+  const fleetEcon = meanFleetEconomics(bucket.map((b) => b.economics));
   const todayIso = new Date().toISOString().slice(0, 10);
   const points = buildCostPerOutcomeTrend({
     objective,
@@ -1126,30 +1141,22 @@ export async function handleCostPerOutcomeLifetime(
     return;
   }
 
-  // SAME data sources as the trend, summed over ALL days → the window→∞ limit.
-  const [spendByDay, dayOutcomeMap, perBrandEconomics] = await Promise.all([
-    fetchFleetSpendByDay(featureSlug),
-    fetchPublicEmailStats(featureSlug, "day"),
-    fetchFleetBrandEconomics(featureSlug),
-  ]);
+  // Goal-bucketed: each objective's pooled all-history cost is summed over ONLY the brands whose
+  // optimization goal is relevant to it (the window→∞ limit of the objective's bucketed trend). The
+  // SAME per-brand dataset the trend uses. Top-level totals sum ALL bucketable brands (context).
+  const dataset = await getGoalBucketDatasetCached(featureSlug);
+  const objectives = buildBucketedLifetimeAverages(dataset);
 
   let totalSpentUsd = 0;
-  for (const v of spendByDay.values()) totalSpentUsd += v;
-
   let totalClicks = 0;
   let totalPositiveReplies = 0;
-  for (const [day, fields] of dayOutcomeMap) {
-    if (day === "__total__") continue;
-    totalClicks += fields.recipientsClicked ?? 0;
-    totalPositiveReplies += fields.recipientsRepliesPositive ?? 0;
+  for (const b of dataset) {
+    for (const v of b.spendByDay.values()) totalSpentUsd += v;
+    for (const o of b.outcomesByDay.values()) {
+      totalClicks += o.clicks;
+      totalPositiveReplies += o.replies;
+    }
   }
-
-  const objectives = buildLifetimeObjectiveAverages({
-    totalSpentUsd,
-    totalClicks,
-    totalPositiveReplies,
-    fleetEcon: meanFleetEconomics(perBrandEconomics),
-  });
 
   const payload: CostPerOutcomeLifetimePayload = {
     featureSlug,
@@ -1157,7 +1164,7 @@ export async function handleCostPerOutcomeLifetime(
     totalSpentUsd,
     totalClicks,
     totalPositiveReplies,
-    brandCount: perBrandEconomics.length,
+    brandCount: dataset.length,
   };
   setPublicCache(costPerOutcomeLifetimeCache, featureSlug, payload);
   res.json(payload);

@@ -1,5 +1,6 @@
 import type { SalesEconomics } from "./funnel-registry.js";
 import { fetchWithRetry } from "./fetch-retry.js";
+import { matchOptimizationGoal, type Goal } from "./goals.js";
 
 export class BrandOwnershipError extends Error {
   constructor(
@@ -57,6 +58,52 @@ export async function fetchSalesEconomics(
 
   const data = (await response.json()) as { salesEconomics: SalesEconomics | null };
   return data.salesEconomics;
+}
+
+/** A brand's SAVED economics + its declared optimization goal, from ONE internal read. */
+export interface SavedEconomicsWithGoal {
+  /** The brand's OWN saved metric set, or null when it has never saved economics. */
+  economics: SalesEconomics | null;
+  /** The brand's declared optimization goal (canonical camelCase), or null when unset/unrecognised. */
+  goal: Goal | null;
+}
+
+/**
+ * Read a brand's SAVED sales economics + its `optimizationGoal` from brand-service's INTERNAL
+ * `GET /internal/brands/:brandId/sales-economics` (api-key only, brandId in path, NO org context —
+ * built for service schedulers). Returns the brand's OWN saved set (NOT the cross-brand-average
+ * effective one — a goal must be the brand's own, never an average), with `optimizationGoal` mapped to
+ * the canonical Goal. `{ economics: null, goal: null }` when the brand has never saved economics
+ * (unset is NOT a 404). Fails loud on any transport / non-OK error.
+ *
+ * Used by the cross-org goal-bucketed cost surfaces to partition the fleet's brands by the goal they
+ * optimize for, so each cost-per-outcome card only sums the spend + outcomes of the relevant brands.
+ */
+export async function fetchBrandSavedEconomicsWithGoal(brandId: string): Promise<SavedEconomicsWithGoal> {
+  const url = process.env.BRAND_SERVICE_URL;
+  const apiKey = process.env.BRAND_SERVICE_API_KEY;
+  if (!url || !apiKey) {
+    throw new Error("BRAND_SERVICE_URL or BRAND_SERVICE_API_KEY not configured");
+  }
+
+  const response = await fetchWithRetry(`${url}/internal/brands/${brandId}/sales-economics`, {
+    headers: { "x-api-key": apiKey },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`brand-service internal sales-economics failed (${response.status}): ${text}`);
+  }
+
+  const data = (await response.json()) as {
+    salesEconomics: (SalesEconomics & { optimizationGoal?: string | null }) | null;
+  };
+  const saved = data.salesEconomics;
+  if (!saved) return { economics: null, goal: null };
+
+  const rawGoal = saved.optimizationGoal;
+  const goal = typeof rawGoal === "string" ? matchOptimizationGoal(rawGoal) : null;
+  return { economics: saved, goal };
 }
 
 /** A brand's EFFECTIVE economics + provenance, as served by brand-service in ONE call. */
