@@ -377,16 +377,22 @@ injectable deps), new cross-org reads in `src/lib/accounts-client.ts`. 60s in-me
 the active determination + MRR/ARR are computed HERE; the dashboard renders only.**
 
 Each row: `{ orgId, orgExternalId, ownerEmail, brandId, brandName, brandDomain, dailyBudgetUsd,
-orgBalanceUsd, status }`. Response also carries `stats { totalDailyBudgetUsd, mrrUsd, arrUsd,
-activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
+orgBalanceUsd, orgActualBalanceUsd, autoTopupEnabled, status }`. Response also carries `stats {
+totalDailyBudgetUsd, mrrUsd, arrUsd, activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
 
-**STATUS rule (exact, single source `accountStatus()` — do NOT re-litigate). Precedence paused >
-active > inactive:** (1) `paused === true` (campaign-service brand pause) → `"paused"`; (2) else
-`dailyBudgetUsd != null && dailyBudgetUsd > 0 && orgBalanceUsd > dailyBudgetUsd` → `"active"`; (3) else
-`"inactive"`. A PAUSED brand keeps its budget but campaigns are HELD — so it is neither active nor
-plain-inactive (paused wins even over a funded budget). **All rows (active + paused + inactive) are
-LISTED — never dropped.** `stats.totalDailyBudgetUsd`/MRR(×30)/ARR(×365) sum ACTIVE rows ONLY (a paused
-brand is not spending). send-forecast's série-3 gate reuses `accountStatus` and counts only `"active"`.
+**STATUS rule (exact, single source `accountStatus(dailyBudget, actualBalance, autoTopup, paused)` — do
+NOT re-litigate). Precedence paused > active > inactive:** (1) `paused === true` (campaign-service brand
+pause) → `"paused"`; (2) else `dailyBudgetUsd != null && dailyBudgetUsd > 0 && (autoTopupEnabled ||
+orgActualBalanceUsd > dailyBudgetUsd)` → `"active"`; (3) else `"inactive"`. The credit test uses the
+**ACTUAL** balance (credited − ACTUALIZED usage), **NOT the spendable** figure — a provisioned hold is
+in-flight ACTIVE spend, so subtracting it wrongly read the busiest accounts "inactive" (the bug this
+fixed, features-service#502). An **auto-topup** org never runs dry → active regardless of the momentary
+balance (`has_auto_topup` is OPTIONAL on the balance read — absent ⇒ not-enabled, so the actual-balance
+path already corrects the verdict and auto-topup activates once billing ships it). A PAUSED brand keeps
+its budget but campaigns are HELD — so it is neither active nor plain-inactive (paused wins even over a
+funded budget). **All rows (active + paused + inactive) are LISTED — never dropped.**
+`stats.totalDailyBudgetUsd`/MRR(×30)/ARR(×365) sum ACTIVE rows ONLY (a paused brand is not spending).
+send-forecast's série-3 gate reuses `accountStatus` and counts only `"active"`.
 
 **Account universe = the SAME source send-forecast uses** — lead-service `/internal/feature-memberships`
 over the cold-email slugs (`coldEmailOutreachSlugs`), deduped to distinct (org, brand). Org-level reads
@@ -397,13 +403,17 @@ per-(org,brand); brand name/domain is one batched brand-service call. Fail loud 
   user/run). The brand pause lives in campaign-service (NOT brand/billing): a brand can be paused while
   keeping a non-zero daily budget. No pause row → `paused:false` (active by default). Fail loud.
 
-- **orgBalanceUsd** = billing **`GET /internal/accounts/by-org/:orgId/balance`** (user-less internal
-  read — api-key only, org in path; NOT the user-required `/v1/accounts/balance`) → `balance_cents/100`
-  (SPENDABLE, incl. provisioned holds — the authorization/runway value), **NOT `actual_balance_cents`**.
-  The ONE mapped status: billing **404 "billing account not found" → 0** (an org that never funded a
-  wallet has zero spendable → inactive by the rule). That is a documented billing semantic, NOT a
-  swallowed error — do NOT "fix" it to fail-loud (it would 500 the whole fleet audit on one unfunded
-  org). Any OTHER non-OK fails loud.
+- **orgBalanceUsd / orgActualBalanceUsd / autoTopupEnabled** = billing **`GET
+  /internal/accounts/by-org/:orgId/balance`** (user-less internal read — api-key only, org in path; NOT
+  the user-required `/v1/accounts/balance`), read via `fetchOrgBalance` → `{ spendableUsd, actualUsd,
+  autoTopupEnabled }`. `orgBalanceUsd` = `balance_cents/100` (SPENDABLE, incl. provisioned holds —
+  DISPLAY only); `orgActualBalanceUsd` = `actual_balance_cents/100` (credited − ACTUALIZED usage — the
+  figure the ACTIVE verdict gates on, since a provisioned hold is in-flight active spend);
+  `autoTopupEnabled` = `has_auto_topup` (OPTIONAL — billing may not have shipped it on this read yet;
+  absent ⇒ false). The ONE mapped status: billing **404 "billing account not found" → zero balances / no
+  auto-topup** (an org that never funded a wallet is inactive by the rule). That is a documented billing
+  semantic, NOT a swallowed error — do NOT "fix" it to fail-loud (it would 500 the whole fleet audit on
+  one unfunded org). Any OTHER non-OK fails loud.
 - **dailyBudgetUsd** = billing `GET /internal/brands/:brandId/daily-budget` (reuses
   `fetchBrandDailyBudgetUsd`); `dailyBudgetCents:null` = unset/paused → row inactive.
 - **orgExternalId** (Clerk `org_...`) = client-service `GET /internal/orgs/:orgId` (NEW producer read,
