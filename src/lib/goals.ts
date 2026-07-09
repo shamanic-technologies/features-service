@@ -78,3 +78,33 @@ export function matchFormSubmissionGoal(raw: string): "formSubmission" | null {
       return null;
   }
 }
+
+/**
+ * Map brand-service's STORED `OptimizationGoal` enum to the canonical Goal. This is the exact enum
+ * `GET /internal/brands/:id/sales-economics` returns on `salesEconomics.optimizationGoal`:
+ * `signups | booked_meetings | sales | website_visits | positive_replies | form_submissions`.
+ *
+ * The MULTI-STEP spellings differ from the runtime `CurrentGoal` (`signup` / `meetingBooked` /
+ * `purchase`) that `normalizeObjective` accepts — the stored layer pluralises signups, says
+ * `booked_meetings` for a booked meeting and `sales` for a purchase — so they need their own mapping
+ * here (accepts the runtime camel spellings too, for tolerance). Returns null for an unrecognised
+ * value (a brand with no recognised goal is excluded from every cost bucket, never mis-bucketed).
+ */
+export function matchOptimizationGoal(raw: string): Goal | null {
+  const single = matchSingleStepGoal(raw);
+  if (single) return single;
+  if (matchFormSubmissionGoal(raw)) return "formSubmission";
+  switch (raw) {
+    case "signups":
+    case "signup":
+      return "signup";
+    case "booked_meetings":
+    case "meetingBooked":
+      return "meetingBooked";
+    case "sales":
+    case "purchase":
+      return "purchase";
+    default:
+      return null;
+  }
+}
