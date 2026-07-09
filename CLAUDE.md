@@ -629,6 +629,33 @@ wildcard — any NEW `/public/stats/*` endpoint needs a matching api-service pro
 gateway.** The two new paths got their proxies in api-service#686. Triage: STAGING (staff-internal
 analytics, dormant until distribute.you #2486 conforms). (Set 2026-07-08.)
 
+## Lifetime (all-history) cross-org avg cost-per-outcome — the trend's window→∞ limit, NOT a 4th methodology
+
+`GET /public/stats/cost-per-outcome-lifetime?featureSlug=` (extends #485) serves the staff admin table's
+**"All-time avg"** column: cross-org (no-auth) LIFETIME pooled average cost-per-outcome for ALL 6
+objectives in ONE call (`buildLifetimeObjectiveAverages`, `cross-org-cost-per-outcome.ts`). It is a
+BACKEND-owned field because a true lifetime average can NOT be recovered from the moving-average trend
+windows (avg-of-windows ≠ lifetime avg) — do NOT push this to the consumer.
+
+**It is DEFINED as the window→∞ limit of `cost-per-outcome-trend` — same data sources, summed over ALL
+days.** The handler reuses `fetchFleetSpendByDay` (runs-service dated fleet spend) + `fetchPublicEmailStats(_, "day")`
+(dated outcomes), sums every day → pooled `clickUsd = totalSpentUsd/totalClicks`,
+`replyUsd = totalSpentUsd/totalPositiveReplies`, then per objective `objectiveCostPerOutcome` (websiteVisit /
+positiveReply = pooled CPC / CPPR; the rest project through `meanFleetEconomics`). So each objective's
+all-time number is EXACTLY where its trend line converges — coherent by construction. Null (never a false
+$0) per objective when its denominator is 0 or its rate is absent (mirrors a trend point).
+
+**Do NOT reuse `cost-projection`'s `avgCostPerOutcomeByObjective` for the all-time column, and do NOT add a
+differently-computed lifetime field.** `cost-projection` uses per-brand-best→mean-across-brands (a distinct
+projection methodology); the "All-time avg" must be the POOLED total-spend/total-outcomes value so it agrees
+with the trend it terminates. Two different "averages" on the same page that don't converge is an
+internally-incoherent output. Response: `{ featureSlug, avgCostPerOutcomeByObjective{6}, totalSpentUsd,
+totalClicks, totalPositiveReplies, brandCount }`. Cached via the shared `PublicCache`
+(`__resetCostPerOutcomeLifetimeCache` seam). api-service gateway proxy
+`GET /v1/public/features/cost-per-outcome-lifetime` shipped in api-service#688 (mirror of the sibling
+`/public/stats/X` → `/v1/public/features/X` per-route pattern). Triage: STAGING → promoted to main
+(features-service v0.84.0 / api-service v0.83.0). (Set 2026-07-09, PR #496.)
+
 ## Revenue close-paths — combine via independent-OR (`orP`), NEVER `max`; ranking is objective-agnostic
 
 A lead reaches a close through MULTIPLE non-exclusive paths and they must be COMBINED, not MAX'd —
