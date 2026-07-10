@@ -27,6 +27,7 @@ import {
   BrandOwnershipError,
 } from "./sales-economics-client.js";
 import { fetchFleetSpendByDay, fetchPublicEmailStats } from "./public-stats-clients.js";
+import { mapWithConcurrency } from "./concurrency.js";
 
 /** The objective family the admin page charts, = the brand optimization-goal set. */
 export const OBJECTIVES: readonly Goal[] = GOALS;
@@ -720,12 +721,21 @@ export function buildCostPerOutcomeDistribution(params: {
  * transport / non-OK error (essential input, not optional enrichment); a stale membership
  * (BrandOwnershipError) is skipped, mirroring `fetchFleetBrandEconomics`.
  */
+// Cap the per-brand fan-out so the dataset build does not burst ~3×N concurrent sockets at
+// runs-service / email-gateway / brand-service at once. Even a single (single-flighted) build of N≈30
+// brands would otherwise open ~90 simultaneous cross-service connections, spiking load on cold-Neon
+// siblings; a bounded pool smooths it into waves. Fail-loud is preserved — any worker rejection
+// propagates out of the pool.
+const GOAL_BUCKET_BRAND_CONCURRENCY = 8;
+
 export async function fetchGoalBucketDataset(featureSlug: string): Promise<BucketedBrand[]> {
   const memberships = await fetchFeatureMemberships(featureSlug);
   const brandIds = [...new Set(memberships.map((m) => m.brandId))];
 
-  const perBrand = await Promise.all(
-    brandIds.map(async (brandId): Promise<BucketedBrand | null> => {
+  const perBrand = await mapWithConcurrency(
+    brandIds,
+    GOAL_BUCKET_BRAND_CONCURRENCY,
+    async (brandId): Promise<BucketedBrand | null> => {
       const { economics, goal } = await fetchBrandSavedEconomicsWithGoal(brandId);
       if (!economics || !goal) return null;
 
@@ -744,7 +754,7 @@ export async function fetchGoalBucketDataset(featureSlug: string): Promise<Bucke
       }
 
       return { brandId, goal, economics, spendByDay, outcomesByDay };
-    }),
+    },
   );
 
   return perBrand.filter((b): b is BucketedBrand => b != null);
