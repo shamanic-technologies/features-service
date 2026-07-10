@@ -15,6 +15,10 @@ import {
 } from "../lib/public-stats-clients.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { projectOutcomeCosts, type SalesEconomics } from "../lib/funnel-registry.js";
+import {
+  fetchConversionCountsByDay,
+  type ConversionCountsByDay,
+} from "../lib/conversion-counts-by-day-client.js";
 import { aggregateAcrossChains, buildUpgradeChains } from "./public.js";
 
 const router = Router();
@@ -30,6 +34,23 @@ interface SignupMetricValue extends MetricValue {
   conversionPct: number | null;
 }
 
+/**
+ * Fetch the brand's REAL per-day attributed conversion counts, degrading to absent (null) on any
+ * failure — mirrors the Overview's `fetchConversionCountsSoft`. The per-day OBSERVED conversion series
+ * is display enrichment on top of the forecast graph, exactly like the `/conversion-counts` tiles and
+ * the `sequences` series; a lead-service blip must NOT 502 the whole pipeline-activity graph, it just
+ * degrades the signup/form-submission ACTUAL bars to "unknown" (never a fabricated count). Loud log,
+ * never a silent swallow. The underlying client is fail-loud.
+ */
+function fetchConversionCountsByDaySoft(brandId: string): Promise<ConversionCountsByDay | null> {
+  return fetchConversionCountsByDay(brandId).catch((err) => {
+    console.warn(
+      `[features-service] conversion-counts-by-day observed series failed (degrading to absent): ${(err as Error).message}`,
+    );
+    return null;
+  });
+}
+
 interface DayBucket {
   date: string;
   isToday: boolean;
@@ -37,9 +58,13 @@ interface DayBucket {
     outreach: MetricValue;
     opens: MetricValue;
     clicks: MetricValue;
+    // Signup daily bar. `.actual` (today + past days) = the REAL attributed per-day conversion count
+    // from lead-service; `.expected` (future days) = the clicks × visit→signup projection; conversionPct
+    // carries that projection rate.
     signups: SignupMetricValue;
-    // Form-submission daily bar — the visit-driven sibling of signups. Projected off clicks the SAME
-    // way signups are (clicks × the brand's effective visit→form rate); conversionPct carries that rate.
+    // Form-submission daily bar — the visit-driven sibling of signups. Same split: `.actual` = the REAL
+    // per-day form-submission conversion count from lead-service; `.expected` = the clicks × visit→form
+    // projection; conversionPct carries that rate.
     formSubmissions: SignupMetricValue;
   };
 }
@@ -55,6 +80,11 @@ interface PipelineActivityResponse {
     openRatePct: number | null;
     clickToSignupPct: number | null;
     clickToFormSubmissionPct: number | null;
+    // REAL attributed conversions whose day genuinely can't be determined (received_at IS NULL — 0 in
+    // practice). Counted here so they are NEVER dropped and NEVER assigned a fabricated day in `days[]`.
+    // null when the observed series degraded (lead-service unavailable).
+    undatedSignups: number | null;
+    undatedFormSubmissions: number | null;
   };
 }
 
@@ -598,17 +628,25 @@ function buildDayBuckets(
   today: string,
   actualByDate: Map<string, ActualActivity>,
   expected: ExpectedActivity,
+  observed: ConversionCountsByDay | null,
 ): DayBucket[] {
   return dates.map((date) => {
     const isToday = date === today;
     const actual = actualByDate.get(date) ?? { outreach: 0, opens: 0, clicks: 0 };
     const actualMetric = (metric: MetricName): number | null => (isToday ? actual[metric] : null);
-    const signupActual =
-      isToday && expected.clickToSignupPct !== null ? actual.clicks * (expected.clickToSignupPct / 100) : null;
-    const formSubmissionActual =
-      isToday && expected.clickToFormSubmissionPct !== null
-        ? actual.clicks * (expected.clickToFormSubmissionPct / 100)
-        : null;
+    // Signup + form-submission ACTUAL = the REAL, deduped, attributed per-day conversion count from
+    // lead-service (NOT `clicks × conversionPct` — a projection must never sit in `.actual`). Populated
+    // for TODAY and PAST days (date <= today, lexicographic == chronological for YYYY-MM-DD); FUTURE days
+    // keep only the forecast in `.expected`. `?? 0` because lead-service omits a day key with 0
+    // conversions. A per-day count never exceeds the deduped total by construction. null (renders "-",
+    // never a fabricated count) when the observed series degraded (lead-service unavailable).
+    const observedActual = (event: "signup" | "form_submission"): number | null => {
+      if (date > today) return null;
+      if (!observed) return null;
+      return observed.byDay[event][date] ?? 0;
+    };
+    const signupActual = observedActual("signup");
+    const formSubmissionActual = observedActual("form_submission");
 
     return {
       date,
@@ -658,9 +696,10 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
       compute: async (): Promise<PipelineActivityResponse> => {
     const today = dateInTimeZone(new Date(), timezone);
     const dates = Array.from({ length: days }, (_, index) => addDays(today, index));
-    const [expected, actualByDate] = await Promise.all([
+    const [expected, actualByDate, observed] = await Promise.all([
       computeExpectedActivity(featureSlug, brandId, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }),
       fetchDailyBroadcastActivity(brandId, featureSlug, timezone, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }),
+      fetchConversionCountsByDaySoft(brandId),
     ]);
 
     return {
@@ -668,12 +707,14 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
       brandId,
       timezone,
       generatedAt: new Date().toISOString(),
-      days: buildDayBuckets(dates, today, actualByDate, expected),
+      days: buildDayBuckets(dates, today, actualByDate, expected, observed),
       summary: {
         dailyBudgetUsd: expected.dailyBudgetUsd,
         openRatePct: expected.openRatePct,
         clickToSignupPct: expected.clickToSignupPct,
         clickToFormSubmissionPct: expected.clickToFormSubmissionPct,
+        undatedSignups: observed ? observed.undated.signup : null,
+        undatedFormSubmissions: observed ? observed.undated.form_submission : null,
       },
     };
       },

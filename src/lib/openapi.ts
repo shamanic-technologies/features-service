@@ -558,11 +558,13 @@ const pipelineMetricSchema = z.object({
 });
 
 const pipelineSignupMetricSchema = pipelineMetricSchema.extend({
-  conversionPct: z.number().nullable().describe("visitToSignupPct used for signup projection. Null when brand economics are unavailable."),
+  actual: z.number().nullable().describe("Signup ACTUAL: the REAL, deduped, attributed per-day conversion count from lead-service (NOT a clicks × rate projection). Populated for today + past days; null on future days (forecast only) and when the observed series degraded (lead-service unavailable)."),
+  conversionPct: z.number().nullable().describe("visitToSignupPct used for the signup projection in `.expected`. Null when brand economics are unavailable."),
 });
 
 const pipelineFormSubmissionMetricSchema = pipelineMetricSchema.extend({
-  conversionPct: z.number().nullable().describe("visitToFormSubmissionPct used for form-submission projection. Null when brand economics are unavailable OR the brand does not carry a form-submission rate (non-form brand)."),
+  actual: z.number().nullable().describe("Form-submission ACTUAL: the REAL, deduped, attributed per-day conversion count from lead-service (NOT a clicks × rate projection). Populated for today + past days; null on future days (forecast only) and when the observed series degraded (lead-service unavailable)."),
+  conversionPct: z.number().nullable().describe("visitToFormSubmissionPct used for the form-submission projection in `.expected`. Null when brand economics are unavailable OR the brand does not carry a form-submission rate (non-form brand)."),
 });
 
 const pipelineActivityDaySchema = z.object({
@@ -573,7 +575,7 @@ const pipelineActivityDaySchema = z.object({
     opens: pipelineMetricSchema,
     clicks: pipelineMetricSchema,
     signups: pipelineSignupMetricSchema,
-    formSubmissions: pipelineFormSubmissionMetricSchema.describe("Form-submission daily bar — the visit-driven sibling of signups. actual (today) = today's clicks × visitToFormSubmissionPct/100; expected = expected clicks × the same rate. Null values when the brand has no form-submission rate."),
+    formSubmissions: pipelineFormSubmissionMetricSchema.describe("Form-submission daily bar — the visit-driven sibling of signups. actual (today + past days) = the REAL per-day form-submission conversion count from lead-service; expected (future days) = expected clicks × visitToFormSubmissionPct/100."),
   }),
 });
 
@@ -588,6 +590,8 @@ const pipelineActivityResponseSchema = z.object({
     openRatePct: z.number().nullable().describe("Observed audience + workflow broadcast open rate used for expected opens. Null when producer evidence is unavailable."),
     clickToSignupPct: z.number().nullable().describe("Brand effective visit-to-signup conversion percent. Null when brand economics are unavailable."),
     clickToFormSubmissionPct: z.number().nullable().describe("Brand effective visit-to-form-submission conversion percent (the form-submission projection rate). Null when brand economics are unavailable OR the brand does not carry a form-submission rate."),
+    undatedSignups: z.number().nullable().describe("REAL attributed signup conversions whose day cannot be determined (received_at IS NULL — 0 in practice). Counted here so they are never dropped and never assigned a fabricated day in days[]. Null when the observed series degraded (lead-service unavailable)."),
+    undatedFormSubmissions: z.number().nullable().describe("REAL attributed form-submission conversions whose day cannot be determined (received_at IS NULL — 0 in practice). Counted here so they are never dropped and never assigned a fabricated day in days[]. Null when the observed series degraded (lead-service unavailable)."),
   }),
 });
 
@@ -599,7 +603,7 @@ registry.registerPath({
   summary: "Seven-day pipeline activity buckets for the brand overview",
   description:
     "Returns today plus future daily buckets for the dashboard grouped bar chart. Today includes actual-so-far from dated broadcast email events and the same daily expected values shown on future days. " +
-    "Expected outreach uses the org-scoped brand daily budget divided by the recommended workflow's global cost per contacted recipient. Opens and clicks use observed rates for the selected active audience + workflow; signups are clicks × the brand's effective visitToSignupPct / 100. Campaign status and campaign budget do not control this forecast. Missing producer inputs return null for the affected expected values.",
+    "Expected outreach uses the org-scoped brand daily budget divided by the recommended workflow's global cost per contacted recipient. Opens and clicks use observed rates for the selected active audience + workflow; the signup/form-submission EXPECTED (future days) is clicks × the brand's effective visit→signup/visit→form rate. The signup/form-submission ACTUAL (today + past days) is the REAL per-day conversion count from lead-service's conversion tracker — never a projection. Campaign status and campaign budget do not control this forecast. Missing producer inputs return null for the affected expected values.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
