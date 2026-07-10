@@ -1068,6 +1068,20 @@ Databricks medallion Gold, Kleppmann derived-data).
   `PublicCache`; the per-endpoint `__reset*` test seams stay (each clears its own Map). Do NOT re-add a
   per-cache bespoke get/set/TTL — route new public caches through the shared helper.
 
+  **A `PublicCache` getter that guards an O(N) cross-service FAN-OUT MUST be single-flighted — a plain
+  check-then-fetch STAMPEDES on a cold cache.** The 60s `PublicCache` only dedups AFTER the first fan-out
+  finishes and sets the entry; while it is empty, every concurrent caller misses and each runs its own
+  fan-out. The admin page loads several public cost surfaces AT ONCE (trend once per objective + lifetime
+  + distribution all share `getGoalBucketDatasetCached`, which fans out ~3 cross-service calls × N brands),
+  so a cold-cache load fired 6× that fan-out simultaneously → ~6×90 concurrent calls stampeding
+  runs-service / email-gateway → gateway `HEADERS_TIMEOUT` / `SOCKET` (features-service v0.87.6, prod
+  incident 2026-07-10). Fix pattern (mirror `workflowRecentWarmInFlight`): hold an in-flight `Map<key,
+  Promise>` beside the cache; concurrent same-key callers join the ONE promise; clear the slot in a
+  `finally` on settle (success OR failure) so a later miss re-fetches and fail-loud still propagates to
+  every joiner. Also cap the fan-out itself with `mapWithConcurrency` (`src/lib/concurrency.ts`, shared
+  with the recent-rate warm) so even the single build does not burst ~3×N sockets at cold-Neon siblings.
+  Any NEW public cache whose miss triggers a per-brand / per-dynasty / per-N fan-out gets BOTH guards.
+
 **It is DERIVED + rebuildable** — dropping every row is safe (next read recomputes); siblings stay SoT.
 **Eventual-consistency is the accepted CQRS tradeoff**: a served body is "as-of `computed_at`", at most
 the hard max stale window (default 60s). The revenue engine's day-scale decay is therefore as-of
