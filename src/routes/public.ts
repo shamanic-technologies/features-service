@@ -1006,10 +1006,30 @@ const workflowCostPerOutcomeCache: PublicCache = new Map();
 // await the warm before asserting the populated cache.
 const workflowRecentWarmInFlight = new Map<string, Promise<void>>();
 
+// Persisted per-dynasty RECENT rates, keyed by cacheKey, on a LONGER TTL than the 60s payload cache. This
+// decouples the recent-rate lifetime from the payload TTL: once a warm has populated the recent rates, a
+// payload cache-MISS (every ~60s when the short PublicCache entry expires) re-seeds the served payload
+// from this store instead of re-nulling the recent column while the next warm runs. So a normal read
+// carries the last-known recent rate reliably, not only during the few seconds right after a warm — which
+// is the "recent column permanently blank on every read" symptom this fixes. A dynasty absent here → null.
+const RECENT_RATE_TTL_MS = 10 * 60_000;
+const workflowRecentRateStore = new Map<string, { map: Map<string, number | null>; expiresAt: number }>();
+
+function getStoredRecentRates(cacheKey: string): Map<string, number | null> | null {
+  const entry = workflowRecentRateStore.get(cacheKey);
+  if (!entry || entry.expiresAt <= Date.now()) return null;
+  return entry.map;
+}
+
+function setStoredRecentRates(cacheKey: string, map: Map<string, number | null>): void {
+  workflowRecentRateStore.set(cacheKey, { map, expiresAt: Date.now() + RECENT_RATE_TTL_MS });
+}
+
 /** Test seam — reset the in-memory workflow-cost-per-outcome cache. */
 export function __resetWorkflowCostPerOutcomeCache(): void {
   workflowCostPerOutcomeCache.clear();
   workflowRecentWarmInFlight.clear();
+  workflowRecentRateStore.clear();
 }
 
 /** Test seam — await any in-flight background recent-rate warm(s), so a follow-up request deterministically
@@ -1121,24 +1141,34 @@ export async function handleWorkflowCostPerOutcome(
   });
 
   // The per-dynasty RECENT going rate needs, PER dynasty, a dated-spend timeseries (runs) + dated outcomes
-  // (email-gateway) — and neither producer exposes a single-call (day × dynasty) split, so it is an
-  // O(dynasty-count) cross-service fan-out. On top of the Neon-backed siblings' cold-start churn, running
-  // that fan-out ON the request path pushed the endpoint past the gateway timeout (and rejected the whole
-  // Promise.all on any one transient sub-failure) → 500 (regression from the recent-rate work, PR #521).
-  // Fix: keep the fan-out OFF
-  // the request path. Serve the lifetime rows IMMEDIATELY (the same handful of calls as the healthy
-  // /cost-per-outcome-lifetime sibling) with recent=null, then warm the recent rates in the background and
-  // overwrite the SAME cache entry; reads within the TTL get the populated rate. The endpoint never blocks
-  // on — or 500s from — the fan-out again. An un-warmed or genuinely-unbacked dynasty stays null ("—").
-  const payload = buildPayload(new Map());
+  // (email-gateway) — and neither producer exposes a single-call (day × dynasty) split (runs' timeseries
+  // only FILTERS by dynasty, email-gateway's groupBy is single-dimension), so it is an O(dynasty-count)
+  // cross-service fan-out. On top of the Neon-backed siblings' cold-start churn, running that fan-out ON
+  // the request path pushed the endpoint past the gateway timeout (and rejected the whole Promise.all on
+  // any one transient sub-failure) → 500 (regression from the recent-rate work, PR #521). So it stays OFF
+  // the request path: serve the lifetime rows IMMEDIATELY (the same handful of calls as the healthy
+  // /cost-per-outcome-lifetime sibling), SEEDED with the last-known recent rates from the persisted store
+  // (so a payload-TTL miss re-serves them instead of re-nulling), then warm the recent rates in the
+  // background. A never-yet-warmed or genuinely-unbacked dynasty stays null ("—"), never a false $0.
+  const seededRecent = getStoredRecentRates(cacheKey);
+  const payload = buildPayload(seededRecent ?? new Map());
   setPublicCache(workflowCostPerOutcomeCache, cacheKey, payload);
   res.json(payload);
 
-  // Single-flight background warm per cache key (avoid a thundering herd of fan-outs during the cold window).
-  if (!workflowRecentWarmInFlight.has(cacheKey)) {
+  // Warm only when the persisted recent rates are stale/absent (the payload TTL is much shorter than the
+  // recent-store TTL, so most misses already carry fresh recent rates and need no re-fan-out). Single-flight
+  // per cache key avoids a thundering herd of fan-outs during the cold window.
+  if (seededRecent === null && !workflowRecentWarmInFlight.has(cacheKey)) {
     const warm = (async () => {
-      const recentByDynasty = new Map<string, number | null>();
-      await Promise.all(
+      // Seed from the last-known map so a dynasty whose fan-out TRANSIENTLY fails this round keeps its prior
+      // rate instead of flickering to null; a genuinely-unbacked dynasty is (re)set to null by the compute.
+      const recentByDynasty = new Map<string, number | null>(getStoredRecentRates(cacheKey) ?? []);
+
+      // Per-dynasty INDEPENDENT fan-out (allSettled, NOT Promise.all): a single dynasty's transient failure
+      // against a cold Neon-backed sibling must NOT null the whole batch — the healthy dynasties still
+      // populate. Each cross-service call already retries the connect phase (fetchWithRetry). This is the
+      // core fix for "recent column permanently blank": one sub-failure no longer wipes all 25 dynasties.
+      const settled = await Promise.allSettled(
         dynastyInputs.map(async (r) => {
           const [spendByDay, dayFields] = await Promise.all([
             fetchDynastySpendByDay(featureSlug, r.workflowDynastySlug),
@@ -1152,9 +1182,9 @@ export async function handleWorkflowCostPerOutcome(
               replies: fields.recipientsRepliesPositive ?? 0,
             });
           }
-          recentByDynasty.set(
-            r.workflowDynastySlug,
-            recentWindowCostPerOutcome({
+          return {
+            slug: r.workflowDynastySlug,
+            rate: recentWindowCostPerOutcome({
               objective,
               todayIso,
               windowOutcomes,
@@ -1163,15 +1193,38 @@ export async function handleWorkflowCostPerOutcome(
               outcomesByDay,
               fleetEcon,
             }),
-          );
+          };
         }),
       );
-      // Overwrite the cache entry with the recent-populated rows (refreshes the TTL).
+
+      let failures = 0;
+      settled.forEach((result, i) => {
+        if (result.status === "fulfilled") {
+          recentByDynasty.set(result.value.slug, result.value.rate);
+        } else {
+          failures++;
+          // Fail-LOUD per dynasty: log the failure (the recent rate is display enrichment, so it degrades
+          // that ONE dynasty to its prior/null rate and retries next warm — it never 500s the endpoint).
+          console.error(
+            `[features-service] workflow-cost-per-outcome recent-rate warm: dynasty ${dynastyInputs[i].workflowDynastySlug} failed (${cacheKey}):`,
+            result.reason,
+          );
+        }
+      });
+
+      // Persist whatever succeeded (partial is fine) and overwrite the served payload with the populated
+      // rows. Even a partial warm advances the store's TTL, so subsequent reads keep serving these rates.
+      setStoredRecentRates(cacheKey, recentByDynasty);
       setPublicCache(workflowCostPerOutcomeCache, cacheKey, buildPayload(recentByDynasty));
+      if (failures > 0) {
+        console.error(
+          `[features-service] workflow-cost-per-outcome recent-rate warm (${cacheKey}): ${failures}/${dynastyInputs.length} dynasties failed (retained prior/null, retry next cycle)`,
+        );
+      }
     })()
       .catch((error) => {
-        // Fail-soft: the recent rate is display enrichment beside the essential lifetime rows. A fan-out
-        // failure leaves recent=null (already served) and is logged loudly — it never 500s the endpoint.
+        // Outer fail-soft guard: an unexpected non-per-dynasty error (e.g. build/setCache) leaves the
+        // already-served payload intact and is logged loudly — it never 500s the endpoint.
         console.error(`[features-service] workflow-cost-per-outcome recent-rate warm failed (${cacheKey}):`, error);
       })
       .finally(() => {

@@ -1212,6 +1212,68 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
     const warmed = await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=sales-cold-email-outreach&objective=websiteVisit");
     expect(warmed.body.workflows[0].recentCostPerOutcomeUsd).toBeNull(); // unbacked stays null after warm
   });
+
+  it("one dynasty's recent fan-out failing does NOT null the OTHER dynasty's recent rate (per-dynasty resilient warm)", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    const today = new Date().toISOString().slice(0, 10);
+    const mkJson = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+
+    vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
+        return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }] });
+      }
+      if (url.startsWith("http://workflow:3000/public/workflows")) {
+        return mkJson({ workflows: [
+          { id: "w1", workflowSlug: "wf-1", workflowName: "WF One", workflowDynastyName: "WF One", workflowDynastySlug: "wf-1", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
+          { id: "w2", workflowSlug: "wf-2", workflowName: "WF Two", workflowDynastyName: "WF Two", workflowDynastySlug: "wf-2", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
+        ] });
+      }
+      // Per-dynasty RECENT dated spend: wf-1 succeeds ($10 today); wf-2's timeseries fan-out 500s (transient
+      // cold-Neon failure) — it must NOT null wf-1's recent rate.
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) {
+        const dyn = new URL(url).searchParams.get("workflowDynastySlug");
+        if (dyn === "wf-2") return new Response("boom", { status: 500 });
+        return mkJson({ buckets: [{ period: today, totalCostInUsdCents: "1000", actualCostInUsdCents: "1000", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0", runCount: 1 }] });
+      }
+      // Lifetime spend by workflowSlug: $200 each → lifetime CPC = $2 for both.
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
+        return mkJson({ groups: [
+          { dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null },
+          { dimensions: { workflowSlug: "wf-2" }, totalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null },
+        ] });
+      }
+      if (url.startsWith("http://email:3000/public/stats")) {
+        const groupBy = new URL(url).searchParams.get("groupBy");
+        if (groupBy === "day") {
+          // RECENT dated outcomes: 10 clicks today for either dynasty → recent CPC = $10 / 10 = $1.
+          return mkJson({ groups: [{ key: today, broadcast: { recipientStats: { clicked: 10, repliesPositive: 0 } } }] });
+        }
+        return mkJson({ groups: [
+          { key: "wf-1", broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, opened: 50, clicked: 100, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } },
+          { key: "wf-2", broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, opened: 50, clicked: 100, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } },
+        ] });
+      }
+      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
+        return mkJson({ economics: ECON_FULL, source: "user" });
+      }
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    });
+
+    const first = await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=sales-cold-email-outreach&objective=websiteVisit");
+    expect(first.status).toBe(200);
+    expect(first.body.workflows).toHaveLength(2);
+
+    await __awaitWorkflowRecentWarm();
+    const warmed = await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=sales-cold-email-outreach&objective=websiteVisit");
+    expect(warmed.status).toBe(200);
+    const byDynasty = Object.fromEntries(warmed.body.workflows.map((w: { workflowDynastySlug: string; recentCostPerOutcomeUsd: number | null }) => [w.workflowDynastySlug, w.recentCostPerOutcomeUsd]));
+    // wf-1 populated despite wf-2's fan-out failing — the batch is NOT all-null.
+    expect(byDynasty["wf-1"]).toBeCloseTo(1, 6);
+    // wf-2 degrades to null (its transient failure), retried next cycle — never a false $0.
+    expect(byDynasty["wf-2"]).toBeNull();
+  });
 });
 
 /** Drive the cost-projection endpoint's downstream HTTP calls. wf-1 cheap, wf-2 expensive (never best). */
