@@ -10,6 +10,7 @@ import { fetchEmailOutcomes } from "./email-status-client.js";
 import { observedCostPerOutcome, projectedCostPerOutcome } from "./cost-engine.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, type Goal } from "./goals.js";
+import { selectCostCents, type Pricing } from "./pricing.js";
 
 export type SortMetric = "cpc" | "cppr";
 
@@ -172,10 +173,11 @@ async function fetchAudienceCosts(
   brandId: string,
   featureSlug: string,
   identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
-  // NET pricing: scale the GROSS per-audience cost cents by the org's discount factor (1 = gross, the
-  // default → byte-identical). Every per-audience cpc/cppr/cpfs + the brand-parent cascade derives from
-  // these cents, so discounting here makes the whole ranking net + coherent.
-  discountFactor = 1,
+  // NET pricing: read runs#179's FROZEN per-audience net cost cents (netTotalCostInUsdCents) instead of
+  // the gross field (no read-time multiply). GROSS (the default) reads the gross field → byte-identical.
+  // Every per-audience cpc/cppr/cpfs + the brand-parent cascade derives from these cents, so the whole
+  // ranking comes out net + coherent by construction.
+  pricing: Pricing = "gross",
 ): Promise<Map<string, AudienceCostEvidence>> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -206,6 +208,8 @@ async function fetchAudienceCosts(
     groups?: Array<{
       dimensions?: Record<string, string | null>;
       totalCostInUsdCents: string;
+      // Frozen-NET twin (runs#179) — read via selectCostCents when pricing === "net".
+      netTotalCostInUsdCents?: string;
       runCount: number;
       minStartedAt: string | null;
       maxStartedAt: string | null;
@@ -220,7 +224,7 @@ async function fetchAudienceCosts(
     const audienceId = audienceIdFromDimensions(group.dimensions);
     if (!audienceId) continue;
     result.set(audienceId, {
-      totalCostInUsdCents: Math.round(readFiniteNumber(group.totalCostInUsdCents, "totalCostInUsdCents") * discountFactor),
+      totalCostInUsdCents: Math.round(selectCostCents(group, "totalCostInUsdCents", pricing)),
       completedRuns: readFiniteNumber(group.runCount, "runCount"),
       firstRunAt: group.minStartedAt ?? null,
       lastRunAt: group.maxStartedAt ?? null,
@@ -304,7 +308,7 @@ async function fetchAudienceOutcomes(
  * fans out to runs-service (cost) + human-service/email-gateway (outcomes) to build ranked rows.
  * Downstream failures THROW — the route maps them to 502.
  */
-export async function computeAudienceStats(req: Request, discountFactor = 1): Promise<ComputeResult> {
+export async function computeAudienceStats(req: Request, pricing: Pricing = "gross"): Promise<ComputeResult> {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
   const brandId = req.query.brandId as string | undefined;
@@ -358,7 +362,7 @@ export async function computeAudienceStats(req: Request, discountFactor = 1): Pr
     normalizedGoal === "formSubmission" ? await fetchFormSubmissionEmailsSoft(brandId) : null;
 
   const [costs, outcomesResult] = await Promise.all([
-    fetchAudienceCosts(brandId, featureSlug, identity, discountFactor),
+    fetchAudienceCosts(brandId, featureSlug, identity, pricing),
     fetchAudienceOutcomes(brandId, audiences, identity, formSubmissionEmails),
   ]);
   const outcomes = outcomesResult.perAudience;

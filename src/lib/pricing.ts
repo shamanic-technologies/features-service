@@ -1,26 +1,30 @@
 /**
  * GROSS vs NET pricing selector for the customer-facing cost-metric stat endpoints
- * (`/revenue`, `/stats`, `/audience-stats`, `/workflow-projection`, `/pipeline-activity`).
+ * (`/revenue`, `/stats`, `/audience-stats`, `/workflow-projection`).
  *
- * The platform can grant an org a per-org USAGE DISCOUNT (a percentage, owned by billing-service). A
- * discounted org's dashboard must be able to see its cost metrics at the NET (discounted) price it
- * actually pays, so the numbers stay coherent with the "you have X% off" banner. Staff / internal
- * reporting want the GROSS (real, undiscounted) numbers — so GROSS is the DEFAULT and every existing
- * caller (which sends no selector) is byte-identical to today.
+ * The platform can grant an org a per-org USAGE DISCOUNT (a percentage). A discounted org's dashboard
+ * must be able to see its cost metrics at the NET (discounted) price it actually pays, so the numbers
+ * stay coherent with the "you have X% off" banner. Staff / internal reporting want the GROSS (real,
+ * undiscounted) numbers — so GROSS is the DEFAULT and every existing caller (which sends no selector)
+ * is byte-identical to today.
  *
- * HOW the discount is applied — at the COST INPUT, never the output. Every money metric on these
- * endpoints (total spent, CPC, cost-per-outcome / -close, CAC, ROI, revenue spend, projected budget)
- * is DERIVED from the run/cost cents read from runs-service. So multiplying that cents input by the
- * discount factor once, at the point cost enters each compute, makes EVERY derived money figure come
- * out net AND coherent by construction: CPC and total-spent scale down by the factor, CAC scales down,
- * ROI scales UP (cost in the denominator), all from one multiplication — no field-by-field post-hoc
- * classification, no risk of getting ROI's direction wrong. Counts, conversion rates, and
- * probabilities never touch cost, so they are unchanged.
+ * WHERE the net figure comes from — runs-service's FROZEN net, NOT a read-time discount computation.
+ * runs-service freezes each cost row's usage discount AT WRITE TIME (runs-service#179): every cost
+ * aggregation now returns BOTH the gross fields (`totalCostInUsdCents` / `actualCostInUsdCents` /
+ * `provisionedCostInUsdCents`) AND their frozen-NET twins (`netTotalCostInUsdCents` /
+ * `netActualCostInUsdCents` / `netProvisionedCostInUsdCents`, gross reduced by each row's frozen
+ * discount). So NET pricing simply READS the net twin instead of the gross field — features-service
+ * does NOT fetch a discount percentage and does NOT multiply. Every money metric on these endpoints
+ * (total spent, CPC, cost-per-outcome / -close, CAC, ROI, revenue spend, projected budget) is DERIVED
+ * from these cost cents, so sourcing the frozen-net cents at the input makes every derived money figure
+ * come out net AND coherent by construction (CPC / total-spent / CAC scale down, ROI scales up), with
+ * no field-by-field post-hoc classification. Counts, conversion rates, and probabilities never touch
+ * cost, so they are unchanged either way.
  *
- * The default factor is 1.0 (gross): every cost producer takes `discountFactor = 1`, so omitting the
- * selector changes nothing.
+ * The default is GROSS: every cost producer takes `pricing = "gross"`, so omitting the selector reads
+ * the exact gross fields as today. A non-discounted org's frozen net equals its gross per row, so NET
+ * == GROSS for it by construction (no special-casing here).
  */
-import { fetchOrgUsageDiscountPct } from "./billing-discount-client.js";
 
 export type Pricing = "gross" | "net";
 
@@ -34,23 +38,49 @@ export function parsePricing(raw: unknown): Pricing | null {
   return null;
 }
 
+/** The runs-service gross cost fields → their frozen-NET twins (runs-service#179). */
+export type GrossCostField = "totalCostInUsdCents" | "actualCostInUsdCents" | "provisionedCostInUsdCents";
+
+const NET_FIELD: Record<GrossCostField, string> = {
+  totalCostInUsdCents: "netTotalCostInUsdCents",
+  actualCostInUsdCents: "netActualCostInUsdCents",
+  provisionedCostInUsdCents: "netProvisionedCostInUsdCents",
+};
+
 /**
- * Resolve the multiplicative cost factor for a request.
- *   - GROSS → 1 (no billing call — the default path has ZERO billing dependency).
- *   - NET   → 1 − discountPct/100, discountPct read from billing-service (fail-loud).
+ * Select the gross or frozen-NET cost figure from a runs-service cost group, as its raw string.
+ *   - GROSS → the plain `<grossField>` (returned verbatim → byte-identical to today).
+ *   - NET   → the frozen `net<GrossField>` twin (runs already reduced it by each cost row's frozen
+ *             usage discount at write time — features-service does NOT recompute the discount).
  *
- * Fail-loud (No silent fallback): if NET is requested but billing can't resolve the org's discount,
- * this THROWS → the request 502s. It never falls back to gross under a net request. A non-discounted
- * org resolves to discountPct 0 → factor 1 → NET == GROSS (per the AC), because billing returns 0
- * (not an error) for a known org with no discount.
+ * Fail-loud (No silent fallback): a missing / non-numeric field THROWS. For NET specifically, a missing
+ * net twin must NEVER fall back to the gross figure — that would silently serve undiscounted prices
+ * under a NET request (the dashboard would show gross numbers next to a "you have X% off" banner),
+ * worse than an error. The throw propagates → the request 502s. GROSS is unaffected.
  */
-export async function resolveDiscountFactor(pricing: Pricing, orgId: string): Promise<number> {
-  if (pricing === "gross") return 1;
-  const pct = await fetchOrgUsageDiscountPct(orgId);
-  return 1 - pct / 100;
+export function selectCostCentsString(
+  group: object,
+  grossField: GrossCostField,
+  pricing: Pricing,
+): string {
+  const field = pricing === "net" ? NET_FIELD[grossField] : grossField;
+  const raw = (group as Record<string, unknown>)[field];
+  if (raw === undefined || raw === null || raw === "" || !Number.isFinite(Number(raw))) {
+    throw new Error(
+      pricing === "net"
+        ? `[features-service] runs-service cost group missing frozen NET field '${field}' ` +
+          `(net pricing requested; no silent fallback to gross): ${JSON.stringify(raw)}`
+        : `[features-service] runs-service cost group missing '${field}': ${JSON.stringify(raw)}`,
+    );
+  }
+  return String(raw);
 }
 
-/** Apply a discount factor to a USD-cents amount, rounding to whole cents (mirrors the runs-cost reads). */
-export function discountCents(cents: number, factor: number): number {
-  return Math.round(cents * factor);
+/** Numeric variant of {@link selectCostCentsString} (parsed to a Number, fail-loud on missing/non-finite). */
+export function selectCostCents(
+  group: object,
+  grossField: GrossCostField,
+  pricing: Pricing,
+): number {
+  return Number(selectCostCentsString(group, grossField, pricing));
 }

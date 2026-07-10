@@ -51,10 +51,13 @@ const FEATURE = {
   updatedAt: new Date(),
 };
 
-function costGroup(audienceId: string | null, cents: number, runCount = 1): Record<string, unknown> {
+// `netCents` = runs#179's FROZEN net twin (defaults to gross == a non-discounted org). Pass a distinct
+// value to model a frozen per-row discount; features-service reads it verbatim (no read-time multiply).
+function costGroup(audienceId: string | null, cents: number, runCount = 1, netCents = cents): Record<string, unknown> {
   return {
     dimensions: { audienceId },
     totalCostInUsdCents: String(cents),
+    netTotalCostInUsdCents: String(netCents),
     runCount,
     minStartedAt: "2026-01-01T00:00:00Z",
     maxStartedAt: "2026-01-02T00:00:00Z",
@@ -83,9 +86,6 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = urlOf(input);
 
-    if (url.includes("billing:3000") && url.includes("usage-discount")) {
-      return new Response(JSON.stringify({ discount_percent: 50 }), { status: 200, headers: { "Content-Type": "application/json" } });
-    }
     if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
     if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
     if (url.includes("human:3000/orgs/audiences")) {
@@ -106,12 +106,14 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("runs:3000/v1/stats/costs")) {
+      // Each group carries the gross cents + a frozen NET twin (here net = gross halved → models a 50%
+      // frozen usage discount). GROSS reads totalCostInUsdCents; NET reads netTotalCostInUsdCents.
       return new Response(JSON.stringify({
         groups: [
-          costGroup("audience-a", 3000, 3),
-          costGroup("audience-b", 1000, 2),
-          costGroup("unknown-audience", 200, 1),
-          costGroup(null, 9000, 9),
+          costGroup("audience-a", 3000, 3, 1500),
+          costGroup("audience-b", 1000, 2, 500),
+          costGroup("unknown-audience", 200, 1, 100),
+          costGroup(null, 9000, 9, 4500),
         ],
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
@@ -266,28 +268,53 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(billed).toBe(false);
   });
 
-  it("pricing=net applies the org's 50% discount to every $ figure; counts/rate unchanged", async () => {
+  it("pricing=net reads runs' FROZEN net cents (no billing call, no read-time multiply); counts/rate unchanged", async () => {
     fetchSpy = mockFetch();
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup&pricing=net")
       .set(AUTH);
     expect(res.status).toBe(200);
-    // cpc halves (cost ×0.5, clicks unchanged): b 1000→500 /20 = 25; a 3000→1500 /10 = 150.
+    // cpc reads the frozen net twin (net = gross/2 here): b 500 /20 = 25; a 1500 /10 = 150.
     expect(res.body.audiences[0].metrics.cpcCents).toBe(25);
     expect(res.body.audiences[1].metrics.cpcCents).toBe(150);
-    // $ evidence halves; the non-money counts are identical to gross.
+    // $ evidence is the frozen net; the non-money counts are identical to gross.
     expect(res.body.audiences[1].evidence.totalCostInUsdCents).toBe(1500);
     expect(res.body.audiences[1].evidence.websiteClicks).toBe(10);
     expect(res.body.audiences[0].evidence.contacted).toBe(20);
-    // NET resolved the discount from billing.
+    // NET no longer touches billing — it reads runs' frozen net field.
     const billed = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).some((u: string) => u.includes("usage-discount"));
-    expect(billed).toBe(true);
+    expect(billed).toBe(false);
   });
 
-  it("pricing=net fails loud (502) when the discount is unresolvable — never silently gross", async () => {
-    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  it("pricing=net fails loud (502) when runs omits the frozen net twin — never silently gross", async () => {
+    // runs WITHOUT #179 → cost groups carry only the gross field, no netTotalCostInUsdCents.
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = urlOf(input);
-      if (url.includes("billing:3000")) return new Response("boom", { status: 500 });
+      if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+      if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
+      if (url.includes("human:3000/orgs/audiences")) {
+        return new Response(JSON.stringify({
+          audiences: [
+            { id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: { seniorities: ["c_suite"] } },
+            { id: "audience-b", brandId: "brand-1", name: "Founders", status: "active", filters: { titles: ["founder"] } },
+          ],
+          total: 2, limit: 200, offset: 0,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) {
+        return new Response(JSON.stringify({ current: { id: "bp-1", brandId: "brand-1", version: 3, fields: {}, createdAt: "2026-01-01T00:00:00Z" }, versions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("runs:3000/v1/stats/costs")) {
+        // gross-only groups (no net twin).
+        return new Response(JSON.stringify({ groups: [
+          { dimensions: { audienceId: "audience-a" }, totalCostInUsdCents: "3000", runCount: 3, minStartedAt: null, maxStartedAt: null },
+          { dimensions: { audienceId: "audience-b" }, totalCostInUsdCents: "1000", runCount: 2, minStartedAt: null, maxStartedAt: null },
+        ] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("email:3000/orgs/status")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { items: Array<{ email: string }> };
+        return new Response(JSON.stringify({ results: body.items.map(({ email }) => ({ email, broadcast: { brand: { contacted: true, opened: true, clicked: true, replied: false, replyClassification: null } } })) }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
       return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
     });
     const res = await request(app)

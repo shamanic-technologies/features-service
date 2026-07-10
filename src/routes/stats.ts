@@ -5,7 +5,7 @@ import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { STATS_REGISTRY, getPublicRegistry, getEntityRegistry, requiredStatsSources, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
-import { parsePricing, resolveDiscountFactor } from "../lib/pricing.js";
+import { parsePricing, selectCostCents, type Pricing } from "../lib/pricing.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
 import { fetchEngagementSnapshotCounts, SNAPSHOT_ENGAGEMENT_KEYS } from "../lib/engagement-snapshot.js";
@@ -215,9 +215,10 @@ async function fetchRunsStats(
   filters: Record<string, string>,
   featureSlugs: string[] | undefined,
   identity: Identity,
-  // NET pricing: scale the GROSS run cost cents by the org's discount factor (1 = gross, the default →
-  // byte-identical). Applied at the cost input so every derived costPer*Cents figure comes out net.
-  discountFactor = 1,
+  // NET pricing: read runs#179's FROZEN net cost cents (net twins) instead of the gross fields (no
+  // read-time multiply). GROSS (the default) reads the gross fields → byte-identical. Every derived
+  // costPer*Cents figure comes out net by construction.
+  pricing: Pricing = "gross",
 ): Promise<Map<string, RunsStatsEntry>> {
   const runsGroupBy = groupBy ?? "workflowSlug";
   const params = new URLSearchParams({ groupBy: runsGroupBy });
@@ -250,6 +251,9 @@ async function fetchRunsStats(
         dimensions: Record<string, string | null>;
         totalCostInUsdCents: string;
         actualCostInUsdCents: string;
+        // Frozen-NET twins (runs#179) — read via selectCostCents when pricing === "net".
+        netTotalCostInUsdCents?: string;
+        netActualCostInUsdCents?: string;
         runCount: number;
         minStartedAt: string | null;
         maxStartedAt: string | null;
@@ -265,8 +269,8 @@ async function fetchRunsStats(
       let minStartedAt: string | null = null;
       let maxStartedAt: string | null = null;
       for (const group of data.groups) {
-        totalCost += Math.round(Number(group.totalCostInUsdCents) * discountFactor);
-        actualCost += Math.round(Number(group.actualCostInUsdCents) * discountFactor);
+        totalCost += Math.round(selectCostCents(group, "totalCostInUsdCents", pricing));
+        actualCost += Math.round(selectCostCents(group, "actualCostInUsdCents", pricing));
         totalRuns += group.runCount;
         if (group.minStartedAt && (!minStartedAt || group.minStartedAt < minStartedAt)) {
           minStartedAt = group.minStartedAt;
@@ -282,8 +286,8 @@ async function fetchRunsStats(
       for (const group of data.groups) {
         const key = group.dimensions[runsGroupBy] ?? "__total__";
         result.set(key, {
-          totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents) * discountFactor),
-          actualCostInUsdCents: Math.round(Number(group.actualCostInUsdCents) * discountFactor),
+          totalCostInUsdCents: Math.round(selectCostCents(group, "totalCostInUsdCents", pricing)),
+          actualCostInUsdCents: Math.round(selectCostCents(group, "actualCostInUsdCents", pricing)),
           completedRuns: group.runCount,
           minStartedAt: group.minStartedAt ?? null,
           maxStartedAt: group.maxStartedAt ?? null,
@@ -1048,8 +1052,8 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     if (pricing === null) {
       return res.status(400).json({ error: "pricing must be one of: gross, net" });
     }
-    // NET → the org's discount factor (fail-loud if unresolvable). GROSS → 1 (no billing call).
-    const discountFactor = await resolveDiscountFactor(pricing, orgId);
+    // NET reads runs#179's frozen net cost fields (no billing call, no read-time multiply); GROSS reads
+    // the gross fields → byte-identical. The selector is threaded into fetchRunsStats below.
 
     // Served through the Gold snapshot cache (O(1) read; the 10-source fan-out recomputes a viewed
     // cell off the request path ~per TTL). Scope key spans org + every query param that changes the body.
@@ -1088,7 +1092,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
 
     const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, pressKitsStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns, engagementSnapshot] = await Promise.all([
       neededSources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : skip(),
-      fetchRunsStats(orgId, groupBy, filters, [featureSlug], identity, discountFactor),
+      fetchRunsStats(orgId, groupBy, filters, [featureSlug], identity, pricing),
       neededSources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : skip(),
       neededSources.has("journalists") ? fetchJournalistsStats(orgId, groupBy, filters, identity) : skip(),
       neededSources.has("leads") ? fetchLeadsStats(orgId, groupBy, filters, identity) : skip(),
@@ -1201,11 +1205,11 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
     if (pricing === null) {
       return res.status(400).json({ error: "pricing must be one of: gross, net" });
     }
-    const discountFactor = await resolveDiscountFactor(pricing, orgId);
+    // NET reads runs#179's frozen net fields (no billing call, no read-time multiply); GROSS is byte-identical.
 
     const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns] = await Promise.all([
       fetchEmailStats(orgId, groupBy, filters, identity),
-      fetchRunsStats(orgId, groupBy, filters, undefined, identity, discountFactor),
+      fetchRunsStats(orgId, groupBy, filters, undefined, identity, pricing),
       fetchOutletsStats(orgId, groupBy, filters, identity),
       fetchJournalistsStats(orgId, groupBy, filters, identity),
       fetchLeadsStats(orgId, groupBy, filters, identity),

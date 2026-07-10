@@ -29,7 +29,7 @@
  * non-OK / malformed response throws and the caller returns 502 (mirrors fetchRunsCostCents).
  */
 import { fetchWithRetry } from "./fetch-retry.js";
-import { discountCents } from "./pricing.js";
+import { selectCostCents, type Pricing } from "./pricing.js";
 
 export interface SpendSource {
   /** runs-service cost name (the billable line item, e.g. "apollo people-search", "email-send-step-1"). */
@@ -66,6 +66,9 @@ interface RunsCostGroup {
   totalCostInUsdCents: string;
   /** Actualized / billed only. */
   actualCostInUsdCents: string;
+  /** Frozen-NET twins (runs#179) — present when NET pricing is requested; read via selectCostCents. */
+  netTotalCostInUsdCents?: string;
+  netActualCostInUsdCents?: string;
   runCount: number;
 }
 
@@ -105,13 +108,16 @@ async function fetchCostGroups(
   return data.groups;
 }
 
-/** Σ committed (actual + provisioned holds) and Σ actual (billed) across the groups, USD cents. */
-function sumGroups(groups: RunsCostGroup[]): { totalCents: number; actualCents: number } {
+/**
+ * Σ committed (actual + provisioned holds) and Σ actual (billed) across the groups, USD cents.
+ * GROSS reads the gross fields; NET reads runs#179's frozen net twins (fail-loud if absent).
+ */
+function sumGroups(groups: RunsCostGroup[], pricing: Pricing): { totalCents: number; actualCents: number } {
   let totalCents = 0;
   let actualCents = 0;
   for (const g of groups) {
-    totalCents += Math.round(Number(g.totalCostInUsdCents));
-    actualCents += Math.round(Number(g.actualCostInUsdCents));
+    totalCents += Math.round(selectCostCents(g, "totalCostInUsdCents", pricing));
+    actualCents += Math.round(selectCostCents(g, "actualCostInUsdCents", pricing));
   }
   return { totalCents, actualCents };
 }
@@ -127,10 +133,11 @@ export async function fetchSpendBreakdown(
   featureSlug: string,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
   now: Date = new Date(),
-  // NET pricing: scale every USD-cents figure (committed / actual / provisioned, today variants, and
-  // each source's cents) by the org's discount factor (1 = gross, the default → byte-identical). Ratios
-  // (sharePct) are unchanged — a share is discount-invariant since both parts scale together.
-  discountFactor = 1,
+  // NET pricing: read runs#179's FROZEN net cents (netTotal/netActual per source) instead of the gross
+  // fields (no read-time multiply). GROSS (the default) reads the gross fields → byte-identical. Ratios
+  // (sharePct) are unchanged — a share is discount-invariant since numerator + denominator use the same
+  // basis. provisioned is derived (net total − net actual == runs' netProvisioned by construction).
+  pricing: Pricing = "gross",
 ): Promise<SpendBreakdown> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -155,21 +162,21 @@ export async function fetchSpendBreakdown(
     fetchCostGroups(baseUrl, apiKey, todayParams, reqHeaders),
   ]);
 
-  const all = sumGroups(sourceGroups);
-  const today = sumGroups(todayGroups);
+  const all = sumGroups(sourceGroups, pricing);
+  const today = sumGroups(todayGroups, pricing);
 
   const sources: SpendSource[] = sourceGroups
     .map((g) => {
-      const totalCents = Math.round(Number(g.totalCostInUsdCents) * discountFactor);
-      const actualCents = Math.round(Number(g.actualCostInUsdCents) * discountFactor);
+      const totalCents = Math.round(selectCostCents(g, "totalCostInUsdCents", pricing));
+      const actualCents = Math.round(selectCostCents(g, "actualCostInUsdCents", pricing));
       return {
         source: g.dimensions?.costName ?? "unknown",
         totalSpentCents: totalCents,
         actualSpentCents: actualCents,
         provisionedSpentCents: totalCents - actualCents,
         // Share of the COMMITTED total — coherent with the displayed "Total spent". Discount-invariant:
-        // numerator + denominator scale by the same factor, so the ratio is identical to gross.
-        sharePct: all.totalCents > 0 ? (Number(g.totalCostInUsdCents) / all.totalCents) * 100 : 0,
+        // numerator + denominator use the same basis, so the ratio is identical for gross vs net.
+        sharePct: all.totalCents > 0 ? (totalCents / all.totalCents) * 100 : 0,
       };
     })
     // A row with committed 0 has actual 0 too (committed ≥ actual ≥ 0), so dropping it preserves the
@@ -178,12 +185,12 @@ export async function fetchSpendBreakdown(
     .sort((a, b) => b.totalSpentCents - a.totalSpentCents || a.source.localeCompare(b.source));
 
   return {
-    totalSpentCents: discountCents(all.totalCents, discountFactor),
-    actualSpentCents: discountCents(all.actualCents, discountFactor),
-    provisionedSpentCents: discountCents(all.totalCents, discountFactor) - discountCents(all.actualCents, discountFactor),
-    totalSpentTodayCents: discountCents(today.totalCents, discountFactor),
-    actualSpentTodayCents: discountCents(today.actualCents, discountFactor),
-    provisionedSpentTodayCents: discountCents(today.totalCents, discountFactor) - discountCents(today.actualCents, discountFactor),
+    totalSpentCents: all.totalCents,
+    actualSpentCents: all.actualCents,
+    provisionedSpentCents: all.totalCents - all.actualCents,
+    totalSpentTodayCents: today.totalCents,
+    actualSpentTodayCents: today.actualCents,
+    provisionedSpentTodayCents: today.totalCents - today.actualCents,
     sources,
   };
 }
