@@ -1,5 +1,43 @@
 # Features Service — CLAUDE.md
 
+## `?pricing=gross|net` — GROSS (default) vs NET usage-discount on the cost-metric endpoints; discount the COST INPUT, never the output (PR #510, features-service#511)
+
+The customer-facing cost-metric endpoints (`/revenue`, `/stats` + `/features/:slug/stats`,
+`/audience-stats`, `/workflow-projection`) accept `?pricing=gross|net`. **GROSS is the DEFAULT** — an
+omitted or `gross` selector is byte-identical to today AND makes **zero billing calls** (existing
+callers — campaign-service `metrics.cpcCents`, cross-org public revenue — never send `pricing` → always
+gross). `net` shows the org's metrics at the discounted price it actually pays (dashboard coherence with
+a "you have X% off" banner); staff/internal keep gross.
+
+**Apply the discount at the COST INPUT, never field-by-field on the output.** Every money metric (CPC,
+cost-per-outcome/-close, total spent, revenue spend, CAC, ROI, roiMultiple, cacPct, recommendedBudget) is
+DERIVED from the runs-service cost cents. `lib/pricing.ts` `resolveDiscountFactor(pricing, orgId)` →
+`1` for gross (no billing call) or `1−pct/100` for net; the factor (default `1`) is threaded into each
+cost PRODUCER — `fetchRunsCostCents`, `fetchSpendBreakdown`, `fetchRunsStats`, `fetchAudienceCosts`, and
+`workflow-projection`'s grain builder — which multiplies the cents ONCE. So spend/CPC/CAC scale down and
+ROI scales UP by construction, coherent, no risk of getting ROI's direction wrong. **A NEW money field
+on these endpoints is net automatically IF it derives from a discounted producer; if you add a cost read,
+thread `discountFactor` into it — do NOT post-process the response.** Counts, conversion rates, and
+probabilities never touch cost → unchanged in net.
+
+**Fail-loud, no silent fallback.** `parsePricing` defaults to gross with NO Zod `.default()`; an invalid
+value → 400. `net` reads billing `GET /internal/accounts/by-org/:orgId/usage-discount` (user-less,
+api-key; `lib/billing-discount-client.ts`) — any non-OK/404/malformed/out-of-range THROWS → 502. NET
+NEVER falls back to gross. A KNOWN non-discounted org returns discount `0` → factor `1` → NET == GROSS
+(distinct from "unresolvable"). `pricing` is in every Gold `scope_key` so gross/net never collide in the
+snapshot cache.
+
+**`pipeline-activity` is intentionally NOT wired** — it surfaces no discountable $ metric (only projected
+counts, forecast rates, and the customer's own `dailyBudgetUsd` budget CAP, which is an input not a
+cost-metric); its counts must stay unchanged per the discount's non-money rule. Do NOT "add pricing for
+consistency" — there is nothing to discount.
+
+**billing-service GAP (billing-service#248):** billing has no usage-discount read yet (0 hits fleet-wide).
+The consumer was written against the NEED path/shape (`/internal/accounts/by-org/:orgId/usage-discount` →
+`{ discount_percent }`); **conform to billing's DEPLOYED contract once it ships** (producer owns its
+shape) — do NOT treat the guessed path as locked. Until billing ships it, NET fails loud; GROSS is
+unaffected. (Set 2026-07-10.)
+
 ## `cost-engine.ts` — TWO named engines are the SINGLE source of truth for "cost per outcome"; default = projected everywhere except accounting
 
 Every stats surface computes "cost per outcome" through ONE of TWO named functions in `src/lib/cost-engine.ts` —
