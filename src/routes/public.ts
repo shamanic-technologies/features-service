@@ -84,6 +84,17 @@ function setPublicCache<T>(cache: PublicCache, key: string, payload: T): void {
   cache.set(key, { payload, expiresAt: Date.now() + PUBLIC_STATS_TTL_MS });
 }
 
+/** Race a promise against a timeout that REJECTS after `ms` — bounds a per-item async op so a single
+ * stalled call can't leave the batch's `Promise.all` pending forever. The timer is cleared on settle so
+ * it never keeps the event loop alive. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Timed out after ${ms}ms: ${label}`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 // The goal-bucketed per-brand dataset (spend + outcomes + goal + economics per brand) is objective-
 // INDEPENDENT and expensive (one brand fan-out), so both the trend (per-objective) and lifetime
 // surfaces share ONE cached copy. Cached in-memory (holds Maps) under the same 60s TTL as the other
@@ -1006,11 +1017,48 @@ const workflowCostPerOutcomeCache: PublicCache = new Map();
 // await the warm before asserting the populated cache.
 const workflowRecentWarmInFlight = new Map<string, Promise<void>>();
 
+// Persisted per-dynasty RECENT rates, keyed by cacheKey, on a LONGER TTL than the 60s payload cache.
+// Decouples the recent-rate lifetime from the payload TTL: once a warm populates the recent rates, a
+// payload cache-MISS (every ~60s when the short PublicCache entry expires) re-seeds the served payload
+// from this store instead of re-nulling the recent column while the next warm runs. So a normal read
+// carries the last-known recent rate reliably, not only in the few seconds right after a warm.
+const RECENT_RATE_TTL_MS = 10 * 60_000;
+const workflowRecentRateStore = new Map<string, { map: Map<string, number | null>; expiresAt: number }>();
+
+// Per-dynasty warm budget. A single hung cross-service fetch (cold Neon TCP stall with no reject) must NOT
+// block the whole warm's `Promise.all` — if it did, the warm never settles, its `.finally()` never clears
+// `workflowRecentWarmInFlight`, and NO future warm ever runs for that cacheKey → recent stays permanently
+// null (the exact stuck-flag failure that kept the default window all-null even after the producers were
+// fixed). Racing each dynasty against this timeout guarantees every dynasty settles → the warm always
+// completes, always clears its flag, and a stalled dynasty degrades to null (retried next warm).
+const RECENT_WARM_PER_DYNASTY_TIMEOUT_MS = 20_000;
+
+function getStoredRecentRates(cacheKey: string): Map<string, number | null> | null {
+  const entry = workflowRecentRateStore.get(cacheKey);
+  if (!entry || entry.expiresAt <= Date.now()) return null;
+  return entry.map;
+}
+
+function setStoredRecentRates(cacheKey: string, map: Map<string, number | null>): void {
+  workflowRecentRateStore.set(cacheKey, { map, expiresAt: Date.now() + RECENT_RATE_TTL_MS });
+}
+
 /** Test seam — reset the in-memory workflow-cost-per-outcome cache. */
 export function __resetWorkflowCostPerOutcomeCache(): void {
   workflowCostPerOutcomeCache.clear();
   workflowRecentWarmInFlight.clear();
+  workflowRecentRateStore.clear();
 }
+
+/** Test seam — expire ONLY the short payload cache (simulating a 60s TTL lapse) while keeping the
+ * longer-lived recent-rate store, to assert a payload-miss re-serves the last-known recent rates instead
+ * of re-nulling the column. */
+export function __expireWorkflowPayloadCacheForTest(): void {
+  workflowCostPerOutcomeCache.clear();
+}
+
+/** Test-only export of the per-item timeout primitive. */
+export const __withTimeoutForTest = withTimeout;
 
 /** Test seam — await any in-flight background recent-rate warm(s), so a follow-up request deterministically
  * observes the recent-populated cache entry. */
@@ -1121,71 +1169,79 @@ export async function handleWorkflowCostPerOutcome(
   });
 
   // The per-dynasty RECENT going rate needs, PER dynasty, a dated-spend timeseries (runs) + dated outcomes
-  // (email-gateway) — and neither producer exposes a single-call (day × dynasty) split, so it is an
-  // O(dynasty-count) cross-service fan-out. On top of the Neon-backed siblings' cold-start churn, running
-  // that fan-out ON the request path pushed the endpoint past the gateway timeout (and rejected the whole
-  // Promise.all on any one transient sub-failure) → 500 (regression from the recent-rate work, PR #521).
-  // Fix: keep the fan-out OFF
-  // the request path. Serve the lifetime rows IMMEDIATELY (the same handful of calls as the healthy
-  // /cost-per-outcome-lifetime sibling) with recent=null, then warm the recent rates in the background and
-  // overwrite the SAME cache entry; reads within the TTL get the populated rate. The endpoint never blocks
-  // on — or 500s from — the fan-out again. An un-warmed or genuinely-unbacked dynasty stays null ("—").
-  const payload = buildPayload(new Map());
+  // (email-gateway) — and neither producer exposes a single-call (day × dynasty) split (runs' timeseries
+  // only FILTERS by dynasty, email-gateway's groupBy is single-dimension), so it is an O(dynasty-count)
+  // cross-service fan-out. On top of the Neon-backed siblings' cold-start churn, running that fan-out ON
+  // the request path pushed the endpoint past the gateway timeout (and rejected the whole Promise.all on
+  // any one transient sub-failure) → 500 (regression, PR #521). So it stays OFF the request path: serve
+  // the lifetime rows IMMEDIATELY (the same handful of calls as the healthy /cost-per-outcome-lifetime
+  // sibling), SEEDED with the last-known recent rates from the persisted store (so a payload-TTL miss
+  // re-serves them instead of re-nulling), then warm the recent rates in the background. A never-yet-warmed
+  // or genuinely-unbacked dynasty stays null ("—"), never a false $0.
+  const seededRecent = getStoredRecentRates(cacheKey);
+  const payload = buildPayload(seededRecent ?? new Map());
   setPublicCache(workflowCostPerOutcomeCache, cacheKey, payload);
   res.json(payload);
 
-  // Single-flight background warm per cache key (avoid a thundering herd of fan-outs during the cold window).
-  if (!workflowRecentWarmInFlight.has(cacheKey)) {
+  // Warm only when the persisted recent rates are stale/absent (the payload TTL is much shorter than the
+  // recent-store TTL, so most misses already carry fresh recent rates and need no re-fan-out). Single-flight
+  // per cache key avoids a thundering herd of fan-outs during the cold window.
+  if (seededRecent === null && !workflowRecentWarmInFlight.has(cacheKey)) {
     const warm = (async () => {
-      const recentByDynasty = new Map<string, number | null>();
-      // PER-DYNASTY resilient (allSettled-style): each dynasty's dated fan-out is independently caught so
-      // ONE failing dynasty nulls only ITSELF, never the whole set (mirrors the stat-families resilience
-      // doctrine). This matters because the dated fetches currently 500/502 at the PRODUCER — runs-service
-      // timeseries + email-gateway /public/stats both resolve `workflowDynastySlug` through workflow-service
-      // `/workflows/dynasty/slugs`, which requires org/user/run identity a cross-org PUBLIC call cannot
-      // supply (features-service#526 — producer fix in workflow-service + runs + email-gateway). Until that
-      // lands every dynasty fails → every recent is null (correct: unbacked, never a false $0). Once the
-      // producers allow org-less dynasty resolution, each dynasty populates on its own the next warm — and a
-      // lone straggler/failure never re-nulls the other 24.
+      // Seed from the last-known map so a dynasty whose fan-out transiently fails/stalls this round keeps
+      // its prior rate instead of flickering to null; a genuinely-unbacked dynasty is (re)set to null.
+      const recentByDynasty = new Map<string, number | null>(getStoredRecentRates(cacheKey) ?? []);
+      // PER-DYNASTY resilient: each dynasty's dated fan-out is independently caught AND time-bounded so ONE
+      // failing/stalled dynasty nulls only ITSELF, never the whole set (mirrors the stat-families doctrine).
+      // The timeout is load-bearing: a hung cross-service fetch (cold Neon, no reject) would otherwise leave
+      // the outer Promise.all pending forever → the warm never settles → its `.finally()` never clears the
+      // in-flight flag → NO future warm runs for this cacheKey → recent stays permanently null (the exact
+      // stuck-flag failure observed in prod). Racing each dynasty guarantees the warm always completes.
       await Promise.all(
         dynastyInputs.map(async (r) => {
           try {
-            const [spendByDay, dayFields] = await Promise.all([
-              fetchDynastySpendByDay(featureSlug, r.workflowDynastySlug),
-              fetchPublicEmailStats(featureSlug, "day", undefined, r.workflowDynastySlug),
-            ]);
-            const outcomesByDay = new Map<string, DayOutcome>();
-            for (const [day, fields] of dayFields) {
-              if (day === "__total__") continue;
-              outcomesByDay.set(day, {
-                clicks: fields.recipientsClicked ?? 0,
-                replies: fields.recipientsRepliesPositive ?? 0,
-              });
-            }
-            recentByDynasty.set(
-              r.workflowDynastySlug,
-              recentWindowCostPerOutcome({
-                objective,
-                todayIso,
-                windowOutcomes,
-                maxLookbackDays: MAX_TREND_LOOKBACK_DAYS,
-                spendByDay,
-                outcomesByDay,
-                fleetEcon,
-              }),
+            const outcome = await withTimeout(
+              (async () => {
+                const [spendByDay, dayFields] = await Promise.all([
+                  fetchDynastySpendByDay(featureSlug, r.workflowDynastySlug),
+                  fetchPublicEmailStats(featureSlug, "day", undefined, r.workflowDynastySlug),
+                ]);
+                const outcomesByDay = new Map<string, DayOutcome>();
+                for (const [day, fields] of dayFields) {
+                  if (day === "__total__") continue;
+                  outcomesByDay.set(day, {
+                    clicks: fields.recipientsClicked ?? 0,
+                    replies: fields.recipientsRepliesPositive ?? 0,
+                  });
+                }
+                return recentWindowCostPerOutcome({
+                  objective,
+                  todayIso,
+                  windowOutcomes,
+                  maxLookbackDays: MAX_TREND_LOOKBACK_DAYS,
+                  spendByDay,
+                  outcomesByDay,
+                  fleetEcon,
+                });
+              })(),
+              RECENT_WARM_PER_DYNASTY_TIMEOUT_MS,
+              `recent-rate warm dynasty ${r.workflowDynastySlug}`,
             );
+            recentByDynasty.set(r.workflowDynastySlug, outcome);
           } catch (error) {
-            // Fail-soft per dynasty: log loud, leave this dynasty's recent null (never a false $0).
-            recentByDynasty.set(r.workflowDynastySlug, null);
+            // Fail-soft per dynasty: log loud, retain this dynasty's prior/null recent (never a false $0),
+            // retried next warm.
             console.error(
               `[features-service] workflow-cost-per-outcome recent-rate warm failed for dynasty ${r.workflowDynastySlug} (${cacheKey}):`,
               error,
             );
+            if (!recentByDynasty.has(r.workflowDynastySlug)) recentByDynasty.set(r.workflowDynastySlug, null);
           }
         }),
       );
-      // Overwrite the cache entry with whatever populated (refreshes the TTL). Even an all-null warm is a
-      // valid overwrite — it records "attempted, unbacked" so the next miss doesn't refetch mid-TTL.
+      // Persist whatever populated (partial is fine) and overwrite the served payload. Even a partial warm
+      // advances the store's TTL, so subsequent reads keep serving these rates across payload-TTL expiries.
+      setStoredRecentRates(cacheKey, recentByDynasty);
       setPublicCache(workflowCostPerOutcomeCache, cacheKey, buildPayload(recentByDynasty));
     })()
       .catch((error) => {
