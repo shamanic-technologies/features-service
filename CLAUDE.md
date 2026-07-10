@@ -209,20 +209,26 @@ estimatesByGrain:{crossOrg?, brand?, audience?}, resolved }`. `economics` (brand
   dynasty rollup; the brand grain adds a `brandId` filter. The audience grain is audience-WIDE — NOT
   split per-workflow (send/engagement is not workflow-tagged; fleet gap #366/#367).
 
-**`resolved`.** `resolved.grain` is the PROVENANCE of the resolved metrics — the FINEST grain that
-actually OBSERVED the goal's outcome (replies for `positiveReply`, clicks for the click-driven goals,
-either channel for meeting-booked/purchase), precedence `audience > brand > crossOrg`. A grain with
-spend but ZERO outcomes yields a cascade-FLOORED projection, NOT a measured ratio, so it is SKIPPED —
-a projection is never tagged `brand`/`audience` (the dashboard renders that grain verbatim as "From
-this brand's own results", which would be a lie for a brand with 0 realized outcomes). When neither the
-audience nor brand grain has a realized outcome, `resolved` falls to `crossOrg` (fleet benchmark), so
-the consumer never labels a projection as this brand's measured result. crossOrg (fleet, incl. this
-org's own spend) is present whenever any finer grain spent → a projection always has a fleet grain to
-attribute to. `grainHasObservedOutcome` + `resolvePick` (`workflow-projection.ts`); a brand WITH real
-observed outcomes still resolves `brand`/`audience` (no regression). `resolved.costPerOutcomeUsd` is the
-goal metric campaign-service ranks on. The `recommended` selection ranks on `resolved.costPerOutcomeUsd`.
-(Set 2026-07-06; provenance = measured-grain + single-step raw-outcome cost, features-service#528
-2026-07-10.)
+**`resolved` — NUMBER and PROVENANCE LABEL are DECOUPLED (do NOT re-conflate).** Two independent
+selections in `resolvePick` (`workflow-projection.ts`):
+
+- **NUMBERS** (`costPer*`, `roiMultiple`, `cacPct`) come from the finest grain **WITH SPEND**
+  (`audience > brand > crossOrg`). That grain's unit costs already encode the cascade floor
+  `max(spentUsd, parentCost)`, so a brand/audience that OUTSPENT the coarser grain with 0 outcomes keeps
+  its OWN higher spend floor — the resolved number is NEVER collapsed down to the fleet value. (Collapsing
+  a money-burning 0-outcome grain to the cheap fleet rate is the "artificially free" bug the cascade
+  exists to prevent — do NOT resolve the NUMBER to crossOrg.)
+- **`resolved.grain`** is the PROVENANCE **LABEL** the dashboard renders — the finest grain that actually
+  OBSERVED the goal's outcome (replies for `positiveReply`, clicks for the click-driven goals, either
+  channel for meeting-booked/purchase via `grainHasObservedOutcome`), else `crossOrg` (benchmark). A grain
+  with spend but ZERO outcomes is a FLOORED projection, so it is NEVER labelled `brand`/`audience` (the
+  dashboard renders that verbatim as "From this brand's own results" — a lie for a brand with 0 realized
+  outcomes). A brand WITH real observed outcomes still labels `brand`/`audience` (no regression).
+
+So a 0-outcome brand that spent $135 (fleet cost $10) → resolved cost = **$135** (its own floor),
+`grain` = **crossOrg** (benchmark): the number stays brand-specific, only the label stops lying.
+campaign-service ranks on `resolved.costPerOutcomeUsd`; `recommended` ranks on the same. (Set 2026-07-06;
+provenance/number decoupled + single-step raw-outcome cost, features-service#528 2026-07-10.)
 
 **Audience-grain SET must equal `/audience-stats`' set — enumerate the `groupBy=audienceId` cost
 universe, NEVER the `groupBy=audienceId,workflowDynastySlug` couples.** `fetchAudienceGrainEvidence`
