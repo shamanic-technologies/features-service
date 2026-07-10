@@ -475,9 +475,9 @@ const grainBlockSchema = z.object({
 });
 
 const resolvedBlockSchema = z.object({
-  grain: z.enum(["audience", "brand", "crossOrg"]).describe("Finest grain present with spentUsd > 0 (precedence audience > brand > crossOrg). Never null-grain: crossOrg always has spend."),
+  grain: z.enum(["audience", "brand", "crossOrg"]).describe("PROVENANCE of the resolved metrics: the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg). A grain with spend but 0 outcomes yields a FLOORED projection, not a measured result, so it is SKIPPED — a projection is never tagged brand/audience (\"this brand's own results\"); it resolves to crossOrg (fleet benchmark) instead. Never null-grain: crossOrg is present whenever any finer grain spent."),
   costPerClickUsd: z.number().describe("The resolved grain's costPerClickUsd (never 0)."),
-  costPerOutcomeUsd: z.number().nullable().describe("The GOAL metric at the resolved grain (cost per signup/meeting/paid-client per goal) — campaign-service ranks on THIS. Null only at cold start (no economics)."),
+  costPerOutcomeUsd: z.number().nullable().describe("The GOAL metric at the resolved grain — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). Null only at cold start (no economics)."),
   costPerPaidClientUsd: z.number().nullable(),
   costPerMeetingBookedUsd: z.number().nullable(),
   roiMultiple: z.number().nullable(),
@@ -527,7 +527,7 @@ registry.registerPath({
   description:
     "Serves a 3-grain projection ladder (crossOrg → brand → audience) + a resolved pick, keyed per (audienceId?, workflowDynasty). " +
     "crossOrg = fleet-wide per-workflow unit costs (same source as /public/stats/best); brand = the same path scoped to this brandId; audience = audience-attributed evidence for each active human-service audience that ran the workflow (audience-WIDE — the fleet does not tag outcomes per audience×workflow). " +
-    "Each grain carries its own evidence, floor-ruled unit costs (costPerXUsd = spentUsd / max(observedX,1), never null), and projected cost-per-outcome from the brand's EFFECTIVE economics. A grain is included only when it has spentUsd > 0. resolved = the finest grain present (precedence audience > brand > crossOrg); campaign-service ranks on resolved.costPerOutcomeUsd. " +
+    "Each grain carries its own evidence, floor-ruled unit costs (costPerXUsd = spentUsd / max(observedX,1), never null), and projected cost-per-outcome from the brand's EFFECTIVE economics. A grain is included only when it has spentUsd > 0. resolved = the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg); a grain with spend but 0 outcomes is a FLOORED projection and is skipped so it is never tagged as this brand's/audience's own result — it resolves to crossOrg (fleet benchmark). campaign-service ranks on resolved.costPerOutcomeUsd. " +
     "recommendedWorkflowDynastySlug = argmin over rows of resolved.costPerOutcomeUsd; recommendedBudgetUsd = 10 × that cost. Folds in the audience×workflow grain formerly served by the removed /candidates endpoint.",
   tags: ["Stats"],
   request: {

@@ -139,8 +139,14 @@ function outcomeCostForGoal(
   formSubmissionGoal: boolean,
 ): number | null {
   const p = projectOutcomeCosts(econ, unitCosts);
-  if (singleStepGoal === "websiteVisit") return p.costPerVisitPaidClientUsd;
-  if (singleStepGoal === "positiveReply") return p.costPerReplyPaidClientUsd;
+  // Single-step goals: the visit / reply IS the tracked outcome → its RAW unit cost (CPC / CPPR), NOT
+  // the downstream paid-client cost (that is costPerPaidClient, which differs by the visit/reply→paid
+  // rate). Returning the paid-client cost here made cost-per-outcome == cost-per-paid-client — an
+  // internally-incoherent pair whenever the rate < 100% (a paid client cannot cost the same as a single
+  // positive reply when only 15% of replies convert). Mirrors audience-stats (websiteVisit→CPC,
+  // positiveReply→CPPR) + the cross-org objective→cost doctrine ("the visit / reply IS the outcome").
+  if (singleStepGoal === "websiteVisit") return unitCosts.clickUsd;
+  if (singleStepGoal === "positiveReply") return unitCosts.replyUsd;
   if (objective === "purchase") return p.costPerPurchaseUsd;
   if (objective === "meeting-booked") return p.costPerMeetingBookedUsd;
   if (formSubmissionGoal) return p.costPerFormSubmissionUsd;
@@ -206,9 +212,35 @@ function buildGrainBlock(
 }
 
 /**
- * Resolve the finest-grain block present (precedence audience > brand > crossOrg), producing the
- * `resolved` pick. crossOrg always has spend, so resolved is never null-grain and costPerClickUsd is
- * never 0. costPerOutcomeUsd = the queried goal's metric at the resolved grain.
+ * A grain's cost-per-outcome is MEASURED (derived from THIS grain's realized outcomes) only when the
+ * grain observed the goal's driving-channel outcome — positive replies for `positiveReply`, clicks for
+ * the click-driven goals (websiteVisit / signup / form_submissions), either channel for meeting-booked /
+ * purchase (both funnel from clicks + replies). When a grain has spend but 0 of that outcome, its unit
+ * cost is a cascade-FLOORED projection, NOT a measured ratio — so it must NOT carry that grain's "own
+ * results" provenance ("From this brand's own results"). resolvePick skips such a grain.
+ */
+function grainHasObservedOutcome(
+  ev: GrainBlock["evidence"],
+  objective: Objective,
+  singleStepGoal: SingleStepGoal | null,
+): boolean {
+  if (singleStepGoal === "positiveReply") return ev.observedPositiveReplies > 0;
+  if (singleStepGoal === "websiteVisit") return ev.observedClicks > 0;
+  if (objective === "signup" || objective === "self-serve" || objective === "form_submissions")
+    return ev.observedClicks > 0;
+  // meeting-booked / purchase funnel from BOTH channels → either observed outcome makes it measured.
+  return ev.observedClicks > 0 || ev.observedPositiveReplies > 0;
+}
+
+/**
+ * Resolve the `resolved` pick. Provenance MUST reflect MEASURED results, so the grain is the finest one
+ * that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg) — a grain with
+ * spend but 0 outcomes yields a FLOORED projection, not a measured ratio, and must not be tagged as
+ * this brand's / this audience's own result. When neither the audience nor the brand grain has a
+ * realized outcome, the number is a fleet-derived PROJECTION → resolve to crossOrg (fleet benchmark),
+ * never to "this brand". crossOrg (fleet, incl. this org's own spend) is present whenever any finer
+ * grain spent, so a projection always has a fleet grain to attribute to; the trailing fallbacks only
+ * guard the impossible no-crossOrg case. costPerOutcomeUsd = the queried goal's metric at that grain.
  */
 function resolvePick(
   estimatesByGrain: Partial<Record<GrainName, GrainBlock>>,
@@ -217,7 +249,14 @@ function resolvePick(
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
 ): ResolvedBlock {
-  const grain: GrainName = estimatesByGrain.audience ? "audience" : estimatesByGrain.brand ? "brand" : "crossOrg";
+  const measured = (g: GrainName): boolean =>
+    !!estimatesByGrain[g] && grainHasObservedOutcome(estimatesByGrain[g]!.evidence, objective, singleStepGoal);
+  const grain: GrainName =
+    measured("audience") ? "audience"
+      : measured("brand") ? "brand"
+        : estimatesByGrain.crossOrg ? "crossOrg"
+          : estimatesByGrain.brand ? "brand"
+            : "audience";
   const block = estimatesByGrain[grain]!;
   const unitCosts = { clickUsd: block.unitCosts.costPerClickUsd, replyUsd: block.unitCosts.costPerPositiveReplyUsd };
   const costPerOutcomeUsd = econ ? outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal) : null;

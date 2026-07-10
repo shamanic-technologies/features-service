@@ -432,7 +432,7 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     expect(audRow.estimatesByGrain.audience.unitCosts.costPerClickUsd).toBeCloseTo(20, 6); // floored to BRAND parent
   });
 
-  it("single-step website_visits: costPerPaidClientUsd = clickUsd / v2pc; costPerOutcomeUsd rides it", async () => {
+  it("single-step website_visits: costPerOutcome = RAW CPC (the visit); costPerPaidClient = CPC / v2pc (COHERENT, distinct)", async () => {
     const SINGLE = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 20 };
     mockFetch({ economics: SINGLE });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=website_visits`).set(AUTH);
@@ -441,12 +441,74 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     expect(res.body.goal).toBe("websiteVisit");
     expect(res.body.economics.visitToPaidClientPct).toBe(5);
     const a = rowFor(res.body, "dyn-a");
-    // crossOrg cpc $10 → 10 / 0.05 = 200
+    // crossOrg cpc $10 → paid client 10 / 0.05 = 200
     expect(a.estimatesByGrain.crossOrg.projected.costPerPaidClientUsd).toBeCloseTo(200, 3);
-    // resolved at brand grain (cpc $20) → 20 / 0.05 = 400
+    // brand grain has 25 clicks → MEASURED → resolves at brand (cpc $20).
     expect(a.resolved.grain).toBe("brand");
-    expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(400, 3);
+    // costPerOutcome = the RAW visit cost (CPC $20), NOT the paid-client cost.
+    expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(20, 3);
+    // costPerPaidClient = CPC / v2pc = 20 / 0.05 = 400 — DISTINCT from the outcome cost (coherent pair).
     expect(a.resolved.costPerPaidClientUsd).toBeCloseTo(400, 3);
+    expect(a.resolved.costPerOutcomeUsd).not.toBeCloseTo(a.resolved.costPerPaidClientUsd, 3);
+  });
+
+  it("DEFECT 2 — positive_replies: costPerOutcome (CPPR) ≠ costPerPaidClient; they differ by the reply→paid rate", async () => {
+    // Repro brand's saved economics: reply→paid = 15%. Brand ran wf-a WITH replies (measured) so it
+    // resolves at the brand grain: CPPR = $500/5 = $100; paid client = 100 / 0.15 = 666.67. They MUST differ.
+    const SINGLE = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 15 };
+    mockFetch({ economics: SINGLE });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=positive_replies`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.objective).toBe("positive_replies");
+    expect(res.body.goal).toBe("positiveReply");
+    const a = rowFor(res.body, "dyn-a");
+    expect(a.resolved.grain).toBe("brand"); // 5 observed replies → measured
+    // costPerOutcome = the RAW positive-reply cost (CPPR = brand $500/5 = $100).
+    expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(100, 3);
+    // costPerPaidClient = CPPR / r2pc = 100 / 0.15 = 666.67 — materially higher, NOT equal.
+    expect(a.resolved.costPerPaidClientUsd).toBeCloseTo(100 / 0.15, 3);
+    expect(a.resolved.costPerPaidClientUsd).toBeGreaterThan(a.resolved.costPerOutcomeUsd);
+  });
+
+  it("DEFECT 1 — positive_replies, brand+audience spend but ZERO replies → provenance is crossOrg (benchmark), NOT this brand/audience", async () => {
+    // The exact repro: ~$32 spent on ONE audience, 0 outcomes. Brand + audience grains have spend but 0
+    // observed positive replies → their cost is a FLOORED projection, so provenance must NOT be "this
+    // brand"/"this audience" — it resolves to the crossOrg fleet benchmark.
+    const SINGLE = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 15 };
+    mockFetch({
+      economics: SINGLE,
+      brandCost: [costGroup("wf-a", 3200)], // $32 brand spend on wf-a
+      brandEmail: [emailGroup("wf-a", 0, 0, 20)], // 0 clicks, 0 replies
+      audiences: [{ id: "aud-1" }],
+      audienceCost: [{ dimensions: { audienceId: "aud-1" }, totalCostInUsdCents: "3200", runCount: 4 }],
+      audienceCouples: [{ dimensions: { audienceId: "aud-1", workflowSlug: "wf-a" }, totalCostInUsdCents: "3200", runCount: 4 }],
+      membersByAudience: { "aud-1": ["m1@x.com", "m2@x.com"] },
+      outcomesByEmail: { "m1@x.com": { contacted: true }, "m2@x.com": { contacted: true } }, // 0 replies
+    });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=positive_replies`).set(AUTH);
+    expect(res.status).toBe(200);
+
+    // Brand-level row: brand grain present (spend) but 0 replies → resolves to crossOrg.
+    const brandRow = rowFor(res.body, "dyn-a", null);
+    expect(brandRow.estimatesByGrain.brand).toBeTruthy();
+    expect(brandRow.estimatesByGrain.brand.evidence.observedPositiveReplies).toBe(0);
+    expect(brandRow.resolved.grain).toBe("crossOrg"); // NOT "brand" — no measured outcome
+
+    // Audience row: audience + brand grains have spend but 0 replies → resolves to crossOrg, NOT audience.
+    const audRow = rowFor(res.body, "dyn-a", "aud-1");
+    expect(audRow.estimatesByGrain.audience).toBeTruthy();
+    expect(audRow.estimatesByGrain.audience.evidence.observedPositiveReplies).toBe(0);
+    expect(audRow.resolved.grain).toBe("crossOrg"); // NOT "audience" — projection, not measured
+  });
+
+  it("DEFECT 1 no-regression — a brand WITH real observed replies keeps the brand provenance", async () => {
+    // Default brand grain: 5 observed replies → the brand's cost IS measured → provenance stays "brand".
+    const SINGLE = { ...ECONOMICS, replyToPaidClientPct: 15 };
+    mockFetch({ economics: SINGLE });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=positive_replies`).set(AUTH);
+    const a = rowFor(res.body, "dyn-a");
+    expect(a.estimatesByGrain.brand.evidence.observedPositiveReplies).toBe(5);
+    expect(a.resolved.grain).toBe("brand");
   });
 
   it("single-step goal with the rate field ABSENT → fail loud (502)", async () => {
