@@ -1022,7 +1022,14 @@ const workflowRecentWarmInFlight = new Map<string, Promise<void>>();
 // payload cache-MISS (every ~60s when the short PublicCache entry expires) re-seeds the served payload
 // from this store instead of re-nulling the recent column while the next warm runs. So a normal read
 // carries the last-known recent rate reliably, not only in the few seconds right after a warm.
+// A CLEAN warm (every dynasty's fetch succeeded) is trusted for the full window — no re-warm for 10 min,
+// so reads seed from the store and the O(dynasty-count) fan-out does NOT run again, keeping load off the
+// (cold-Neon-sensitive) sibling services the request-path lifetime fan-out also depends on.
 const RECENT_RATE_TTL_MS = 10 * 60_000;
+// A DEGRADED warm (≥1 dynasty's fetch failed/timed out — typically cold-start churn) is trusted only
+// briefly, so the next read after this window re-warms and SELF-HEALS the failed dynasties once the
+// computes are warm — without re-fanning-out on every 60s miss (which would contend with the request path).
+const RECENT_RATE_DEGRADED_TTL_MS = 90_000;
 const workflowRecentRateStore = new Map<string, { map: Map<string, number | null>; expiresAt: number }>();
 
 // Per-dynasty warm budget. A single hung cross-service fetch (cold Neon TCP stall with no reject) must NOT
@@ -1042,8 +1049,8 @@ function getStoredRecentRates(cacheKey: string): Map<string, number | null> | nu
   return entry.map;
 }
 
-function setStoredRecentRates(cacheKey: string, map: Map<string, number | null>): void {
-  workflowRecentRateStore.set(cacheKey, { map, expiresAt: Date.now() + RECENT_RATE_TTL_MS });
+function setStoredRecentRates(cacheKey: string, map: Map<string, number | null>, ttlMs: number = RECENT_RATE_TTL_MS): void {
+  workflowRecentRateStore.set(cacheKey, { map, expiresAt: Date.now() + ttlMs });
 }
 
 /** Test seam — reset the in-memory workflow-cost-per-outcome cache. */
@@ -1186,15 +1193,16 @@ export async function handleWorkflowCostPerOutcome(
   setPublicCache(workflowCostPerOutcomeCache, cacheKey, payload);
   res.json(payload);
 
-  // Refresh the recent rates on EVERY payload miss where no warm is already running (single-flight per
-  // cache key). This is the stale-while-revalidate cadence: the served payload is already seeded from the
-  // store above (so a miss never re-nulls the column — no flicker), and this background warm refreshes the
-  // store for the next reads. Refreshing every miss (NOT only when the store is empty) is what makes a
-  // degraded warm SELF-HEAL: a cold-Neon round that times some dynasties out to null is superseded by the
-  // next miss's warm once the computes are warm — gating on "store empty" would instead pin that degraded
-  // all-null result for the store's full TTL. The warm is off the request path, so this never slows a read.
-  if (!workflowRecentWarmInFlight.has(cacheKey)) {
+  // Warm when the persisted recent rates are stale/absent (single-flight per cache key). Stale-while-
+  // revalidate: the served payload is already seeded from the store above (a miss never re-nulls the column
+  // — no flicker), and this background warm refreshes the store for later reads. Self-heal without hammering
+  // is achieved by a VARIABLE store TTL (see the warm's `setStoredRecentRates` below): a CLEAN warm is
+  // trusted 10 min (no re-warm → the O(dynasty) fan-out doesn't contend with the request-path lifetime
+  // fan-out for the same cold-Neon siblings), while a DEGRADED warm (any dynasty failed/timed out) is
+  // trusted only ~90s → the next read re-warms and heals the failed dynasties once the computes are warm.
+  if (seededRecent === null && !workflowRecentWarmInFlight.has(cacheKey)) {
     const warm = (async () => {
+      let failures = 0;
       // Seed from the last-known map so a dynasty whose fan-out transiently fails/stalls this round keeps
       // its prior rate instead of flickering to null; a genuinely-unbacked dynasty is (re)set to null.
       const recentByDynasty = new Map<string, number | null>(getStoredRecentRates(cacheKey) ?? []);
@@ -1236,8 +1244,9 @@ export async function handleWorkflowCostPerOutcome(
             );
             recentByDynasty.set(r.workflowDynastySlug, outcome);
           } catch (error) {
-            // Fail-soft per dynasty: log loud, retain this dynasty's prior/null recent (never a false $0),
-            // retried next warm.
+            // Fail-soft per dynasty: count it (drives the DEGRADED store TTL → a soon self-heal), log loud,
+            // retain this dynasty's prior/null recent (never a false $0), retried next warm.
+            failures++;
             console.error(
               `[features-service] workflow-cost-per-outcome recent-rate warm failed for dynasty ${r.workflowDynastySlug} (${cacheKey}):`,
               error,
@@ -1246,9 +1255,10 @@ export async function handleWorkflowCostPerOutcome(
           }
         }),
       );
-      // Persist whatever populated (partial is fine) and overwrite the served payload. Even a partial warm
-      // advances the store's TTL, so subsequent reads keep serving these rates across payload-TTL expiries.
-      setStoredRecentRates(cacheKey, recentByDynasty);
+      // Persist whatever populated (partial is fine) and overwrite the served payload. A CLEAN warm is
+      // trusted the full 10-min TTL (no re-warm → no sibling contention); a DEGRADED warm (≥1 fetch failed/
+      // timed out) is trusted only ~90s so the next read re-warms and heals the failed dynasties.
+      setStoredRecentRates(cacheKey, recentByDynasty, failures > 0 ? RECENT_RATE_DEGRADED_TTL_MS : RECENT_RATE_TTL_MS);
       setPublicCache(workflowCostPerOutcomeCache, cacheKey, buildPayload(recentByDynasty));
     })()
       .catch((error) => {
