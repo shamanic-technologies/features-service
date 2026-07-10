@@ -1483,6 +1483,44 @@ describe("GET /public/stats/cost-per-outcome-trend (goal-bucketed)", () => {
   });
 });
 
+describe("goal-bucket dataset single-flight (no cold-cache stampede)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    __resetCostPerOutcomeTrendCache();
+    __resetCostPerOutcomeLifetimeCache();
+    __resetGoalBucketDatasetCache();
+  });
+
+  it("concurrent trend + lifetime requests share ONE dataset fan-out (1 memberships fetch, not 4)", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    const spy = mockBucketedFetch({
+      memberships: [
+        { orgId: "org-A", brandId: "brand-visit", workflowSlug: "wf-1" },
+        { orgId: "org-B", brandId: "brand-reply", workflowSlug: "wf-2" },
+      ],
+      brands: {
+        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+        "brand-reply": { goal: "positive_replies", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "50000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 25 }] },
+      },
+    });
+
+    // Fire trend (3 objectives) + lifetime concurrently against a COLD cache — the admin-page load pattern.
+    const responses = await Promise.all([
+      request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=websiteVisit"),
+      request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=positiveReply"),
+      request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=signup"),
+      request(app).get("/public/stats/cost-per-outcome-lifetime?featureSlug=sales-cold-email-outreach"),
+    ]);
+    for (const r of responses) expect(r.status).toBe(200);
+
+    // One `feature-memberships` fetch marks one `fetchGoalBucketDataset` fan-out. Without the single-flight
+    // guard each of the 4 concurrent cold-cache handlers launches its own → 4 stampeding fan-outs. With it: 1.
+    const membershipCalls = spy.mock.calls.filter(([input]) => String(input).includes("/internal/feature-memberships"));
+    expect(membershipCalls.length).toBe(1);
+  });
+});
+
 describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
   beforeEach(() => {
     vi.clearAllMocks();

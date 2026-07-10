@@ -39,6 +39,7 @@ import {
   type WorkflowGrainInput,
 } from "../lib/cross-org-cost-per-outcome.js";
 import { fetchFeatureMemberships } from "../lib/feature-memberships-client.js";
+import { mapWithConcurrency } from "../lib/concurrency.js";
 import { fetchFleetEmailsSentByDay, fetchFleetSendingForecast } from "../lib/send-forecast-client.js";
 import { aggregateFleetNewSequences } from "../lib/send-forecast-aggregate.js";
 import {
@@ -99,40 +100,46 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  * Bounds fan-out concurrency so a large batch (e.g. one dated fetch pair per workflow dynasty) does not
  * open N connections at once and overwhelm cold-start Neon-backed siblings — which would make every
  * request slow enough to trip a per-item timeout. Never rejects: `fn` owns its own error handling. */
-async function mapWithConcurrency<T, R>(
-  items: readonly T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await fn(items[index], index);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
-
 // The goal-bucketed per-brand dataset (spend + outcomes + goal + economics per brand) is objective-
 // INDEPENDENT and expensive (one brand fan-out), so both the trend (per-objective) and lifetime
 // surfaces share ONE cached copy. Cached in-memory (holds Maps) under the same 60s TTL as the other
 // public caches. Fail-loud: a fetch error propagates (no stale-serve on a hard failure).
 const goalBucketDatasetCache: PublicCache = new Map();
+// Single-flight guard. The admin page loads trend (once per objective) + lifetime + distribution AT ONCE;
+// on a cold 60s cache every one of those handlers misses simultaneously and, without this guard, each
+// independently runs the O(brands) `fetchGoalBucketDataset` fan-out (~3 cross-service calls × N brands).
+// 6+ concurrent misses → 6× that fan-out stampeding runs-service/email-gateway, which tips an already-slow
+// (cold-Neon / undersized) sibling from slow into gateway HEADERS_TIMEOUT. Deduping concurrent same-feature
+// fetches onto ONE in-flight promise collapses the stampede to a single fan-out shared by every caller.
+const goalBucketDatasetInFlight = new Map<string, Promise<BucketedBrand[]>>();
 
 /** Test seam — reset the shared goal-bucketed dataset cache. */
 export function __resetGoalBucketDatasetCache(): void {
   goalBucketDatasetCache.clear();
+  goalBucketDatasetInFlight.clear();
 }
 
 async function getGoalBucketDatasetCached(featureSlug: string): Promise<BucketedBrand[]> {
   const cached = getPublicCache<BucketedBrand[]>(goalBucketDatasetCache, featureSlug);
   if (cached) return cached;
-  const dataset = await fetchGoalBucketDataset(featureSlug);
-  setPublicCache(goalBucketDatasetCache, featureSlug, dataset);
-  return dataset;
+
+  // Join any in-flight fetch for the same feature instead of launching a duplicate fan-out.
+  const existing = goalBucketDatasetInFlight.get(featureSlug);
+  if (existing) return existing;
+
+  const flight = (async () => {
+    const dataset = await fetchGoalBucketDataset(featureSlug);
+    setPublicCache(goalBucketDatasetCache, featureSlug, dataset);
+    return dataset;
+  })();
+  goalBucketDatasetInFlight.set(featureSlug, flight);
+  try {
+    return await flight;
+  } finally {
+    // Clear the in-flight slot on settle (success OR failure) so a later miss re-fetches rather than
+    // reusing a rejected/stale promise. Fail-loud is preserved: a fetch error propagates to every joiner.
+    goalBucketDatasetInFlight.delete(featureSlug);
+  }
 }
 
 // ── GET /public/features — List active features (landing page) ──────────────
