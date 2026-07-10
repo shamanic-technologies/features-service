@@ -476,6 +476,32 @@ prod-only-dependency gotcha (railway-vars skill). Verified working on prod v0.72
 rows, 10 active / 22 inactive, `totalDailyBudgetUsd`=Σ active budgets, `mrr`=×30, `arr`=×365.
 (Set 2026-07-01.)
 
+## `pipeline-activity` signup/form-submission `.actual` = REAL observed conversions, NEVER `clicks × rate` (PR #513)
+
+The signup + form-submission daily bars split cleanly: **`.actual` (today + past days) = the REAL,
+deduped, attributed per-day conversion count from lead-service; `.expected` (future days) = the
+`clicks × visit→signup / visit→form` projection.** A projection MUST NEVER sit in `.actual` — that was
+the bug (prod showed "1 form submission today" = `5 clicks × 25%` while the brand had 0 tracked form
+submissions and `/revenue spend.formSubmissionsCount` read 0). `buildDayBuckets` reads
+`observed.byDay[event][date] ?? 0` for `date <= today`, null on future days; the old `clicks × rate`
+fabrication is GONE. Same observed/projected doctrine as `cost-engine.ts` — a rankable/forecast number
+belongs in `.expected`, a measured number in `.actual`; do NOT re-introduce a modeled `.actual`.
+
+Source: lead-service `GET /internal/brands/:brandId/conversion-counts-by-day` (service-auth) via
+`src/lib/conversion-counts-by-day-client.ts` (fail-loud client) wrapped **fail-SOFT** in the route
+(`fetchConversionCountsByDaySoft`) — the observed conversion series is DISPLAY ENRICHMENT on the forecast
+graph (like the `/revenue` conversion-count tiles + `sequences`), so a lead-service blip degrades the two
+ACTUAL bars to null ("-", never a fabricated count) rather than 502-ing the whole graph. `clicks`/`opens`/
+`outreach` actuals are untouched. **Undated** conversions (`received_at IS NULL` — 0 in practice) are
+counted on `summary.undatedSignups` / `undatedFormSubmissions` — NEVER dropped, NEVER assigned a
+fabricated day in `days[]`. A per-day actual never exceeds the deduped total by construction
+(`sum(byDay) + undated === /conversion-counts total`). **PAST days are not in pipeline-activity's range
+(today→future); the dashboard fills past bars from the `/revenue` daily series and reads only
+pipeline-activity's TODAY bucket `.actual`** — so fixing today's `.actual` fixes the symptom; the
+`date <= today` guard keeps the logic correct if the range ever extends. Producer `conversion-counts-by-day`
+was staging-only at ship; the fail-soft client makes prod safe (fabrication removed → "-"), fully
+self-activating to real counts once lead-service promotes the endpoint to prod. (Set 2026-07-10.)
+
 ## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #346)
 
 `pipeline-activity.ts` (the budget→forecast endpoint) was the LAST `customerProfileId` / brand-persona
