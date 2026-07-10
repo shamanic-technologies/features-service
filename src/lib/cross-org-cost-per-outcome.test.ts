@@ -7,6 +7,7 @@ import {
   buildObjectiveAverages,
   buildLifetimeObjectiveAverages,
   buildCostPerOutcomeTrend,
+  recentWindowCostPerOutcome,
   buildWorkflowCostPerOutcome,
   meanFleetEconomics,
   OBJECTIVES,
@@ -250,6 +251,54 @@ describe("buildCostPerOutcomeTrend", () => {
   });
 });
 
+describe("recentWindowCostPerOutcome", () => {
+  const fleetEcon = buildLenientProjectionEconomics(FULL_ECON);
+  // 5 days of history, 2 clicks/day, $2 spend/day → CPC steady at $1; replies 1/day.
+  const spendByDay = new Map<string, number>([
+    ["2026-07-04", 2], ["2026-07-05", 2], ["2026-07-06", 2], ["2026-07-07", 2], ["2026-07-08", 2],
+  ]);
+  const outcomesByDay = new Map<string, DayOutcome>([
+    ["2026-07-04", { clicks: 2, replies: 1 }],
+    ["2026-07-05", { clicks: 2, replies: 1 }],
+    ["2026-07-06", { clicks: 2, replies: 1 }],
+    ["2026-07-07", { clicks: 2, replies: 1 }],
+    ["2026-07-08", { clicks: 2, replies: 1 }],
+  ]);
+
+  it("= the today-anchored point of the fleet trend (same window, one dynasty)", () => {
+    const recent = recentWindowCostPerOutcome({
+      objective: "websiteVisit", todayIso: "2026-07-08", windowOutcomes: 4, maxLookbackDays: 30, spendByDay, outcomesByDay, fleetEcon,
+    });
+    const trend = buildCostPerOutcomeTrend({
+      objective: "websiteVisit", todayIso: "2026-07-08", days: 1, windowOutcomes: 4, maxLookbackDays: 30, spendByDay, outcomesByDay, fleetEcon,
+    });
+    expect(recent).toBeCloseTo(trend[0].costPerOutcomeUsd!, 9);
+    expect(recent).toBeCloseTo(1, 6); // window spans 2 days: $4 / 4 clicks = $1
+  });
+
+  it("projects a projected objective (signup) through the fleet economics", () => {
+    const recent = recentWindowCostPerOutcome({
+      objective: "signup", todayIso: "2026-07-08", windowOutcomes: 4, maxLookbackDays: 30, spendByDay, outcomesByDay, fleetEcon,
+    });
+    const expected = projectOutcomeCosts(fleetEcon, { clickUsd: 1, replyUsd: 2 }).costPerSignupUsd;
+    expect(recent).toBeCloseTo(expected!, 6);
+  });
+
+  it("null (never a false $0) when the recent window has zero base outcomes", () => {
+    const recent = recentWindowCostPerOutcome({
+      objective: "websiteVisit", todayIso: "2026-07-08", windowOutcomes: 4, maxLookbackDays: 30, spendByDay: new Map(), outcomesByDay: new Map(), fleetEcon,
+    });
+    expect(recent).toBeNull();
+  });
+
+  it("null when fleet economics are absent (cold start)", () => {
+    const recent = recentWindowCostPerOutcome({
+      objective: "signup", todayIso: "2026-07-08", windowOutcomes: 4, maxLookbackDays: 30, spendByDay, outcomesByDay, fleetEcon: null,
+    });
+    expect(recent).toBeNull();
+  });
+});
+
 describe("buildWorkflowCostPerOutcome", () => {
   const fleetEcon = buildLenientProjectionEconomics(FULL_ECON);
 
@@ -283,6 +332,38 @@ describe("buildWorkflowCostPerOutcome", () => {
       projectedFloor: projectedCostPerOutcome,
     });
     expect(rows[0].costPerOutcomeUsd).toBeNull();
+  });
+
+  it("threads recentByDynasty onto each row; absent dynasty → recentCostPerOutcomeUsd null", () => {
+    const rows = buildWorkflowCostPerOutcome({
+      objective: "websiteVisit",
+      rows: [
+        { workflowDynastySlug: "a", workflowDynastyName: "A", spentUsd: 100, clicks: 50, replies: 0 },
+        { workflowDynastySlug: "b", workflowDynastyName: "B", spentUsd: 10, clicks: 5, replies: 0 },
+      ],
+      fleetParentClickUsd: 2,
+      fleetParentReplyUsd: 4,
+      fleetEcon,
+      projectedFloor: projectedCostPerOutcome,
+      recentByDynasty: new Map<string, number | null>([["a", 3.5]]), // only 'a' has a recent value
+    });
+    const a = rows.find((r) => r.workflowDynastySlug === "a")!;
+    const b = rows.find((r) => r.workflowDynastySlug === "b")!;
+    expect(a.recentCostPerOutcomeUsd).toBe(3.5); // recent distinct from lifetime (spentUsd/clicks = 2)
+    expect(a.costPerOutcomeUsd).toBe(2);
+    expect(b.recentCostPerOutcomeUsd).toBeNull(); // absent from the map → null
+  });
+
+  it("defaults recentCostPerOutcomeUsd to null when recentByDynasty is omitted", () => {
+    const rows = buildWorkflowCostPerOutcome({
+      objective: "websiteVisit",
+      rows: [{ workflowDynastySlug: "a", workflowDynastyName: "A", spentUsd: 10, clicks: 5, replies: 0 }],
+      fleetParentClickUsd: 2,
+      fleetParentReplyUsd: 4,
+      fleetEcon,
+      projectedFloor: projectedCostPerOutcome,
+    });
+    expect(rows[0].recentCostPerOutcomeUsd).toBeNull();
   });
 });
 

@@ -7,6 +7,7 @@ import {
   fetchPublicWorkflows,
   fetchPublicCosts,
   fetchPublicEmailStats,
+  fetchDynastySpendByDay,
   fetchPublicWorkflowEngagementLatency,
   fetchPublicJournalistsStats,
   fetchBrandInfoBatch,
@@ -21,6 +22,7 @@ import {
   buildCostPerOutcomeTrend,
   buildCostPerOutcomeDistribution,
   buildWorkflowCostPerOutcome,
+  recentWindowCostPerOutcome,
   fetchFleetBrandEconomics,
   fetchGoalBucketDataset,
   bucketBrandsForObjective,
@@ -30,6 +32,7 @@ import {
   normalizeObjective,
   type ObjectiveAverages,
   type TrendPoint,
+  type DayOutcome,
   type CostPerOutcomeDistribution,
   type BucketedBrand,
   type WorkflowCostRow,
@@ -991,6 +994,9 @@ export async function handleCostPerOutcomeTrend(
 interface WorkflowCostPerOutcomePayload {
   featureSlug: string;
   objective: string;
+  /** The trailing-window size (base outcomes) the per-row `recentCostPerOutcomeUsd` moving average targets
+   * — the SAME window semantics as /public/stats/cost-per-outcome-trend. */
+  windowOutcomes: number;
   workflows: WorkflowCostRow[];
 }
 
@@ -1004,6 +1010,7 @@ export function __resetWorkflowCostPerOutcomeCache(): void {
 export async function handleWorkflowCostPerOutcome(
   featureSlug: string | undefined,
   objectiveParam: string | undefined,
+  windowParam: string | undefined,
   res: import("express").Response,
 ): Promise<void> {
   if (!featureSlug) {
@@ -1022,7 +1029,12 @@ export async function handleWorkflowCostPerOutcome(
     return;
   }
 
-  const cacheKey = `wf-cpo:${featureSlug}:${objective}`;
+  // Same window sizing as the fleet cost-per-outcome trend (default 100 base outcomes, same clamp).
+  const parsedWindow = parseInt(windowParam ?? "", 10);
+  const windowOutcomes =
+    Number.isFinite(parsedWindow) && parsedWindow >= 1 ? Math.min(parsedWindow, MAX_WINDOW_OUTCOMES) : DEFAULT_WINDOW_OUTCOMES;
+
+  const cacheKey = `wf-cpo:${featureSlug}:${objective}:${windowOutcomes}`;
   const cached = getPublicCache<WorkflowCostPerOutcomePayload>(workflowCostPerOutcomeCache, cacheKey);
   if (cached) {
     res.json(cached);
@@ -1075,16 +1087,52 @@ export async function handleWorkflowCostPerOutcome(
   const fleetParentClickUsd = totalClicks > 0 && totalSpent > 0 ? totalSpent / totalClicks : null;
   const fleetParentReplyUsd = totalReplies > 0 && totalSpent > 0 ? totalSpent / totalReplies : null;
 
+  const fleetEcon = meanFleetEconomics(perBrandEconomics);
+  const todayIso = new Date().toISOString().slice(0, 10);
+
+  // The RECENT going rate per dynasty: fetch each dynasty's dated spend (runs timeseries,
+  // workflowDynastySlug filter) + dated outcomes (email groupBy=day, same filter), then reduce to the
+  // today-anchored trailing-window moving average — same window semantics as the fleet trend, scoped to
+  // the single dynasty. Concurrent across dynasties; null when a dynasty has no backed recent window.
+  const recentByDynasty = new Map<string, number | null>();
+  await Promise.all(
+    [...byDynasty.values()].map(async (r) => {
+      const [spendByDay, dayFields] = await Promise.all([
+        fetchDynastySpendByDay(featureSlug, r.workflowDynastySlug),
+        fetchPublicEmailStats(featureSlug, "day", undefined, r.workflowDynastySlug),
+      ]);
+      const outcomesByDay = new Map<string, DayOutcome>();
+      for (const [day, fields] of dayFields) {
+        if (day === "__total__") continue;
+        outcomesByDay.set(day, {
+          clicks: fields.recipientsClicked ?? 0,
+          replies: fields.recipientsRepliesPositive ?? 0,
+        });
+      }
+      const recent = recentWindowCostPerOutcome({
+        objective,
+        todayIso,
+        windowOutcomes,
+        maxLookbackDays: MAX_TREND_LOOKBACK_DAYS,
+        spendByDay,
+        outcomesByDay,
+        fleetEcon,
+      });
+      recentByDynasty.set(r.workflowDynastySlug, recent);
+    }),
+  );
+
   const rows = buildWorkflowCostPerOutcome({
     objective,
     rows: [...byDynasty.values()],
     fleetParentClickUsd,
     fleetParentReplyUsd,
-    fleetEcon: meanFleetEconomics(perBrandEconomics),
+    fleetEcon,
     projectedFloor: projectedCostPerOutcome,
+    recentByDynasty,
   });
 
-  const payload: WorkflowCostPerOutcomePayload = { featureSlug, objective, workflows: rows };
+  const payload: WorkflowCostPerOutcomePayload = { featureSlug, objective, windowOutcomes, workflows: rows };
   setPublicCache(workflowCostPerOutcomeCache, cacheKey, payload);
   res.json(payload);
 }
@@ -1467,6 +1515,7 @@ router.get("/public/stats/workflow-cost-per-outcome", async (req, res) => {
     await handleWorkflowCostPerOutcome(
       req.query.featureSlug as string | undefined,
       req.query.objective as string | undefined,
+      req.query.windowOutcomes as string | undefined,
       res,
     );
   } catch (error) {
