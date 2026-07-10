@@ -1138,41 +1138,60 @@ export async function handleWorkflowCostPerOutcome(
   if (!workflowRecentWarmInFlight.has(cacheKey)) {
     const warm = (async () => {
       const recentByDynasty = new Map<string, number | null>();
+      // PER-DYNASTY resilient (allSettled-style): each dynasty's dated fan-out is independently caught so
+      // ONE failing dynasty nulls only ITSELF, never the whole set (mirrors the stat-families resilience
+      // doctrine). This matters because the dated fetches currently 500/502 at the PRODUCER — runs-service
+      // timeseries + email-gateway /public/stats both resolve `workflowDynastySlug` through workflow-service
+      // `/workflows/dynasty/slugs`, which requires org/user/run identity a cross-org PUBLIC call cannot
+      // supply (features-service#526 — producer fix in workflow-service + runs + email-gateway). Until that
+      // lands every dynasty fails → every recent is null (correct: unbacked, never a false $0). Once the
+      // producers allow org-less dynasty resolution, each dynasty populates on its own the next warm — and a
+      // lone straggler/failure never re-nulls the other 24.
       await Promise.all(
         dynastyInputs.map(async (r) => {
-          const [spendByDay, dayFields] = await Promise.all([
-            fetchDynastySpendByDay(featureSlug, r.workflowDynastySlug),
-            fetchPublicEmailStats(featureSlug, "day", undefined, r.workflowDynastySlug),
-          ]);
-          const outcomesByDay = new Map<string, DayOutcome>();
-          for (const [day, fields] of dayFields) {
-            if (day === "__total__") continue;
-            outcomesByDay.set(day, {
-              clicks: fields.recipientsClicked ?? 0,
-              replies: fields.recipientsRepliesPositive ?? 0,
-            });
+          try {
+            const [spendByDay, dayFields] = await Promise.all([
+              fetchDynastySpendByDay(featureSlug, r.workflowDynastySlug),
+              fetchPublicEmailStats(featureSlug, "day", undefined, r.workflowDynastySlug),
+            ]);
+            const outcomesByDay = new Map<string, DayOutcome>();
+            for (const [day, fields] of dayFields) {
+              if (day === "__total__") continue;
+              outcomesByDay.set(day, {
+                clicks: fields.recipientsClicked ?? 0,
+                replies: fields.recipientsRepliesPositive ?? 0,
+              });
+            }
+            recentByDynasty.set(
+              r.workflowDynastySlug,
+              recentWindowCostPerOutcome({
+                objective,
+                todayIso,
+                windowOutcomes,
+                maxLookbackDays: MAX_TREND_LOOKBACK_DAYS,
+                spendByDay,
+                outcomesByDay,
+                fleetEcon,
+              }),
+            );
+          } catch (error) {
+            // Fail-soft per dynasty: log loud, leave this dynasty's recent null (never a false $0).
+            recentByDynasty.set(r.workflowDynastySlug, null);
+            console.error(
+              `[features-service] workflow-cost-per-outcome recent-rate warm failed for dynasty ${r.workflowDynastySlug} (${cacheKey}):`,
+              error,
+            );
           }
-          recentByDynasty.set(
-            r.workflowDynastySlug,
-            recentWindowCostPerOutcome({
-              objective,
-              todayIso,
-              windowOutcomes,
-              maxLookbackDays: MAX_TREND_LOOKBACK_DAYS,
-              spendByDay,
-              outcomesByDay,
-              fleetEcon,
-            }),
-          );
         }),
       );
-      // Overwrite the cache entry with the recent-populated rows (refreshes the TTL).
+      // Overwrite the cache entry with whatever populated (refreshes the TTL). Even an all-null warm is a
+      // valid overwrite — it records "attempted, unbacked" so the next miss doesn't refetch mid-TTL.
       setPublicCache(workflowCostPerOutcomeCache, cacheKey, buildPayload(recentByDynasty));
     })()
       .catch((error) => {
-        // Fail-soft: the recent rate is display enrichment beside the essential lifetime rows. A fan-out
-        // failure leaves recent=null (already served) and is logged loudly — it never 500s the endpoint.
-        console.error(`[features-service] workflow-cost-per-outcome recent-rate warm failed (${cacheKey}):`, error);
+        // Belt-and-suspenders: the per-dynasty catches above already fail-soft, so this only fires on a
+        // non-fetch bug. Never 500s the endpoint (the response was already sent).
+        console.error(`[features-service] workflow-cost-per-outcome recent-rate warm crashed (${cacheKey}):`, error);
       })
       .finally(() => {
         workflowRecentWarmInFlight.delete(cacheKey);
