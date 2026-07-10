@@ -29,6 +29,8 @@ process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.HUMAN_SERVICE_URL = "http://human:3000";
 process.env.HUMAN_SERVICE_API_KEY = "human-key";
+process.env.LEAD_SERVICE_URL = "http://lead:3000";
+process.env.LEAD_SERVICE_API_KEY = "lead-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
@@ -104,6 +106,13 @@ const DEFAULT_OUTCOMES: Record<string, Outcome> = {
 // audienceId -> cost cents (runs /v1/stats/costs groupBy=audienceId)
 const DEFAULT_AUDIENCE_COSTS: Record<string, string> = { "aud-a": "10000", "aud-b": "40000" };
 
+// lead-service conversion-counts-by-day default: a brand with ZERO real tracked conversions
+// (the AC2 verification-brand shape — byDay all-empty, undated all-zero).
+const EMPTY_CONVERSION_BY_DAY = {
+  byDay: { signup: {}, meeting_booked: {}, form_submission: {}, purchase: {} },
+  undated: { signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 },
+};
+
 function mockFetch(opts: {
   dailyBudgetCents?: string | number | null;
   economics?: unknown;
@@ -114,6 +123,8 @@ function mockFetch(opts: {
   outcomes?: Record<string, Outcome>;
   audienceCosts?: Record<string, string>;
   brandProfile?: unknown;
+  conversionByDay?: unknown;
+  conversionByDayStatus?: number;
 } = {}): void {
   vi.mocked(fetchWithRetry).mockImplementation(async (input, init) => {
     const rawInput = input as unknown;
@@ -122,6 +133,13 @@ function mockFetch(opts: {
     const members = opts.members ?? MEMBERS;
     const outcomes = opts.outcomes ?? DEFAULT_OUTCOMES;
     const audienceCosts = opts.audienceCosts ?? DEFAULT_AUDIENCE_COSTS;
+
+    // lead-service: REAL per-day attributed conversion counts (drives signup/form-submission .actual).
+    if (url.includes("/internal/brands/brand-1/conversion-counts-by-day")) {
+      const status = opts.conversionByDayStatus ?? 200;
+      const body = status === 200 ? (opts.conversionByDay ?? EMPTY_CONVERSION_BY_DAY) : { error: "lead-service down" };
+      return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+    }
 
     if (url.includes("/internal/brands/brand-1/daily-budget")) {
       return new Response(JSON.stringify({
@@ -253,13 +271,15 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(today.metrics.opens).toEqual({ actual: 1, expected: 5 });
     // best audience aud-a clickPerOutreach = clicked 1 / contacted 2 = 0.5; clicks = 10 * 0.5 = 5.
     expect(today.metrics.clicks).toEqual({ actual: 1, expected: 5 });
-    // signups expected = clicks 5 * 0.08; actual = clicks 1 * 0.08.
-    expect(today.metrics.signups).toEqual({ actual: 0.08, expected: 0.4, conversionPct: 8 });
-    // this brand carries no visitToFormSubmissionPct → the form-submission series is all-null (never a false 0).
-    expect(today.metrics.formSubmissions).toEqual({ actual: null, expected: null, conversionPct: null });
+    // signups EXPECTED = clicks 5 * 0.08 (projection). ACTUAL = the REAL per-day conversion count from
+    // lead-service (0 here — no tracked signups today), NOT clicks × rate.
+    expect(today.metrics.signups).toEqual({ actual: 0, expected: 0.4, conversionPct: 8 });
+    // this brand carries no visitToFormSubmissionPct → expected null; actual = the REAL observed count (0).
+    expect(today.metrics.formSubmissions).toEqual({ actual: 0, expected: null, conversionPct: null });
 
     const tomorrow = res.body.days[1];
     expect(tomorrow.metrics.outreach).toEqual({ actual: null, expected: 10 });
+    // future days keep the forecast in .expected; .actual is null (no observed conversions yet).
     expect(tomorrow.metrics.signups).toEqual({ actual: null, expected: 0.4, conversionPct: 8 });
     expect(tomorrow.metrics.formSubmissions).toEqual({ actual: null, expected: null, conversionPct: null });
 
@@ -268,6 +288,8 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
       openRatePct: 50,
       clickToSignupPct: 8,
       clickToFormSubmissionPct: null,
+      undatedSignups: 0,
+      undatedFormSubmissions: 0,
     });
 
     // candidate set sourced from human-service active audiences (not brand personas).
@@ -332,11 +354,11 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(res.body.days[0].metrics.outreach).toEqual({ actual: 1, expected: null });
     expect(res.body.days[0].metrics.opens).toEqual({ actual: 1, expected: null });
     expect(res.body.days[0].metrics.clicks).toEqual({ actual: 1, expected: null });
-    expect(res.body.days[0].metrics.signups).toEqual({ actual: 0.08, expected: null, conversionPct: 8 });
+    expect(res.body.days[0].metrics.signups).toEqual({ actual: 0, expected: null, conversionPct: 8 });
     expect(res.body.summary.dailyBudgetUsd).toBeNull();
   });
 
-  it("projects the form-submission series off clicks when the brand carries visitToFormSubmissionPct", async () => {
+  it("projects the form-submission EXPECTED off clicks, but takes .actual from real observed conversions", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
     // Same brand as the happy path, but the effective economics now carries the visit→form rate (15%).
@@ -351,11 +373,96 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
       .expect(200);
 
     const today = res.body.days[0];
-    // clicks: actual 1, expected 5 (unchanged). form submissions = clicks × 0.15.
-    expect(today.metrics.formSubmissions).toEqual({ actual: 0.15, expected: 0.75, conversionPct: 15 });
+    // EXPECTED (future forecast, also shown today) = clicks 5 × 0.15 = 0.75 (projection stays here).
+    // ACTUAL = the REAL observed count (0 tracked form submissions), NOT clicks × 0.15.
+    expect(today.metrics.formSubmissions).toEqual({ actual: 0, expected: 0.75, conversionPct: 15 });
     const tomorrow = res.body.days[1];
     expect(tomorrow.metrics.formSubmissions).toEqual({ actual: null, expected: 0.75, conversionPct: 15 });
     expect(res.body.summary.clickToFormSubmissionPct).toBe(15);
+  });
+
+  it("AC2: 0 real tracked form submissions → today's form-submission .actual is 0, never clicks × rate", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+    // A form brand (25% rate) with 5 clicks today: the OLD code fabricated actual = 5 × 0.25 = 1.25 ("1").
+    // With 0 real tracked conversions the observed .actual must be 0.
+    mockFetch({
+      economics: { ...ECONOMICS, visitToFormSubmissionPct: 25 },
+      dailyStats: [{ key: "2026-06-17", broadcast: { recipientStats: { contacted: 20, sent: 20, opened: 10, clicked: 5 } } }],
+      conversionByDay: EMPTY_CONVERSION_BY_DAY,
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&timezone=UTC")
+      .set(AUTH)
+      .expect(200);
+
+    const today = res.body.days[0];
+    expect(today.metrics.clicks.actual).toBe(5); // real clicks today
+    expect(today.metrics.formSubmissions.actual).toBe(0); // NOT 1.25 — coherent with revenue spend.formSubmissionsCount (0)
+    expect(today.metrics.formSubmissions.expected).toBeGreaterThan(0); // projection lives only in .expected
+    expect(res.body.summary.undatedFormSubmissions).toBe(0);
+  });
+
+  it("sources signup + form-submission .actual from the REAL per-day conversion counts (today), never clicks × rate", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+    // Only 1 click today, but 3 real tracked signups + 2 form submissions today → .actual is the REAL count,
+    // proving it is NOT derived from clicks (clicks × any rate could never yield 3).
+    mockFetch({
+      economics: { ...ECONOMICS, visitToFormSubmissionPct: 15 },
+      dailyStats: [{ key: "2026-06-17", broadcast: { recipientStats: { contacted: 2, sent: 2, opened: 1, clicked: 1 } } }],
+      conversionByDay: {
+        byDay: {
+          signup: { "2026-06-17": 3, "2026-06-15": 9 },
+          meeting_booked: {},
+          form_submission: { "2026-06-17": 2 },
+          purchase: {},
+        },
+        undated: { signup: 1, meeting_booked: 0, form_submission: 4, purchase: 0 },
+      },
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&timezone=UTC")
+      .set(AUTH)
+      .expect(200);
+
+    const today = res.body.days[0];
+    expect(today.metrics.clicks.actual).toBe(1);
+    // REAL observed today: 3 signups, 2 form submissions (a past day's 9 signups is NOT in the today+future range).
+    expect(today.metrics.signups.actual).toBe(3);
+    expect(today.metrics.formSubmissions.actual).toBe(2);
+    // a per-day actual never exceeds the deduped attributed total (AC5): 3 <= 3+9+1 = 13.
+    // projection still populates .expected.
+    expect(today.metrics.signups.expected).toBeGreaterThan(0);
+    // undated conversions are counted on the summary — never dropped, never assigned a fabricated day.
+    expect(res.body.summary.undatedSignups).toBe(1);
+    expect(res.body.summary.undatedFormSubmissions).toBe(4);
+  });
+
+  it("degrades signup/form-submission .actual to null (never a fabricated count) when lead-service is unavailable", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+    mockFetch({
+      economics: { ...ECONOMICS, visitToFormSubmissionPct: 15 },
+      dailyStats: [{ key: "2026-06-17", broadcast: { recipientStats: { contacted: 2, sent: 2, opened: 1, clicked: 1 } } }],
+      conversionByDayStatus: 500, // lead-service down → soft-degrade to absent
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&timezone=UTC")
+      .set(AUTH)
+      .expect(200); // graph still renders — conversion actual is display enrichment, not a 502
+
+    const today = res.body.days[0];
+    // observed series absent → .actual is null ("-"), NOT a fabricated clicks × rate. Forecast survives.
+    expect(today.metrics.signups.actual).toBeNull();
+    expect(today.metrics.formSubmissions.actual).toBeNull();
+    expect(today.metrics.formSubmissions.expected).toBeGreaterThan(0);
+    expect(today.metrics.clicks.actual).toBe(1); // outreach/opens/clicks actuals unchanged
+    expect(res.body.summary.undatedSignups).toBeNull();
+    expect(res.body.summary.undatedFormSubmissions).toBeNull();
   });
 
   it("projects expected values from brand daily budget, not campaign status", async () => {
@@ -405,7 +512,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(res.body.days[0].metrics.opens).toEqual({ actual: 1, expected: 4.5 });
     // workflow click rate 20/200 = 0.1 -> 10 * 0.1 = 1.
     expect(res.body.days[0].metrics.clicks).toEqual({ actual: 1, expected: 1 });
-    expect(res.body.days[0].metrics.signups).toEqual({ actual: 0.08, expected: 0.08, conversionPct: 8 });
+    expect(res.body.days[0].metrics.signups).toEqual({ actual: 0, expected: 0.08, conversionPct: 8 });
     expect(res.body.summary.openRatePct).toBe(45);
   });
 
