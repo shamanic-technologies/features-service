@@ -295,6 +295,8 @@ import {
   mergeSpendByDay,
   mergeOutcomesByDay,
   buildBucketedLifetimeAverages,
+  perBrandCostPerOutcome,
+  buildCostPerOutcomeDistribution,
   type BucketedBrand,
 } from "./cross-org-cost-per-outcome.js";
 import { matchOptimizationGoal, type Goal } from "./goals.js";
@@ -404,5 +406,94 @@ describe("buildBucketedLifetimeAverages", () => {
     const brands = [brand("b-visit", "websiteVisit", 100, 50, 0)];
     const avgs = buildBucketedLifetimeAverages(brands);
     expect(avgs.positiveReply).toBeNull(); // no reply-goal brand
+  });
+});
+
+describe("perBrandCostPerOutcome", () => {
+  it("one data point per brand = its pooled cost-per-outcome (CPC), 0-outcome brands dropped", () => {
+    const brands = [
+      brand("b1", "websiteVisit", 100, 50, 0), // CPC 2
+      brand("b2", "websiteVisit", 300, 50, 0), // CPC 6
+      brand("b3", "websiteVisit", 100, 0, 0), // 0 clicks → no data point (never a false $0)
+    ];
+    const values = perBrandCostPerOutcome(brands, "websiteVisit").sort((a, b) => a - b);
+    expect(values).toEqual([2, 6]);
+  });
+
+  it("positiveReply uses each brand's CPPR", () => {
+    const brands = [
+      brand("b1", "positiveReply", 200, 0, 10), // CPPR 20
+      brand("b2", "positiveReply", 300, 0, 10), // CPPR 30
+    ];
+    const values = perBrandCostPerOutcome(brands, "positiveReply").sort((a, b) => a - b);
+    expect(values).toEqual([20, 30]);
+  });
+});
+
+describe("buildCostPerOutcomeDistribution", () => {
+  const visitBrands = (cpcs: number[]): BucketedBrand[] =>
+    // clicks fixed at 100 → spend = cpc*100 gives that CPC
+    cpcs.map((cpc, i) => brand(`b${i}`, "websiteVisit", cpc * 100, 100, 0));
+
+  it("empty/soft below the minimum brand count — buckets [] + all scalars null, brandCount reported", () => {
+    const dist = buildCostPerOutcomeDistribution({ objective: "websiteVisit", brands: visitBrands([5]), bucketCount: 10, minBrands: 2 });
+    expect(dist.brandCount).toBe(1);
+    expect(dist.buckets).toEqual([]);
+    expect(dist.mean).toBeNull();
+    expect(dist.median).toBeNull();
+    expect(dist.min).toBeNull();
+    expect(dist.max).toBeNull();
+    expect(dist.stddev).toBeNull();
+  });
+
+  it("histogram bars + central tendency + spread over per-brand CPCs", () => {
+    // CPCs 1..10 → mean 5.5, median 5.5, min 1, max 10
+    const dist = buildCostPerOutcomeDistribution({
+      objective: "websiteVisit",
+      brands: visitBrands([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+      bucketCount: 10,
+      minBrands: 2,
+    });
+    expect(dist.brandCount).toBe(10);
+    expect(dist.mean).toBeCloseTo(5.5, 6);
+    expect(dist.median).toBeCloseTo(5.5, 6);
+    expect(dist.min).toBe(1);
+    expect(dist.max).toBe(10);
+    expect(dist.p25).toBeCloseTo(3.25, 6);
+    expect(dist.p75).toBeCloseTo(7.75, 6);
+    expect(dist.buckets).toHaveLength(10);
+    // every value binned exactly once — counts sum to brandCount, no data escapes the histogram
+    expect(dist.buckets.reduce((a, b) => a + b.count, 0)).toBe(10);
+    // first bar starts at min, last bar ends at max
+    expect(dist.buckets[0].minUsd).toBeCloseTo(1, 6);
+    expect(dist.buckets[9].maxUsd).toBeCloseTo(10, 6);
+  });
+
+  it("all-equal values collapse to a single bar (max == min)", () => {
+    const dist = buildCostPerOutcomeDistribution({ objective: "websiteVisit", brands: visitBrands([4, 4, 4]), bucketCount: 10, minBrands: 2 });
+    expect(dist.brandCount).toBe(3);
+    expect(dist.buckets).toEqual([{ minUsd: 4, maxUsd: 4, count: 3 }]);
+    expect(dist.mean).toBe(4);
+    expect(dist.stddev).toBe(0);
+    expect(dist.min).toBe(4);
+    expect(dist.max).toBe(4);
+  });
+
+  it("goal-bucketed inputs excluded upstream: callers pass bucketBrandsForObjective — off-goal brands never contribute", () => {
+    // a positiveReply brand carries no CPC data point even if it has spend
+    const brands = [
+      brand("b-visit-1", "websiteVisit", 200, 100, 0), // CPC 2
+      brand("b-visit-2", "websiteVisit", 600, 100, 0), // CPC 6
+      brand("b-reply", "positiveReply", 9999, 0, 40), // 0 clicks → excluded from CPC
+    ];
+    const dist = buildCostPerOutcomeDistribution({
+      objective: "websiteVisit",
+      brands: bucketBrandsForObjective(brands, "websiteVisit"),
+      bucketCount: 5,
+      minBrands: 2,
+    });
+    expect(dist.brandCount).toBe(2);
+    expect(dist.min).toBe(2);
+    expect(dist.max).toBe(6);
   });
 });

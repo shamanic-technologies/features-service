@@ -531,6 +531,151 @@ export function buildBucketedLifetimeAverages(brands: BucketedBrand[]): Objectiv
   return objectives;
 }
 
+// ── Cost-per-outcome DISTRIBUTION (per-brand histogram + central tendency + spread) ───────────
+//
+// The staff/marketing "going rate" view: not one flat average but the SPREAD of an objective's
+// cost-per-outcome ACROSS the brands the fleet runs (a cheap tail, a bulk, an expensive tail). The
+// distribution UNIT is the BRAND — each brand contributes ONE data point = its pooled all-history
+// cost-per-outcome (its total spend ÷ its total outcomes, pushed through the objective's cost math),
+// exactly the per-brand version of the lifetime pooled number. Goal-bucketed like the trend/lifetime
+// surfaces (a brand feeds an objective only when its optimization goal is in that objective's bucket),
+// so the set of contributing brands agrees with those surfaces by construction.
+//
+// The response carries ONLY aggregate histogram buckets + summary stats — NEVER per-brand values or
+// ids — so a public (no-auth) caller sees the spread without any brand's individual cost being exposed.
+
+/** One histogram bar: the count of brands whose cost-per-outcome falls in [minUsd, maxUsd). */
+export interface DistributionBucket {
+  /** Lower edge of the bar (USD, inclusive). */
+  minUsd: number;
+  /** Upper edge of the bar (USD). Exclusive except on the LAST bar, where the max value lands. */
+  maxUsd: number;
+  /** Number of brands whose per-brand cost-per-outcome falls in this bar. */
+  count: number;
+}
+
+export interface CostPerOutcomeDistribution {
+  /** Number of brands that contributed a usable ( > 0 ) per-brand cost-per-outcome data point. */
+  brandCount: number;
+  /** Histogram bars over [min, max] (empty when brandCount < the minimum to form a distribution). */
+  buckets: DistributionBucket[];
+  /** Unweighted mean of the per-brand costs (the "going rate" across brands). Null under the minimum. */
+  mean: number | null;
+  /** Median per-brand cost (50th percentile, linear-interpolated). Null under the minimum. */
+  median: number | null;
+  /** Cheapest brand's cost-per-outcome (the cheap tail). Null under the minimum. */
+  min: number | null;
+  /** Most expensive brand's cost-per-outcome (the expensive tail). Null under the minimum. */
+  max: number | null;
+  /** 25th percentile — the lower edge of the bulk. Null under the minimum. */
+  p25: number | null;
+  /** 75th percentile — the upper edge of the bulk. Null under the minimum. */
+  p75: number | null;
+  /** Population standard deviation of the per-brand costs (a scalar sense of the spread). Null under the minimum. */
+  stddev: number | null;
+}
+
+/** Linear-interpolated quantile of a NON-EMPTY ascending-sorted array (q in [0,1]). */
+function quantile(sorted: number[], q: number): number {
+  if (sorted.length === 1) return sorted[0];
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
+/**
+ * Bin an ascending-sorted, non-empty value array into `bucketCount` equal-width bars over [min, max].
+ * All values equal (max == min) → a single bar holding every value. The max value lands in the LAST
+ * bar (its upper edge is inclusive) so no data point falls outside the histogram.
+ */
+function histogram(sorted: number[], bucketCount: number): DistributionBucket[] {
+  const min = sorted[0];
+  const max = sorted[sorted.length - 1];
+  if (max === min) return [{ minUsd: min, maxUsd: max, count: sorted.length }];
+
+  const width = (max - min) / bucketCount;
+  const buckets: DistributionBucket[] = [];
+  for (let i = 0; i < bucketCount; i++) {
+    buckets.push({ minUsd: min + i * width, maxUsd: min + (i + 1) * width, count: 0 });
+  }
+  for (const v of sorted) {
+    let idx = Math.floor((v - min) / width);
+    if (idx >= bucketCount) idx = bucketCount - 1; // the max value lands in the last bar
+    if (idx < 0) idx = 0;
+    buckets[idx].count += 1;
+  }
+  return buckets;
+}
+
+/**
+ * Per-brand pooled all-history cost-per-outcome for an objective, over a set of (already goal-bucketed)
+ * brands: sum each brand's spend + clicks / replies over all days, form its unit costs, and push through
+ * `objectiveCostPerOutcome` (websiteVisit / positiveReply = the brand's CPC / CPPR; the rest project
+ * through the brand's OWN economics). A brand whose cost is null or ≤ 0 (0 outcomes, or an absent rate)
+ * contributes NO data point — never a false $0. Returns one number per contributing brand (unsorted).
+ */
+export function perBrandCostPerOutcome(brands: BucketedBrand[], objective: Goal): number[] {
+  const values: number[] = [];
+  for (const b of brands) {
+    let spend = 0;
+    let clicks = 0;
+    let replies = 0;
+    for (const s of b.spendByDay.values()) spend += s;
+    for (const o of b.outcomesByDay.values()) {
+      clicks += o.clicks;
+      replies += o.replies;
+    }
+    const unitCosts: ProjectionUnitCosts = {
+      clickUsd: clicks > 0 && spend > 0 ? spend / clicks : null,
+      replyUsd: replies > 0 && spend > 0 ? spend / replies : null,
+    };
+    const cost = objectiveCostPerOutcome(objective, unitCosts, buildLenientProjectionEconomics(b.economics));
+    if (cost != null && cost > 0) values.push(cost);
+  }
+  return values;
+}
+
+/**
+ * The cross-org DISTRIBUTION of per-brand cost-per-outcome for ONE objective: a histogram (equal-width
+ * bars + counts) plus the central tendency (mean, median) and the spread (min / p25 / p75 / max / stddev).
+ * The unit is the BRAND. `brands` should already be the objective's goal bucket (`bucketBrandsForObjective`).
+ *
+ * Empty/soft below `minBrands`: fewer than `minBrands` usable data points cannot form a meaningful spread
+ * (and could reveal an individual brand's cost on a public surface), so buckets = [] and every scalar is
+ * null — the consumer shows "not enough data yet". `brandCount` is always the true count of data points.
+ * Pure.
+ */
+export function buildCostPerOutcomeDistribution(params: {
+  objective: Goal;
+  brands: BucketedBrand[];
+  bucketCount: number;
+  minBrands: number;
+}): CostPerOutcomeDistribution {
+  const { objective, brands, bucketCount, minBrands } = params;
+  const values = perBrandCostPerOutcome(brands, objective).sort((a, b) => a - b);
+  const brandCount = values.length;
+
+  if (brandCount < minBrands) {
+    return { brandCount, buckets: [], mean: null, median: null, min: null, max: null, p25: null, p75: null, stddev: null };
+  }
+
+  const meanVal = values.reduce((a, b) => a + b, 0) / brandCount;
+  const variance = values.reduce((a, v) => a + (v - meanVal) ** 2, 0) / brandCount;
+  return {
+    brandCount,
+    buckets: histogram(values, bucketCount),
+    mean: meanVal,
+    median: quantile(values, 0.5),
+    min: values[0],
+    max: values[brandCount - 1],
+    p25: quantile(values, 0.25),
+    p75: quantile(values, 0.75),
+    stddev: Math.sqrt(variance),
+  };
+}
+
 /**
  * Fetch the goal-bucketed per-brand dataset for a feature (cross-org): enumerate the feature's distinct
  * brands, resolve each brand's saved economics + optimization goal, and fetch each brand's dated spend

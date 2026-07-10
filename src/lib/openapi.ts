@@ -1074,6 +1074,26 @@ const costPerOutcomeLifetimeResponseSchema = z.object({
   brandCount: z.number().int().describe("Number of client brands with usable economics that backed the fleet-mean projection."),
 });
 
+const costPerOutcomeDistributionResponseSchema = z.object({
+  featureSlug: z.string(),
+  objective: z.string().describe("Canonical camelCase objective the distribution is for."),
+  unit: z.literal("brand").describe("Each data point is one brand's pooled all-history cost-per-outcome."),
+  bucketCount: z.number().int().describe("Number of equal-width histogram bars requested (may collapse to 1 when all values are equal)."),
+  brandCount: z.number().int().describe("Number of brands that contributed a usable ( > 0 ) per-brand cost-per-outcome data point."),
+  buckets: z.array(z.object({
+    minUsd: z.number().describe("Lower edge of the bar (USD, inclusive)."),
+    maxUsd: z.number().describe("Upper edge of the bar (USD). Exclusive except on the last bar, where the max value lands."),
+    count: z.number().int().describe("Number of brands whose per-brand cost-per-outcome falls in this bar."),
+  })).describe("Histogram bars over [min, max]. Empty when brandCount is below the minimum to form a distribution."),
+  mean: z.number().nullable().describe("Unweighted mean of the per-brand costs (the going rate across brands). Null when insufficient data — never a false $0."),
+  median: z.number().nullable().describe("Median per-brand cost (50th percentile). Null when insufficient data."),
+  min: z.number().nullable().describe("Cheapest brand's cost-per-outcome (the cheap tail). Null when insufficient data."),
+  max: z.number().nullable().describe("Most expensive brand's cost-per-outcome (the expensive tail). Null when insufficient data."),
+  p25: z.number().nullable().describe("25th percentile — lower edge of the bulk. Null when insufficient data."),
+  p75: z.number().nullable().describe("75th percentile — upper edge of the bulk. Null when insufficient data."),
+  stddev: z.number().nullable().describe("Population standard deviation of the per-brand costs (a scalar sense of the spread). Null when insufficient data."),
+});
+
 registry.registerPath({
   method: "get",
   path: "/public/stats/cost-projection",
@@ -1158,6 +1178,29 @@ registry.registerPath({
   responses: {
     200: { description: "Lifetime cross-org average cost-per-outcome per objective", content: { "application/json": { schema: costPerOutcomeLifetimeResponseSchema } } },
     400: { description: "Missing parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/cost-per-outcome-distribution ──────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/cost-per-outcome-distribution",
+  summary: "Cross-org distribution (histogram) of cost-per-outcome across brands for an objective (public, no auth)",
+  description:
+    "Cross-org (fleet-wide) DISTRIBUTION of a feature's cost-per-outcome for ONE objective — the spread ACROSS the brands the fleet runs, so a consumer can draw a histogram (equal-width bars + counts) plus the central tendency (mean, median) and the spread (min / p25 / p75 / max / stddev). The unit is the BRAND: each brand contributes one data point = its pooled all-history cost-per-outcome, goal-bucketed exactly like /public/stats/cost-per-outcome-trend and -lifetime. The payload carries only aggregate buckets + summary stats (no per-brand value or id). Returned empty/soft (buckets: [], scalars null) when fewer than 2 brands have a usable cost — never a false $0. NOTE the mean/median here are the UNWEIGHTED per-brand going rate, which legitimately differs from -lifetime's spend-weighted pooled average.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string().describe("Feature slug (required)."),
+      objective: objectiveQueryParam,
+      buckets: z.string().optional().describe("Number of equal-width histogram bars (default 10, max 50)."),
+    }),
+  },
+  responses: {
+    200: { description: "Cross-org distribution of cost-per-outcome across brands", content: { "application/json": { schema: costPerOutcomeDistributionResponseSchema } } },
+    400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
   },
 });
