@@ -7,6 +7,7 @@ import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, type ProjectionEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { parsePricing } from "../lib/pricing.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, type SingleStepGoal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
@@ -271,6 +272,12 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       : "meetingBooked";
   const budgetUsd = budgetRaw != null && budgetRaw !== "" ? Number(budgetRaw) : null;
 
+  // GROSS (default) vs NET pricing. Omitted → gross → byte-identical to today.
+  const pricing = parsePricing(req.query.pricing);
+  if (pricing === null) {
+    return res.status(400).json({ error: "pricing must be one of: gross, net" });
+  }
+
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) {
@@ -280,11 +287,15 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // recommendedBudgetUsd cover the projection) → excluded from the cache key.
     void budgetUsd;
 
+    // NET reads runs#179's frozen net cost fields at each grain source (no billing call, no read-time
+    // multiply); GROSS is byte-identical. The selector is threaded into the grain fetchers below; a NET
+    // request where a frozen net figure is absent throws → 502 (via catch), never cached, no fallback.
+
     // Gold SWR: the heavy cross-org + brand + audience fan-out runs off the request path ~once per
-    // TTL; keyed on the inputs that shape the body (orgId + brand + goal). Response is byte-identical.
+    // TTL; keyed on the inputs that shape the body (orgId + brand + goal + pricing).
     const response = await servedCached({
       view: "workflow-projection",
-      scopeKey: buildScopeKey(featureSlug, { orgId, brandId, objective }),
+      scopeKey: buildScopeKey(featureSlug, { orgId, brandId, objective, pricing }),
       orgId,
       compute: async (): Promise<WorkflowProjectionResponse> => {
     const identity: Identity = { orgId, userId, runId, featureSlug: headerFeatureSlug };
@@ -297,11 +308,11 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // lossy workflowDynastySlug regroup, which collapses the co-grouped audienceId).
     const slugToDynasty = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
     const [costGroups, emailStats, effective, brandGrain, audienceEvidence] = await Promise.all([
-      fetchPublicCosts(featureSlug, "workflowSlug"),
+      fetchPublicCosts(featureSlug, "workflowSlug", pricing),
       fetchPublicEmailStats(featureSlug, "workflowSlug"),
       fetchEffectiveEconomics(brandId, identity),
-      fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity),
-      fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty),
+      fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing),
+      fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing),
     ]);
     const economics = effective.economics;
 
@@ -348,6 +359,10 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         }
       : null;
 
+    // Each grain's evidence cost is ALREADY gross-or-net: the grain fetchers selected runs#179's frozen
+    // net twin (or the gross field) at the source per `pricing`, so the whole crossOrg→brand→audience
+    // ladder is on one basis end to end (a mixed gross/net cascade would be incoherent). No post-hoc
+    // multiply here — buildGrainBlock consumes the evidence as-is.
     const buildBlock = (
       ev: WorkflowGrainEvidence | AudienceGrainEvidence,
       parentUnitCosts: GrainUnitCosts | null = null,

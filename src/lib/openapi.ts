@@ -221,6 +221,7 @@ registry.registerPath({
       campaignId: z.string().optional(),
       workflowSlug: z.string().optional(),
       workflowDynastySlug: z.string().optional(),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric in the response (cost, costPer*Cents). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (the discount is frozen at cost-declaration time; features-service does NOT recompute it); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (counts, rates) are identical either way."),
     }),
   },
   responses: {
@@ -436,11 +437,12 @@ registry.registerPath({
       campaignId: z.string().optional().describe("Optional campaign drill-down (ignored when groupBy=campaignId)."),
       groupBy: z.enum(["campaignId"]).optional().describe("When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview."),
       lens: z.enum(["signups", "booked-meetings", "sales", "website_visits", "positive_replies"]).optional().describe("Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), sales=click and/or positive reply (combined-OR paid-close), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (spend block, costEconomics actualCostUsd, CAC, ROI, cps/cpsm/cpfs). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (counts, rates, pipeline revenue) are identical either way."),
     }),
   },
   responses: {
     200: { description: "Feature revenue (overview, or grouped when groupBy=campaignId; lensed when ?lens= is set)", content: { "application/json": { schema: z.union([featureRevenueResponseRef, featureRevenueGroupedResponseRef]) } } },
-    400: { description: "Missing brandId or invalid lens value", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing brandId, invalid lens, or invalid pricing value", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },
@@ -537,6 +539,7 @@ registry.registerPath({
       goal: z.string().optional().describe("Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase), snake (website_visits/positive_replies/form_submissions), and kebab. Also accepted via `objective`. Defaults to meeting-booked."),
       objective: z.string().optional().describe("Alias of `goal` (snake/kebab spelling). Either param is accepted."),
       budgetUsd: z.string().optional().describe("Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface)."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (each grain's unitCosts + projected cost-per-outcome, resolved.costPerOutcomeUsd, roiMultiple, cacPct, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the discounted figures, sourced from runs-service's FROZEN net cost amounts at every grain of the crossOrg→brand→audience ladder (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. Non-money fields (counts, rates, economics rates) are identical either way."),
     }),
   },
   responses: {
@@ -555,11 +558,13 @@ const pipelineMetricSchema = z.object({
 });
 
 const pipelineSignupMetricSchema = pipelineMetricSchema.extend({
-  conversionPct: z.number().nullable().describe("visitToSignupPct used for signup projection. Null when brand economics are unavailable."),
+  actual: z.number().nullable().describe("Signup ACTUAL: the REAL, deduped, attributed per-day conversion count from lead-service (NOT a clicks × rate projection). Populated for today + past days; null on future days (forecast only) and when the observed series degraded (lead-service unavailable)."),
+  conversionPct: z.number().nullable().describe("visitToSignupPct used for the signup projection in `.expected`. Null when brand economics are unavailable."),
 });
 
 const pipelineFormSubmissionMetricSchema = pipelineMetricSchema.extend({
-  conversionPct: z.number().nullable().describe("visitToFormSubmissionPct used for form-submission projection. Null when brand economics are unavailable OR the brand does not carry a form-submission rate (non-form brand)."),
+  actual: z.number().nullable().describe("Form-submission ACTUAL: the REAL, deduped, attributed per-day conversion count from lead-service (NOT a clicks × rate projection). Populated for today + past days; null on future days (forecast only) and when the observed series degraded (lead-service unavailable)."),
+  conversionPct: z.number().nullable().describe("visitToFormSubmissionPct used for the form-submission projection in `.expected`. Null when brand economics are unavailable OR the brand does not carry a form-submission rate (non-form brand)."),
 });
 
 const pipelineActivityDaySchema = z.object({
@@ -570,7 +575,7 @@ const pipelineActivityDaySchema = z.object({
     opens: pipelineMetricSchema,
     clicks: pipelineMetricSchema,
     signups: pipelineSignupMetricSchema,
-    formSubmissions: pipelineFormSubmissionMetricSchema.describe("Form-submission daily bar — the visit-driven sibling of signups. actual (today) = today's clicks × visitToFormSubmissionPct/100; expected = expected clicks × the same rate. Null values when the brand has no form-submission rate."),
+    formSubmissions: pipelineFormSubmissionMetricSchema.describe("Form-submission daily bar — the visit-driven sibling of signups. actual (today + past days) = the REAL per-day form-submission conversion count from lead-service; expected (future days) = expected clicks × visitToFormSubmissionPct/100."),
   }),
 });
 
@@ -585,6 +590,8 @@ const pipelineActivityResponseSchema = z.object({
     openRatePct: z.number().nullable().describe("Observed audience + workflow broadcast open rate used for expected opens. Null when producer evidence is unavailable."),
     clickToSignupPct: z.number().nullable().describe("Brand effective visit-to-signup conversion percent. Null when brand economics are unavailable."),
     clickToFormSubmissionPct: z.number().nullable().describe("Brand effective visit-to-form-submission conversion percent (the form-submission projection rate). Null when brand economics are unavailable OR the brand does not carry a form-submission rate."),
+    undatedSignups: z.number().nullable().describe("REAL attributed signup conversions whose day cannot be determined (received_at IS NULL — 0 in practice). Counted here so they are never dropped and never assigned a fabricated day in days[]. Null when the observed series degraded (lead-service unavailable)."),
+    undatedFormSubmissions: z.number().nullable().describe("REAL attributed form-submission conversions whose day cannot be determined (received_at IS NULL — 0 in practice). Counted here so they are never dropped and never assigned a fabricated day in days[]. Null when the observed series degraded (lead-service unavailable)."),
   }),
 });
 
@@ -596,7 +603,7 @@ registry.registerPath({
   summary: "Seven-day pipeline activity buckets for the brand overview",
   description:
     "Returns today plus future daily buckets for the dashboard grouped bar chart. Today includes actual-so-far from dated broadcast email events and the same daily expected values shown on future days. " +
-    "Expected outreach uses the org-scoped brand daily budget divided by the recommended workflow's global cost per contacted recipient. Opens and clicks use observed rates for the selected active audience + workflow; signups are clicks × the brand's effective visitToSignupPct / 100. Campaign status and campaign budget do not control this forecast. Missing producer inputs return null for the affected expected values.",
+    "Expected outreach uses the org-scoped brand daily budget divided by the recommended workflow's global cost per contacted recipient. Opens and clicks use observed rates for the selected active audience + workflow; the signup/form-submission EXPECTED (future days) is clicks × the brand's effective visit→signup/visit→form rate. The signup/form-submission ACTUAL (today + past days) is the REAL per-day conversion count from lead-service's conversion tracker — never a projection. Campaign status and campaign budget do not control this forecast. Missing producer inputs return null for the affected expected values.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
@@ -692,6 +699,7 @@ registry.registerPath({
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
       goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"]).describe("Active optimization goal (required). signup + websiteVisit sort by CPC; meetingBooked / purchase / positiveReply sort by CPPR. snake_case single-step spellings (website_visits / positive_replies) are also accepted."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every per-audience MONEY metric (metrics.cpcCents / cpprCents / cpfsCents + the brand-parent cascade). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (evidence counts, conversion.rate) are identical either way. NOTE: campaign-service reads metrics.cpcCents byte-equal — it does NOT send pricing, so it always gets gross."),
       brandProfileId: z.string().optional().describe("Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted."),
       limit: z.string().optional().describe("Optional positive integer row limit after sorting."),
       statuses: z
@@ -965,7 +973,7 @@ const accountRowSchema = z.object({
   dailyBudgetUsd: z.number().nullable().describe("Brand's configured daily spend ceiling in USD. Null when unset/paused."),
   orgBalanceUsd: z.number().describe("Org SPENDABLE credit balance in USD (billing balance_cents/100; committed usage incl. provisioned holds subtracted; 0 if no funded wallet). Display only."),
   orgActualBalanceUsd: z.number().describe("Org ACTUAL credit balance in USD (billing actual_balance_cents/100; only ACTUALIZED usage subtracted). The figure the active verdict gates on."),
-  autoTopupEnabled: z.boolean().describe("Whether the org has auto-topup enabled (billing has_auto_topup). An auto-topup org never runs dry → active regardless of momentary balance. false when billing hasn't shipped the field yet."),
+  autoTopupEnabled: z.boolean().describe("Whether the org has auto-topup enabled (billing auto_topup_enabled). An auto-topup org never runs dry → active regardless of momentary balance. false when absent."),
   status: z.enum(["active", "paused", "inactive"]).describe("Precedence paused > active > inactive: 'paused' iff campaign-service brand pause=true; else 'active' iff dailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>dailyBudgetUsd); else 'inactive'."),
 });
 

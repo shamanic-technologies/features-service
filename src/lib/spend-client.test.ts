@@ -11,6 +11,27 @@ function group(costName: string | null, actual: number, total = actual): Record<
   return { dimensions: costName === null ? {} : { costName }, totalCostInUsdCents: String(total), actualCostInUsdCents: String(actual), runCount: 0, minStartedAt: null, maxStartedAt: null };
 }
 
+// A group carrying BOTH gross and frozen-NET twins (runs#179). netTotal/netActual are the frozen
+// discounted cents (NOT recomputed here) — features-service simply reads them for NET pricing.
+function groupWithNet(
+  costName: string,
+  actual: number,
+  total: number,
+  netActual: number,
+  netTotal: number,
+): Record<string, unknown> {
+  return {
+    dimensions: { costName },
+    totalCostInUsdCents: String(total),
+    actualCostInUsdCents: String(actual),
+    netTotalCostInUsdCents: String(netTotal),
+    netActualCostInUsdCents: String(netActual),
+    runCount: 0,
+    minStartedAt: null,
+    maxStartedAt: null,
+  };
+}
+
 describe("fetchSpendBreakdown", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -49,6 +70,64 @@ describe("fetchSpendBreakdown", () => {
     // Two runs calls: groupBy=costName (sources) + a startedAfter-filtered call (today).
     expect(seenUrls.filter((u) => u.includes("groupBy=costName")).length).toBe(2);
     expect(seenUrls.some((u) => u.includes("startedAfter"))).toBe(true);
+  });
+
+  it("NET pricing reads runs' FROZEN net twins (no read-time multiply); sharePct (a ratio) unchanged", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
+      // Frozen net = gross halved here (arbitrary per-row discount frozen by runs — features reads it verbatim).
+      if (url.includes("startedAfter")) return json({ groups: [groupWithNet("apollo people-search", 1000, 1500, 500, 750)] });
+      return json({
+        groups: [
+          groupWithNet("email-send-step-1", 6000, 8000, 3000, 4000),
+          groupWithNet("apollo people-search", 2000, 2000, 1000, 1000),
+        ],
+      });
+    });
+
+    const res = await fetchSpendBreakdown("brand-1", undefined, "f", HEADERS, new Date(), "net");
+    // NET reads the frozen net twins: total 5000 (4000+1000), actual 4000 (3000+1000).
+    expect(res.totalSpentCents).toBe(5000);
+    expect(res.actualSpentCents).toBe(4000);
+    expect(res.provisionedSpentCents).toBe(1000); // 5000 − 4000
+    expect(res.totalSpentTodayCents).toBe(750); // frozen net today total
+    expect(res.actualSpentTodayCents).toBe(500); // frozen net today actual
+    expect(res.sources).toEqual([
+      { source: "email-send-step-1", totalSpentCents: 4000, actualSpentCents: 3000, provisionedSpentCents: 1000, sharePct: 80 },
+      { source: "apollo people-search", totalSpentCents: 1000, actualSpentCents: 1000, provisionedSpentCents: 0, sharePct: 20 },
+    ]);
+    // Invariant preserved: each top-level total == Σ over sources.
+    expect(res.sources.reduce((n, s) => n + s.totalSpentCents, 0)).toBe(res.totalSpentCents);
+  });
+
+  it("NET pricing fails loud (throws) when a frozen net twin is absent — never falls back to gross", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
+      // runs WITHOUT #179 → gross-only groups (no net twin).
+      if (url.includes("startedAfter")) return json({ groups: [group("apollo people-search", 1000, 1500)] });
+      return json({ groups: [group("email-send-step-1", 6000, 8000)] });
+    });
+    await expect(fetchSpendBreakdown("brand-1", undefined, "f", HEADERS, new Date(), "net")).rejects.toThrow(
+      /frozen NET field/,
+    );
+  });
+
+  it("non-discounted org (frozen net == gross) → NET == GROSS", async () => {
+    const mk = (input: unknown) => {
+      const url = typeof input === "string" ? input : (input as any).url;
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
+      // net twins equal gross (org has 0% discount → runs freezes net == gross).
+      if (String(url).includes("startedAfter")) return json({ groups: [groupWithNet("apollo people-search", 1000, 1500, 1000, 1500)] });
+      return json({ groups: [groupWithNet("email-send-step-1", 6000, 8000, 6000, 8000), groupWithNet("apollo people-search", 2000, 2000, 2000, 2000)] });
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (i) => mk(i));
+    const net = await fetchSpendBreakdown("brand-1", undefined, "f", HEADERS, new Date(), "net");
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (i) => mk(i));
+    const gross = await fetchSpendBreakdown("brand-1", undefined, "f", HEADERS, new Date(), "gross");
+    expect(net).toEqual(gross);
   });
 
   it("fails loud (throws) on a non-OK runs response — never fakes $0 spend", async () => {

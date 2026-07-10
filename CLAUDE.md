@@ -1,5 +1,54 @@
 # Features Service — CLAUDE.md
 
+## `?pricing=gross|net` — GROSS (default) vs NET on the cost-metric endpoints; NET reads runs-service's FROZEN net, NEVER a read-time discount multiply (supersedes PR #510)
+
+The customer-facing cost-metric endpoints (`/revenue`, `/stats` + `/features/:slug/stats`,
+`/audience-stats`, `/workflow-projection`) accept `?pricing=gross|net`. **GROSS is the DEFAULT** — an
+omitted or `gross` selector is byte-identical to today (existing callers — campaign-service
+`metrics.cpcCents`, cross-org public revenue — never send `pricing` → always gross). `net` shows the
+org's metrics at the discounted price it actually pays (dashboard coherence with a "you have X% off"
+banner); staff/internal keep gross.
+
+**NET sources runs-service's FROZEN net cost amounts — features-service does NOT recompute the discount
+(supersedes #510's read-time multiply).** runs-service freezes each cost row's usage discount AT WRITE
+TIME (runs-service#179): every `/v1/stats/costs` + `/v1/stats/public/costs` group now returns BOTH the
+gross fields (`totalCostInUsdCents` / `actualCostInUsdCents` / `provisionedCostInUsdCents`) AND their
+frozen-NET twins (`netTotalCostInUsdCents` / `netActualCostInUsdCents` / `netProvisionedCostInUsdCents`).
+So NET pricing simply READS the net twin instead of the gross field at the COST INPUT — no billing
+discount fetch, no `1−pct/100` factor, no multiply. `lib/pricing.ts` `selectCostCents(group, grossField,
+pricing)` / `selectCostCentsString(...)` pick gross-vs-net per group; threaded into every cost PRODUCER —
+`fetchRunsCostCents`, `fetchSpendBreakdown`, `fetchRunsStats`, `fetchAudienceCosts`, `fetchPublicCosts`
+(crossOrg fleet grain), and workflow-projection's brand+audience grain fetchers. Every money metric (CPC,
+cost-per-outcome/-close, total spent, revenue spend, CAC, ROI, roiMultiple, cacPct, recommendedBudget) is
+DERIVED from these cents, so reading the frozen-net cents at the input makes spend/CPC/CAC come out net
+and ROI scale UP by construction, coherent — no field-by-field output classification. **A NEW money field
+is net automatically IF it derives from a producer that reads via `selectCostCents`; if you add a cost
+read, thread `pricing` into it and select the field — do NOT post-process the response, do NOT reintroduce
+a discount multiply.** Counts, conversion rates, and probabilities never touch cost → unchanged in net.
+
+**`resolveDiscountFactor` / `discountCents` / `billing-discount-client.ts` are DELETED.** NET no longer
+calls billing at all (the read-time discount fetch is gone). The old billing-service usage-discount GAP
+(#248) is moot for this feature — the discount now lives frozen on the runs cost row, owned by
+runs-service, not read live from billing.
+
+**Fail-loud, no silent fallback.** `parsePricing` defaults to gross with NO Zod `.default()`; an invalid
+value → 400. NET requires the frozen net twin on every cost group it reads: `selectCostCents(..., "net")`
+THROWS (→ 502) when the `net*` field is absent / non-numeric — NET NEVER falls back to gross (that would
+show undiscounted prices under the "X% off" banner). A non-discounted org has frozen net == gross per row
+(runs freezes a 0% discount), so NET == GROSS for it BY CONSTRUCTION — no special-casing here. `pricing`
+is in every Gold `scope_key` so gross/net never collide in the snapshot cache.
+
+**`pipeline-activity` is intentionally NOT wired** — it surfaces no discountable $ metric (only projected
+counts, forecast rates, and the customer's own `dailyBudgetUsd` budget CAP, which is an input not a
+cost-metric). Its `fetchPublicCosts` call passes no `pricing` → always gross. Do NOT "add pricing for
+consistency" — there is nothing to discount.
+
+**Deploy ordering (dormant until runs#179 reaches the same env).** NET reads runs' `net*` fields; on any
+env where runs-service predates #179, NET fails loud (502) — the SAME dormant state as before (NET was
+already 502-ing since billing had no discount endpoint). GROSS (the default, and the only live path) is
+unaffected. NET self-activates once runs#179 is deployed alongside. (Set 2026-07-10; supersedes #510's
+read-time compute.)
+
 ## `cost-engine.ts` — TWO named engines are the SINGLE source of truth for "cost per outcome"; default = projected everywhere except accounting
 
 Every stats surface computes "cost per outcome" through ONE of TWO named functions in `src/lib/cost-engine.ts` —
@@ -387,7 +436,7 @@ orgActualBalanceUsd > dailyBudgetUsd)` → `"active"`; (3) else `"inactive"`. Th
 **ACTUAL** balance (credited − ACTUALIZED usage), **NOT the spendable** figure — a provisioned hold is
 in-flight ACTIVE spend, so subtracting it wrongly read the busiest accounts "inactive" (the bug this
 fixed, features-service#502). An **auto-topup** org never runs dry → active regardless of the momentary
-balance (`has_auto_topup` is OPTIONAL on the balance read — absent ⇒ not-enabled, so the actual-balance
+balance (`auto_topup_enabled` is OPTIONAL on the balance read — absent ⇒ not-enabled, so the actual-balance
 path already corrects the verdict and auto-topup activates once billing ships it). A PAUSED brand keeps
 its budget but campaigns are HELD — so it is neither active nor plain-inactive (paused wins even over a
 funded budget). **All rows (active + paused + inactive) are LISTED — never dropped.**
@@ -409,8 +458,8 @@ per-(org,brand); brand name/domain is one batched brand-service call. Fail loud 
   autoTopupEnabled }`. `orgBalanceUsd` = `balance_cents/100` (SPENDABLE, incl. provisioned holds —
   DISPLAY only); `orgActualBalanceUsd` = `actual_balance_cents/100` (credited − ACTUALIZED usage — the
   figure the ACTIVE verdict gates on, since a provisioned hold is in-flight active spend);
-  `autoTopupEnabled` = `has_auto_topup` (OPTIONAL — billing may not have shipped it on this read yet;
-  absent ⇒ false). The ONE mapped status: billing **404 "billing account not found" → zero balances / no
+  `autoTopupEnabled` = `auto_topup_enabled` (the DEPLOYED name on this balance read — verified live via
+  api-registry, NOT the `has_auto_topup` name used on `/v1/accounts`; OPTIONAL, absent ⇒ false). The ONE mapped status: billing **404 "billing account not found" → zero balances / no
   auto-topup** (an org that never funded a wallet is inactive by the rule). That is a documented billing
   semantic, NOT a swallowed error — do NOT "fix" it to fail-loud (it would 500 the whole fleet audit on
   one unfunded org). Any OTHER non-OK fails loud.
@@ -437,6 +486,32 @@ correctly fails loud → 500 on staging. That is NOT a features-service defect; 
 prod-only-dependency gotcha (railway-vars skill). Verified working on prod v0.72.0 (2026-07-01): 32
 rows, 10 active / 22 inactive, `totalDailyBudgetUsd`=Σ active budgets, `mrr`=×30, `arr`=×365.
 (Set 2026-07-01.)
+
+## `pipeline-activity` signup/form-submission `.actual` = REAL observed conversions, NEVER `clicks × rate` (PR #513)
+
+The signup + form-submission daily bars split cleanly: **`.actual` (today + past days) = the REAL,
+deduped, attributed per-day conversion count from lead-service; `.expected` (future days) = the
+`clicks × visit→signup / visit→form` projection.** A projection MUST NEVER sit in `.actual` — that was
+the bug (prod showed "1 form submission today" = `5 clicks × 25%` while the brand had 0 tracked form
+submissions and `/revenue spend.formSubmissionsCount` read 0). `buildDayBuckets` reads
+`observed.byDay[event][date] ?? 0` for `date <= today`, null on future days; the old `clicks × rate`
+fabrication is GONE. Same observed/projected doctrine as `cost-engine.ts` — a rankable/forecast number
+belongs in `.expected`, a measured number in `.actual`; do NOT re-introduce a modeled `.actual`.
+
+Source: lead-service `GET /internal/brands/:brandId/conversion-counts-by-day` (service-auth) via
+`src/lib/conversion-counts-by-day-client.ts` (fail-loud client) wrapped **fail-SOFT** in the route
+(`fetchConversionCountsByDaySoft`) — the observed conversion series is DISPLAY ENRICHMENT on the forecast
+graph (like the `/revenue` conversion-count tiles + `sequences`), so a lead-service blip degrades the two
+ACTUAL bars to null ("-", never a fabricated count) rather than 502-ing the whole graph. `clicks`/`opens`/
+`outreach` actuals are untouched. **Undated** conversions (`received_at IS NULL` — 0 in practice) are
+counted on `summary.undatedSignups` / `undatedFormSubmissions` — NEVER dropped, NEVER assigned a
+fabricated day in `days[]`. A per-day actual never exceeds the deduped total by construction
+(`sum(byDay) + undated === /conversion-counts total`). **PAST days are not in pipeline-activity's range
+(today→future); the dashboard fills past bars from the `/revenue` daily series and reads only
+pipeline-activity's TODAY bucket `.actual`** — so fixing today's `.actual` fixes the symptom; the
+`date <= today` guard keeps the logic correct if the range ever extends. Producer `conversion-counts-by-day`
+was staging-only at ship; the fail-soft client makes prod safe (fabrication removed → "-"), fully
+self-activating to real counts once lead-service promotes the endpoint to prod. (Set 2026-07-10.)
 
 ## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #346)
 
@@ -665,6 +740,7 @@ totalClicks, totalPositiveReplies, brandCount }`. Cached via the shared `PublicC
 `GET /v1/public/features/cost-per-outcome-lifetime` shipped in api-service#688 (mirror of the sibling
 `/public/stats/X` → `/v1/public/features/X` per-route pattern). Triage: STAGING → promoted to main
 (features-service v0.84.0 / api-service v0.83.0). (Set 2026-07-09, PR #496.)
+
 ### Trend + lifetime are GOAL-BUCKETED — each objective sums ONLY the brands whose goal is relevant
 
 `cost-per-outcome-trend` + `cost-per-outcome-lifetime` DO NOT sum fleet-wide spend/outcomes anymore —

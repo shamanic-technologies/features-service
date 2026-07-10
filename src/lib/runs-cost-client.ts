@@ -12,12 +12,18 @@
  * 0) — the revenue path treats cost as a core output, like its leads / economics clients.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
+import { selectCostCents, type Pricing } from "./pricing.js";
 
 export async function fetchRunsCostCents(
   brandId: string,
   campaignId: string | undefined,
   featureSlug: string,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
+  // NET pricing: read runs-service's FROZEN net actual-cost (`netActualCostInUsdCents`) instead of the
+  // gross `actualCostInUsdCents` (runs#179 freezes each row's discount at write time — no read-time
+  // multiply here). GROSS (the default) reads the gross field → byte-identical. Every downstream metric
+  // (CAC, ROI, CPC) derives from this, so it comes out net + coherent by construction.
+  pricing: Pricing = "gross",
 ): Promise<number> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -46,14 +52,14 @@ export async function fetchRunsCostCents(
     throw new Error(`runs-service /v1/stats/costs failed (${response.status}): ${text}`);
   }
 
-  const data = (await response.json()) as { groups?: Array<{ actualCostInUsdCents: string }> };
+  const data = (await response.json()) as { groups?: Array<Record<string, unknown>> };
   if (!Array.isArray(data.groups)) {
     throw new Error("runs-service /v1/stats/costs returned no groups array");
   }
 
   let totalCents = 0;
   for (const group of data.groups) {
-    totalCents += Math.round(Number(group.actualCostInUsdCents));
+    totalCents += Math.round(selectCostCents(group, "actualCostInUsdCents", pricing));
   }
   return totalCents;
 }
