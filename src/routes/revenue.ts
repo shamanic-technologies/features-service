@@ -30,7 +30,7 @@ import {
 } from "../lib/revenue-engine.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
-import { parsePricing, resolveDiscountFactor } from "../lib/pricing.js";
+import { parsePricing, type Pricing } from "../lib/pricing.js";
 
 const router = Router();
 
@@ -556,10 +556,10 @@ export async function computeFeatureRevenue(
   // groups discard spend, and lens omits it (a brand-total concept). When false we use the cheaper
   // single-total fetchRunsCostCents; both read the SAME runs ACTUAL spend, so costEconomics agrees.
   includeSpend = false,
-  // NET pricing: the org's discount factor (1 = gross, the default → byte-identical). Passed straight
-  // to the cost reads (fetchRunsCostCents / fetchSpendBreakdown) so the engine derives net CAC/ROI/spend.
-  // The CROSS-ORG public revenue caller (staff) never sets it → always gross.
-  discountFactor = 1,
+  // NET pricing: read runs#179's FROZEN net cost cents (no read-time multiply). Passed straight to the
+  // cost reads (fetchRunsCostCents / fetchSpendBreakdown) so the engine derives net CAC/ROI/spend. GROSS
+  // (the default) is byte-identical; the CROSS-ORG public revenue caller (staff) never sets it → gross.
+  pricing: Pricing = "gross",
 ): Promise<RevenueBody> {
   // No funnel wired for this feature yet → null pipeline (not an error). `funnel` is known up
   // front (caller param), so short-circuit BEFORE Wave A and fetch ONLY the cost the empty body
@@ -570,14 +570,14 @@ export async function computeFeatureRevenue(
       // Overview: fetch spend (fail-loud) + sequences (fail-soft) in parallel. Outreach activity
       // is independent of the funnel — a no-funnel feature still launches campaigns worth graphing.
       const [breakdown, sequences, counts] = await Promise.all([
-        fetchSpendBreakdown(brandId, campaignId, featureSlug, headers, new Date(), discountFactor),
+        fetchSpendBreakdown(brandId, campaignId, featureSlug, headers, new Date(), pricing),
         fetchSequencesSoft(brandId, campaignId, featureSlug, headers),
         fetchConversionCountsSoft(brandId),
       ]);
       // ROI/CAC ride ACTUAL spend; the `spend` block carries the committed total separately.
       return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, [], counts), sequences);
     }
-    const actualCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers, discountFactor);
+    const actualCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers, pricing);
     return emptyBody(null, actualCostInUsdCents, null);
   }
 
@@ -594,8 +594,8 @@ export async function computeFeatureRevenue(
   // cold-start path below over-fetches rates+leads — accepted for the common-path win.
   const [costResult, { economics, source }, platformRates, persons, sequences, counts, conversionEmails] = await Promise.all([
     includeSpend
-      ? fetchSpendBreakdown(brandId, campaignId, featureSlug, headers, new Date(), discountFactor)
-      : fetchRunsCostCents(brandId, campaignId, featureSlug, headers, discountFactor),
+      ? fetchSpendBreakdown(brandId, campaignId, featureSlug, headers, new Date(), pricing)
+      : fetchRunsCostCents(brandId, campaignId, featureSlug, headers, pricing),
     economicsOverride ?? fetchEffectiveEconomics(brandId, { ...headers, campaignId }),
     fetchPlatformEmailRates(),
     fetchLeadsForRevenue(brandId, campaignId, headers),
@@ -764,8 +764,8 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       return res.status(404).json({ error: "Feature not found" });
     }
 
-    // NET → the org's discount factor (fail-loud if unresolvable). GROSS → 1 (no billing call).
-    const discountFactor = await resolveDiscountFactor(pricing, orgId);
+    // NET reads runs#179's frozen net cost fields (no billing call, no read-time multiply); GROSS is
+    // byte-identical. The selector is threaded straight into computeFeatureRevenue's cost reads.
 
     const headers: DownstreamHeaders = { orgId, userId, runId, featureSlug: headerFeatureSlug };
     // Resolved once and shared across every campaign — null when no funnel is wired for the feature.
@@ -790,7 +790,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
 
           const groups = await Promise.all(
             campaignIds.map(async (cid) => {
-              const body = await computeFeatureRevenue(featureSlug, brandId, cid, funnel, headers, undefined, sharedEconomics, false, discountFactor);
+              const body = await computeFeatureRevenue(featureSlug, brandId, cid, funnel, headers, undefined, sharedEconomics, false, pricing);
               return { campaignId: cid, headline: body.headline, costEconomics: body.costEconomics };
             }),
           );
@@ -813,7 +813,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
 
         // Overview (no lens) emits the canonical spend block; the lens path omits it (brand-total concept).
-        const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, funnel, headers, lens, undefined, !lens, discountFactor);
+        const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, funnel, headers, lens, undefined, !lens, pricing);
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 

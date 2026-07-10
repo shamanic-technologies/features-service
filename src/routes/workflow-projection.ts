@@ -7,7 +7,7 @@ import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, type ProjectionEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
-import { parsePricing, resolveDiscountFactor, discountCents } from "../lib/pricing.js";
+import { parsePricing } from "../lib/pricing.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, type SingleStepGoal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
@@ -287,9 +287,9 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // recommendedBudgetUsd cover the projection) → excluded from the cache key.
     void budgetUsd;
 
-    // NET → the org's discount factor (fail-loud if unresolvable, 502 via catch). GROSS → 1 (no billing call).
-    // Resolved OUTSIDE servedCached so a NET resolution failure never persists a snapshot.
-    const discountFactor = await resolveDiscountFactor(pricing, orgId);
+    // NET reads runs#179's frozen net cost fields at each grain source (no billing call, no read-time
+    // multiply); GROSS is byte-identical. The selector is threaded into the grain fetchers below; a NET
+    // request where a frozen net figure is absent throws → 502 (via catch), never cached, no fallback.
 
     // Gold SWR: the heavy cross-org + brand + audience fan-out runs off the request path ~once per
     // TTL; keyed on the inputs that shape the body (orgId + brand + goal + pricing).
@@ -308,11 +308,11 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // lossy workflowDynastySlug regroup, which collapses the co-grouped audienceId).
     const slugToDynasty = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
     const [costGroups, emailStats, effective, brandGrain, audienceEvidence] = await Promise.all([
-      fetchPublicCosts(featureSlug, "workflowSlug"),
+      fetchPublicCosts(featureSlug, "workflowSlug", pricing),
       fetchPublicEmailStats(featureSlug, "workflowSlug"),
       fetchEffectiveEconomics(brandId, identity),
-      fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity),
-      fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty),
+      fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing),
+      fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing),
     ]);
     const economics = effective.economics;
 
@@ -359,18 +359,15 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         }
       : null;
 
-    // NET pricing: scale each grain's GROSS evidence cost by the org's discount factor (1 = gross, the
-    // default → byte-identical) BEFORE the unit-cost / projection math, so every grain's unit costs,
-    // projected cost-per-outcome, cascade floor, roiMultiple + cacPct come out net AND coherent (the
-    // whole crossOrg→brand→audience ladder scales together — a mixed gross/net cascade would be incoherent).
+    // Each grain's evidence cost is ALREADY gross-or-net: the grain fetchers selected runs#179's frozen
+    // net twin (or the gross field) at the source per `pricing`, so the whole crossOrg→brand→audience
+    // ladder is on one basis end to end (a mixed gross/net cascade would be incoherent). No post-hoc
+    // multiply here — buildGrainBlock consumes the evidence as-is.
     const buildBlock = (
       ev: WorkflowGrainEvidence | AudienceGrainEvidence,
       parentUnitCosts: GrainUnitCosts | null = null,
     ): GrainBlock =>
-      buildGrainBlock(
-        discountFactor === 1 ? ev : { ...ev, totalCostInUsdCents: discountCents(ev.totalCostInUsdCents, discountFactor) },
-        econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal, parentUnitCosts,
-      );
+      buildGrainBlock(ev, econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal, parentUnitCosts);
     const resolve = (grains: Partial<Record<GrainName, GrainBlock>>): ResolvedBlock =>
       resolvePick(grains, econ, objective, singleStepGoal, formSubmissionGoal);
 

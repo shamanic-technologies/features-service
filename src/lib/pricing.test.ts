@@ -1,12 +1,6 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
-process.env.BILLING_SERVICE_URL = "http://billing:3000";
-process.env.BILLING_SERVICE_API_KEY = "billing-key";
-
-const { parsePricing, resolveDiscountFactor, discountCents } = await import("./pricing.js");
-
-const OK = (b: unknown) =>
-  new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
+const { parsePricing, selectCostCents, selectCostCentsString } = await import("./pricing.js");
 
 describe("parsePricing", () => {
   it("defaults to gross when omitted / empty", () => {
@@ -25,36 +19,52 @@ describe("parsePricing", () => {
   });
 });
 
-describe("discountCents", () => {
-  it("scales + rounds to whole cents", () => {
-    expect(discountCents(1000, 1)).toBe(1000);
-    expect(discountCents(1000, 0.5)).toBe(500);
-    expect(discountCents(999, 0.5)).toBe(500); // round(499.5) = 500
-    expect(discountCents(0, 0.5)).toBe(0);
-  });
-});
+describe("selectCostCents / selectCostCentsString", () => {
+  // A runs-service cost group carrying BOTH gross fields and their frozen-NET twins (runs#179).
+  const group = {
+    totalCostInUsdCents: "1000",
+    actualCostInUsdCents: "800",
+    provisionedCostInUsdCents: "200",
+    netTotalCostInUsdCents: "500",
+    netActualCostInUsdCents: "400",
+    netProvisionedCostInUsdCents: "100",
+  };
 
-describe("resolveDiscountFactor", () => {
-  afterEach(() => vi.restoreAllMocks());
-
-  it("gross → 1 WITHOUT any billing call (default path has zero billing dependency)", async () => {
-    const spy = vi.spyOn(globalThis, "fetch");
-    expect(await resolveDiscountFactor("gross", "org-1")).toBe(1);
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it("net → 1 − pct/100 from billing (50% → 0.5)", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => OK({ discount_percent: 50 }));
-    expect(await resolveDiscountFactor("net", "org-1")).toBe(0.5);
+  it("gross → reads the plain field verbatim (byte-identical to today)", () => {
+    expect(selectCostCentsString(group, "totalCostInUsdCents", "gross")).toBe("1000");
+    expect(selectCostCents(group, "actualCostInUsdCents", "gross")).toBe(800);
+    expect(selectCostCents(group, "provisionedCostInUsdCents", "gross")).toBe(200);
   });
 
-  it("net for a non-discounted org (0%) → factor 1 → NET == GROSS", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => OK({ discount_percent: 0 }));
-    expect(await resolveDiscountFactor("net", "org-1")).toBe(1);
+  it("net → reads the frozen net twin, NOT a read-time multiply", () => {
+    expect(selectCostCentsString(group, "totalCostInUsdCents", "net")).toBe("500");
+    expect(selectCostCents(group, "actualCostInUsdCents", "net")).toBe(400);
+    expect(selectCostCents(group, "provisionedCostInUsdCents", "net")).toBe(100);
   });
 
-  it("net fails loud when the discount is unresolvable — NEVER falls back to gross", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("boom", { status: 500 }));
-    await expect(resolveDiscountFactor("net", "org-1")).rejects.toThrow(/usage-discount failed/);
+  it("non-discounted org (runs freezes net == gross) → NET == GROSS", () => {
+    const undiscounted = {
+      totalCostInUsdCents: "1000",
+      netTotalCostInUsdCents: "1000",
+    };
+    expect(selectCostCents(undiscounted, "totalCostInUsdCents", "net")).toBe(
+      selectCostCents(undiscounted, "totalCostInUsdCents", "gross"),
+    );
+  });
+
+  it("net with the frozen net twin ABSENT → THROWS (no silent fallback to gross)", () => {
+    const grossOnly = { totalCostInUsdCents: "1000" }; // runs without #179 → no net twin
+    expect(() => selectCostCents(grossOnly, "totalCostInUsdCents", "net")).toThrow(
+      /missing frozen NET field 'netTotalCostInUsdCents'/,
+    );
+  });
+
+  it("net with a non-numeric net twin → THROWS", () => {
+    const bad = { totalCostInUsdCents: "1000", netTotalCostInUsdCents: "oops" };
+    expect(() => selectCostCents(bad, "totalCostInUsdCents", "net")).toThrow(/net pricing requested/);
+  });
+
+  it("gross with the field missing → THROWS (fail-loud, never a fake $0)", () => {
+    expect(() => selectCostCents({}, "totalCostInUsdCents", "gross")).toThrow(/missing 'totalCostInUsdCents'/);
   });
 });

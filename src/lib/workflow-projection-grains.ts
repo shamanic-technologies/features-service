@@ -20,6 +20,7 @@ import { buildUpgradeChains, aggregateAcrossChains } from "../routes/public.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
 import { fetchActiveAudiences, fetchAudienceMemberEmails } from "./human-client.js";
 import { fetchEmailOutcomes } from "./email-status-client.js";
+import { selectCostCents, selectCostCentsString, type Pricing } from "./pricing.js";
 
 export interface Identity {
   orgId: string;
@@ -59,6 +60,8 @@ function emailHeaders(brandId: string, identity: Identity): Record<string, strin
 interface CostGroup {
   dimensions: Record<string, string | null>;
   totalCostInUsdCents: string;
+  /** Frozen-NET twin (runs#179) — read via selectCostCents when pricing === "net". */
+  netTotalCostInUsdCents?: string;
   runCount: number;
 }
 
@@ -140,6 +143,8 @@ export async function fetchBrandWorkflowEvidence(
   featureSlug: string,
   workflows: WorkflowMetadata[],
   identity: Identity,
+  // NET reads runs#179's frozen net twin per group; GROSS reads the gross field → byte-identical.
+  pricing: Pricing = "gross",
 ): Promise<Map<string, WorkflowGrainEvidence>> {
   const [costGroups, emailStats] = await Promise.all([
     fetchBrandCostGroups(brandId, featureSlug, "workflowSlug", identity),
@@ -148,7 +153,9 @@ export async function fetchBrandWorkflowEvidence(
   const chains = buildUpgradeChains(workflows);
   const { costMap, aggregatedOutcomes } = aggregateAcrossChains(
     chains,
-    costGroups.map((g) => ({ dimensions: g.dimensions, totalCostInUsdCents: g.totalCostInUsdCents, runCount: g.runCount })),
+    // Select gross vs frozen-net cost per group BEFORE the dynasty rollup, so the aggregated brand-grain
+    // cost is net-or-gross end to end (no post-hoc multiply).
+    costGroups.map((g) => ({ dimensions: g.dimensions, totalCostInUsdCents: selectCostCentsString(g, "totalCostInUsdCents", pricing), runCount: g.runCount })),
     emailStats,
     "workflowSlug",
   );
@@ -199,6 +206,7 @@ async function fetchAudienceCostTotals(
   featureSlug: string,
   activeIds: Set<string>,
   identity: Identity,
+  pricing: Pricing,
 ): Promise<Map<string, { totalCostInUsdCents: number; completedRuns: number }>> {
   const groups = await fetchBrandCostGroups(brandId, featureSlug, "audienceId", identity);
   const result = new Map<string, { totalCostInUsdCents: number; completedRuns: number }>();
@@ -206,7 +214,7 @@ async function fetchAudienceCostTotals(
     const audienceId = audienceIdFromDimensions(g.dimensions);
     if (!audienceId || !activeIds.has(audienceId)) continue;
     result.set(audienceId, {
-      totalCostInUsdCents: Math.round(Number(g.totalCostInUsdCents)),
+      totalCostInUsdCents: Math.round(selectCostCents(g, "totalCostInUsdCents", pricing)),
       completedRuns: Number(g.runCount),
     });
   }
@@ -294,13 +302,15 @@ export async function fetchAudienceGrainEvidence(
   featureSlug: string,
   identity: Identity,
   slugToDynasty: Map<string, string>,
+  // NET reads runs#179's frozen net twin per audience group; GROSS reads the gross field → byte-identical.
+  pricing: Pricing = "gross",
 ): Promise<AudienceGrainEvidence[]> {
   const audiences = await fetchActiveAudiences(brandId, identity);
   if (audiences.length === 0) return [];
   const activeIds = new Set(audiences.map((a) => a.id));
 
   const [costTotals, slugCouples] = await Promise.all([
-    fetchAudienceCostTotals(brandId, featureSlug, activeIds, identity),
+    fetchAudienceCostTotals(brandId, featureSlug, activeIds, identity, pricing),
     fetchAudienceWorkflowSlugCouples(brandId, featureSlug, activeIds, identity),
   ]);
 

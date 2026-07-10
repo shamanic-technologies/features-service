@@ -5,6 +5,7 @@
  */
 
 import { fetchWithRetry } from "./fetch-retry.js";
+import { selectCostCentsString, type Pricing } from "./pricing.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,8 @@ export interface WorkflowMetadata {
 export interface CostGroup {
   dimensions: Record<string, string | null>;
   totalCostInUsdCents: string;
+  /** Frozen-NET twin (runs#179) — present on the runs response; selected when pricing === "net". */
+  netTotalCostInUsdCents?: string;
   runCount: number;
   minStartedAt: string | null;
   maxStartedAt: string | null;
@@ -66,6 +69,11 @@ export async function fetchPublicWorkflows(
 export async function fetchPublicCosts(
   featureSlugs: string,
   groupBy: string,
+  // GROSS (the default) returns each group's gross `totalCostInUsdCents` verbatim → byte-identical for
+  // every existing caller (pipeline-activity, /public/stats/*). NET remaps `totalCostInUsdCents` to
+  // runs#179's frozen `netTotalCostInUsdCents` (fail-loud if absent) so the fleet crossOrg grain reads
+  // frozen net — no read-time discount multiply.
+  pricing: Pricing = "gross",
 ): Promise<CostGroup[]> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
 
@@ -80,7 +88,11 @@ export async function fetchPublicCosts(
   }
 
   const data = await response.json() as { groups: CostGroup[] };
-  return data.groups;
+  if (pricing === "gross") return data.groups;
+  return data.groups.map((g) => ({
+    ...g,
+    totalCostInUsdCents: selectCostCentsString(g, "totalCostInUsdCents", pricing),
+  }));
 }
 
 /**

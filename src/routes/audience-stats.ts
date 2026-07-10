@@ -2,7 +2,7 @@ import { Router } from "express";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
-import { parsePricing, resolveDiscountFactor } from "../lib/pricing.js";
+import { parsePricing } from "../lib/pricing.js";
 
 const router = Router();
 
@@ -16,9 +16,9 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     if (pricing === null) {
       return res.status(400).json({ error: "pricing must be one of: gross, net" });
     }
-    // NET → the org's discount factor (fail-loud if unresolvable, 502 via catch). GROSS → 1 (no billing call).
-    // Resolved OUTSIDE servedCached so a NET resolution failure never persists a snapshot.
-    const discountFactor = await resolveDiscountFactor(pricing, orgId);
+    // NET reads runs#179's frozen net cost fields (no billing call, no read-time multiply); GROSS is
+    // byte-identical. The selector is threaded into computeAudienceStats' cost read below. A NET request
+    // where the net figure is absent throws inside computeAudienceStats → 502 (never cached, no fallback).
 
     // Gold SWR: the cost + membership + email fan-out runs off the request path ~once per TTL, keyed on
     // every input that shapes the body. The ComputeResult is deterministic (validation 400/404 or a
@@ -37,7 +37,7 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
       view: "audience-stats",
       scopeKey,
       orgId,
-      compute: () => computeAudienceStats(req, discountFactor),
+      compute: () => computeAudienceStats(req, pricing),
     });
     if (!result.ok) {
       return res.status(result.status).json({ error: result.error });
