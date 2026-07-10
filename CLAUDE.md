@@ -698,6 +698,39 @@ across client brands; null only when no brand has usable economics. No forced or
 costs — high self-serve `v2c` lets purchases bypass meetings, so cost-per-meeting CAN exceed
 cost-per-purchase (correct, not a bug). (#274, PR #275.)
 
+## `workflow-cost-per-outcome` per-workflow RECENT rate — the OFF-request-path warm pattern (4 cold-Neon failure modes; features-service#526)
+
+The per-workflow `recentCostPerOutcomeUsd` (trailing-window moving average) can NOT be computed on the
+request path: it needs, PER dynasty, a dated-spend timeseries (runs) + dated outcomes (email-gateway), and
+neither producer exposes a single `(day × dynasty)` call (runs' timeseries only FILTERS by dynasty;
+email-gateway `groupBy` is single-dimension), so it is an O(dynasty-count) cross-service fan-out. Running it
+on the request path 500s/timeouts (PR #521 regression). It runs as a background SWR **warm** in
+`handleWorkflowCostPerOutcome` (`src/routes/public.ts`) that overwrites the cache entry + a persisted
+recent-rate store. That warm hits the Neon-scale-to-zero siblings and went through FOUR cold-start failure
+modes before it populated reliably in prod — **any new off-request-path fan-out warm MUST carry all four**
+(do NOT re-discover them one prod hotfix at a time, v0.87.1→v0.87.4):
+
+1. **Per-dynasty resilience** (`try/catch` per item, not one all-or-nothing `Promise.all`) — one failing
+   dynasty nulls only itself, never the whole set.
+2. **Per-item timeout** (`withTimeout`, 45s) — a HUNG fetch (cold Neon TCP stall, no reject) would leave the
+   outer `Promise.all` pending forever → the warm never settles → its `.finally()` never clears the
+   single-flight flag → NO future warm runs → recent permanently null. The timeout guarantees the warm
+   always settles + clears its flag.
+3. **Capped concurrency** (`mapWithConcurrency`, 6) — firing all ~25 dynasties' fan-outs at once = ~50
+   connections that OVERWHELM cold-start siblings, making every fetch slow enough to trip the timeout →
+   all-null. The cap keeps each fetch fast enough to beat the timeout. (Timeout + concurrency are a PAIR:
+   the timeout without the cap is what turned a slow-cold warm into an all-null one.)
+4. **Variable store TTL + serve-from-store** — the served payload is seeded from the persisted store (a
+   payload-TTL miss never re-nulls the column, no flicker); a CLEAN warm (0 failures) is trusted 10 min
+   (no re-warm → no contention with the request-path lifetime fan-out for the same cold siblings), a
+   DEGRADED warm (≥1 failure) only ~90s so it self-heals on the next read WITHOUT hammering. Do NOT gate
+   re-warm on "store empty" alone with a single long TTL — that pins a degraded all-null result; and do NOT
+   re-warm on every miss — that contends with the request path.
+
+Genuinely-unbacked dynasty (no recent clicks) → null, never a false $0. Depends on the org-less dynasty
+resolution chain: workflow-service `/workflows/dynasty/slugs` api-key-only (v0.38.0) + email-gateway
+sending `workflowDynastySlug` (v0.25.1). (Set 2026-07-10.)
+
 ## Cross-org cost-per-outcome trio — ALL objectives, dated trend, per-workflow ratio (features-service#485)
 
 Three PLATFORM-WIDE (all-org, no-auth) cost-per-outcome surfaces for the staff admin analytics page,
