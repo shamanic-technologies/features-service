@@ -19,6 +19,7 @@ import {
   buildObjectiveAverages,
   buildBucketedLifetimeAverages,
   buildCostPerOutcomeTrend,
+  buildCostPerOutcomeDistribution,
   buildWorkflowCostPerOutcome,
   fetchFleetBrandEconomics,
   fetchGoalBucketDataset,
@@ -29,6 +30,7 @@ import {
   normalizeObjective,
   type ObjectiveAverages,
   type TrendPoint,
+  type CostPerOutcomeDistribution,
   type BucketedBrand,
   type WorkflowCostRow,
   type WorkflowGrainInput,
@@ -1170,6 +1172,102 @@ export async function handleCostPerOutcomeLifetime(
   res.json(payload);
 }
 
+// ── GET /public/stats/cost-per-outcome-distribution ──────────────────────────
+//
+// The cross-org DISTRIBUTION (histogram) of an objective's cost-per-outcome across the brands the fleet
+// runs — the SPREAD around the average the marketing site renders so the "going rate" reads as a real
+// range (cheap tail / bulk / expensive tail), not a single flat number. The distribution UNIT is the
+// BRAND: each brand contributes ONE data point = its pooled all-history cost-per-outcome, goal-bucketed
+// exactly like the trend + lifetime surfaces (a brand feeds an objective only when its optimization goal
+// is in that objective's bucket), so the contributing brand set + central tendency stay coherent with
+// those surfaces. Reuses the SAME shared per-brand dataset (getGoalBucketDatasetCached).
+//
+// PUBLIC / no-auth → the payload carries ONLY aggregate histogram buckets + summary stats, NEVER a
+// per-brand value or id. Empty/soft below MIN_DISTRIBUTION_BRANDS: buckets = [] and every scalar null
+// (the consumer shows "not enough data yet") — never a false $0. NOTE the central tendency here is the
+// UNWEIGHTED per-brand mean/median (the going rate ACROSS brands); it legitimately differs from
+// cost-per-outcome-lifetime's spend-WEIGHTED pooled average (a different, per-brand question).
+
+const DEFAULT_DISTRIBUTION_BUCKETS = 10;
+const MAX_DISTRIBUTION_BUCKETS = 50;
+/** Fewer than this many brands with a usable cost cannot form a meaningful spread (and would risk
+ *  revealing an individual brand's cost on a public surface) → the distribution is returned empty/null. */
+const MIN_DISTRIBUTION_BRANDS = 2;
+
+interface CostPerOutcomeDistributionPayload extends CostPerOutcomeDistribution {
+  featureSlug: string;
+  /** Canonical camelCase objective the distribution is for. */
+  objective: string;
+  /** The unit each data point represents — a brand's pooled all-history cost-per-outcome. */
+  unit: "brand";
+  /** Number of equal-width histogram bars requested (the bars may collapse to 1 when all values are equal). */
+  bucketCount: number;
+}
+
+const costPerOutcomeDistributionCache: PublicCache = new Map();
+
+/** Test seam — reset the in-memory cost-per-outcome-distribution cache. */
+export function __resetCostPerOutcomeDistributionCache(): void {
+  costPerOutcomeDistributionCache.clear();
+}
+
+export async function handleCostPerOutcomeDistribution(
+  featureSlug: string | undefined,
+  objectiveParam: string | undefined,
+  bucketsParam: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  if (!featureSlug) {
+    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
+    return;
+  }
+  const objective = normalizeObjective(objectiveParam);
+  if (!objective) {
+    res.status(400).json({ error: "Query parameter 'objective' is required (one of the optimization goals)" });
+    return;
+  }
+
+  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
+  if (!feature) {
+    res.status(404).json({ error: "Feature not found" });
+    return;
+  }
+
+  const parsedBuckets = parseInt(bucketsParam ?? "", 10);
+  const bucketCount =
+    Number.isFinite(parsedBuckets) && parsedBuckets >= 1
+      ? Math.min(parsedBuckets, MAX_DISTRIBUTION_BUCKETS)
+      : DEFAULT_DISTRIBUTION_BUCKETS;
+
+  const cacheKey = `cpo-dist:${featureSlug}:${objective}:${bucketCount}`;
+  const cached = getPublicCache<CostPerOutcomeDistributionPayload>(costPerOutcomeDistributionCache, cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  // Goal-bucketed: only the brands whose optimization goal is relevant to this objective contribute a
+  // data point (a reply-driven brand does not appear in the CPC histogram). SAME dataset as trend/lifetime.
+  const dataset = await getGoalBucketDatasetCached(featureSlug);
+  const bucketBrands = bucketBrandsForObjective(dataset, objective);
+  const distribution = buildCostPerOutcomeDistribution({
+    objective,
+    brands: bucketBrands,
+    bucketCount,
+    minBrands: MIN_DISTRIBUTION_BRANDS,
+  });
+
+  const payload: CostPerOutcomeDistributionPayload = {
+    featureSlug,
+    objective,
+    unit: "brand",
+    bucketCount,
+    ...distribution,
+  };
+  setPublicCache(costPerOutcomeDistributionCache, cacheKey, payload);
+  res.json(payload);
+}
+
 // ── GET /internal/stats/send-forecast ─────────────────────────────────────────
 
 const PAST_WINDOW_DAYS = 7;
@@ -1384,6 +1482,22 @@ router.get("/public/stats/cost-per-outcome-lifetime", async (req, res) => {
     await handleCostPerOutcomeLifetime(req.query.featureSlug as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public stats cost-per-outcome-lifetime error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/cost-per-outcome-distribution ──────────────────────────
+
+router.get("/public/stats/cost-per-outcome-distribution", async (req, res) => {
+  try {
+    await handleCostPerOutcomeDistribution(
+      req.query.featureSlug as string | undefined,
+      req.query.objective as string | undefined,
+      req.query.buckets as string | undefined,
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] Public stats cost-per-outcome-distribution error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

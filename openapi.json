@@ -7154,6 +7154,195 @@
         }
       }
     },
+    "/public/stats/cost-per-outcome-distribution": {
+      "get": {
+        "summary": "Cross-org distribution (histogram) of cost-per-outcome across brands for an objective (public, no auth)",
+        "description": "Cross-org (fleet-wide) DISTRIBUTION of a feature's cost-per-outcome for ONE objective — the spread ACROSS the brands the fleet runs, so a consumer can draw a histogram (equal-width bars + counts) plus the central tendency (mean, median) and the spread (min / p25 / p75 / max / stddev). The unit is the BRAND: each brand contributes one data point = its pooled all-history cost-per-outcome, goal-bucketed exactly like /public/stats/cost-per-outcome-trend and -lifetime. The payload carries only aggregate buckets + summary stats (no per-brand value or id). Returned empty/soft (buckets: [], scalars null) when fewer than 2 brands have a usable cost — never a false $0. NOTE the mean/median here are the UNWEIGHTED per-brand going rate, which legitimately differs from -lifetime's spend-weighted pooled average.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature slug (required)."
+            },
+            "required": true,
+            "description": "Feature slug (required).",
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Optimization objective — one of websiteVisit / positiveReply / signup / formSubmission / meetingBooked / purchase (snake / camel / kebab spellings accepted; self-serve aliases signup)."
+            },
+            "required": true,
+            "description": "Optimization objective — one of websiteVisit / positiveReply / signup / formSubmission / meetingBooked / purchase (snake / camel / kebab spellings accepted; self-serve aliases signup).",
+            "name": "objective",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Number of equal-width histogram bars (default 10, max 50)."
+            },
+            "required": false,
+            "description": "Number of equal-width histogram bars (default 10, max 50).",
+            "name": "buckets",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cross-org distribution of cost-per-outcome across brands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "objective": {
+                      "type": "string",
+                      "description": "Canonical camelCase objective the distribution is for."
+                    },
+                    "unit": {
+                      "type": "string",
+                      "enum": [
+                        "brand"
+                      ],
+                      "description": "Each data point is one brand's pooled all-history cost-per-outcome."
+                    },
+                    "bucketCount": {
+                      "type": "integer",
+                      "description": "Number of equal-width histogram bars requested (may collapse to 1 when all values are equal)."
+                    },
+                    "brandCount": {
+                      "type": "integer",
+                      "description": "Number of brands that contributed a usable ( > 0 ) per-brand cost-per-outcome data point."
+                    },
+                    "buckets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "minUsd": {
+                            "type": "number",
+                            "description": "Lower edge of the bar (USD, inclusive)."
+                          },
+                          "maxUsd": {
+                            "type": "number",
+                            "description": "Upper edge of the bar (USD). Exclusive except on the last bar, where the max value lands."
+                          },
+                          "count": {
+                            "type": "integer",
+                            "description": "Number of brands whose per-brand cost-per-outcome falls in this bar."
+                          }
+                        },
+                        "required": [
+                          "minUsd",
+                          "maxUsd",
+                          "count"
+                        ]
+                      },
+                      "description": "Histogram bars over [min, max]. Empty when brandCount is below the minimum to form a distribution."
+                    },
+                    "mean": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Unweighted mean of the per-brand costs (the going rate across brands). Null when insufficient data — never a false $0."
+                    },
+                    "median": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Median per-brand cost (50th percentile). Null when insufficient data."
+                    },
+                    "min": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Cheapest brand's cost-per-outcome (the cheap tail). Null when insufficient data."
+                    },
+                    "max": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Most expensive brand's cost-per-outcome (the expensive tail). Null when insufficient data."
+                    },
+                    "p25": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "25th percentile — lower edge of the bulk. Null when insufficient data."
+                    },
+                    "p75": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "75th percentile — upper edge of the bulk. Null when insufficient data."
+                    },
+                    "stddev": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Population standard deviation of the per-brand costs (a scalar sense of the spread). Null when insufficient data."
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "objective",
+                    "unit",
+                    "bucketCount",
+                    "brandCount",
+                    "buckets",
+                    "mean",
+                    "median",
+                    "min",
+                    "max",
+                    "p25",
+                    "p75",
+                    "stddev"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/public/stats/workflow-engagement-latency": {
       "get": {
         "summary": "Average and median time-to-engagement per workflow (public, no auth)",
