@@ -95,6 +95,27 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+/** Map `items` through `fn` with at most `limit` in flight at once, preserving index order in the result.
+ * Bounds fan-out concurrency so a large batch (e.g. one dated fetch pair per workflow dynasty) does not
+ * open N connections at once and overwhelm cold-start Neon-backed siblings — which would make every
+ * request slow enough to trip a per-item timeout. Never rejects: `fn` owns its own error handling. */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 // The goal-bucketed per-brand dataset (spend + outcomes + goal + economics per brand) is objective-
 // INDEPENDENT and expensive (one brand fan-out), so both the trend (per-objective) and lifetime
 // surfaces share ONE cached copy. Cached in-memory (holds Maps) under the same 60s TTL as the other
@@ -1042,6 +1063,12 @@ const workflowRecentRateStore = new Map<string, { map: Map<string, number | null
 // on a merely-slow cold-Neon fetch (fetchWithRetry already handles cold-start connect retries); killing a
 // slow-but-live fetch would spuriously null a backed dynasty for a whole warm cycle.
 const RECENT_WARM_PER_DYNASTY_TIMEOUT_MS = 45_000;
+// Cap how many dynasties' dated fan-outs run at once. The warm fetches TWO cross-service calls per dynasty
+// (runs timeseries + email-gateway dated outcomes); firing all ~25 dynasties at once = ~50 concurrent
+// connections that overwhelm cold-start Neon-backed siblings, making EVERY fetch slow enough to trip the
+// per-dynasty timeout → the whole warm degrades to all-null. Capping concurrency keeps each fetch fast
+// enough to beat the timeout (which then only fires on a genuine hang), so backed dynasties populate.
+const RECENT_WARM_CONCURRENCY = 6;
 
 function getStoredRecentRates(cacheKey: string): Map<string, number | null> | null {
   const entry = workflowRecentRateStore.get(cacheKey);
@@ -1069,6 +1096,9 @@ export function __expireWorkflowPayloadCacheForTest(): void {
 
 /** Test-only export of the per-item timeout primitive. */
 export const __withTimeoutForTest = withTimeout;
+
+/** Test-only export of the concurrency-limited map primitive. */
+export const __mapWithConcurrencyForTest = mapWithConcurrency;
 
 /** Test seam — await any in-flight background recent-rate warm(s), so a follow-up request deterministically
  * observes the recent-populated cache entry. */
@@ -1212,8 +1242,7 @@ export async function handleWorkflowCostPerOutcome(
       // the outer Promise.all pending forever → the warm never settles → its `.finally()` never clears the
       // in-flight flag → NO future warm runs for this cacheKey → recent stays permanently null (the exact
       // stuck-flag failure observed in prod). Racing each dynasty guarantees the warm always completes.
-      await Promise.all(
-        dynastyInputs.map(async (r) => {
+      await mapWithConcurrency(dynastyInputs, RECENT_WARM_CONCURRENCY, async (r) => {
           try {
             const outcome = await withTimeout(
               (async () => {
@@ -1253,8 +1282,7 @@ export async function handleWorkflowCostPerOutcome(
             );
             if (!recentByDynasty.has(r.workflowDynastySlug)) recentByDynasty.set(r.workflowDynastySlug, null);
           }
-        }),
-      );
+      });
       // Persist whatever populated (partial is fine) and overwrite the served payload. A CLEAN warm is
       // trusted the full 10-min TTL (no re-warm → no sibling contention); a DEGRADED warm (≥1 fetch failed/
       // timed out) is trusted only ~90s so the next read re-warms and heals the failed dynasties.

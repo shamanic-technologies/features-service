@@ -71,7 +71,7 @@ vi.mock("../lib/send-forecast-aggregate.js", () => ({
 }));
 
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetGoalBucketDatasetCache } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __mapWithConcurrencyForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetGoalBucketDatasetCache } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
@@ -1326,6 +1326,22 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
   it("withTimeout rejects a hung promise (bounds a stalled per-dynasty fetch so the warm always settles)", async () => {
     await expect(__withTimeoutForTest(Promise.resolve(42), 1000, "fast")).resolves.toBe(42);
     await expect(__withTimeoutForTest(new Promise(() => {}), 10, "hang")).rejects.toThrow(/Timed out after 10ms: hang/);
+  });
+
+  it("mapWithConcurrency caps in-flight count and preserves index order", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const items = Array.from({ length: 20 }, (_, i) => i);
+    const out = await __mapWithConcurrencyForTest(items, 6, async (n: number) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return n * 2;
+    });
+    expect(maxInFlight).toBeLessThanOrEqual(6);
+    expect(maxInFlight).toBeGreaterThan(1); // actually ran concurrently
+    expect(out).toEqual(items.map((n) => n * 2)); // order preserved despite out-of-order completion
   });
 });
 
