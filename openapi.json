@@ -6884,7 +6884,7 @@
     "/public/stats/workflow-cost-per-outcome": {
       "get": {
         "summary": "Per-workflow cross-org cost-per-outcome for an objective (public, no auth)",
-        "description": "Cross-org (fleet-wide) per-workflow-dynasty cost-per-outcome for ONE objective, guaranteed to populate when the workflow has spend: unit costs run through the projected cost-engine, flooring to max(spent, fleet unit cost) when the outcome denominator is 0. Same crossOrg dynasty rollup as /public/stats/best. Sorted by spend desc.",
+        "description": "Cross-org (fleet-wide) per-workflow-dynasty cost-per-outcome for ONE objective. Each row carries TWO cost-per-outcome rates: (1) costPerOutcomeUsd — the LIFETIME all-history pooled rate (guaranteed to populate when the workflow has spend: unit costs run through the projected cost-engine, flooring to max(spent, fleet unit cost) when the outcome denominator is 0), and (2) recentCostPerOutcomeUsd — the RECENT trailing-window moving average over the workflow's most recent ~windowOutcomes base outcomes (same window semantics as /public/stats/cost-per-outcome-trend, scoped to the single dynasty; null when the dynasty has no backed recent window). Same crossOrg dynasty rollup as /public/stats/best. Sorted by spend desc.",
         "tags": [
           "Public"
         ],
@@ -6908,6 +6908,16 @@
             "description": "Optimization objective — one of websiteVisit / positiveReply / signup / formSubmission / meetingBooked / purchase (snake / camel / kebab spellings accepted; self-serve aliases signup).",
             "name": "objective",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Trailing-window size (base outcomes) for recentCostPerOutcomeUsd. Default 100, clamped to 100000 — same default/clamp as /public/stats/cost-per-outcome-trend."
+            },
+            "required": false,
+            "description": "Trailing-window size (base outcomes) for recentCostPerOutcomeUsd. Default 100, clamped to 100000 — same default/clamp as /public/stats/cost-per-outcome-trend.",
+            "name": "windowOutcomes",
+            "in": "query"
           }
         ],
         "responses": {
@@ -6924,6 +6934,10 @@
                     "objective": {
                       "type": "string",
                       "description": "Canonical camelCase objective the ratios are for."
+                    },
+                    "windowOutcomes": {
+                      "type": "integer",
+                      "description": "Trailing-window size (base outcomes) the per-row recentCostPerOutcomeUsd moving average targets — the SAME window semantics as /public/stats/cost-per-outcome-trend."
                     },
                     "workflows": {
                       "type": "array",
@@ -6949,7 +6963,12 @@
                           "costPerOutcomeUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Populated cost-per-outcome (projected cascade floor: max(spent, fleet unit cost) when the outcome denominator is 0), so non-null whenever the workflow has spend and fleet economics exist."
+                            "description": "LIFETIME (all-history) pooled cost-per-outcome — what the workflow has cost per outcome over ALL history. Populated cost (projected cascade floor: max(spent, fleet unit cost) when the outcome denominator is 0), so non-null whenever the workflow has spend and fleet economics exist."
+                          },
+                          "recentCostPerOutcomeUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "RECENT going rate — the trailing-window moving-average cost-per-outcome over the workflow's most recent ~windowOutcomes base outcomes (same window semantics as /public/stats/cost-per-outcome-trend, scoped to this dynasty). Distinct from the lifetime costPerOutcomeUsd. Null (never a false $0) when the workflow has no backed recent window, no fleet economics, or the projected objective's rate is absent."
                           }
                         },
                         "required": [
@@ -6958,15 +6977,17 @@
                           "spentUsd",
                           "observedClicks",
                           "observedPositiveReplies",
-                          "costPerOutcomeUsd"
+                          "costPerOutcomeUsd",
+                          "recentCostPerOutcomeUsd"
                         ]
                       },
-                      "description": "One row per workflow dynasty, sorted by spend desc."
+                      "description": "One row per workflow dynasty, sorted by spend desc. Each row carries BOTH the lifetime cost-per-outcome and the recent trailing-window moving-average cost-per-outcome for the objective."
                     }
                   },
                   "required": [
                     "featureSlug",
                     "objective",
+                    "windowOutcomes",
                     "workflows"
                   ]
                 }

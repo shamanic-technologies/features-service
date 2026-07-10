@@ -352,6 +352,29 @@ export function buildCostPerOutcomeTrend(params: {
   return points;
 }
 
+/**
+ * The SINGLE most-recent trailing-window moving-average cost-per-outcome for one dated spend/outcome
+ * series (a workflow dynasty), for ONE objective — the per-workflow analogue of the fleet-wide
+ * `buildCostPerOutcomeTrend`'s latest point. Same window semantics: walk backward from `todayIso`
+ * accumulating the objective's base outcomes until ≥ `windowOutcomes` (or `maxLookbackDays`), then the
+ * window's spend ÷ outcomes (projected objectives pushed through the fleet-mean economics). Reduced to
+ * the today-anchored point (days = 1). Null (never a false $0) when the trailing window holds no base
+ * outcome for the objective (an unbacked recent window), the fleet economics are absent, or the
+ * projected objective's rate is absent — identical null semantics to a trend point.
+ */
+export function recentWindowCostPerOutcome(params: {
+  objective: Goal;
+  todayIso: string;
+  windowOutcomes: number;
+  maxLookbackDays: number;
+  spendByDay: Map<string, number>;
+  outcomesByDay: Map<string, DayOutcome>;
+  fleetEcon: ProjectionEconomics | null;
+}): number | null {
+  const [point] = buildCostPerOutcomeTrend({ ...params, days: 1 });
+  return point ? point.costPerOutcomeUsd : null;
+}
+
 // ── Gap #3 — per-workflow populated ratio ────────────────────────────────────
 
 export interface WorkflowGrainInput {
@@ -370,8 +393,15 @@ export interface WorkflowCostRow {
   observedPositiveReplies: number;
   /** Populated cost-per-outcome for the objective — projected cascade floor (parent = fleet unit cost)
    * so it is NEVER null when the workflow has spend and economics exist. Null only at cold start (no
-   * fleet economics) or for a projected objective whose rate is absent. */
+   * fleet economics) or for a projected objective whose rate is absent. This is the LIFETIME (all-history)
+   * pooled rate — what the workflow has cost per outcome over all history. */
   costPerOutcomeUsd: number | null;
+  /** The workflow's RECENT going rate: the trailing-window moving-average cost-per-outcome over its most
+   * recent ~windowOutcomes of the objective's base outcomes (same window semantics as the fleet
+   * cost-per-outcome trend, scoped to THIS dynasty). Distinct from the lifetime `costPerOutcomeUsd`.
+   * Null (never a false $0) when the workflow has no backed recent window (0 recent base outcomes),
+   * no fleet economics, or the projected objective's rate is absent. */
+  recentCostPerOutcomeUsd: number | null;
 }
 
 /**
@@ -392,8 +422,12 @@ export function buildWorkflowCostPerOutcome(params: {
   fleetParentReplyUsd: number | null;
   fleetEcon: ProjectionEconomics | null;
   projectedFloor: (spentUsd: number, observedCount: number, parentCost: number | null) => number;
+  /** Per-dynasty RECENT trailing-window cost-per-outcome (see `recentWindowCostPerOutcome`), keyed by
+   * dynasty slug. Computed by the route from each dynasty's dated spend/outcomes. A dynasty absent from
+   * the map (or mapping to null) → `recentCostPerOutcomeUsd: null`. */
+  recentByDynasty?: Map<string, number | null>;
 }): WorkflowCostRow[] {
-  const { objective, rows, fleetParentClickUsd, fleetParentReplyUsd, fleetEcon, projectedFloor } = params;
+  const { objective, rows, fleetParentClickUsd, fleetParentReplyUsd, fleetEcon, projectedFloor, recentByDynasty } = params;
 
   return rows
     .map((r): WorkflowCostRow => {
@@ -409,6 +443,7 @@ export function buildWorkflowCostPerOutcome(params: {
         observedClicks: r.clicks,
         observedPositiveReplies: r.replies,
         costPerOutcomeUsd,
+        recentCostPerOutcomeUsd: recentByDynasty?.get(r.workflowDynastySlug) ?? null,
       };
     })
     .sort((a, b) => b.spentUsd - a.spentUsd || a.workflowDynastySlug.localeCompare(b.workflowDynastySlug));

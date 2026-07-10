@@ -1111,6 +1111,93 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
     const res = await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=nope&objective=websiteVisit");
     expect(res.status).toBe(404);
   });
+
+  it("returns BOTH the lifetime and the recent trailing-window cost-per-outcome per workflow", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    const today = new Date().toISOString().slice(0, 10);
+    const mkJson = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+
+    vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
+        return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }] });
+      }
+      if (url.startsWith("http://workflow:3000/public/workflows")) {
+        return mkJson({ workflows: [{ id: "w1", workflowSlug: "wf-1", workflowName: "WF One", workflowDynastyName: "WF One", workflowDynastySlug: "wf-1", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null }] });
+      }
+      // Per-dynasty RECENT dated spend: $10 today (route matches /timeseries BEFORE the lifetime /costs branch).
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) {
+        return mkJson({ buckets: [{ period: today, totalCostInUsdCents: "1000", actualCostInUsdCents: "1000", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0", runCount: 1 }] });
+      }
+      // Lifetime spend by workflowSlug: $200.
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
+        return mkJson({ groups: [{ dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null }] });
+      }
+      if (url.startsWith("http://email:3000/public/stats")) {
+        const groupBy = new URL(url).searchParams.get("groupBy");
+        if (groupBy === "day") {
+          // RECENT dated outcomes for this dynasty: 10 clicks today → recent CPC = $10 / 10 = $1.
+          return mkJson({ groups: [{ key: today, broadcast: { recipientStats: { clicked: 10, repliesPositive: 0 } } }] });
+        }
+        // Lifetime by workflowSlug: 100 clicks → lifetime CPC = $200 / 100 = $2.
+        return mkJson({ groups: [{ key: "wf-1", broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, opened: 50, clicked: 100, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }] });
+      }
+      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
+        return mkJson({ economics: ECON_FULL, source: "user" });
+      }
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    });
+
+    const res = await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=sales-cold-email-outreach&objective=websiteVisit");
+    expect(res.status).toBe(200);
+    expect(res.body.windowOutcomes).toBe(100);
+    expect(res.body.workflows).toHaveLength(1);
+    const row = res.body.workflows[0];
+    expect(row.workflowDynastySlug).toBe("wf-1");
+    // Lifetime pooled rate (all-history): $200 / 100 clicks = $2 — UNCHANGED by this feature.
+    expect(row.costPerOutcomeUsd).toBeCloseTo(2, 6);
+    // Recent trailing-window rate (today's window): $10 / 10 clicks = $1 — the NEW field, distinct.
+    expect(row.recentCostPerOutcomeUsd).toBeCloseTo(1, 6);
+  });
+
+  it("recentCostPerOutcomeUsd is null (never a false $0) when the dynasty has no recent window", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    const mkJson = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+
+    vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
+        return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }] });
+      }
+      if (url.startsWith("http://workflow:3000/public/workflows")) {
+        return mkJson({ workflows: [{ id: "w1", workflowSlug: "wf-1", workflowName: "WF One", workflowDynastyName: "WF One", workflowDynastySlug: "wf-1", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null }] });
+      }
+      // No recent dated spend/outcomes at all → unbacked recent window.
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) {
+        return mkJson({ buckets: [] });
+      }
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
+        return mkJson({ groups: [{ dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null }] });
+      }
+      if (url.startsWith("http://email:3000/public/stats")) {
+        const groupBy = new URL(url).searchParams.get("groupBy");
+        if (groupBy === "day") return mkJson({ groups: [] });
+        return mkJson({ groups: [{ key: "wf-1", broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, opened: 50, clicked: 100, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }] });
+      }
+      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
+        return mkJson({ economics: ECON_FULL, source: "user" });
+      }
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    });
+
+    const res = await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=sales-cold-email-outreach&objective=websiteVisit");
+    expect(res.status).toBe(200);
+    const row = res.body.workflows[0];
+    expect(row.costPerOutcomeUsd).toBeCloseTo(2, 6); // lifetime still populated
+    expect(row.recentCostPerOutcomeUsd).toBeNull();   // recent unbacked → null, not $0
+  });
 });
 
 /** Drive the cost-projection endpoint's downstream HTTP calls. wf-1 cheap, wf-2 expensive (never best). */

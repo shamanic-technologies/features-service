@@ -1053,14 +1053,16 @@ const costPerOutcomeTrendResponseSchema = z.object({
 const workflowCostPerOutcomeResponseSchema = z.object({
   featureSlug: z.string(),
   objective: z.string().describe("Canonical camelCase objective the ratios are for."),
+  windowOutcomes: z.number().int().describe("Trailing-window size (base outcomes) the per-row recentCostPerOutcomeUsd moving average targets — the SAME window semantics as /public/stats/cost-per-outcome-trend."),
   workflows: z.array(z.object({
     workflowDynastySlug: z.string(),
     workflowDynastyName: z.string(),
     spentUsd: z.number().describe("Cross-org fleet spend (USD) attributed to this workflow dynasty."),
     observedClicks: z.number(),
     observedPositiveReplies: z.number(),
-    costPerOutcomeUsd: z.number().nullable().describe("Populated cost-per-outcome (projected cascade floor: max(spent, fleet unit cost) when the outcome denominator is 0), so non-null whenever the workflow has spend and fleet economics exist."),
-  })).describe("One row per workflow dynasty, sorted by spend desc."),
+    costPerOutcomeUsd: z.number().nullable().describe("LIFETIME (all-history) pooled cost-per-outcome — what the workflow has cost per outcome over ALL history. Populated cost (projected cascade floor: max(spent, fleet unit cost) when the outcome denominator is 0), so non-null whenever the workflow has spend and fleet economics exist."),
+    recentCostPerOutcomeUsd: z.number().nullable().describe("RECENT going rate — the trailing-window moving-average cost-per-outcome over the workflow's most recent ~windowOutcomes base outcomes (same window semantics as /public/stats/cost-per-outcome-trend, scoped to this dynasty). Distinct from the lifetime costPerOutcomeUsd. Null (never a false $0) when the workflow has no backed recent window, no fleet economics, or the projected objective's rate is absent."),
+  })).describe("One row per workflow dynasty, sorted by spend desc. Each row carries BOTH the lifetime cost-per-outcome and the recent trailing-window moving-average cost-per-outcome for the objective."),
 });
 
 const costPerOutcomeLifetimeResponseSchema = z.object({
@@ -1146,12 +1148,13 @@ registry.registerPath({
   path: "/public/stats/workflow-cost-per-outcome",
   summary: "Per-workflow cross-org cost-per-outcome for an objective (public, no auth)",
   description:
-    "Cross-org (fleet-wide) per-workflow-dynasty cost-per-outcome for ONE objective, guaranteed to populate when the workflow has spend: unit costs run through the projected cost-engine, flooring to max(spent, fleet unit cost) when the outcome denominator is 0. Same crossOrg dynasty rollup as /public/stats/best. Sorted by spend desc.",
+    "Cross-org (fleet-wide) per-workflow-dynasty cost-per-outcome for ONE objective. Each row carries TWO cost-per-outcome rates: (1) costPerOutcomeUsd — the LIFETIME all-history pooled rate (guaranteed to populate when the workflow has spend: unit costs run through the projected cost-engine, flooring to max(spent, fleet unit cost) when the outcome denominator is 0), and (2) recentCostPerOutcomeUsd — the RECENT trailing-window moving average over the workflow's most recent ~windowOutcomes base outcomes (same window semantics as /public/stats/cost-per-outcome-trend, scoped to the single dynasty; null when the dynasty has no backed recent window). Same crossOrg dynasty rollup as /public/stats/best. Sorted by spend desc.",
   tags: ["Public"],
   request: {
     query: z.object({
       featureSlug: z.string().describe("Feature slug (required)."),
       objective: objectiveQueryParam,
+      windowOutcomes: z.string().optional().describe("Trailing-window size (base outcomes) for recentCostPerOutcomeUsd. Default 100, clamped to 100000 — same default/clamp as /public/stats/cost-per-outcome-trend."),
     }),
   },
   responses: {

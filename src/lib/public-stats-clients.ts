@@ -106,6 +106,25 @@ export async function fetchFleetSpendByDay(featureSlug: string, brandId?: string
   const params = new URLSearchParams({ interval: "day", featureSlug });
   // runs filters brandId as a single `= ANY(r.brand_ids)` (NOT comma-split) — pass ONE brand per call.
   if (brandId) params.set("brandId", brandId);
+  return fetchCostTimeseriesByDay(params);
+}
+
+/**
+ * Cross-org spend per UTC day for ONE workflow dynasty of a feature — same runs-service dated cost
+ * endpoint as `fetchFleetSpendByDay`, filtered to a single `workflowDynastySlug` (resolved to all its
+ * versioned slugs upstream). Feeds the per-workflow RECENT trailing-window cost-per-outcome (the
+ * per-workflow analogue of the fleet cost-per-outcome trend). api-key only, fail loud.
+ */
+export async function fetchDynastySpendByDay(
+  featureSlug: string,
+  workflowDynastySlug: string,
+): Promise<Map<string, number>> {
+  const params = new URLSearchParams({ interval: "day", featureSlug, workflowDynastySlug });
+  return fetchCostTimeseriesByDay(params);
+}
+
+/** Shared parse of runs-service `/v1/stats/public/costs/timeseries` → Map<YYYY-MM-DD, spentUsd>. */
+async function fetchCostTimeseriesByDay(params: URLSearchParams): Promise<Map<string, number>> {
   const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs/timeseries?${params}`;
   const response = await fetchWithRetry(url, {
     headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY! },
@@ -137,10 +156,14 @@ export async function fetchPublicEmailStats(
   featureSlugs: string,
   groupBy: string,
   brandIds?: string[],
+  // Optional workflow-dynasty filter (resolved to all versioned slugs upstream). Combined with
+  // groupBy=day it yields ONE dynasty's dated outcomes — the per-workflow RECENT-window join partner.
+  workflowDynastySlug?: string,
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
   // email-gateway accepts a comma-separated brandId filter (per its public /stats contract).
   if (brandIds && brandIds.length > 0) params.set("brandId", brandIds.join(","));
+  if (workflowDynastySlug) params.set("workflowDynastySlug", workflowDynastySlug);
 
   const url = `${process.env.EMAIL_GATEWAY_SERVICE_URL}/public/stats?${params}`;
   const response = await fetchWithRetry(url, {
