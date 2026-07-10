@@ -488,17 +488,38 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=positive_replies`).set(AUTH);
     expect(res.status).toBe(200);
 
-    // Brand-level row: brand grain present (spend) but 0 replies → resolves to crossOrg.
+    // crossOrg reply cost = $1000/50 = $20; brand spent $32 on the dynasty (0 replies) → its floored
+    // reply cost = max(32, 20) = $32 (brand OUTSPENT the fleet with nothing to show).
+    // Brand-level row: LABEL is crossOrg (benchmark, not measured), but the NUMBER stays the brand's own
+    // $32 spend floor — NOT collapsed to the fleet $20.
     const brandRow = rowFor(res.body, "dyn-a", null);
     expect(brandRow.estimatesByGrain.brand).toBeTruthy();
     expect(brandRow.estimatesByGrain.brand.evidence.observedPositiveReplies).toBe(0);
-    expect(brandRow.resolved.grain).toBe("crossOrg"); // NOT "brand" — no measured outcome
+    expect(brandRow.resolved.grain).toBe("crossOrg"); // LABEL: NOT "brand" — no measured outcome
+    expect(brandRow.resolved.costPerOutcomeUsd).toBeCloseTo(32, 3); // NUMBER: brand spend floor, NOT fleet $20
+    expect(brandRow.resolved.costPerOutcomeUsd).not.toBeCloseTo(20, 3);
 
-    // Audience row: audience + brand grains have spend but 0 replies → resolves to crossOrg, NOT audience.
+    // Audience row: audience + brand grains have spend but 0 replies → LABEL crossOrg, NUMBER = audience
+    // spend floor ($32), still brand/audience-specific (Kevin's cascade preserved, not fleet-collapsed).
     const audRow = rowFor(res.body, "dyn-a", "aud-1");
     expect(audRow.estimatesByGrain.audience).toBeTruthy();
     expect(audRow.estimatesByGrain.audience.evidence.observedPositiveReplies).toBe(0);
-    expect(audRow.resolved.grain).toBe("crossOrg"); // NOT "audience" — projection, not measured
+    expect(audRow.resolved.grain).toBe("crossOrg"); // LABEL: NOT "audience" — projection, not measured
+    expect(audRow.resolved.costPerOutcomeUsd).toBeCloseTo(32, 3); // NUMBER: own spend floor
+    // paid client still coherent (= outcome cost / 0.15), distinct from the outcome cost.
+    expect(audRow.resolved.costPerPaidClientUsd).toBeCloseTo(32 / 0.15, 2);
+  });
+
+  it("DEFECT 1 — number keeps the brand spend floor even when brand OUTSPENT the fleet (not collapsed to crossOrg)", async () => {
+    // crossOrg wf-a reply cost = $1000/50 = $20. Brand ran wf-a: $200 spent, 0 replies → floored reply
+    // cost = max(200, 20) = $200. resolved NUMBER must be $200 (brand's own burn), LABEL crossOrg.
+    const SINGLE = { ...ECONOMICS, replyToPaidClientPct: 15 };
+    mockFetch({ economics: SINGLE, brandCost: [costGroup("wf-a", 20000)], brandEmail: [emailGroup("wf-a", 0, 0, 50)] });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=positive_replies`).set(AUTH);
+    const a = rowFor(res.body, "dyn-a", null);
+    expect(a.estimatesByGrain.brand.unitCosts.costPerPositiveReplyUsd).toBeCloseTo(200, 3); // floor = own spend
+    expect(a.resolved.grain).toBe("crossOrg"); // benchmark label (no measured outcome)
+    expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(200, 3); // NUMBER = brand floor, NOT fleet $20
   });
 
   it("DEFECT 1 no-regression — a brand WITH real observed replies keeps the brand provenance", async () => {
