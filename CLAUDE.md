@@ -155,9 +155,13 @@ valid zero-denominator gate → null cost (renders "-"), never a false $0; a gen
 fails loud via `singleStepRateDecimal` (502), never NaN / zero-collapse.
 
 **Surfaces wired (each keyed on the goal):**
-- `workflow-projection` (`objective`): the single-step cost rides each grain's `projected` +
-  `resolved.costPerOutcomeUsd` (NOT `costPerPurchaseUsd`) → non-null `roiMultiple` + positive
-  `recommendedBudgetUsd`, no zero-collapse.
+- `workflow-projection` (`objective`): `resolved.costPerOutcomeUsd` = the RAW unit cost of the outcome
+  (`websiteVisit`→CPC = `unitCosts.clickUsd`, `positiveReply`→CPPR = `unitCosts.replyUsd`) — the visit /
+  reply IS the outcome, matching audience-stats + the cross-org objective→cost doctrine. It is NOT the
+  single-step PAID-CLIENT cost (that is `resolved.costPerPaidClientUsd` = raw / rate, which drives ROI +
+  `recommendedBudget`); the two are DISTINCT by the visit/reply→paid rate. Returning the paid-client cost
+  as the outcome cost made cost-per-outcome == cost-per-paid-client — an internally-incoherent pair when
+  the rate < 100% (features-service#528). Fixed in `outcomeCostForGoal` (`workflow-projection.ts`).
 - `audience-stats` (`goal`): `costPerOutcomeUsd` / sort-metric per goal
   (`websiteVisit`→CPC, `positiveReply`→CPPR); `conversion.rate` = the single-step rate.
 - `revenue` (`lens=website_visits`/`positive_replies`): per-lead EV = rate × LTR via `lensProbability`
@@ -205,9 +209,20 @@ estimatesByGrain:{crossOrg?, brand?, audience?}, resolved }`. `economics` (brand
   dynasty rollup; the brand grain adds a `brandId` filter. The audience grain is audience-WIDE — NOT
   split per-workflow (send/engagement is not workflow-tagged; fleet gap #366/#367).
 
-**`resolved`.** `resolved.grain` = the FINEST grain present with spend, precedence
-`audience > brand > crossOrg`. `resolved.costPerOutcomeUsd` is the goal metric campaign-service ranks
-on. The `recommended` selection ranks on `resolved.costPerOutcomeUsd`. (Set 2026-07-06.)
+**`resolved`.** `resolved.grain` is the PROVENANCE of the resolved metrics — the FINEST grain that
+actually OBSERVED the goal's outcome (replies for `positiveReply`, clicks for the click-driven goals,
+either channel for meeting-booked/purchase), precedence `audience > brand > crossOrg`. A grain with
+spend but ZERO outcomes yields a cascade-FLOORED projection, NOT a measured ratio, so it is SKIPPED —
+a projection is never tagged `brand`/`audience` (the dashboard renders that grain verbatim as "From
+this brand's own results", which would be a lie for a brand with 0 realized outcomes). When neither the
+audience nor brand grain has a realized outcome, `resolved` falls to `crossOrg` (fleet benchmark), so
+the consumer never labels a projection as this brand's measured result. crossOrg (fleet, incl. this
+org's own spend) is present whenever any finer grain spent → a projection always has a fleet grain to
+attribute to. `grainHasObservedOutcome` + `resolvePick` (`workflow-projection.ts`); a brand WITH real
+observed outcomes still resolves `brand`/`audience` (no regression). `resolved.costPerOutcomeUsd` is the
+goal metric campaign-service ranks on. The `recommended` selection ranks on `resolved.costPerOutcomeUsd`.
+(Set 2026-07-06; provenance = measured-grain + single-step raw-outcome cost, features-service#528
+2026-07-10.)
 
 **Audience-grain SET must equal `/audience-stats`' set — enumerate the `groupBy=audienceId` cost
 universe, NEVER the `groupBy=audienceId,workflowDynastySlug` couples.** `fetchAudienceGrainEvidence`
