@@ -51,6 +51,29 @@ describe("fetchSpendBreakdown", () => {
     expect(seenUrls.some((u) => u.includes("startedAfter"))).toBe(true);
   });
 
+  it("NET pricing (discountFactor) scales every $ figure but leaves sharePct (a ratio) unchanged", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.includes("startedAfter")) return json({ groups: [group("apollo people-search", 1000, 1500)] });
+      return json({ groups: [group("email-send-step-1", 6000, 8000), group("apollo people-search", 2000)] });
+    });
+
+    // 50% off (factor 0.5): every cents figure halves; shares (80/20) are discount-invariant.
+    const res = await fetchSpendBreakdown("brand-1", undefined, "f", HEADERS, new Date(), 0.5);
+    expect(res.totalSpentCents).toBe(5000); // 10000 × 0.5
+    expect(res.actualSpentCents).toBe(4000); // 8000 × 0.5
+    expect(res.provisionedSpentCents).toBe(1000); // 5000 − 4000
+    expect(res.totalSpentTodayCents).toBe(750); // 1500 × 0.5
+    expect(res.actualSpentTodayCents).toBe(500); // 1000 × 0.5
+    expect(res.sources).toEqual([
+      { source: "email-send-step-1", totalSpentCents: 4000, actualSpentCents: 3000, provisionedSpentCents: 1000, sharePct: 80 },
+      { source: "apollo people-search", totalSpentCents: 1000, actualSpentCents: 1000, provisionedSpentCents: 0, sharePct: 20 },
+    ]);
+    // Invariant preserved under discount: each top-level total == Σ over sources.
+    expect(res.sources.reduce((n, s) => n + s.totalSpentCents, 0)).toBe(res.totalSpentCents);
+  });
+
   it("fails loud (throws) on a non-OK runs response — never fakes $0 spend", async () => {
     // Fresh Response per call (the two breakdown fetches run in parallel; a shared body errors).
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("boom", { status: 500 }));

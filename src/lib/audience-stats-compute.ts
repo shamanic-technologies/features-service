@@ -172,6 +172,10 @@ async function fetchAudienceCosts(
   brandId: string,
   featureSlug: string,
   identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
+  // NET pricing: scale the GROSS per-audience cost cents by the org's discount factor (1 = gross, the
+  // default → byte-identical). Every per-audience cpc/cppr/cpfs + the brand-parent cascade derives from
+  // these cents, so discounting here makes the whole ranking net + coherent.
+  discountFactor = 1,
 ): Promise<Map<string, AudienceCostEvidence>> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -216,7 +220,7 @@ async function fetchAudienceCosts(
     const audienceId = audienceIdFromDimensions(group.dimensions);
     if (!audienceId) continue;
     result.set(audienceId, {
-      totalCostInUsdCents: Math.round(readFiniteNumber(group.totalCostInUsdCents, "totalCostInUsdCents")),
+      totalCostInUsdCents: Math.round(readFiniteNumber(group.totalCostInUsdCents, "totalCostInUsdCents") * discountFactor),
       completedRuns: readFiniteNumber(group.runCount, "runCount"),
       firstRunAt: group.minStartedAt ?? null,
       lastRunAt: group.maxStartedAt ?? null,
@@ -300,7 +304,7 @@ async function fetchAudienceOutcomes(
  * fans out to runs-service (cost) + human-service/email-gateway (outcomes) to build ranked rows.
  * Downstream failures THROW — the route maps them to 502.
  */
-export async function computeAudienceStats(req: Request): Promise<ComputeResult> {
+export async function computeAudienceStats(req: Request, discountFactor = 1): Promise<ComputeResult> {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
   const brandId = req.query.brandId as string | undefined;
@@ -354,7 +358,7 @@ export async function computeAudienceStats(req: Request): Promise<ComputeResult>
     normalizedGoal === "formSubmission" ? await fetchFormSubmissionEmailsSoft(brandId) : null;
 
   const [costs, outcomesResult] = await Promise.all([
-    fetchAudienceCosts(brandId, featureSlug, identity),
+    fetchAudienceCosts(brandId, featureSlug, identity, discountFactor),
     fetchAudienceOutcomes(brandId, audiences, identity, formSubmissionEmails),
   ]);
   const outcomes = outcomesResult.perAudience;

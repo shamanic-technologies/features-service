@@ -29,6 +29,7 @@
  * non-OK / malformed response throws and the caller returns 502 (mirrors fetchRunsCostCents).
  */
 import { fetchWithRetry } from "./fetch-retry.js";
+import { discountCents } from "./pricing.js";
 
 export interface SpendSource {
   /** runs-service cost name (the billable line item, e.g. "apollo people-search", "email-send-step-1"). */
@@ -126,6 +127,10 @@ export async function fetchSpendBreakdown(
   featureSlug: string,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
   now: Date = new Date(),
+  // NET pricing: scale every USD-cents figure (committed / actual / provisioned, today variants, and
+  // each source's cents) by the org's discount factor (1 = gross, the default → byte-identical). Ratios
+  // (sharePct) are unchanged — a share is discount-invariant since both parts scale together.
+  discountFactor = 1,
 ): Promise<SpendBreakdown> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -155,15 +160,16 @@ export async function fetchSpendBreakdown(
 
   const sources: SpendSource[] = sourceGroups
     .map((g) => {
-      const totalCents = Math.round(Number(g.totalCostInUsdCents));
-      const actualCents = Math.round(Number(g.actualCostInUsdCents));
+      const totalCents = Math.round(Number(g.totalCostInUsdCents) * discountFactor);
+      const actualCents = Math.round(Number(g.actualCostInUsdCents) * discountFactor);
       return {
         source: g.dimensions?.costName ?? "unknown",
         totalSpentCents: totalCents,
         actualSpentCents: actualCents,
         provisionedSpentCents: totalCents - actualCents,
-        // Share of the COMMITTED total — coherent with the displayed "Total spent".
-        sharePct: all.totalCents > 0 ? (totalCents / all.totalCents) * 100 : 0,
+        // Share of the COMMITTED total — coherent with the displayed "Total spent". Discount-invariant:
+        // numerator + denominator scale by the same factor, so the ratio is identical to gross.
+        sharePct: all.totalCents > 0 ? (Number(g.totalCostInUsdCents) / all.totalCents) * 100 : 0,
       };
     })
     // A row with committed 0 has actual 0 too (committed ≥ actual ≥ 0), so dropping it preserves the
@@ -172,12 +178,12 @@ export async function fetchSpendBreakdown(
     .sort((a, b) => b.totalSpentCents - a.totalSpentCents || a.source.localeCompare(b.source));
 
   return {
-    totalSpentCents: all.totalCents,
-    actualSpentCents: all.actualCents,
-    provisionedSpentCents: all.totalCents - all.actualCents,
-    totalSpentTodayCents: today.totalCents,
-    actualSpentTodayCents: today.actualCents,
-    provisionedSpentTodayCents: today.totalCents - today.actualCents,
+    totalSpentCents: discountCents(all.totalCents, discountFactor),
+    actualSpentCents: discountCents(all.actualCents, discountFactor),
+    provisionedSpentCents: discountCents(all.totalCents, discountFactor) - discountCents(all.actualCents, discountFactor),
+    totalSpentTodayCents: discountCents(today.totalCents, discountFactor),
+    actualSpentTodayCents: discountCents(today.actualCents, discountFactor),
+    provisionedSpentTodayCents: discountCents(today.totalCents, discountFactor) - discountCents(today.actualCents, discountFactor),
     sources,
   };
 }

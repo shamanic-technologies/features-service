@@ -5,6 +5,7 @@ import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { STATS_REGISTRY, getPublicRegistry, getEntityRegistry, requiredStatsSources, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { parsePricing, resolveDiscountFactor } from "../lib/pricing.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
 import { fetchEngagementSnapshotCounts, SNAPSHOT_ENGAGEMENT_KEYS } from "../lib/engagement-snapshot.js";
@@ -214,6 +215,9 @@ async function fetchRunsStats(
   filters: Record<string, string>,
   featureSlugs: string[] | undefined,
   identity: Identity,
+  // NET pricing: scale the GROSS run cost cents by the org's discount factor (1 = gross, the default →
+  // byte-identical). Applied at the cost input so every derived costPer*Cents figure comes out net.
+  discountFactor = 1,
 ): Promise<Map<string, RunsStatsEntry>> {
   const runsGroupBy = groupBy ?? "workflowSlug";
   const params = new URLSearchParams({ groupBy: runsGroupBy });
@@ -261,8 +265,8 @@ async function fetchRunsStats(
       let minStartedAt: string | null = null;
       let maxStartedAt: string | null = null;
       for (const group of data.groups) {
-        totalCost += Math.round(Number(group.totalCostInUsdCents));
-        actualCost += Math.round(Number(group.actualCostInUsdCents));
+        totalCost += Math.round(Number(group.totalCostInUsdCents) * discountFactor);
+        actualCost += Math.round(Number(group.actualCostInUsdCents) * discountFactor);
         totalRuns += group.runCount;
         if (group.minStartedAt && (!minStartedAt || group.minStartedAt < minStartedAt)) {
           minStartedAt = group.minStartedAt;
@@ -278,8 +282,8 @@ async function fetchRunsStats(
       for (const group of data.groups) {
         const key = group.dimensions[runsGroupBy] ?? "__total__";
         result.set(key, {
-          totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)),
-          actualCostInUsdCents: Math.round(Number(group.actualCostInUsdCents)),
+          totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents) * discountFactor),
+          actualCostInUsdCents: Math.round(Number(group.actualCostInUsdCents) * discountFactor),
           completedRuns: group.runCount,
           minStartedAt: group.minStartedAt ?? null,
           maxStartedAt: group.maxStartedAt ?? null,
@@ -1039,11 +1043,19 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     // Scope downstream calls to this feature
     filters.featureSlug = featureSlug;
 
+    // GROSS (default) vs NET pricing. Omitted → gross → byte-identical to today.
+    const pricing = parsePricing(req.query.pricing);
+    if (pricing === null) {
+      return res.status(400).json({ error: "pricing must be one of: gross, net" });
+    }
+    // NET → the org's discount factor (fail-loud if unresolvable). GROSS → 1 (no billing call).
+    const discountFactor = await resolveDiscountFactor(pricing, orgId);
+
     // Served through the Gold snapshot cache (O(1) read; the 10-source fan-out recomputes a viewed
     // cell off the request path ~per TTL). Scope key spans org + every query param that changes the body.
     const payload = await servedCached({
       view: "stats",
-      scopeKey: buildScopeKey(featureSlug, { orgId, groupBy: groupByParam, ...filters }),
+      scopeKey: buildScopeKey(featureSlug, { orgId, groupBy: groupByParam, ...filters, pricing }),
       orgId,
       compute: async () => {
     traceEvent(runId, { service: "features-service", event: "feature-stats-start", detail: `featureSlug=${featureSlug}, groupBy=${groupByParam ?? "none"}, filters=${JSON.stringify(filters)}` }, req.headers).catch(() => {});
@@ -1076,7 +1088,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
 
     const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, pressKitsStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns, engagementSnapshot] = await Promise.all([
       neededSources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : skip(),
-      fetchRunsStats(orgId, groupBy, filters, [featureSlug], identity),
+      fetchRunsStats(orgId, groupBy, filters, [featureSlug], identity, discountFactor),
       neededSources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : skip(),
       neededSources.has("journalists") ? fetchJournalistsStats(orgId, groupBy, filters, identity) : skip(),
       neededSources.has("leads") ? fetchLeadsStats(orgId, groupBy, filters, identity) : skip(),
@@ -1184,9 +1196,16 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
     const groupBy = (groupByParam?.split(",")[0] ?? null) as GroupByDimension | null;
     const identity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };
 
+    // GROSS (default) vs NET pricing. Omitted → gross → byte-identical to today.
+    const pricing = parsePricing(req.query.pricing);
+    if (pricing === null) {
+      return res.status(400).json({ error: "pricing must be one of: gross, net" });
+    }
+    const discountFactor = await resolveDiscountFactor(pricing, orgId);
+
     const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns] = await Promise.all([
       fetchEmailStats(orgId, groupBy, filters, identity),
-      fetchRunsStats(orgId, groupBy, filters, undefined, identity),
+      fetchRunsStats(orgId, groupBy, filters, undefined, identity, discountFactor),
       fetchOutletsStats(orgId, groupBy, filters, identity),
       fetchJournalistsStats(orgId, groupBy, filters, identity),
       fetchLeadsStats(orgId, groupBy, filters, identity),

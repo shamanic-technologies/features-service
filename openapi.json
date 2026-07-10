@@ -3780,6 +3780,20 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis for every MONEY metric in the response (cost, costPer*Cents). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today, no billing dependency). 'net' → the org's usage discount (billing-service) applied to all $ figures; fail-loud (502) if the discount cannot be resolved. Non-money fields (counts, rates) are identical either way."
+            },
+            "required": false,
+            "description": "Pricing basis for every MONEY metric in the response (cost, costPer*Cents). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today, no billing dependency). 'net' → the org's usage discount (billing-service) applied to all $ figures; fail-loud (502) if the discount cannot be resolved. Non-money fields (counts, rates) are identical either way.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "format": "uuid",
               "description": "Internal org UUID from client-service"
             },
@@ -4054,6 +4068,20 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis for every MONEY metric (spend block, costEconomics actualCostUsd, CAC, ROI, cps/cpsm/cpfs). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today, no billing dependency). 'net' → the org's usage discount (billing-service) applied to all $ figures; fail-loud (502) if the discount cannot be resolved. Non-money fields (counts, rates, pipeline revenue) are identical either way."
+            },
+            "required": false,
+            "description": "Pricing basis for every MONEY metric (spend block, costEconomics actualCostUsd, CAC, ROI, cps/cpsm/cpfs). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today, no billing dependency). 'net' → the org's usage discount (billing-service) applied to all $ figures; fail-loud (502) if the discount cannot be resolved. Non-money fields (counts, rates, pipeline revenue) are identical either way.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "format": "uuid",
               "description": "Internal org UUID from client-service"
             },
@@ -4114,7 +4142,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId or invalid lens value",
+            "description": "Missing brandId, invalid lens, or invalid pricing value",
             "content": {
               "application/json": {
                 "schema": {
@@ -4234,6 +4262,20 @@
             "required": false,
             "description": "Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface).",
             "name": "budgetUsd",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis for every MONEY metric (each grain's unitCosts + projected cost-per-outcome, resolved.costPerOutcomeUsd, roiMultiple, cacPct, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today, no billing dependency). 'net' → the org's usage discount (billing-service) applied uniformly across the whole crossOrg→brand→audience ladder; fail-loud (502) if unresolvable. Non-money fields (counts, rates, economics rates) are identical either way."
+            },
+            "required": false,
+            "description": "Pricing basis for every MONEY metric (each grain's unitCosts + projected cost-per-outcome, resolved.costPerOutcomeUsd, roiMultiple, cacPct, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today, no billing dependency). 'net' → the org's usage discount (billing-service) applied uniformly across the whole crossOrg→brand→audience ladder; fail-loud (502) if unresolvable. Non-money fields (counts, rates, economics rates) are identical either way.",
+            "name": "pricing",
             "in": "query"
           },
           {
@@ -5207,6 +5249,20 @@
             "required": true,
             "description": "Active optimization goal (required). signup + websiteVisit sort by CPC; meetingBooked / purchase / positiveReply sort by CPPR. snake_case single-step spellings (website_visits / positive_replies) are also accepted.",
             "name": "goal",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis for every per-audience MONEY metric (metrics.cpcCents / cpprCents / cpfsCents + the brand-parent cascade). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today, no billing dependency). 'net' → the org's usage discount (billing-service) applied to all $ figures; fail-loud (502) if unresolvable. Non-money fields (evidence counts, conversion.rate) are identical either way. NOTE: campaign-service reads metrics.cpcCents byte-equal — it does NOT send pricing, so it always gets gross."
+            },
+            "required": false,
+            "description": "Pricing basis for every per-audience MONEY metric (metrics.cpcCents / cpprCents / cpfsCents + the brand-parent cascade). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today, no billing dependency). 'net' → the org's usage discount (billing-service) applied to all $ figures; fail-loud (502) if unresolvable. Non-money fields (evidence counts, conversion.rate) are identical either way. NOTE: campaign-service reads metrics.cpcCents byte-equal — it does NOT send pricing, so it always gets gross.",
+            "name": "pricing",
             "in": "query"
           },
           {

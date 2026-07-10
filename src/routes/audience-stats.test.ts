@@ -26,6 +26,8 @@ process.env.HUMAN_SERVICE_URL = "http://human:3000";
 process.env.HUMAN_SERVICE_API_KEY = "human-key";
 process.env.LEAD_SERVICE_URL = "http://lead:3000";
 process.env.LEAD_SERVICE_API_KEY = "lead-key";
+process.env.BILLING_SERVICE_URL = "http://billing:3000";
+process.env.BILLING_SERVICE_API_KEY = "billing-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
@@ -81,6 +83,9 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = urlOf(input);
 
+    if (url.includes("billing:3000") && url.includes("usage-discount")) {
+      return new Response(JSON.stringify({ discount_percent: 50 }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
     if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
     if (url.includes("human:3000/orgs/audiences")) {
@@ -237,6 +242,58 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     const costUrl = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).find((u: string) => u.includes("runs:3000"));
     expect(costUrl).toContain("groupBy=audienceId");
     expect(costUrl).not.toContain("goal=");
+  });
+
+  it("400 on an invalid pricing value", async () => {
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup&pricing=NET")
+      .set(AUTH);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/pricing/);
+  });
+
+  it("pricing=gross returns the SAME numbers as omitting the selector (default is gross)", async () => {
+    fetchSpy = mockFetch();
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup&pricing=gross")
+      .set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.audiences[0].metrics.cpcCents).toBe(50);
+    expect(res.body.audiences[1].metrics.cpcCents).toBe(300);
+    expect(res.body.audiences[1].evidence.totalCostInUsdCents).toBe(3000);
+    // GROSS never calls billing.
+    const billed = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).some((u: string) => u.includes("usage-discount"));
+    expect(billed).toBe(false);
+  });
+
+  it("pricing=net applies the org's 50% discount to every $ figure; counts/rate unchanged", async () => {
+    fetchSpy = mockFetch();
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup&pricing=net")
+      .set(AUTH);
+    expect(res.status).toBe(200);
+    // cpc halves (cost ×0.5, clicks unchanged): b 1000→500 /20 = 25; a 3000→1500 /10 = 150.
+    expect(res.body.audiences[0].metrics.cpcCents).toBe(25);
+    expect(res.body.audiences[1].metrics.cpcCents).toBe(150);
+    // $ evidence halves; the non-money counts are identical to gross.
+    expect(res.body.audiences[1].evidence.totalCostInUsdCents).toBe(1500);
+    expect(res.body.audiences[1].evidence.websiteClicks).toBe(10);
+    expect(res.body.audiences[0].evidence.contacted).toBe(20);
+    // NET resolved the discount from billing.
+    const billed = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).some((u: string) => u.includes("usage-discount"));
+    expect(billed).toBe(true);
+  });
+
+  it("pricing=net fails loud (502) when the discount is unresolvable — never silently gross", async () => {
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = urlOf(input);
+      if (url.includes("billing:3000")) return new Response("boom", { status: 500 });
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup&pricing=net")
+      .set(AUTH);
+    expect(res.status).toBe(502);
   });
 
   it("sorts sales-meeting audiences by CPPR using read-time membership evidence", async () => {

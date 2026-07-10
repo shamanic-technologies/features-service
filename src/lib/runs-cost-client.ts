@@ -18,6 +18,9 @@ export async function fetchRunsCostCents(
   campaignId: string | undefined,
   featureSlug: string,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
+  // NET pricing: multiply the GROSS run spend by the org's discount factor (1 = gross, the default →
+  // byte-identical). Applied at the cost input so every downstream metric (CAC, ROI, CPC) derives net.
+  discountFactor = 1,
 ): Promise<number> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -55,7 +58,7 @@ export async function fetchRunsCostCents(
   for (const group of data.groups) {
     totalCents += Math.round(Number(group.actualCostInUsdCents));
   }
-  return totalCents;
+  return Math.round(totalCents * discountFactor);
 }
 
 /**
