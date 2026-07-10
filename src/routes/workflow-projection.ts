@@ -217,7 +217,9 @@ function buildGrainBlock(
  * the click-driven goals (websiteVisit / signup / form_submissions), either channel for meeting-booked /
  * purchase (both funnel from clicks + replies). When a grain has spend but 0 of that outcome, its unit
  * cost is a cascade-FLOORED projection, NOT a measured ratio — so it must NOT carry that grain's "own
- * results" provenance ("From this brand's own results"). resolvePick skips such a grain.
+ * results" provenance ("From this brand's own results"). resolvePick uses this only for the PROVENANCE
+ * label (not the number): a non-measured finest grain keeps its floored spend as the resolved NUMBER but
+ * is labelled crossOrg (benchmark).
  */
 function grainHasObservedOutcome(
   ev: GrainBlock["evidence"],
@@ -233,14 +235,23 @@ function grainHasObservedOutcome(
 }
 
 /**
- * Resolve the `resolved` pick. Provenance MUST reflect MEASURED results, so the grain is the finest one
- * that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg) — a grain with
- * spend but 0 outcomes yields a FLOORED projection, not a measured ratio, and must not be tagged as
- * this brand's / this audience's own result. When neither the audience nor the brand grain has a
- * realized outcome, the number is a fleet-derived PROJECTION → resolve to crossOrg (fleet benchmark),
- * never to "this brand". crossOrg (fleet, incl. this org's own spend) is present whenever any finer
- * grain spent, so a projection always has a fleet grain to attribute to; the trailing fallbacks only
- * guard the impossible no-crossOrg case. costPerOutcomeUsd = the queried goal's metric at that grain.
+ * Resolve the `resolved` pick. TWO independent selections that must NOT be conflated:
+ *
+ *  • NUMBERS (costPer*, roi, cac) come from the finest grain WITH SPEND (audience > brand > crossOrg).
+ *    That grain's unit costs already encode the cascade floor `max(spentUsd, parentCost)`, so a brand /
+ *    audience that OUTSPENT the coarser grain with 0 outcomes keeps its OWN higher spend floor — the
+ *    resolved number is NEVER collapsed down to the fleet value (that would make a money-burning grain
+ *    with nothing to show look artificially cheap, the exact bug the cascade prevents).
+ *
+ *  • PROVENANCE (`grain`, the label the dashboard renders) is the finest grain that actually OBSERVED
+ *    the goal's outcome (measured), else crossOrg (benchmark). A grain with spend but 0 outcomes yields
+ *    a FLOORED projection, not a measured ratio, so it is NEVER tagged as this brand's / this audience's
+ *    own result — even though its NUMBER is that grain's own spend floor. crossOrg (fleet, incl. this
+ *    org's own spend) is present whenever any finer grain spent, so a projection always has a benchmark
+ *    grain to attribute to.
+ *
+ * So for a 0-outcome brand that spent $135 (fleet cost $10): resolved cost = $135 (its own floor),
+ * grain = crossOrg (benchmark) — the number stays brand-specific, the label stops lying.
  */
 function resolvePick(
   estimatesByGrain: Partial<Record<GrainName, GrainBlock>>,
@@ -251,13 +262,14 @@ function resolvePick(
 ): ResolvedBlock {
   const measured = (g: GrainName): boolean =>
     !!estimatesByGrain[g] && grainHasObservedOutcome(estimatesByGrain[g]!.evidence, objective, singleStepGoal);
+  // NUMBER source: finest grain with spend (its floored unit costs = max(spent, parent) — Kevin's cascade).
+  const numberGrain: GrainName =
+    estimatesByGrain.audience ? "audience" : estimatesByGrain.brand ? "brand" : "crossOrg";
+  const block = estimatesByGrain[numberGrain]!;
+  // PROVENANCE label: finest MEASURED grain (observed the outcome), else crossOrg benchmark. Decoupled
+  // from `numberGrain` so a 0-outcome grain's spend-floor number is never labelled "this brand/audience".
   const grain: GrainName =
-    measured("audience") ? "audience"
-      : measured("brand") ? "brand"
-        : estimatesByGrain.crossOrg ? "crossOrg"
-          : estimatesByGrain.brand ? "brand"
-            : "audience";
-  const block = estimatesByGrain[grain]!;
+    measured("audience") ? "audience" : measured("brand") ? "brand" : "crossOrg";
   const unitCosts = { clickUsd: block.unitCosts.costPerClickUsd, replyUsd: block.unitCosts.costPerPositiveReplyUsd };
   const costPerOutcomeUsd = econ ? outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal) : null;
   return {
