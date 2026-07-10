@@ -1030,8 +1030,11 @@ const workflowRecentRateStore = new Map<string, { map: Map<string, number | null
 // `workflowRecentWarmInFlight`, and NO future warm ever runs for that cacheKey → recent stays permanently
 // null (the exact stuck-flag failure that kept the default window all-null even after the producers were
 // fixed). Racing each dynasty against this timeout guarantees every dynasty settles → the warm always
-// completes, always clears its flag, and a stalled dynasty degrades to null (retried next warm).
-const RECENT_WARM_PER_DYNASTY_TIMEOUT_MS = 20_000;
+// completes, always clears its flag, and a stalled dynasty degrades to null (retried next warm). The warm
+// is OFF the request path (no gateway deadline), so this is generous — it only fires on a genuine hang, NOT
+// on a merely-slow cold-Neon fetch (fetchWithRetry already handles cold-start connect retries); killing a
+// slow-but-live fetch would spuriously null a backed dynasty for a whole warm cycle.
+const RECENT_WARM_PER_DYNASTY_TIMEOUT_MS = 45_000;
 
 function getStoredRecentRates(cacheKey: string): Map<string, number | null> | null {
   const entry = workflowRecentRateStore.get(cacheKey);
@@ -1183,10 +1186,14 @@ export async function handleWorkflowCostPerOutcome(
   setPublicCache(workflowCostPerOutcomeCache, cacheKey, payload);
   res.json(payload);
 
-  // Warm only when the persisted recent rates are stale/absent (the payload TTL is much shorter than the
-  // recent-store TTL, so most misses already carry fresh recent rates and need no re-fan-out). Single-flight
-  // per cache key avoids a thundering herd of fan-outs during the cold window.
-  if (seededRecent === null && !workflowRecentWarmInFlight.has(cacheKey)) {
+  // Refresh the recent rates on EVERY payload miss where no warm is already running (single-flight per
+  // cache key). This is the stale-while-revalidate cadence: the served payload is already seeded from the
+  // store above (so a miss never re-nulls the column — no flicker), and this background warm refreshes the
+  // store for the next reads. Refreshing every miss (NOT only when the store is empty) is what makes a
+  // degraded warm SELF-HEAL: a cold-Neon round that times some dynasties out to null is superseded by the
+  // next miss's warm once the computes are warm — gating on "store empty" would instead pin that degraded
+  // all-null result for the store's full TTL. The warm is off the request path, so this never slows a read.
+  if (!workflowRecentWarmInFlight.has(cacheKey)) {
     const warm = (async () => {
       // Seed from the last-known map so a dynasty whose fan-out transiently fails/stalls this round keeps
       // its prior rate instead of flickering to null; a genuinely-unbacked dynasty is (re)set to null.
