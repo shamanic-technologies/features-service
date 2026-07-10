@@ -71,7 +71,7 @@ vi.mock("../lib/send-forecast-aggregate.js", () => ({
 }));
 
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __awaitWorkflowRecentWarm, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetGoalBucketDatasetCache } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetGoalBucketDatasetCache } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
@@ -1275,6 +1275,57 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
     // wf-2's dated fetch 500'd → its recent is null; wf-1 STILL populates ($10 / 10 = $1) — not nulled by wf-2.
     expect(byDynasty["wf-1"].recentCostPerOutcomeUsd).toBeCloseTo(1, 6);
     expect(byDynasty["wf-2"].recentCostPerOutcomeUsd).toBeNull();
+  });
+
+  it("recent rate survives a payload-cache (60s TTL) lapse — re-served from the persisted store, not re-nulled", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    const today = new Date().toISOString().slice(0, 10);
+    const mkJson = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+
+    vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
+        return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }] });
+      }
+      if (url.startsWith("http://workflow:3000/public/workflows")) {
+        return mkJson({ workflows: [{ id: "w1", workflowSlug: "wf-1", workflowName: "WF One", workflowDynastyName: "WF One", workflowDynastySlug: "wf-1", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null }] });
+      }
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) {
+        return mkJson({ buckets: [{ period: today, totalCostInUsdCents: "1000", actualCostInUsdCents: "1000", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0", runCount: 1 }] });
+      }
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
+        return mkJson({ groups: [{ dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null }] });
+      }
+      if (url.startsWith("http://email:3000/public/stats")) {
+        const groupBy = new URL(url).searchParams.get("groupBy");
+        if (groupBy === "day") return mkJson({ groups: [{ key: today, broadcast: { recipientStats: { clicked: 10, repliesPositive: 0 } } }] });
+        return mkJson({ groups: [{ key: "wf-1", broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, opened: 50, clicked: 100, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }] });
+      }
+      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
+        return mkJson({ economics: ECON_FULL, source: "user" });
+      }
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    });
+
+    // Warm once → recent populated ($10 / 10 = $1) and persisted to the store.
+    await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=sales-cold-email-outreach&objective=websiteVisit");
+    await __awaitWorkflowRecentWarm();
+
+    // Simulate the 60s payload-cache TTL lapsing (store's 10-min TTL still valid). A fresh read must
+    // re-serve the recent rate FROM THE STORE — the pre-fix behavior re-nulled the column here.
+    __expireWorkflowPayloadCacheForTest();
+    const afterExpiry = await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=sales-cold-email-outreach&objective=websiteVisit");
+    expect(afterExpiry.status).toBe(200);
+    expect(afterExpiry.body.workflows[0].recentCostPerOutcomeUsd).toBeCloseTo(1, 6);
+
+    // Settle any warm the expiry-read may have spawned so teardown doesn't restore mocks mid-fan-out.
+    await __awaitWorkflowRecentWarm();
+  });
+
+  it("withTimeout rejects a hung promise (bounds a stalled per-dynasty fetch so the warm always settles)", async () => {
+    await expect(__withTimeoutForTest(Promise.resolve(42), 1000, "fast")).resolves.toBe(42);
+    await expect(__withTimeoutForTest(new Promise(() => {}), 10, "hang")).rejects.toThrow(/Timed out after 10ms: hang/);
   });
 });
 
