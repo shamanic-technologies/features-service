@@ -71,7 +71,7 @@ vi.mock("../lib/send-forecast-aggregate.js", () => ({
 }));
 
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __resetCostPerOutcomeLifetimeCache, __resetGoalBucketDatasetCache } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetGoalBucketDatasetCache } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
@@ -1347,6 +1347,83 @@ describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
   it("404 when feature not found", async () => {
     mockFindFirst.mockResolvedValueOnce(null);
     const res = await request(app).get("/public/stats/cost-per-outcome-lifetime?featureSlug=nope");
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /public/stats/cost-per-outcome-distribution (goal-bucketed, per-brand)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    __resetCostPerOutcomeDistributionCache();
+    __resetGoalBucketDatasetCache();
+  });
+
+  it("histogram + stats over per-brand CPCs, only click-driven brands contribute", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    mockBucketedFetch({
+      memberships: [
+        { orgId: "org-A", brandId: "b-visit-1", workflowSlug: "wf-1" },
+        { orgId: "org-B", brandId: "b-visit-2", workflowSlug: "wf-2" },
+        { orgId: "org-C", brandId: "b-reply", workflowSlug: "wf-3" },
+      ],
+      brands: {
+        // CPC 2 (200/100) and CPC 6 (600/100)
+        "b-visit-1": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+        "b-visit-2": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "60000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+        // reply-driven brand — excluded from the CPC distribution
+        "b-reply": { goal: "positive_replies", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "999900" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 40 }] },
+      },
+    });
+
+    const res = await request(app).get("/public/stats/cost-per-outcome-distribution?featureSlug=sales-cold-email-outreach&objective=websiteVisit&buckets=4");
+    expect(res.status).toBe(200);
+    expect(res.body.unit).toBe("brand");
+    expect(res.body.objective).toBe("websiteVisit");
+    expect(res.body.brandCount).toBe(2); // reply brand excluded
+    expect(res.body.min).toBeCloseTo(2, 6);
+    expect(res.body.max).toBeCloseTo(6, 6);
+    expect(res.body.mean).toBeCloseTo(4, 6);
+    expect(res.body.buckets).toHaveLength(4);
+    expect(res.body.buckets.reduce((a: number, b: { count: number }) => a + b.count, 0)).toBe(2);
+    // no per-brand id/value leaks on the public payload
+    expect(JSON.stringify(res.body)).not.toContain("b-visit-1");
+  });
+
+  it("empty/soft when fewer than 2 brands have a usable cost — buckets [], scalars null, never a false $0", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    mockBucketedFetch({
+      memberships: [{ orgId: "org-A", brandId: "b-visit-1", workflowSlug: "wf-1" }],
+      brands: {
+        "b-visit-1": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+      },
+    });
+
+    const res = await request(app).get("/public/stats/cost-per-outcome-distribution?featureSlug=sales-cold-email-outreach&objective=websiteVisit");
+    expect(res.status).toBe(200);
+    expect(res.body.brandCount).toBe(1);
+    expect(res.body.buckets).toEqual([]);
+    expect(res.body.mean).toBeNull();
+    expect(res.body.median).toBeNull();
+    expect(res.body.min).toBeNull();
+  });
+
+  it("400 when objective is missing/invalid", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    const res = await request(app).get("/public/stats/cost-per-outcome-distribution?featureSlug=sales-cold-email-outreach");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/objective/i);
+  });
+
+  it("400 when featureSlug is missing", async () => {
+    const res = await request(app).get("/public/stats/cost-per-outcome-distribution?objective=websiteVisit");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/featureSlug/i);
+  });
+
+  it("404 when feature not found", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    const res = await request(app).get("/public/stats/cost-per-outcome-distribution?featureSlug=nope&objective=websiteVisit");
     expect(res.status).toBe(404);
   });
 });
