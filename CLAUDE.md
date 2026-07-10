@@ -707,6 +707,25 @@ through `projectOutcomeCosts`.** Objective params accept every fleet spelling vi
   the PROJECTED cost-engine (`projectedCostPerOutcome`), flooring to `max(spent, fleet-parent unit cost)`
   when the outcome denominator is 0 (the fix for `ranked` reading null cross-org). Same crossOrg dynasty
   rollup as `/public/stats/best`. Sorted by spend desc. `buildWorkflowCostPerOutcome` is pure.
+  **The per-row RECENT trailing-window rate (`recentCostPerOutcomeUsd`, #521) is WARMED OFF the request
+  path — do NOT move it back on-path.** That rate needs, PER dynasty, a dated-spend timeseries (runs) + a
+  dated-outcomes fetch (email-gateway), and neither producer exposes a single-call (day × dynasty) split,
+  so it is an O(dynasty-count) cross-service fan-out. Running it inside the request-path `Promise.all`
+  (as #521 first shipped) pushed the endpoint past the gateway timeout — and rejected the whole batch on
+  any ONE transient Neon cold-start sub-failure — → prod HTTP 500 on every objective (v0.86.1 hotfix,
+  PR #524). Fix: the handler serves the lifetime rows IMMEDIATELY with `recentCostPerOutcomeUsd = null`,
+  then runs the fan-out in a SINGLE-FLIGHT background warm (`workflowRecentWarmInFlight`, `__awaitWorkflowRecentWarm`
+  test seam) that overwrites the SAME cache entry; reads within the 60s TTL get the populated rate. The warm
+  is PER-DYNASTY resilient (each dynasty's fan-out independently try/caught → null + loud log; one failure
+  never nulls the other 24 — stat-families doctrine). If you add a NEW per-dynasty dated metric here, warm
+  it the same way; keep it off-path. **KNOWN PRODUCER BLOCKER (features-service#526): recent is null for
+  EVERY dynasty in prod today** because the dated fetches filter `workflowDynastySlug`, which runs-service
+  timeseries + email-gateway `/public/stats` resolve via workflow-service `/workflows/dynasty/slugs` — an
+  endpoint that REQUIRES `x-org-id`/`x-user-id`/`x-run-id` a cross-org PUBLIC call cannot supply → runs 500 /
+  email-gateway 502 → every dynasty fails → recent null (correct: unbacked, never a false $0). Do NOT "fix"
+  this in features-service by resolving dynasty→slugs locally + passing raw slug lists (the timeseries
+  endpoint has no `groupBy`, so there's no local-derive path anyway, and it would reimplement the producer's
+  job — forbidden). The fix is org-less dynasty resolution upstream; recent self-populates once it lands.
 
 Each surface uses the shared `PublicCache` memo (60s), `__reset*Cache` test seams. **The api-service
 gateway forwards `/public/stats/X` → `/v1/public/features/X` via EXPLICIT per-route proxies, NOT a
