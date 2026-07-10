@@ -221,6 +221,7 @@ registry.registerPath({
       campaignId: z.string().optional(),
       workflowSlug: z.string().optional(),
       workflowDynastySlug: z.string().optional(),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric in the response (cost, costPer*Cents). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today, no billing dependency). 'net' → the org's usage discount (billing-service) applied to all $ figures; fail-loud (502) if the discount cannot be resolved. Non-money fields (counts, rates) are identical either way."),
     }),
   },
   responses: {
@@ -436,11 +437,12 @@ registry.registerPath({
       campaignId: z.string().optional().describe("Optional campaign drill-down (ignored when groupBy=campaignId)."),
       groupBy: z.enum(["campaignId"]).optional().describe("When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview."),
       lens: z.enum(["signups", "booked-meetings", "sales", "website_visits", "positive_replies"]).optional().describe("Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), sales=click and/or positive reply (combined-OR paid-close), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (spend block, costEconomics actualCostUsd, CAC, ROI, cps/cpsm/cpfs). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today, no billing dependency). 'net' → the org's usage discount (billing-service) applied to all $ figures; fail-loud (502) if the discount cannot be resolved. Non-money fields (counts, rates, pipeline revenue) are identical either way."),
     }),
   },
   responses: {
     200: { description: "Feature revenue (overview, or grouped when groupBy=campaignId; lensed when ?lens= is set)", content: { "application/json": { schema: z.union([featureRevenueResponseRef, featureRevenueGroupedResponseRef]) } } },
-    400: { description: "Missing brandId or invalid lens value", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing brandId, invalid lens, or invalid pricing value", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },
@@ -537,6 +539,7 @@ registry.registerPath({
       goal: z.string().optional().describe("Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase), snake (website_visits/positive_replies/form_submissions), and kebab. Also accepted via `objective`. Defaults to meeting-booked."),
       objective: z.string().optional().describe("Alias of `goal` (snake/kebab spelling). Either param is accepted."),
       budgetUsd: z.string().optional().describe("Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface)."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (each grain's unitCosts + projected cost-per-outcome, resolved.costPerOutcomeUsd, roiMultiple, cacPct, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today, no billing dependency). 'net' → the org's usage discount (billing-service) applied uniformly across the whole crossOrg→brand→audience ladder; fail-loud (502) if unresolvable. Non-money fields (counts, rates, economics rates) are identical either way."),
     }),
   },
   responses: {
@@ -692,6 +695,7 @@ registry.registerPath({
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
       goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"]).describe("Active optimization goal (required). signup + websiteVisit sort by CPC; meetingBooked / purchase / positiveReply sort by CPPR. snake_case single-step spellings (website_visits / positive_replies) are also accepted."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every per-audience MONEY metric (metrics.cpcCents / cpprCents / cpfsCents + the brand-parent cascade). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today, no billing dependency). 'net' → the org's usage discount (billing-service) applied to all $ figures; fail-loud (502) if unresolvable. Non-money fields (evidence counts, conversion.rate) are identical either way. NOTE: campaign-service reads metrics.cpcCents byte-equal — it does NOT send pricing, so it always gets gross."),
       brandProfileId: z.string().optional().describe("Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted."),
       limit: z.string().optional().describe("Optional positive integer row limit after sorting."),
       statuses: z

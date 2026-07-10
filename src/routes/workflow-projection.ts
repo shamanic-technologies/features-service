@@ -7,6 +7,7 @@ import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, type ProjectionEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { parsePricing, resolveDiscountFactor, discountCents } from "../lib/pricing.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, type SingleStepGoal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
@@ -271,6 +272,12 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       : "meetingBooked";
   const budgetUsd = budgetRaw != null && budgetRaw !== "" ? Number(budgetRaw) : null;
 
+  // GROSS (default) vs NET pricing. Omitted → gross → byte-identical to today.
+  const pricing = parsePricing(req.query.pricing);
+  if (pricing === null) {
+    return res.status(400).json({ error: "pricing must be one of: gross, net" });
+  }
+
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) {
@@ -280,11 +287,15 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // recommendedBudgetUsd cover the projection) → excluded from the cache key.
     void budgetUsd;
 
+    // NET → the org's discount factor (fail-loud if unresolvable, 502 via catch). GROSS → 1 (no billing call).
+    // Resolved OUTSIDE servedCached so a NET resolution failure never persists a snapshot.
+    const discountFactor = await resolveDiscountFactor(pricing, orgId);
+
     // Gold SWR: the heavy cross-org + brand + audience fan-out runs off the request path ~once per
-    // TTL; keyed on the inputs that shape the body (orgId + brand + goal). Response is byte-identical.
+    // TTL; keyed on the inputs that shape the body (orgId + brand + goal + pricing).
     const response = await servedCached({
       view: "workflow-projection",
-      scopeKey: buildScopeKey(featureSlug, { orgId, brandId, objective }),
+      scopeKey: buildScopeKey(featureSlug, { orgId, brandId, objective, pricing }),
       orgId,
       compute: async (): Promise<WorkflowProjectionResponse> => {
     const identity: Identity = { orgId, userId, runId, featureSlug: headerFeatureSlug };
@@ -348,11 +359,18 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         }
       : null;
 
+    // NET pricing: scale each grain's GROSS evidence cost by the org's discount factor (1 = gross, the
+    // default → byte-identical) BEFORE the unit-cost / projection math, so every grain's unit costs,
+    // projected cost-per-outcome, cascade floor, roiMultiple + cacPct come out net AND coherent (the
+    // whole crossOrg→brand→audience ladder scales together — a mixed gross/net cascade would be incoherent).
     const buildBlock = (
       ev: WorkflowGrainEvidence | AudienceGrainEvidence,
       parentUnitCosts: GrainUnitCosts | null = null,
     ): GrainBlock =>
-      buildGrainBlock(ev, econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal, parentUnitCosts);
+      buildGrainBlock(
+        discountFactor === 1 ? ev : { ...ev, totalCostInUsdCents: discountCents(ev.totalCostInUsdCents, discountFactor) },
+        econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal, parentUnitCosts,
+      );
     const resolve = (grains: Partial<Record<GrainName, GrainBlock>>): ResolvedBlock =>
       resolvePick(grains, econ, objective, singleStepGoal, formSubmissionGoal);
 
