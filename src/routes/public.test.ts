@@ -71,7 +71,7 @@ vi.mock("../lib/send-forecast-aggregate.js", () => ({
 }));
 
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetGoalBucketDatasetCache } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __awaitWorkflowRecentWarm, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetGoalBucketDatasetCache } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
@@ -1112,7 +1112,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
     expect(res.status).toBe(404);
   });
 
-  it("returns BOTH the lifetime and the recent trailing-window cost-per-outcome per workflow", async () => {
+  it("serves the lifetime rate immediately, then warms the recent trailing-window rate off the request path", async () => {
     mockFindFirst.mockResolvedValue(MOCK_FEATURE);
     const today = new Date().toISOString().slice(0, 10);
     const mkJson = (body: unknown) =>
@@ -1155,10 +1155,19 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
     expect(res.body.workflows).toHaveLength(1);
     const row = res.body.workflows[0];
     expect(row.workflowDynastySlug).toBe("wf-1");
-    // Lifetime pooled rate (all-history): $200 / 100 clicks = $2 — UNCHANGED by this feature.
+    // Lifetime pooled rate (all-history) is served IMMEDIATELY: $200 / 100 clicks = $2 — UNCHANGED.
     expect(row.costPerOutcomeUsd).toBeCloseTo(2, 6);
-    // Recent trailing-window rate (today's window): $10 / 10 clicks = $1 — the NEW field, distinct.
-    expect(row.recentCostPerOutcomeUsd).toBeCloseTo(1, 6);
+    // The recent rate's per-dynasty dated fan-out is warmed OFF the request path (so it can't 500/timeout
+    // the response), so the FIRST read carries recent=null — never a false $0.
+    expect(row.recentCostPerOutcomeUsd).toBeNull();
+
+    // After the background warm settles, a follow-up read (cache hit) carries the populated trailing-window
+    // rate: today's window $10 / 10 clicks = $1 — the NEW field, distinct from the lifetime $2.
+    await __awaitWorkflowRecentWarm();
+    const warmed = await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=sales-cold-email-outreach&objective=websiteVisit");
+    expect(warmed.status).toBe(200);
+    expect(warmed.body.workflows[0].costPerOutcomeUsd).toBeCloseTo(2, 6);
+    expect(warmed.body.workflows[0].recentCostPerOutcomeUsd).toBeCloseTo(1, 6);
   });
 
   it("recentCostPerOutcomeUsd is null (never a false $0) when the dynasty has no recent window", async () => {
@@ -1197,6 +1206,11 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
     const row = res.body.workflows[0];
     expect(row.costPerOutcomeUsd).toBeCloseTo(2, 6); // lifetime still populated
     expect(row.recentCostPerOutcomeUsd).toBeNull();   // recent unbacked → null, not $0
+
+    // Settle the background warm (empty buckets → still null) so teardown doesn't restore mocks mid-fan-out.
+    await __awaitWorkflowRecentWarm();
+    const warmed = await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=sales-cold-email-outreach&objective=websiteVisit");
+    expect(warmed.body.workflows[0].recentCostPerOutcomeUsd).toBeNull(); // unbacked stays null after warm
   });
 });
 

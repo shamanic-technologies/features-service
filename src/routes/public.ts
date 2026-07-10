@@ -1001,10 +1001,21 @@ interface WorkflowCostPerOutcomePayload {
 }
 
 const workflowCostPerOutcomeCache: PublicCache = new Map();
+// Single-flight guard for the OFF-request-path recent-rate warm (see handler below): at most one
+// background fan-out per cache key at a time. Holds the in-flight promise so tests can deterministically
+// await the warm before asserting the populated cache.
+const workflowRecentWarmInFlight = new Map<string, Promise<void>>();
 
 /** Test seam — reset the in-memory workflow-cost-per-outcome cache. */
 export function __resetWorkflowCostPerOutcomeCache(): void {
   workflowCostPerOutcomeCache.clear();
+  workflowRecentWarmInFlight.clear();
+}
+
+/** Test seam — await any in-flight background recent-rate warm(s), so a follow-up request deterministically
+ * observes the recent-populated cache entry. */
+export async function __awaitWorkflowRecentWarm(): Promise<void> {
+  await Promise.all([...workflowRecentWarmInFlight.values()]);
 }
 
 export async function handleWorkflowCostPerOutcome(
@@ -1089,52 +1100,85 @@ export async function handleWorkflowCostPerOutcome(
 
   const fleetEcon = meanFleetEconomics(perBrandEconomics);
   const todayIso = new Date().toISOString().slice(0, 10);
+  const dynastyInputs = [...byDynasty.values()];
 
-  // The RECENT going rate per dynasty: fetch each dynasty's dated spend (runs timeseries,
-  // workflowDynastySlug filter) + dated outcomes (email groupBy=day, same filter), then reduce to the
-  // today-anchored trailing-window moving average — same window semantics as the fleet trend, scoped to
-  // the single dynasty. Concurrent across dynasties; null when a dynasty has no backed recent window.
-  const recentByDynasty = new Map<string, number | null>();
-  await Promise.all(
-    [...byDynasty.values()].map(async (r) => {
-      const [spendByDay, dayFields] = await Promise.all([
-        fetchDynastySpendByDay(featureSlug, r.workflowDynastySlug),
-        fetchPublicEmailStats(featureSlug, "day", undefined, r.workflowDynastySlug),
-      ]);
-      const outcomesByDay = new Map<string, DayOutcome>();
-      for (const [day, fields] of dayFields) {
-        if (day === "__total__") continue;
-        outcomesByDay.set(day, {
-          clicks: fields.recipientsClicked ?? 0,
-          replies: fields.recipientsRepliesPositive ?? 0,
-        });
-      }
-      const recent = recentWindowCostPerOutcome({
-        objective,
-        todayIso,
-        windowOutcomes,
-        maxLookbackDays: MAX_TREND_LOOKBACK_DAYS,
-        spendByDay,
-        outcomesByDay,
-        fleetEcon,
-      });
-      recentByDynasty.set(r.workflowDynastySlug, recent);
-    }),
-  );
-
-  const rows = buildWorkflowCostPerOutcome({
+  // Build the response for a given per-dynasty recent-rate map. The lifetime cost / spend / clicks /
+  // replies come from the (already-fetched, fast) main fan-out; `recentByDynasty` carries the trailing-
+  // window moving average (a dynasty absent from the map → null recent, never a false $0).
+  const buildPayload = (recentByDynasty: Map<string, number | null>): WorkflowCostPerOutcomePayload => ({
+    featureSlug,
     objective,
-    rows: [...byDynasty.values()],
-    fleetParentClickUsd,
-    fleetParentReplyUsd,
-    fleetEcon,
-    projectedFloor: projectedCostPerOutcome,
-    recentByDynasty,
+    windowOutcomes,
+    workflows: buildWorkflowCostPerOutcome({
+      objective,
+      rows: dynastyInputs,
+      fleetParentClickUsd,
+      fleetParentReplyUsd,
+      fleetEcon,
+      projectedFloor: projectedCostPerOutcome,
+      recentByDynasty,
+    }),
   });
 
-  const payload: WorkflowCostPerOutcomePayload = { featureSlug, objective, windowOutcomes, workflows: rows };
+  // The per-dynasty RECENT going rate needs, PER dynasty, a dated-spend timeseries (runs) + dated outcomes
+  // (email-gateway) — and neither producer exposes a single-call (day × dynasty) split, so it is an
+  // O(dynasty-count) cross-service fan-out. On top of the Neon-backed siblings' cold-start churn, running
+  // that fan-out ON the request path pushed the endpoint past the gateway timeout (and rejected the whole
+  // Promise.all on any one transient sub-failure) → 500 (regression from the recent-rate work, PR #521).
+  // Fix: keep the fan-out OFF
+  // the request path. Serve the lifetime rows IMMEDIATELY (the same handful of calls as the healthy
+  // /cost-per-outcome-lifetime sibling) with recent=null, then warm the recent rates in the background and
+  // overwrite the SAME cache entry; reads within the TTL get the populated rate. The endpoint never blocks
+  // on — or 500s from — the fan-out again. An un-warmed or genuinely-unbacked dynasty stays null ("—").
+  const payload = buildPayload(new Map());
   setPublicCache(workflowCostPerOutcomeCache, cacheKey, payload);
   res.json(payload);
+
+  // Single-flight background warm per cache key (avoid a thundering herd of fan-outs during the cold window).
+  if (!workflowRecentWarmInFlight.has(cacheKey)) {
+    const warm = (async () => {
+      const recentByDynasty = new Map<string, number | null>();
+      await Promise.all(
+        dynastyInputs.map(async (r) => {
+          const [spendByDay, dayFields] = await Promise.all([
+            fetchDynastySpendByDay(featureSlug, r.workflowDynastySlug),
+            fetchPublicEmailStats(featureSlug, "day", undefined, r.workflowDynastySlug),
+          ]);
+          const outcomesByDay = new Map<string, DayOutcome>();
+          for (const [day, fields] of dayFields) {
+            if (day === "__total__") continue;
+            outcomesByDay.set(day, {
+              clicks: fields.recipientsClicked ?? 0,
+              replies: fields.recipientsRepliesPositive ?? 0,
+            });
+          }
+          recentByDynasty.set(
+            r.workflowDynastySlug,
+            recentWindowCostPerOutcome({
+              objective,
+              todayIso,
+              windowOutcomes,
+              maxLookbackDays: MAX_TREND_LOOKBACK_DAYS,
+              spendByDay,
+              outcomesByDay,
+              fleetEcon,
+            }),
+          );
+        }),
+      );
+      // Overwrite the cache entry with the recent-populated rows (refreshes the TTL).
+      setPublicCache(workflowCostPerOutcomeCache, cacheKey, buildPayload(recentByDynasty));
+    })()
+      .catch((error) => {
+        // Fail-soft: the recent rate is display enrichment beside the essential lifetime rows. A fan-out
+        // failure leaves recent=null (already served) and is logged loudly — it never 500s the endpoint.
+        console.error(`[features-service] workflow-cost-per-outcome recent-rate warm failed (${cacheKey}):`, error);
+      })
+      .finally(() => {
+        workflowRecentWarmInFlight.delete(cacheKey);
+      });
+    workflowRecentWarmInFlight.set(cacheKey, warm);
+  }
 }
 
 // ── GET /public/stats/cost-per-outcome-lifetime ──────────────────────────────
