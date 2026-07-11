@@ -47,7 +47,15 @@ consistency" — there is nothing to discount.
 env where runs-service predates #179, NET fails loud (502) — the SAME dormant state as before (NET was
 already 502-ing since billing had no discount endpoint). GROSS (the default, and the only live path) is
 unaffected. NET self-activates once runs#179 is deployed alongside. (Set 2026-07-10; supersedes #510's
-read-time compute.)
+read-time compute, shipped PR #517 → main, v0.87.6.)
+
+**Base-branch lesson (2026-07-10, this rework):** the brief said "#510 is on staging; build on staging."
+It was WRONG — #510 lived on `origin/main` (`src/lib/pricing.ts` present on main, absent on staging).
+When SUPERSEDING a PR, verify where the superseded code ACTUALLY lives (`git cat-file -e origin/<b>:<file>`
+/ `git branch -r --contains <sha>`) before choosing the base — do NOT trust the brief's named branch. A
+fresh add of the same file on the WRONG base ADD/ADD-conflicts the real one on the eventual promotion
+(the exact conflict the brief wanted to avoid). Basing on where the superseded commit lives makes the
+rework a clean in-place delta on top of it → conflict-free. Here that meant hotfix→main, not feature→staging.
 
 ## `cost-engine.ts` — TWO named engines are the SINGLE source of truth for "cost per outcome"; default = projected everywhere except accounting
 
