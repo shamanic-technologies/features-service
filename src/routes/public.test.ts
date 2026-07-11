@@ -71,7 +71,7 @@ vi.mock("../lib/send-forecast-aggregate.js", () => ({
 }));
 
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __mapWithConcurrencyForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetGoalBucketDatasetCache } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __mapWithConcurrencyForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetGoalBucketDatasetCache, __expireGoalBucketFreshCacheForTest, __awaitGoalBucketRefresh } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
@@ -1518,6 +1518,59 @@ describe("goal-bucket dataset single-flight (no cold-cache stampede)", () => {
     // guard each of the 4 concurrent cold-cache handlers launches its own → 4 stampeding fan-outs. With it: 1.
     const membershipCalls = spy.mock.calls.filter(([input]) => String(input).includes("/internal/feature-memberships"));
     expect(membershipCalls.length).toBe(1);
+  });
+});
+
+describe("goal-bucket dataset stale-while-revalidate (cold-freshness read served off the request path)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    __resetCostPerOutcomeTrendCache();
+    __resetGoalBucketDatasetCache();
+  });
+
+  it("a cold-freshness trend read serves the STORED dataset instantly (no synchronous cold fan-out); the background refresh self-heals", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    // Build 1 (true cold): populates the freshness cache AND the long-lived stale store with CPC = 2.
+    mockBucketedFetch({
+      memberships: [{ orgId: "org-A", brandId: "brand-visit", workflowSlug: "wf-1" }],
+      brands: {
+        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+      },
+    });
+    const first = await request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=websiteVisit&windowOutcomes=50");
+    expect(first.status).toBe(200);
+    expect(first.body.points.at(-1).costPerOutcomeUsd).toBeCloseTo(2, 6);
+
+    // Re-mock so a REBUILD would produce CPC = 6 (different value → proves which source served the read).
+    const spy = mockBucketedFetch({
+      memberships: [{ orgId: "org-A", brandId: "brand-visit", workflowSlug: "wf-1" }],
+      brands: {
+        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "60000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+      },
+    });
+
+    // Simulate the low-traffic cold cache: expire ONLY the 60s freshness cache (dataset store + the trend
+    // payload cache), keeping the long-lived stale dataset store. This is the "first page-load after the
+    // short public cache expired" state that used to pay the ~13s cold fan-out on the request path.
+    __resetCostPerOutcomeTrendCache();
+    __expireGoalBucketFreshCacheForTest();
+
+    const cold = await request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=websiteVisit&windowOutcomes=50");
+    expect(cold.status).toBe(200);
+    expect(cold.body.points.length).toBeGreaterThan(0);
+    // Served from the STORE (CPC 2), NOT the on-request-path rebuild (which would be CPC 6) → the cold
+    // O(brands) fan-out did NOT run synchronously on the request path.
+    expect(cold.body.points.at(-1).costPerOutcomeUsd).toBeCloseTo(2, 6);
+
+    // The background refresh runs OFF the request path and self-heals the store/cache to CPC 6.
+    await __awaitGoalBucketRefresh();
+    expect(spy.mock.calls.some(([input]) => String(input).includes("/internal/feature-memberships"))).toBe(true);
+
+    __resetCostPerOutcomeTrendCache();
+    const healed = await request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=websiteVisit&windowOutcomes=50");
+    expect(healed.status).toBe(200);
+    expect(healed.body.points.at(-1).costPerOutcomeUsd).toBeCloseTo(6, 6);
   });
 });
 
