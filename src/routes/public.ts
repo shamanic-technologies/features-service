@@ -101,45 +101,105 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  * open N connections at once and overwhelm cold-start Neon-backed siblings — which would make every
  * request slow enough to trip a per-item timeout. Never rejects: `fn` owns its own error handling. */
 // The goal-bucketed per-brand dataset (spend + outcomes + goal + economics per brand) is objective-
-// INDEPENDENT and expensive (one brand fan-out), so both the trend (per-objective) and lifetime
-// surfaces share ONE cached copy. Cached in-memory (holds Maps) under the same 60s TTL as the other
-// public caches. Fail-loud: a fetch error propagates (no stale-serve on a hard failure).
+// INDEPENDENT and expensive (one O(brands) fan-out), so the trend (per-objective) + lifetime +
+// distribution surfaces share ONE copy. TWO tiers:
+//   • FRESHNESS cache (60s `goalBucketDatasetCache`) — a hit means "recomputed within the last minute".
+//   • STALE-SERVE store (long `goalBucketDatasetStore`) — the last-known-good dataset, serves reads
+//     STALE-WHILE-REVALIDATE so a cold-freshness read never pays the O(brands) build on the request path.
 const goalBucketDatasetCache: PublicCache = new Map();
-// Single-flight guard. The admin page loads trend (once per objective) + lifetime + distribution AT ONCE;
-// on a cold 60s cache every one of those handlers misses simultaneously and, without this guard, each
-// independently runs the O(brands) `fetchGoalBucketDataset` fan-out (~3 cross-service calls × N brands).
-// 6+ concurrent misses → 6× that fan-out stampeding runs-service/email-gateway, which tips an already-slow
-// (cold-Neon / undersized) sibling from slow into gateway HEADERS_TIMEOUT. Deduping concurrent same-feature
-// fetches onto ONE in-flight promise collapses the stampede to a single fan-out shared by every caller.
+// Single-flight guard (also the SWR background-refresh guard). The admin/landing page loads trend (once per
+// objective) + lifetime + distribution AT ONCE; on a cold 60s cache every one of those handlers misses
+// simultaneously and, without this guard, each independently runs the O(brands) `fetchGoalBucketDataset`
+// fan-out (~3 cross-service calls × N brands). Concurrent same-feature (re)builds dedupe onto ONE in-flight
+// promise → one fan-out shared by every caller / joined by the background refresh, never a stampede.
 const goalBucketDatasetInFlight = new Map<string, Promise<BucketedBrand[]>>();
 
-/** Test seam — reset the shared goal-bucketed dataset cache. */
+// STALE-WHILE-REVALIDATE store — the last-known-good dataset per feature on a LONG TTL that far outlives the
+// 60s freshness cache. On a LOW-TRAFFIC public surface the 60s cache is cold most of the time, so WITHOUT
+// this every fresh page-load paid the cold O(brands) cross-service fan-out ON the request path (~13s, and
+// sometimes a gateway timeout → the landing rendered stale fallback rates; #547 residual). WITH it, a
+// cold-freshness read serves this stored dataset INSTANTLY and refreshes the freshness cache + store in a
+// single-flight BACKGROUND warm (off the request path) — mirrors the "fast-200-then-warm" pattern (#524).
+// Fail-loud is preserved ONLY for the TRUE cold case (no stored dataset yet — first build after boot / beyond
+// the stale window): that build runs synchronously and PROPAGATES on error (never fabricates an empty
+// dataset). A background refresh that fails keeps the prior store — it NEVER zeros real cached data. The
+// data is slow-moving (all-history pooled + ~100-outcome moving averages), so a ≤30-min-stale "going rate"
+// on the landing is fine; every serve within the window also fires a background refresh that resets the TTL,
+// so an actively-viewed feature's store stays warm indefinitely.
+const GOAL_BUCKET_DATASET_STALE_TTL_MS = 30 * 60_000;
+const goalBucketDatasetStore = new Map<string, { dataset: BucketedBrand[]; expiresAt: number }>();
+
+/** Test seam — reset the shared goal-bucketed dataset caches (freshness + stale store + in-flight). */
 export function __resetGoalBucketDatasetCache(): void {
   goalBucketDatasetCache.clear();
   goalBucketDatasetInFlight.clear();
+  goalBucketDatasetStore.clear();
+}
+
+/** Test seam — expire ONLY the 60s freshness cache (keeping the long-lived stale store + in-flight), to
+ * assert a cold-freshness read is served from the store WITHOUT a synchronous request-path fan-out. */
+export function __expireGoalBucketFreshCacheForTest(): void {
+  goalBucketDatasetCache.clear();
+}
+
+/** Test seam — await any in-flight background goal-bucket dataset refresh(es), so a follow-up request
+ * deterministically observes the refreshed store/cache. */
+export async function __awaitGoalBucketRefresh(): Promise<void> {
+  await Promise.allSettled([...goalBucketDatasetInFlight.values()]);
+}
+
+function getStoredGoalBucketDataset(featureSlug: string): BucketedBrand[] | null {
+  const entry = goalBucketDatasetStore.get(featureSlug);
+  if (!entry || entry.expiresAt <= Date.now()) return null;
+  return entry.dataset;
+}
+
+/**
+ * Single-flight (re)build of the goal-bucket dataset: run the O(brands) fan-out ONCE and refresh BOTH the
+ * 60s freshness cache and the long-lived stale store. Concurrent callers join the one in-flight build. The
+ * store is written ONLY on success, so a failed build keeps the prior stale dataset (never zeros it); the
+ * rejection still propagates to any synchronous awaiter so a true-cold first build fails loud.
+ */
+function refreshGoalBucketDataset(featureSlug: string): Promise<BucketedBrand[]> {
+  const existing = goalBucketDatasetInFlight.get(featureSlug);
+  if (existing) return existing;
+  const flight = (async () => {
+    try {
+      const dataset = await fetchGoalBucketDataset(featureSlug);
+      setPublicCache(goalBucketDatasetCache, featureSlug, dataset);
+      goalBucketDatasetStore.set(featureSlug, { dataset, expiresAt: Date.now() + GOAL_BUCKET_DATASET_STALE_TTL_MS });
+      return dataset;
+    } finally {
+      goalBucketDatasetInFlight.delete(featureSlug);
+    }
+  })();
+  goalBucketDatasetInFlight.set(featureSlug, flight);
+  return flight;
 }
 
 async function getGoalBucketDatasetCached(featureSlug: string): Promise<BucketedBrand[]> {
-  const cached = getPublicCache<BucketedBrand[]>(goalBucketDatasetCache, featureSlug);
-  if (cached) return cached;
+  // Freshness tier (< 60s): serve as-is, no work.
+  const fresh = getPublicCache<BucketedBrand[]>(goalBucketDatasetCache, featureSlug);
+  if (fresh) return fresh;
 
-  // Join any in-flight fetch for the same feature instead of launching a duplicate fan-out.
-  const existing = goalBucketDatasetInFlight.get(featureSlug);
-  if (existing) return existing;
-
-  const flight = (async () => {
-    const dataset = await fetchGoalBucketDataset(featureSlug);
-    setPublicCache(goalBucketDatasetCache, featureSlug, dataset);
-    return dataset;
-  })();
-  goalBucketDatasetInFlight.set(featureSlug, flight);
-  try {
-    return await flight;
-  } finally {
-    // Clear the in-flight slot on settle (success OR failure) so a later miss re-fetches rather than
-    // reusing a rejected/stale promise. Fail-loud is preserved: a fetch error propagates to every joiner.
-    goalBucketDatasetInFlight.delete(featureSlug);
+  // Stale-while-revalidate: a stored dataset within the long stale window is served INSTANTLY while a
+  // single-flight BACKGROUND rebuild refreshes the freshness cache + store off the request path. So once the
+  // store has been populated once, a low-traffic cold-freshness read gets a fast 200 with last-known numbers
+  // instead of paying the ~13s cold O(brands) fan-out on the request path (#547 residual).
+  const stale = getStoredGoalBucketDataset(featureSlug);
+  if (stale) {
+    if (!goalBucketDatasetInFlight.has(featureSlug)) {
+      refreshGoalBucketDataset(featureSlug).catch((error) => {
+        // Fail-soft: the store is untouched on error (keeps the prior dataset — never zeros real data); log loud.
+        console.error(`[features-service] goal-bucket dataset background refresh failed for ${featureSlug}:`, error);
+      });
+    }
+    return stale;
   }
+
+  // True cold (no stored dataset — first build after boot / beyond the stale window): build synchronously,
+  // single-flight, fail-loud (propagate) so we never fabricate an empty dataset.
+  return refreshGoalBucketDataset(featureSlug);
 }
 
 // ── GET /public/features — List active features (landing page) ──────────────
