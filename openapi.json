@@ -2505,6 +2505,10 @@
                     "formSubmissions": {
                       "type": "number",
                       "description": "REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions."
+                    },
+                    "signups": {
+                      "type": "number",
+                      "description": "REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups."
                     }
                   },
                   "required": [
@@ -2535,12 +2539,18 @@
                       "type": "number",
                       "nullable": true,
                       "description": "REAL cost per form submission (OBSERVED) = totalCostInUsdCents / formSubmissions. Null when formSubmissions is 0/absent (not the form_submissions goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (form_submissions sorts on cpc)."
+                    },
+                    "cpsCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "REAL cost per signup (OBSERVED) = totalCostInUsdCents / signups. Null when signups is 0/absent (not the signup goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (signup sorts on cpc)."
                     }
                   },
                   "required": [
                     "cpcCents",
                     "cpprCents",
-                    "cpfsCents"
+                    "cpfsCents",
+                    "cpsCents"
                   ]
                 }
               },
@@ -5576,6 +5586,10 @@
                               "formSubmissions": {
                                 "type": "number",
                                 "description": "REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions."
+                              },
+                              "signups": {
+                                "type": "number",
+                                "description": "REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups."
                               }
                             },
                             "required": [
@@ -5606,12 +5620,18 @@
                                 "type": "number",
                                 "nullable": true,
                                 "description": "REAL cost per form submission (OBSERVED) = totalCostInUsdCents / formSubmissions. Null when formSubmissions is 0/absent (not the form_submissions goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (form_submissions sorts on cpc)."
+                              },
+                              "cpsCents": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "REAL cost per signup (OBSERVED) = totalCostInUsdCents / signups. Null when signups is 0/absent (not the signup goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (signup sorts on cpc)."
                               }
                             },
                             "required": [
                               "cpcCents",
                               "cpprCents",
-                              "cpfsCents"
+                              "cpfsCents",
+                              "cpsCents"
                             ]
                           }
                         },
