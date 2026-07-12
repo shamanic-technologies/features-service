@@ -634,6 +634,7 @@ const audienceStatsEvidenceSchema = z.object({
   websiteClicks: z.number().describe("Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."),
   positiveReplies: z.number().describe("Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."),
   formSubmissions: z.number().optional().describe("REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions."),
+  signups: z.number().optional().describe("REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups."),
 });
 
 const audienceStatsRowSchema = z.object({
@@ -670,6 +671,7 @@ const audienceStatsRowSchema = z.object({
     cpcCents: z.number().nullable().describe("totalCostInUsdCents / websiteClicks. Null when websiteClicks is zero OR no spend is attributed (totalCostInUsdCents is zero) — never a false $0.00."),
     cpprCents: z.number().nullable().describe("totalCostInUsdCents / positiveReplies. Null when positiveReplies is zero OR no spend is attributed (totalCostInUsdCents is zero) — never a false $0.00."),
     cpfsCents: z.number().nullable().describe("REAL cost per form submission (OBSERVED) = totalCostInUsdCents / formSubmissions. Null when formSubmissions is 0/absent (not the form_submissions goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (form_submissions sorts on cpc)."),
+    cpsCents: z.number().nullable().describe("REAL cost per signup (OBSERVED) = totalCostInUsdCents / signups. Null when signups is 0/absent (not the signup goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (signup sorts on cpc)."),
   }),
 });
 
