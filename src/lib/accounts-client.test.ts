@@ -50,14 +50,14 @@ describe("fetchOrgIdentity", () => {
 describe("fetchOrgBalance", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("returns spendable + actual balances and the auto_topup_enabled flag", async () => {
+  it("returns spendable + actual balances and the has_auto_topup flag", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jsonRes({ balance_cents: "1397", actual_balance_cents: "5317", auto_topup_enabled: true, depleted: false }),
+      jsonRes({ balance_cents: "1397", actual_balance_cents: "5317", has_auto_topup: true, depleted: false }),
     );
     expect(await fetchOrgBalance("o1")).toEqual({ spendableUsd: 13.97, actualUsd: 53.17, autoTopupEnabled: true });
   });
 
-  it("treats a MISSING auto_topup_enabled (older billing deploy) as not-enabled", async () => {
+  it("treats a MISSING has_auto_topup (older billing deploy) as not-enabled", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonRes({ balance_cents: "5000", actual_balance_cents: "5000", depleted: false }));
     expect(await fetchOrgBalance("o1")).toEqual({ spendableUsd: 50, actualUsd: 50, autoTopupEnabled: false });
   });

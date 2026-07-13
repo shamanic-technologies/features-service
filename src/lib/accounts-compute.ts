@@ -48,7 +48,7 @@ export interface AccountRow {
   orgBalanceUsd: number;
   /** Org ACTUAL balance in USD (billing actual_balance_cents/100; only actualized usage subtracted). The active-verdict figure. */
   orgActualBalanceUsd: number;
-  /** Whether the org has auto-topup enabled (billing auto_topup_enabled; false when absent). */
+  /** Whether the org has auto-topup enabled (billing has_auto_topup; false when absent). */
   autoTopupEnabled: boolean;
   status: AccountStatus;
 }
