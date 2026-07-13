@@ -2841,7 +2841,7 @@
                 },
                 "autoTopupEnabled": {
                   "type": "boolean",
-                  "description": "Whether the org has auto-topup enabled (billing auto_topup_enabled). An auto-topup org never runs dry → active regardless of momentary balance. false when absent."
+                  "description": "Whether the org has auto-topup enabled (billing has_auto_topup). An auto-topup org never runs dry → active regardless of momentary balance. false when absent."
                 },
                 "status": {
                   "type": "string",

@@ -44,10 +44,11 @@ export interface OrgBalance {
    */
   actualUsd: number;
   /**
-   * Whether the org has auto-topup enabled (billing `auto_topup_enabled` on this balance read — verified
-   * live via api-registry; NOT the `has_auto_topup` name used on `/v1/accounts`). An auto-topup org never
-   * runs dry (it tops up on dip), so it is ACTIVE regardless of the momentary balance. OPTIONAL — ABSENT
-   * ⇒ treated as not-enabled (fail-open to the actual-balance path, which already corrects the verdict).
+   * Whether the org has auto-topup enabled (billing `has_auto_topup` on this balance read — verified
+   * live via api-registry: the deployed key is `has_auto_topup`, the SAME name `/v1/accounts` uses).
+   * An auto-topup org never runs dry (it tops up on dip), so it is ACTIVE regardless of the momentary
+   * balance. OPTIONAL — ABSENT ⇒ treated as not-enabled (fail-open to the actual-balance path, which
+   * already corrects the verdict).
    */
   autoTopupEnabled: boolean;
 }
@@ -112,7 +113,7 @@ export async function fetchBrandPaused(brandId: string, orgId: string): Promise<
  * Org balance snapshot for the active verdict, from billing-service
  * `GET /internal/accounts/by-org/:orgId/balance` (user-less internal read — api-key only, org in path).
  * Reads `balance_cents` (spendable, display), `actual_balance_cents` (credited − ACTUALIZED usage; the
- * active-verdict figure), and the OPTIONAL `auto_topup_enabled` (absent ⇒ false). 404 (no billing
+ * active-verdict figure), and the OPTIONAL `has_auto_topup` (absent ⇒ false). 404 (no billing
  * account) → zero balances / no auto-topup (see module doc).
  */
 export async function fetchOrgBalance(orgId: string): Promise<OrgBalance> {
@@ -130,7 +131,7 @@ export async function fetchOrgBalance(orgId: string): Promise<OrgBalance> {
   const data = (await response.json()) as {
     balance_cents?: string | number;
     actual_balance_cents?: string | number;
-    auto_topup_enabled?: boolean;
+    has_auto_topup?: boolean;
   };
   const spendableCents = Number(data.balance_cents);
   if (!Number.isFinite(spendableCents)) {
@@ -140,8 +141,8 @@ export async function fetchOrgBalance(orgId: string): Promise<OrgBalance> {
   if (!Number.isFinite(actualCents)) {
     throw new Error(`[features-service] billing-service balance returned non-numeric actual_balance_cents: ${JSON.stringify(data.actual_balance_cents)}`);
   }
-  // auto_topup_enabled is OPTIONAL (older billing deploys omit it) — absent ⇒ not-enabled.
-  return { spendableUsd: spendableCents / 100, actualUsd: actualCents / 100, autoTopupEnabled: data.auto_topup_enabled === true };
+  // has_auto_topup is OPTIONAL (older billing deploys omit it) — absent ⇒ not-enabled.
+  return { spendableUsd: spendableCents / 100, actualUsd: actualCents / 100, autoTopupEnabled: data.has_auto_topup === true };
 }
 
 /**
