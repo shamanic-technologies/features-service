@@ -1064,6 +1064,71 @@ registry.registerPath({
   },
 });
 
+// ── GET /internal/stats/active-users-by-user ───────────────────────────────────
+
+const activeUserBrandSchema = z.object({
+  brandId: z.string().describe("Brand UUID."),
+  brandName: z.string().nullable(),
+  brandDomain: z.string().nullable().describe("Brand domain — the admin's label fallback after Clerk org name / owner email."),
+});
+
+const activeUserRowSchema = z.object({
+  orgId: z.string().describe("Internal org UUID."),
+  orgExternalId: z.string().nullable().describe("Clerk org id (org_...); lets the admin resolve the org display name. null if unset."),
+  ownerEmail: z.string().nullable().describe("The org owner's email (earliest-created user). null if the org has no users. Label fallback."),
+  brands: z.array(activeUserBrandSchema).describe("Every cold-email brand of the org (id + name + domain). Label fallback (brand domain)."),
+  firstActiveDay: z.string().describe("Earliest UTC day (`YYYY-MM-DD`) the org billed cold-email spend (inception)."),
+  lastActiveDay: z.string().describe("Latest UTC day (`YYYY-MM-DD`) the org billed cold-email spend."),
+  firstActiveWeek: z.string().describe("ISO-week label (`YYYY-Www`) of the first active day."),
+  lastActiveWeek: z.string().describe("ISO-week label (`YYYY-Www`) of the last active day."),
+  firstActiveMonth: z.string().describe("Calendar-month label (`YYYY-MM`) of the first active day."),
+  lastActiveMonth: z.string().describe("Calendar-month label (`YYYY-MM`) of the last active day."),
+  retentionWeeks: z.number().int().describe("Retention window in ISO weeks = inclusive span between the first and last active week ((lastWeekMonday − firstWeekMonday)/7 + 1). A user active in exactly one week → 1."),
+  activeThisWeek: z.boolean().describe("Whether the org was active at least once in the current ISO week (tab count / filter)."),
+  activeThisMonth: z.boolean().describe("Whether the org was active at least once in the current calendar month (tab count / filter)."),
+  activeDays: z.array(z.string()).describe("Distinct active UTC days (`YYYY-MM-DD`), ascending — the day-by-day drill-down."),
+  activeWeeks: z.array(z.string()).describe("Distinct active ISO weeks (`YYYY-Www`), ascending — the week-by-week drill-down."),
+  activeMonths: z.array(z.string()).describe("Distinct active calendar months (`YYYY-MM`), ascending — the month-by-month drill-down."),
+});
+
+const activeUsersByUserStatsSchema = z.object({
+  totalUsers: z.number().int().describe("Number of users ever active (= users.length)."),
+  activeThisWeekCount: z.number().int().describe("Users active at least once in the current ISO week."),
+  activeThisMonthCount: z.number().int().describe("Users active at least once in the current calendar month."),
+});
+
+const activeUsersByUserResponseSchema = z.object({
+  users: z.array(activeUserRowSchema).describe("One row per user (org) EVER active (≥1 billed cold-email day), sorted most-recently-active first."),
+  stats: activeUsersByUserStatsSchema,
+  currentWeek: z.string().describe("Current ISO-week label (`YYYY-Www`) — the boundary the activeThisWeek flag / tab count uses."),
+  currentMonth: z.string().describe("Current calendar-month label (`YYYY-MM`) — the boundary the activeThisMonth flag / tab count uses."),
+  asOf: z.string().describe("ISO timestamp the breakdown was computed."),
+});
+
+const activeUsersByUserResponseRef = registry.register("ActiveUsersByUserResponse", activeUsersByUserResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/stats/active-users-by-user",
+  summary: "Fleet-wide per-user active history (internal, api-key; staff-gated at api-service)",
+  description:
+    "Cross-org, fleet-wide PER-USER breakdown of the active-users history — one row per USER (a distinct org with an active, funded, " +
+    "non-paused cold-email brand) EVER active, carrying that user's active months / weeks / days SINCE INCEPTION plus a pre-derived summary " +
+    "(first/last active month, first/last active week, retention-window-in-weeks) and current-week / current-month 'active at least once' flags " +
+    "for the admin tab counts. SAME universe + SAME 'active' notion as GET /internal/stats/active-users: an active day = a day of real billed " +
+    "cold-email spend (the accounts active-verdict — not paused, had a budget, funded — observed after the fact). 'Inception' goes back to each " +
+    "org's earliest billed cold-email day; an org that was never active is OMITTED. PER-ORG rows are allowed because this is a staff-only admin " +
+    "surface (staff-gated at api-service, like the accounts audit); each row carries identity (Clerk org id, owner email, brand name/domain) for " +
+    "labelling. Does NOT change GET /internal/stats/active-users (aggregate counts) — this is an additive per-user companion. Aggregate + per-user " +
+    "stay coherent (same realized-activity signal).",
+  tags: ["Internal"],
+  responses: {
+    200: { description: "Per-user active history rows + tab-count stats + current week/month", content: { "application/json": { schema: activeUsersByUserResponseRef } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Server error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /public/stats/cost-projection ─────────────────────────────────────────
 
 const objectiveAveragesSchema = z.object({
