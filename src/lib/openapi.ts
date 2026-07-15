@@ -1016,6 +1016,54 @@ registry.registerPath({
   },
 });
 
+// ── GET /internal/stats/active-users ───────────────────────────────────────────
+
+const activeUsersBucketSchema = z.object({
+  period: z.string().describe("Bucket label — `YYYY-MM-DD` (daily), `YYYY-Www` ISO week (weekly), or `YYYY-MM` (monthly)."),
+  periodStart: z.string().describe("UTC start date of the bucket (`YYYY-MM-DD`): the day, the ISO week's Monday, or the month's 1st. For charting."),
+  activeUsers: z.number().int().describe("Distinct orgs that billed cold-email spend (were active) at least once in this bucket."),
+  growthPct: z.number().nullable().describe("Period-over-period growth vs the previous bucket, in percent (1-decimal). null on the first bucket or when the previous bucket is 0."),
+});
+
+const activeUsersResponseSchema = z.object({
+  currentTotal: z.number().int().describe("LIVE active-user count — distinct orgs with ≥1 active brand right now (the accounts-audit active verdict). Matches the accounts snapshot the admin page already renders."),
+  monthly: z.array(activeUsersBucketSchema).describe("Trailing calendar-month buckets (oldest→newest)."),
+  weekly: z.array(activeUsersBucketSchema).describe("Trailing ISO-week buckets (oldest→newest)."),
+  daily: z.array(activeUsersBucketSchema).describe("Trailing UTC-day buckets (oldest→newest)."),
+  asOf: z.string().describe("ISO timestamp the series was computed."),
+});
+
+const activeUsersResponseRef = registry.register("ActiveUsersHistoryResponse", activeUsersResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/stats/active-users",
+  summary: "Fleet-wide active-users history (internal, api-key; staff-gated at api-service)",
+  description:
+    "Cross-org, fleet-wide HISTORY of ACTIVE USERS (distinct orgs with an active, funded, non-paused cold-email brand) bucketed monthly, weekly, " +
+    "and daily, each with a period-over-period growth rate, plus the current live total. 'Active user' = a distinct org with ≥1 active brand, " +
+    "where active is the accounts-audit verdict (not paused, has a daily budget, credit funds ≥ the next day). The history is RECONSTRUCTED from " +
+    "per-day ACTUALIZED cold-email spend (runs-service): a day of real billed cold-email spend implies the brand was not paused, had a budget, and " +
+    "was funded — the same three conditions the live verdict checks, observed after the fact. Each bucket counts DISTINCT such orgs. currentTotal is " +
+    "NOT reconstructed — it is the LIVE accounts-audit active-user count, so it stays coherent with GET /internal/stats/accounts; the last daily point " +
+    "(realized spend so far today) may lag currentTotal (an org configured-active that hasn't billed yet today). Aggregate counts only — no per-org data. " +
+    "Windows are trailing and end at today (UTC): daily default 90 (max 365), weekly default 26 (max 104), monthly default 12 (max 36).",
+  tags: ["Internal"],
+  request: {
+    query: z.object({
+      days: z.coerce.number().int().min(1).max(365).optional().describe("Trailing days in the daily series (default 90, max 365)."),
+      weeks: z.coerce.number().int().min(1).max(104).optional().describe("Trailing ISO weeks in the weekly series (default 26, max 104)."),
+      months: z.coerce.number().int().min(1).max(36).optional().describe("Trailing months in the monthly series (default 12, max 36)."),
+    }),
+  },
+  responses: {
+    200: { description: "Active-users history (monthly/weekly/daily + growth) + current total", content: { "application/json": { schema: activeUsersResponseRef } } },
+    400: { description: "Invalid window parameter", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Server error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /public/stats/cost-projection ─────────────────────────────────────────
 
 const objectiveAveragesSchema = z.object({
