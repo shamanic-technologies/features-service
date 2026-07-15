@@ -7,8 +7,8 @@ import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, type ProjectionEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
-import { parsePricing } from "../lib/pricing.js";
-import { matchSingleStepGoal, matchFormSubmissionGoal, type SingleStepGoal } from "../lib/goals.js";
+import { parsePricing, type Pricing } from "../lib/pricing.js";
+import { matchSingleStepGoal, matchFormSubmissionGoal, type SingleStepGoal, type Goal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
@@ -32,12 +32,12 @@ const TARGET_OUTCOMES_PER_MONTH = 10;
 // signup alias. The `objective` echo is the canonical snake spelling; the `goal` echo is the canonical
 // camel spelling (= brand-service CurrentGoal). Both request params are normalised (any of the fleet's
 // snake/camel/kebab spellings) via matchSingleStepGoal / matchFormSubmissionGoal.
-type Objective = "meeting-booked" | "self-serve" | "signup" | "purchase" | "website_visits" | "positive_replies" | "form_submissions";
-type GoalEcho = "meetingBooked" | "signup" | "purchase" | "websiteVisit" | "positiveReply" | "formSubmission";
+export type Objective = "meeting-booked" | "self-serve" | "signup" | "purchase" | "website_visits" | "positive_replies" | "form_submissions";
+export type GoalEcho = "meetingBooked" | "signup" | "purchase" | "websiteVisit" | "positiveReply" | "formSubmission";
 
 // ── Response shape (3-grain ladder + resolved pick) ──────────────────────────
 
-type GrainName = "crossOrg" | "brand" | "audience";
+export type GrainName = "crossOrg" | "brand" | "audience";
 
 /** The three per-outcome unit costs of a grain — also the shape passed as the PARENT floor for the
  * next finer grain (crossOrg → brand → audience) via the projected cost-engine. */
@@ -69,7 +69,7 @@ interface ResolvedBlock {
   cacPct: number | null;
 }
 
-interface ProjectionRow {
+export interface ProjectionRow {
   audienceId: string | null;
   workflow: { workflowDynastySlug: string; workflowDynastyName: string | null };
   estimatesByGrain: Partial<Record<GrainName, GrainBlock>>;
@@ -89,7 +89,7 @@ interface EconomicsEcho {
   formSubmissionToPaidClientPct?: number;
 }
 
-interface WorkflowProjectionResponse {
+export interface WorkflowProjectionResponse {
   featureSlug: string;
   objective: Objective;
   goal: GoalEcho;
@@ -97,6 +97,35 @@ interface WorkflowProjectionResponse {
   rows: ProjectionRow[];
   recommendedWorkflowDynastySlug: string | null;
   recommendedBudgetUsd: number | null;
+}
+
+/**
+ * Map a canonical brand `Goal` (brand-service CurrentGoal camelCase, as resolved by
+ * `fetchBrandSavedEconomicsWithGoal`) to the four workflow-projection compute inputs (objective echo,
+ * goal echo, single-step goal, form-submission flag). Mirrors the route's goalParam→inputs derivation
+ * so an internal caller that already holds a resolved `Goal` (e.g. the customer-health board) can invoke
+ * `computeWorkflowProjection` with the SAME semantics the dashboard route produces.
+ */
+export function goalToProjectionInputs(goal: Goal): {
+  objective: Objective;
+  goalEcho: GoalEcho;
+  singleStepGoal: SingleStepGoal | null;
+  formSubmissionGoal: boolean;
+} {
+  switch (goal) {
+    case "websiteVisit":
+      return { objective: "website_visits", goalEcho: "websiteVisit", singleStepGoal: "websiteVisit", formSubmissionGoal: false };
+    case "positiveReply":
+      return { objective: "positive_replies", goalEcho: "positiveReply", singleStepGoal: "positiveReply", formSubmissionGoal: false };
+    case "formSubmission":
+      return { objective: "form_submissions", goalEcho: "formSubmission", singleStepGoal: null, formSubmissionGoal: true };
+    case "purchase":
+      return { objective: "purchase", goalEcho: "purchase", singleStepGoal: null, formSubmissionGoal: false };
+    case "signup":
+      return { objective: "signup", goalEcho: "signup", singleStepGoal: null, formSubmissionGoal: false };
+    case "meetingBooked":
+      return { objective: "meeting-booked", goalEcho: "meetingBooked", singleStepGoal: null, formSubmissionGoal: false };
+  }
 }
 
 /**
@@ -344,12 +373,41 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
 
     // Gold SWR: the heavy cross-org + brand + audience fan-out runs off the request path ~once per
     // TTL; keyed on the inputs that shape the body (orgId + brand + goal + pricing).
+    const identity: Identity = { orgId, userId, runId, featureSlug: headerFeatureSlug };
     const response = await servedCached({
       view: "workflow-projection",
       scopeKey: buildScopeKey(featureSlug, { orgId, brandId, objective, pricing }),
       orgId,
-      compute: async (): Promise<WorkflowProjectionResponse> => {
-    const identity: Identity = { orgId, userId, runId, featureSlug: headerFeatureSlug };
+      compute: () =>
+        computeWorkflowProjection({ featureSlug, brandId, objective, goal, singleStepGoal, formSubmissionGoal, identity, pricing }),
+    });
+    res.json(response);
+  } catch (error) {
+    console.error("[features-service] Workflow projection error:", error);
+    res.status(502).json({ error: "Failed to compute workflow projection" });
+  }
+});
+
+/**
+ * Build the full workflow-projection response (3-grain ladder + resolved pick + recommendation) for one
+ * (org, brand, goal) from already-parsed inputs. Extracted verbatim from the route handler's compute
+ * closure so BOTH the `GET /features/:slug/workflow-projection` route AND internal callers (the
+ * customer-health board's "best workflow by CAC") run the IDENTICAL projection — no divergence. The route
+ * owns request parsing + the Gold SWR (`servedCached`) wrapper; this is the pure cross-service compute.
+ * Runs ORG-ONLY (service api-key + x-org-id; userId/runId optional passthrough on `identity`). Throws on
+ * any downstream failure (the route maps it to 502).
+ */
+export async function computeWorkflowProjection(input: {
+  featureSlug: string;
+  brandId: string;
+  objective: Objective;
+  goal: GoalEcho;
+  singleStepGoal: SingleStepGoal | null;
+  formSubmissionGoal: boolean;
+  identity: Identity;
+  pricing: Pricing;
+}): Promise<WorkflowProjectionResponse> {
+  const { featureSlug, brandId, objective, goal, singleStepGoal, formSubmissionGoal, identity, pricing } = input;
 
     // The workflow list is needed by the crossOrg AND brand dynasty rollups, so fetch it first; the
     // brand grain then fans out in parallel with the remaining reads.
@@ -535,13 +593,6 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       recommendedWorkflowDynastySlug: recommended?.workflow.workflowDynastySlug ?? null,
       recommendedBudgetUsd: recommendedCost != null ? TARGET_OUTCOMES_PER_MONTH * recommendedCost : null,
     };
-      },
-    });
-    res.json(response);
-  } catch (error) {
-    console.error("[features-service] Workflow projection error:", error);
-    res.status(502).json({ error: "Failed to compute workflow projection" });
-  }
-});
+}
 
 export default router;
