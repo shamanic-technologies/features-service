@@ -1064,6 +1064,56 @@ registry.registerPath({
   },
 });
 
+// ── GET /internal/stats/revenue ─────────────────────────────────────────────────
+
+const revenueBucketSchema = z.object({
+  period: z.string().describe("Bucket label — `YYYY-MM-DD` (daily), `YYYY-Www` ISO week (weekly), or `YYYY-MM` (monthly)."),
+  periodStart: z.string().describe("UTC start date of the bucket (`YYYY-MM-DD`): the day, the ISO week's Monday, or the month's 1st. For charting."),
+  revenueUsd: z.number().describe("Realized revenue (summed actual cold-email spend, all orgs) in this bucket, in USD (2-decimal)."),
+  growthPct: z.number().nullable().describe("Period-over-period growth vs the previous bucket, in percent (1-decimal). null on the first bucket or when the previous bucket is 0."),
+});
+
+const revenueHistoryResponseSchema = z.object({
+  totalRevenueUsd: z.number().describe("Cumulative realized revenue since inception (all orgs, all time), in USD (2-decimal)."),
+  currentMrrUsd: z.number().describe("LIVE MRR — fleet active daily budget × 30 (the accounts-audit verdict). Matches the mrrUsd the admin page already renders from GET /internal/stats/accounts."),
+  monthly: z.array(revenueBucketSchema).describe("Trailing calendar-month revenue buckets (oldest→newest)."),
+  weekly: z.array(revenueBucketSchema).describe("Trailing ISO-week revenue buckets (oldest→newest)."),
+  daily: z.array(revenueBucketSchema).describe("Trailing UTC-day revenue buckets (oldest→newest)."),
+  sinceInceptionDaily: z.array(revenueBucketSchema).describe("Per-day realized-revenue line from the first billed day to today (the 'MRR over time' series)."),
+  asOf: z.string().describe("ISO timestamp the series was computed."),
+});
+
+const revenueHistoryResponseRef = registry.register("RevenueHistoryResponse", revenueHistoryResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/stats/revenue",
+  summary: "Fleet-wide realized-revenue history (internal, api-key; staff-gated at api-service)",
+  description:
+    "Cross-org, fleet-wide HISTORY of REALIZED REVENUE (summed ACTUALIZED cold-email spend across all orgs) bucketed monthly, weekly, and daily, " +
+    "each with a period-over-period growth rate; plus the total since inception, a per-day-since-inception line (the 'MRR over time' series), and the " +
+    "current live MRR. This is the MONEY twin of GET /internal/stats/active-users — the exact same per-day actualized cold-email spend signal, summed " +
+    "in dollars instead of thresholded to a distinct-org headcount. A day of real billed cold-email spend is realized revenue that day (spend only " +
+    "happens on a non-paused, budgeted, funded brand — the same conditions the accounts 'active' verdict checks, observed after the fact). currentMrrUsd " +
+    "is NOT reconstructed — it is the LIVE accounts-audit MRR (fleet active daily budget × 30), the SAME number GET /internal/stats/accounts renders, so " +
+    "the two tabs reconcile; the last daily point (realized spend so far today) legitimately lags currentMrrUsd. Aggregate totals only — no per-org data. " +
+    "Windows are trailing and end at today (UTC): daily default 90 (max 365), weekly default 26 (max 104), monthly default 12 (max 36). All amounts in USD.",
+  tags: ["Internal"],
+  request: {
+    query: z.object({
+      days: z.coerce.number().int().min(1).max(365).optional().describe("Trailing days in the daily series (default 90, max 365)."),
+      weeks: z.coerce.number().int().min(1).max(104).optional().describe("Trailing ISO weeks in the weekly series (default 26, max 104)."),
+      months: z.coerce.number().int().min(1).max(36).optional().describe("Trailing months in the monthly series (default 12, max 36)."),
+    }),
+  },
+  responses: {
+    200: { description: "Revenue history (monthly/weekly/daily + growth), total since inception, per-day line, and current MRR", content: { "application/json": { schema: revenueHistoryResponseRef } } },
+    400: { description: "Invalid window parameter", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Server error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /internal/stats/active-users-by-user ───────────────────────────────────
 
 const activeUserBrandSchema = z.object({
