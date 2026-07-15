@@ -566,7 +566,7 @@ is the ONE documented per-pair skip (enrichment nulled, row still listed — mir
 existing env only (LEAD/BILLING/BRAND/CAMPAIGN/CLIENT/HUMAN/RUNS/EMAIL_GATEWAY) — NO new env var. Additive/dormant:
 needs an **api-service proxy** (`/v1/...` mirror) + the admin-dashboard page as follow-ups (separate repos).
 Same prod-only-balance gotcha as the accounts audit (billing balance → stripe-service, no staging runtime → the
-whole board 502s on staging; **verify on PROD**). Triage: STAGING → feature. (Set 2026-07-15.)
+whole board 502s on staging; **verify on PROD**). Triage: STAGING → feature. (PR #572, set 2026-07-15.)
 
 ## `pipeline-activity` signup/form-submission `.actual` = REAL observed conversions, NEVER `clicks × rate` (PR #513)
 
