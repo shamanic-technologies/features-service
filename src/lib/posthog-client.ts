@@ -1,4 +1,5 @@
 import { fetchWithRetry } from "./fetch-retry.js";
+import { getPlatformKey } from "./key-service-client.js";
 
 /**
  * Per-ORGANIZATION dashboard-return-frequency signal, read from PostHog.
@@ -26,6 +27,15 @@ export interface DashboardReturnSignal {
   /** Whole days between `lastSeen` and the board's `now`. null when lastSeen is null. */
   daysSinceLastSeen: number | null;
 }
+
+/**
+ * PostHog project coordinates. The HOST + PROJECT id are NOT secret and are the same across envs (one
+ * Distribute PostHog project), so they default in code (overridable by env). The KEY is a secret personal
+ * API key — resolved from key-service (`posthog` platform provider), NOT a features-service env var.
+ */
+const DEFAULT_POSTHOG_HOST = "https://eu.posthog.com";
+const DEFAULT_POSTHOG_PROJECT_ID = "171095";
+const POSTHOG_KEY_PROVIDER = "posthog";
 
 /** Trailing window (days) the 30-day aggregate scans; the 7-day figures are a sub-window of it. */
 const WINDOW_DAYS = 30;
@@ -70,21 +80,27 @@ function toInt(v: unknown): number {
 /**
  * Fetch the per-org dashboard-return signal for the WHOLE fleet in one PostHog query.
  *
- * FAILS LOUD — missing config, transport error, non-OK, or a malformed matrix all throw. The Customer
- * Success board wraps this soft (a PostHog blip degrades `dashboardReturnFrequency` to null on every
- * row, never a fabricated count), exactly like the board's other display enrichments. Returns a map
- * keyed on the Clerk org id (`org_...`), joined to each row via `orgExternalId`.
+ * FAILS LOUD — key-service unavailable / provider not registered, transport error, non-OK, or a
+ * malformed matrix all throw. The Customer Success board wraps this soft (a PostHog / key-service blip
+ * degrades `dashboardReturnFrequency` to null on every row, never a fabricated count), exactly like the
+ * board's other display enrichments. Returns a map keyed on the Clerk org id (`org_...`), joined to each
+ * row via `orgExternalId`.
+ *
+ * The personal API key is resolved from key-service (`posthog` platform provider) — the fleet's single
+ * secret source (the admin app registers its Vercel `POSTHOG_PERSONAL_API_KEY` there at startup), so
+ * features-service does NOT carry the secret in its own env. HOST + PROJECT id default in code.
  *
  * @param now the board's reference time — used ONLY to derive `daysSinceLastSeen` (the window itself is
  *            anchored on PostHog's server `now()` inside the query, so a small clock skew is harmless).
  */
 export async function fetchDashboardReturnsByOrg(now: Date): Promise<Map<string, DashboardReturnSignal>> {
-  const host = process.env.POSTHOG_API_HOST;
-  const projectId = process.env.POSTHOG_PROJECT_ID;
-  const apiKey = process.env.POSTHOG_PERSONAL_API_KEY;
-  if (!host || !projectId || !apiKey) {
-    throw new Error("POSTHOG_API_HOST, POSTHOG_PROJECT_ID or POSTHOG_PERSONAL_API_KEY not configured");
-  }
+  const host = process.env.POSTHOG_API_HOST || DEFAULT_POSTHOG_HOST;
+  const projectId = process.env.POSTHOG_PROJECT_ID || DEFAULT_POSTHOG_PROJECT_ID;
+  const apiKey = await getPlatformKey(POSTHOG_KEY_PROVIDER, {
+    service: "features-service",
+    method: "GET",
+    path: "/internal/stats/customer-health",
+  });
 
   const url = `${host.replace(/\/$/, "")}/api/projects/${encodeURIComponent(projectId)}/query/`;
   const response = await fetchWithRetry(url, {
