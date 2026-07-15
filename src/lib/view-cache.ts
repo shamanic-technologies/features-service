@@ -30,6 +30,16 @@ import { featureViewSnapshots } from "../db/schema.js";
 const DEFAULT_TTL_MS = 5_000;
 const DEFAULT_MAX_STALE_MS = 60_000;
 
+/**
+ * Platform / fleet scope for a GLOBAL (org-less) view — a cross-org internal audit (e.g. the
+ * customer-health board) has no per-org `scope_key`. The snapshot row's `org_id` column is `NOT NULL`
+ * uuid for bookkeeping only; it is never forwarded to a sibling service, so a nil-UUID is the correct
+ * platform sentinel (mirrors how any org-less internal stat keys its own Gold row). Using it avoids a
+ * migration to make `org_id` nullable (which drizzle-kit would re-emit spurious `features` drops around
+ * — see CLAUDE.md migration gotcha).
+ */
+export const PLATFORM_SCOPE_ORG_ID = "00000000-0000-0000-0000-000000000000";
+
 /** Max age of a refresh claim before another replica may steal it (a hung refresh must not wedge). */
 const REFRESH_CLAIM_TTL_MS = 30_000;
 
@@ -48,11 +58,22 @@ function cacheEnabled(): boolean {
 }
 
 interface CachedViewArgs<T> {
-  /** Logical view family — "revenue" | "revenue-grouped" | "revenue-lens" | "stats". */
+  /** Logical view family — "revenue" | "revenue-grouped" | "revenue-lens" | "stats" | "customer-health". */
   view: string;
   /** Canonical key over ALL inputs that change the body (featureSlug + sorted query string). */
   scopeKey: string;
   orgId: string;
+  /**
+   * Per-view FRESH window override (ms). Omit to use the global `FEATURE_VIEW_SNAPSHOT_TTL_MS` (5s
+   * default) — right for a per-request dashboard cell. A HEAVY cross-org FLEET board (customer-health)
+   * that changes slowly wants a minutes-scale window so it does NOT re-fan-out every few seconds.
+   */
+  ttlMs?: number;
+  /**
+   * Per-view HARD-MAX-STALE override (ms). Beyond this age a read recomputes SYNCHRONOUSLY (blocking)
+   * rather than serving too-old data. Omit to use the global 60s cap. Bounds the served "as-of" staleness.
+   */
+  maxStaleMs?: number;
   /** Runs the live engine fan-out and returns the response body. */
   compute: () => Promise<T>;
 }
@@ -60,8 +81,10 @@ interface CachedViewArgs<T> {
 /**
  * Serve `compute`'s result through the Gold snapshot cache. See module doc for the freshness model.
  */
-export async function servedCached<T>({ view, scopeKey, orgId, compute }: CachedViewArgs<T>): Promise<T> {
+export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs, compute }: CachedViewArgs<T>): Promise<T> {
   if (!cacheEnabled()) return compute();
+  const ttl = ttlMs ?? viewCacheTtlMs();
+  const maxStale = maxStaleMs ?? DEFAULT_MAX_STALE_MS;
 
   let row: typeof featureViewSnapshots.$inferSelect | undefined;
   try {
@@ -78,10 +101,10 @@ export async function servedCached<T>({ view, scopeKey, orgId, compute }: Cached
 
   if (row) {
     const ageMs = Date.now() - new Date(row.computedAt).getTime();
-    if (ageMs < viewCacheTtlMs()) {
+    if (ageMs < ttl) {
       return row.body as T; // fresh hit
     }
-    if (ageMs >= DEFAULT_MAX_STALE_MS) {
+    if (ageMs >= maxStale) {
       return computeAndPersistSingleFlight(view, scopeKey, orgId, compute);
     }
     // Stale hit — serve immediately, refresh in the background (single-flight across replicas).
