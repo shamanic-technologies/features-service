@@ -567,7 +567,7 @@ sessions30d, pageviews7d, pageviews30d, lastSeen, daysSinceLastSeen }` — so th
 customers. Source: ONE fleet-wide HogQL scan of `$pageview` events grouped by `person.properties.org_id` (=
 the Clerk org id = the row's `orgExternalId`, NOT the internal org UUID), sessions counted via
 `$session_id` (a "return" = a distinct session), via `src/lib/posthog-client.ts` `fetchDashboardReturnsByOrg`
-(POST `{POSTHOG_API_HOST}/api/projects/{POSTHOG_PROJECT_ID}/query/`, `Authorization: Bearer {POSTHOG_API_KEY}`
+(POST `{POSTHOG_API_HOST}/api/projects/{POSTHOG_PROJECT_ID}/query/`, `Authorization: Bearer {POSTHOG_PERSONAL_API_KEY}`
 personal API key). Fetched ONCE per board build (dep-injected), joined per row on `orgExternalId`. **Fail-SOFT**
 — PostHog unreachable / unconfigured / no data ⇒ explicit `null` on every row (NEVER a fabricated count, NEVER a
 502), the SAME display-enrichment pattern as the /revenue conversion-count tiles + sequences series (the
@@ -577,7 +577,7 @@ personal API key). Fetched ONCE per board build (dep-injected), joined per row o
 **Fail loud** — no fabricated defaults; a stale membership the forwarded org doesn't own (BrandOwnershipError)
 is the ONE documented per-pair skip (enrichment nulled, row still listed — mirrors handlePublicRevenue). Reuses
 existing env (LEAD/BILLING/BRAND/CAMPAIGN/CLIENT/HUMAN/RUNS/EMAIL_GATEWAY) + the **NEW shared `POSTHOG_API_HOST`
-/ `POSTHOG_PROJECT_ID` / `POSTHOG_API_KEY`** (prod + staging). The board self-activates the return signal once
+/ `POSTHOG_PROJECT_ID` / `POSTHOG_PERSONAL_API_KEY`** (prod + staging). The board self-activates the return signal once
 those are set; until then `dashboardReturnFrequency` is null fleet-wide (dormant-safe, no breakage). Additive:
 needs an **api-service proxy** (`/v1/...` mirror) + the admin-dashboard page as follow-ups (separate repos; the
 dashboard currently types the field as null — rendering it is a separate follow-up).

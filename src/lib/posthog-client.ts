@@ -81,9 +81,9 @@ function toInt(v: unknown): number {
 export async function fetchDashboardReturnsByOrg(now: Date): Promise<Map<string, DashboardReturnSignal>> {
   const host = process.env.POSTHOG_API_HOST;
   const projectId = process.env.POSTHOG_PROJECT_ID;
-  const apiKey = process.env.POSTHOG_API_KEY;
+  const apiKey = process.env.POSTHOG_PERSONAL_API_KEY;
   if (!host || !projectId || !apiKey) {
-    throw new Error("POSTHOG_API_HOST, POSTHOG_PROJECT_ID or POSTHOG_API_KEY not configured");
+    throw new Error("POSTHOG_API_HOST, POSTHOG_PROJECT_ID or POSTHOG_PERSONAL_API_KEY not configured");
   }
 
   const url = `${host.replace(/\/$/, "")}/api/projects/${encodeURIComponent(projectId)}/query/`;
