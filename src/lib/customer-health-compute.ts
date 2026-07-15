@@ -526,7 +526,19 @@ export async function buildCustomerHealthBoard(
         // still list the row's identity + status (mirrors handlePublicRevenue). Not a silent fallback.
         ownershipSkipped = true;
       } else {
-        throw error;
+        // Per-row FAIL-SOFT. A SINGLE customer's enrichment failing — a cold downstream composite that
+        // exhausted its transient retries (the fetch-retry layer already backs off ECONNRESET / "timeout
+        // exceeded when trying to connect"), a real downstream 5xx, or an audience/revenue/workflow
+        // compute throw for one brand — MUST NOT 500 the WHOLE fleet board. Degrade THIS row to its
+        // identity + status + whatever enrichment resolved before the throw (all other enrichment vars
+        // stay at their null/default init above), loud in the logs. Mirrors the PostHog degrade-to-null
+        // and the BrandOwnershipError skip already in this file, and PR #248 ("one upstream stat family
+        // failure no longer zeros the others") applied at the ROW grain. The step-1 universe composites
+        // (accounts audit, active history, memberships) stay OUTSIDE this loop and fail loud — a missing
+        // universe is a real 500, not a degraded row.
+        console.error(
+          `[features-service] customer-health row degraded (org=${account.orgId} brand=${account.brandId}): ${(error as Error).message}`,
+        );
       }
     }
 

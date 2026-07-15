@@ -393,4 +393,39 @@ describe("buildCustomerHealthBoard", () => {
     expect(board.customers).toHaveLength(1);
     expect(board.customers[0].notTrackedYet.dashboardReturnFrequency).toBeNull();
   });
+
+  it("per-row fail-soft: a non-ownership downstream error on ONE customer degrades that row but the board still builds (200) with every row + a healthy sibling", async () => {
+    const deps = makeDeps({
+      accounts: [
+        account({ orgId: "m", brandId: "bm", status: "active" }), // enrichment throws → degraded
+        account({ orgId: "n", brandId: "bn", status: "active" }), // healthy sibling, fully enriched
+      ],
+      recencies: [recency("m", "2026-07-14"), recency("n", "2026-07-13")],
+      perBrand: {
+        bm: { economics: econ(100), goal: "signup", audiences: [] },
+        bn: { economics: econ(100), goal: "signup", revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, audiences: [] },
+      },
+    });
+    // A real (non-BrandOwnershipError) downstream failure for brand bm — e.g. a revenue composite whose
+    // transient retries exhausted, or a downstream 5xx. Must NOT reject the whole board.
+    const wrapped: CustomerHealthDeps = {
+      ...deps,
+      brandRevenue: async (f, brandId, orgId, e) => {
+        if (brandId === "bm") throw new Error("downstream revenue 503");
+        return deps.brandRevenue(f, brandId, orgId, e);
+      },
+    };
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, wrapped);
+    expect(board.customers).toHaveLength(2);
+    const byId = Object.fromEntries(board.customers.map((c) => [c.brandId, c]));
+    // Degraded row: still listed with identity + status, economics-derived enrichment nulled.
+    expect(byId.bm.status).toBe("active");
+    expect(byId.bm.currentEconomics.roiMultiple).toBeNull();
+    // Healthy sibling unaffected — full enrichment.
+    expect(byId.bn.currentEconomics.roiMultiple).toBe(10);
+    expect(byId.bn.health.badge).toBe("green");
+    // Fleet stats still computed over ALL rows.
+    expect(board.stats.totalCustomers).toBe(2);
+    expect(board.stats.activeCount).toBe(2);
+  });
 });
