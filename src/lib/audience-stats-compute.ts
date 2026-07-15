@@ -22,6 +22,12 @@ interface AudienceCostEvidence {
 }
 
 interface AudienceOutcomeEvidence {
+  // Distinct MEMBER count of the audience (people served under it — human-service membership provenance).
+  // The audience's addressable pool size; `contacted` ⊆ this. Lets a consumer derive remaining-to-contact
+  // (memberCount − contacted) + %used (contacted / memberCount) without a second human-service fetch — the
+  // member emails are ALREADY fetched here for the outcome join, so this is free. 0 when the audience has
+  // no members.
+  memberCount: number;
   contacted: number;
   opened: number;
   websiteClicks: number;
@@ -110,7 +116,7 @@ function emptyCost(): AudienceCostEvidence {
 }
 
 function emptyOutcomes(): AudienceOutcomeEvidence {
-  return { contacted: 0, opened: 0, websiteClicks: 0, positiveReplies: 0 };
+  return { memberCount: 0, contacted: 0, opened: 0, websiteClicks: 0, positiveReplies: 0 };
 }
 
 /**
@@ -291,6 +297,8 @@ async function fetchAudienceOutcomes(
   const result = new Map<string, AudienceOutcomeEvidence>();
   for (const { audienceId, emails } of perAudience) {
     const agg = emptyOutcomes();
+    // Addressable pool size = distinct member emails served under the audience (contacted ⊆ this).
+    agg.memberCount = new Set(emails).size;
     // DISTINCT-member conversion tally: count each member email at most once (mirrors the
     // clicked/replied member-grain counts). Only when we have the conversion-email set.
     let formSubmissions = formSubmissionEmails ? 0 : undefined;
