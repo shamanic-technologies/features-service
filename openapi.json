@@ -3312,8 +3312,45 @@
                   "type": "object",
                   "properties": {
                     "dashboardReturnFrequency": {
+                      "type": "object",
                       "nullable": true,
-                      "description": "Per-day dashboard-return frequency (PostHog only) — not wired into features-service yet."
+                      "properties": {
+                        "sessions7d": {
+                          "type": "integer",
+                          "description": "Distinct dashboard sessions in the trailing 7 days."
+                        },
+                        "sessions30d": {
+                          "type": "integer",
+                          "description": "Distinct dashboard sessions in the trailing 30 days."
+                        },
+                        "pageviews7d": {
+                          "type": "integer",
+                          "description": "Dashboard pageviews in the trailing 7 days."
+                        },
+                        "pageviews30d": {
+                          "type": "integer",
+                          "description": "Dashboard pageviews in the trailing 30 days."
+                        },
+                        "lastSeen": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "ISO timestamp of the org's most recent dashboard pageview in the window. null when none."
+                        },
+                        "daysSinceLastSeen": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Whole days between lastSeen and the board's asOf. null when lastSeen is null."
+                        }
+                      },
+                      "required": [
+                        "sessions7d",
+                        "sessions30d",
+                        "pageviews7d",
+                        "pageviews30d",
+                        "lastSeen",
+                        "daysSinceLastSeen"
+                      ],
+                      "description": "Per-org dashboard-return frequency from PostHog (sessions 7d/30d + last-seen), keyed on the Clerk org id. null when PostHog has no data / is unreachable / is unconfigured — never fabricated."
                     },
                     "budgetChangeHistory": {
                       "nullable": true,
@@ -3329,7 +3366,7 @@
                     "budgetChangeHistory",
                     "pauseHistory"
                   ],
-                  "description": "Signals that are KNOWN GAPS — explicit null so the front never fabricates them (separate backend requests)."
+                  "description": "dashboardReturnFrequency is a real PostHog signal (null when no data / degraded); budgetChangeHistory + pauseHistory are KNOWN GAPS — explicit null so the front never fabricates them."
                 }
               },
               "required": [
@@ -7551,7 +7588,7 @@
     "/internal/stats/customer-health": {
       "get": {
         "summary": "Fleet-wide customer-success health board (internal, api-key; staff-gated at api-service)",
-        "description": "Cross-org, fleet-wide 'Customer Success' health board — one ready-composed row per cold-email customer (org × brand), currently-active first, with a green/yellow/red health badge. Every metric is computed + owned here; the admin dashboard renders only (no browser math, no per-row fan-out). Each row carries: identity (org + brand, owner email, Clerk org id); recency + retention (first/last active day, retention weeks, active-day timeline from billed spend); the brand's optimization goal; conversion-tracker context (whether a tracker is NEEDED for the goal + an INFERRED firing flag from observed conversion counts — a clean installed/verified boolean is a known gap); breakeven CAC (= brand LTR); full conversion economics + LTR; realized CAC / ROI / %CAC (roiMultiple = pipeline/spend = LTR/CAC; cacPct = spend/pipeline = CAC/LTR — coherent by construction, own-economics only); an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). Health: red = not active; green = active AND ROI ≥ 1 AND audience not near-exhausted; yellow = active but ROI < 1 (or unknown) OR audience near-exhausted. Known gaps (dashboard-return frequency, budget-change history, pause history) are explicit null under notTrackedYet — never fabricated.",
+        "description": "Cross-org, fleet-wide 'Customer Success' health board — one ready-composed row per cold-email customer (org × brand), currently-active first, with a green/yellow/red health badge. Every metric is computed + owned here; the admin dashboard renders only (no browser math, no per-row fan-out). Each row carries: identity (org + brand, owner email, Clerk org id); recency + retention (first/last active day, retention weeks, active-day timeline from billed spend); the brand's optimization goal; conversion-tracker context (whether a tracker is NEEDED for the goal + an INFERRED firing flag from observed conversion counts — a clean installed/verified boolean is a known gap); breakeven CAC (= brand LTR); full conversion economics + LTR; realized CAC / ROI / %CAC (roiMultiple = pipeline/spend = LTR/CAC; cacPct = spend/pipeline = CAC/LTR — coherent by construction, own-economics only); an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). Health: red = not active; green = active AND ROI ≥ 1 AND audience not near-exhausted; yellow = active but ROI < 1 (or unknown) OR audience near-exhausted. Under notTrackedYet: dashboardReturnFrequency is a REAL per-org PostHog return signal (sessions 7d/30d + last-seen; null when PostHog has no data / is degraded); budget-change history + pause history remain explicit-null gaps — never fabricated.",
         "tags": [
           "Internal"
         ],

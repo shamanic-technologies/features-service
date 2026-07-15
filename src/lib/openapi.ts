@@ -1102,10 +1102,17 @@ const customerHealthRowSchema = z.object({
     }).describe("The inputs the badge was derived from (so the front can explain the badge)."),
   }),
   notTrackedYet: z.object({
-    dashboardReturnFrequency: z.null().describe("Per-day dashboard-return frequency (PostHog only) — not wired into features-service yet."),
+    dashboardReturnFrequency: z.object({
+      sessions7d: z.number().int().describe("Distinct dashboard sessions in the trailing 7 days."),
+      sessions30d: z.number().int().describe("Distinct dashboard sessions in the trailing 30 days."),
+      pageviews7d: z.number().int().describe("Dashboard pageviews in the trailing 7 days."),
+      pageviews30d: z.number().int().describe("Dashboard pageviews in the trailing 30 days."),
+      lastSeen: z.string().nullable().describe("ISO timestamp of the org's most recent dashboard pageview in the window. null when none."),
+      daysSinceLastSeen: z.number().int().nullable().describe("Whole days between lastSeen and the board's asOf. null when lastSeen is null."),
+    }).nullable().describe("Per-org dashboard-return frequency from PostHog (sessions 7d/30d + last-seen), keyed on the Clerk org id. null when PostHog has no data / is unreachable / is unconfigured — never fabricated."),
     budgetChangeHistory: z.null().describe("Daily-budget change-history timeline — not persisted yet."),
     pauseHistory: z.null().describe("Pause on/off history timeline — not persisted yet."),
-  }).describe("Signals that are KNOWN GAPS — explicit null so the front never fabricates them (separate backend requests)."),
+  }).describe("dashboardReturnFrequency is a real PostHog signal (null when no data / degraded); budgetChangeHistory + pauseHistory are KNOWN GAPS — explicit null so the front never fabricates them."),
 });
 
 const customerHealthStatsSchema = z.object({
@@ -1140,7 +1147,7 @@ registry.registerPath({
     "coherent by construction, own-economics only); an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single " +
     "best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). " +
     "Health: red = not active; green = active AND ROI ≥ 1 AND audience not near-exhausted; yellow = active but ROI < 1 (or unknown) OR audience " +
-    "near-exhausted. Known gaps (dashboard-return frequency, budget-change history, pause history) are explicit null under notTrackedYet — never fabricated.",
+    "near-exhausted. Under notTrackedYet: dashboardReturnFrequency is a REAL per-org PostHog return signal (sessions 7d/30d + last-seen; null when PostHog has no data / is degraded); budget-change history + pause history remain explicit-null gaps — never fabricated.",
   tags: ["Internal"],
   responses: {
     200: { description: "Per-customer health rows + fleet stats", content: { "application/json": { schema: customerHealthResponseRef } } },
