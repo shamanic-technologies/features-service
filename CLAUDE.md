@@ -675,6 +675,21 @@ tests from `src` ONLY. Previously CI ran `pnpm build` (emits `dist/*.test.js`) b
 and removes the flake at the source. If a teardown error ever recurs despite this, confirm no
 new `include`/dist glob crept back in (`pnpm exec vitest list` must show only `src/` files).
 
+## A "pure-logic" test that imports a bucket/compute helper transitively pulls the DB module → `vi.mock("../db/index.js")` or CI fails
+
+`src/db/index.ts` THROWS at import time when `FEATURES_SERVICE_DATABASE_URL` is unset. Many "pure"
+compute libs are not import-pure: `active-users-compute.ts` (and anything reaching a `REAL_DEPS` that
+calls `buildAccountsAudit`) transitively imports `accounts-compute.ts → pipeline-activity.ts →
+db/index.ts`. So a new **pure-logic** test that imports ANY bucket/helper from those files
+(`bucketOf`/`enumerateBuckets` from active-users-compute, etc.) loads the DB module — and CI (no DB env)
+fails the whole suite with `Error: FEATURES_SERVICE_DATABASE_URL is not set` even though every assertion
+is DB-free. **Local passes (the Conductor workspace has the env), CI fails** — a false-green trap.
+
+Fix: add `vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));` at the top of the test (mirrors
+`revenue-history-compute.test.ts` / `committed-mrr-compute.test.ts`). Verify BEFORE push by running the
+new suite with the env UNSET: `env -u FEATURES_SERVICE_DATABASE_URL npx vitest run <file>`. (Set 2026-07-15,
+committed-mrr-compute.test.ts hit this on PR #581 → CI red → fixed by the db mock.)
+
 ## Issue-tag in code comments — NEVER bake an UNCONFIRMED `features-service#NNN` (sibling OR guessed-next)
 
 This repo tags features in code/OpenAPI describe strings with `features-service#NNN`. The number you
