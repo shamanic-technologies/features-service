@@ -51,7 +51,8 @@ const dbMock = {
 
 vi.mock("../db/index.js", () => ({ db: dbMock, sql: {} }));
 
-const { servedCached, buildScopeKey } = await import("./view-cache.js");
+const { servedCached, buildScopeKey, PLATFORM_SCOPE_ORG_ID } = await import("./view-cache.js");
+const PLATFORM = PLATFORM_SCOPE_ORG_ID;
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -159,5 +160,47 @@ describe("servedCached", () => {
     const body = await servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute });
     expect(body).toEqual({ pipeline: 1 });
     expect(storedRow).toBeUndefined();
+  });
+
+  // ── Per-view TTL / max-stale overrides (the customer-health FLEET-board freshness config) ──────────
+  describe("per-view ttlMs / maxStaleMs overrides", () => {
+    it("ttlMs override → a snapshot older than the 5s global TTL but younger than the override is FRESH (served, no compute)", async () => {
+      // 60s old: STALE under the 5s global TTL, but FRESH under a 2-min customer-health TTL.
+      storedRow = { view: "customer-health", scopeKey: "global", orgId: PLATFORM, body: { asOf: "t0", customers: [] }, computedAt: new Date(Date.now() - 60_000), refreshingAt: null };
+      const compute = vi.fn().mockResolvedValue({ asOf: "t1", customers: [{ id: "x" }] });
+      const body = await servedCached({ view: "customer-health", scopeKey: "global", orgId: PLATFORM, ttlMs: 120_000, maxStaleMs: 600_000, compute });
+      expect(body).toEqual({ asOf: "t0", customers: [] }); // last snapshot served instantly
+      await flush();
+      expect(compute).not.toHaveBeenCalled(); // O(1) read, NO fleet fan-out on the request path
+    });
+
+    it("ttlMs override → past the override TTL but within maxStale → serves stale + BACKGROUND refresh", async () => {
+      // 3 min old: stale under the 2-min TTL, still within the 10-min hard cap → serve stale now, refresh async.
+      storedRow = { view: "customer-health", scopeKey: "global", orgId: PLATFORM, body: { asOf: "t0", customers: [] }, computedAt: new Date(Date.now() - 180_000), refreshingAt: null };
+      const compute = vi.fn().mockResolvedValue({ asOf: "t1", customers: [{ id: "x" }] });
+      const body = await servedCached({ view: "customer-health", scopeKey: "global", orgId: PLATFORM, ttlMs: 120_000, maxStaleMs: 600_000, compute });
+      expect(body).toEqual({ asOf: "t0", customers: [] }); // stale served instantly
+      await flush();
+      expect(compute).toHaveBeenCalledTimes(1); // single-flight background revalidate ran
+      expect(storedRow?.body).toEqual({ asOf: "t1", customers: [{ id: "x" }] }); // snapshot refreshed
+    });
+
+    it("maxStaleMs override → only beyond the override does a read recompute synchronously", async () => {
+      // 11 min old: past the 10-min hard cap → block once, recompute, persist, serve fresh.
+      storedRow = { view: "customer-health", scopeKey: "global", orgId: PLATFORM, body: { asOf: "t0", customers: [] }, computedAt: new Date(Date.now() - 660_000), refreshingAt: null };
+      const compute = vi.fn().mockResolvedValue({ asOf: "t1", customers: [{ id: "x" }] });
+      const body = await servedCached({ view: "customer-health", scopeKey: "global", orgId: PLATFORM, ttlMs: 120_000, maxStaleMs: 600_000, compute });
+      expect(body).toEqual({ asOf: "t1", customers: [{ id: "x" }] });
+      expect(compute).toHaveBeenCalledTimes(1);
+      expect(storedRow?.body).toEqual({ asOf: "t1", customers: [{ id: "x" }] });
+    });
+
+    it("MISS on a global view → computes once, persists under the platform sentinel org", async () => {
+      const compute = vi.fn().mockResolvedValue({ asOf: "t1", customers: [] });
+      const body = await servedCached({ view: "customer-health", scopeKey: "global", orgId: PLATFORM, ttlMs: 120_000, maxStaleMs: 600_000, compute });
+      expect(body).toEqual({ asOf: "t1", customers: [] });
+      expect(compute).toHaveBeenCalledTimes(1);
+      expect(storedRow?.orgId).toBe(PLATFORM);
+    });
   });
 });
