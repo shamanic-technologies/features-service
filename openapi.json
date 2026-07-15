@@ -3704,6 +3704,100 @@
             },
             "description": "Per-day realized-revenue line from the first billed day to today (the 'MRR over time' series)."
           },
+          "committedMrr": {
+            "type": "object",
+            "properties": {
+              "currentMrrUsd": {
+                "type": "number",
+                "description": "LIVE committed MRR — fleet active daily budget × 30 (the accounts-audit verdict). The current-period point of monthly/weekly equals this (reconciles with GET /internal/stats/accounts)."
+              },
+              "currentArrUsd": {
+                "type": "number",
+                "description": "LIVE committed ARR = currentMrrUsd × 12, in USD."
+              },
+              "monthly": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "period": {
+                      "type": "string",
+                      "description": "Bucket label — `YYYY-MM` (monthly) or `YYYY-Www` ISO week (weekly)."
+                    },
+                    "periodStart": {
+                      "type": "string",
+                      "description": "UTC start date of the bucket (`YYYY-MM-DD`): the month's 1st or the ISO week's Monday. For charting."
+                    },
+                    "mrrUsd": {
+                      "type": "number",
+                      "description": "Committed MRR as of this period (the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal)."
+                    },
+                    "arrUsd": {
+                      "type": "number",
+                      "description": "Committed ARR = mrrUsd × 12, in USD (2-decimal)."
+                    },
+                    "growthPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Point-over-point growth vs the previous EMITTED bucket, in percent (1-decimal). null on the first bucket or when the previous point is 0."
+                    }
+                  },
+                  "required": [
+                    "period",
+                    "periodStart",
+                    "mrrUsd",
+                    "arrUsd",
+                    "growthPct"
+                  ]
+                },
+                "description": "Committed MRR/ARR by calendar month (oldest→newest). Past points come from real recorded daily snapshots; the current month is the live value. Periods with no recorded snapshot are omitted."
+              },
+              "weekly": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "period": {
+                      "type": "string",
+                      "description": "Bucket label — `YYYY-MM` (monthly) or `YYYY-Www` ISO week (weekly)."
+                    },
+                    "periodStart": {
+                      "type": "string",
+                      "description": "UTC start date of the bucket (`YYYY-MM-DD`): the month's 1st or the ISO week's Monday. For charting."
+                    },
+                    "mrrUsd": {
+                      "type": "number",
+                      "description": "Committed MRR as of this period (the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal)."
+                    },
+                    "arrUsd": {
+                      "type": "number",
+                      "description": "Committed ARR = mrrUsd × 12, in USD (2-decimal)."
+                    },
+                    "growthPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Point-over-point growth vs the previous EMITTED bucket, in percent (1-decimal). null on the first bucket or when the previous point is 0."
+                    }
+                  },
+                  "required": [
+                    "period",
+                    "periodStart",
+                    "mrrUsd",
+                    "arrUsd",
+                    "growthPct"
+                  ]
+                },
+                "description": "Committed MRR/ARR by ISO week (oldest→newest). Same snapshot sourcing as monthly."
+              }
+            },
+            "required": [
+              "currentMrrUsd",
+              "currentArrUsd",
+              "monthly",
+              "weekly"
+            ],
+            "description": "COMMITTED MRR/ARR over time (monthly + weekly, each with growth) — the point-in-time run-rate the fleet is CONTRACTED to bill (Σ active daily budget × 30), NOT realized spend. Recorded as daily snapshots going forward (no historical backfill); the current-period point equals currentMrrUsd, ARR = MRR × 12. Additive + non-breaking to the realized series above."
+          },
           "asOf": {
             "type": "string",
             "description": "ISO timestamp the series was computed."
@@ -3716,6 +3810,7 @@
           "weekly",
           "daily",
           "sinceInceptionDaily",
+          "committedMrr",
           "asOf"
         ]
       },
@@ -7758,7 +7853,7 @@
     "/internal/stats/revenue": {
       "get": {
         "summary": "Fleet-wide realized-revenue history (internal, api-key; staff-gated at api-service)",
-        "description": "Cross-org, fleet-wide HISTORY of REALIZED REVENUE (summed ACTUALIZED cold-email spend across all orgs) bucketed monthly, weekly, and daily, each with a period-over-period growth rate; plus the total since inception, a per-day-since-inception line (the 'MRR over time' series), and the current live MRR. This is the MONEY twin of GET /internal/stats/active-users — the exact same per-day actualized cold-email spend signal, summed in dollars instead of thresholded to a distinct-org headcount. A day of real billed cold-email spend is realized revenue that day (spend only happens on a non-paused, budgeted, funded brand — the same conditions the accounts 'active' verdict checks, observed after the fact). currentMrrUsd is NOT reconstructed — it is the LIVE accounts-audit MRR (fleet active daily budget × 30), the SAME number GET /internal/stats/accounts renders, so the two tabs reconcile; the last daily point (realized spend so far today) legitimately lags currentMrrUsd. Aggregate totals only — no per-org data. Windows are trailing and end at today (UTC): daily default 90 (max 365), weekly default 26 (max 104), monthly default 12 (max 36). All amounts in USD.",
+        "description": "Cross-org, fleet-wide HISTORY of REALIZED REVENUE (summed ACTUALIZED cold-email spend across all orgs) bucketed monthly, weekly, and daily, each with a period-over-period growth rate; plus the total since inception, a per-day-since-inception line (the 'MRR over time' series), and the current live MRR. This is the MONEY twin of GET /internal/stats/active-users — the exact same per-day actualized cold-email spend signal, summed in dollars instead of thresholded to a distinct-org headcount. A day of real billed cold-email spend is realized revenue that day (spend only happens on a non-paused, budgeted, funded brand — the same conditions the accounts 'active' verdict checks, observed after the fact). currentMrrUsd is NOT reconstructed — it is the LIVE accounts-audit MRR (fleet active daily budget × 30), the SAME number GET /internal/stats/accounts renders, so the two tabs reconcile; the last daily point (realized spend so far today) legitimately lags currentMrrUsd. Aggregate totals only — no per-org data. Also returns committedMrr: the COMMITTED MRR/ARR run-rate over time (monthly + weekly, each with growth) — Σ active daily budget × 30, what the fleet is CONTRACTED to bill (distinct from realized spend). Committed MRR is a point-in-time snapshot that cannot be reconstructed from spend, so it is persisted as a daily snapshot recorded GOING FORWARD (no historical backfill); the current-period point equals currentMrrUsd (reconciles) and ARR = MRR × 12. Windows are trailing and end at today (UTC): daily default 90 (max 365), weekly default 26 (max 104), monthly default 12 (max 36). All amounts in USD.",
         "tags": [
           "Internal"
         ],

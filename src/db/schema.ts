@@ -57,3 +57,36 @@ export const featureViewSnapshots = pgTable(
 );
 
 export type FeatureViewSnapshot = typeof featureViewSnapshots.$inferSelect;
+
+/**
+ * COMMITTED-MRR daily snapshot store (point-in-time run-rate history).
+ *
+ * Committed MRR = the fleet's currently-active brands' daily budget × 30 — what we are CONTRACTED to
+ * bill, NOT what we actually billed (that is the realized-revenue series, reconstructed from spend).
+ * It is a POINT-IN-TIME SNAPSHOT that CANNOT be reconstructed from realized spend (spend ≠ budget, and
+ * the fleet grows over time), so it is PERSISTED here — one row per UTC day, recorded going forward
+ * whenever the fleet committed budget is computed (accounts audit / revenue history handler). No
+ * historical backfill is possible: the series legitimately starts at the first recorded snapshot and
+ * lengthens each day. Idempotent: upsert on `snapshot_date` (one row/day; today's row reflects the
+ * latest committed budget seen that day). Derived + rebuildable is FALSE here — unlike the Gold view
+ * cache, these rows are the ONLY record of past committed run-rate, so they are never dropped.
+ */
+export const committedMrrSnapshots = pgTable(
+  "committed_mrr_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** UTC calendar day of the snapshot (`YYYY-MM-DD`), unique — one row per day. */
+    snapshotDate: text("snapshot_date").notNull(),
+    /** Σ active brands' daily budget for the day, in whole cents (FP-safe). MRR = ×30, ARR = MRR ×12. */
+    committedDailyBudgetCents: integer("committed_daily_budget_cents").notNull(),
+    /** Count of ACTIVE (org, brand) accounts contributing to the committed budget that day. */
+    activeCount: integer("active_count").notNull(),
+    /** When this row was last written (drifts through the day as the upsert refreshes it). */
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("idx_committed_mrr_snapshots_date").on(table.snapshotDate),
+  ]
+);
+
+export type CommittedMrrSnapshot = typeof committedMrrSnapshots.$inferSelect;

@@ -1213,6 +1213,21 @@ const revenueBucketSchema = z.object({
   growthPct: z.number().nullable().describe("Period-over-period growth vs the previous bucket, in percent (1-decimal). null on the first bucket or when the previous bucket is 0."),
 });
 
+const committedMrrBucketSchema = z.object({
+  period: z.string().describe("Bucket label — `YYYY-MM` (monthly) or `YYYY-Www` ISO week (weekly)."),
+  periodStart: z.string().describe("UTC start date of the bucket (`YYYY-MM-DD`): the month's 1st or the ISO week's Monday. For charting."),
+  mrrUsd: z.number().describe("Committed MRR as of this period (the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal)."),
+  arrUsd: z.number().describe("Committed ARR = mrrUsd × 12, in USD (2-decimal)."),
+  growthPct: z.number().nullable().describe("Point-over-point growth vs the previous EMITTED bucket, in percent (1-decimal). null on the first bucket or when the previous point is 0."),
+});
+
+const committedMrrHistorySchema = z.object({
+  currentMrrUsd: z.number().describe("LIVE committed MRR — fleet active daily budget × 30 (the accounts-audit verdict). The current-period point of monthly/weekly equals this (reconciles with GET /internal/stats/accounts)."),
+  currentArrUsd: z.number().describe("LIVE committed ARR = currentMrrUsd × 12, in USD."),
+  monthly: z.array(committedMrrBucketSchema).describe("Committed MRR/ARR by calendar month (oldest→newest). Past points come from real recorded daily snapshots; the current month is the live value. Periods with no recorded snapshot are omitted."),
+  weekly: z.array(committedMrrBucketSchema).describe("Committed MRR/ARR by ISO week (oldest→newest). Same snapshot sourcing as monthly."),
+});
+
 const revenueHistoryResponseSchema = z.object({
   totalRevenueUsd: z.number().describe("Cumulative realized revenue since inception (all orgs, all time), in USD (2-decimal)."),
   currentMrrUsd: z.number().describe("LIVE MRR — fleet active daily budget × 30 (the accounts-audit verdict). Matches the mrrUsd the admin page already renders from GET /internal/stats/accounts."),
@@ -1220,6 +1235,7 @@ const revenueHistoryResponseSchema = z.object({
   weekly: z.array(revenueBucketSchema).describe("Trailing ISO-week revenue buckets (oldest→newest)."),
   daily: z.array(revenueBucketSchema).describe("Trailing UTC-day revenue buckets (oldest→newest)."),
   sinceInceptionDaily: z.array(revenueBucketSchema).describe("Per-day realized-revenue line from the first billed day to today (the 'MRR over time' series)."),
+  committedMrr: committedMrrHistorySchema.describe("COMMITTED MRR/ARR over time (monthly + weekly, each with growth) — the point-in-time run-rate the fleet is CONTRACTED to bill (Σ active daily budget × 30), NOT realized spend. Recorded as daily snapshots going forward (no historical backfill); the current-period point equals currentMrrUsd, ARR = MRR × 12. Additive + non-breaking to the realized series above."),
   asOf: z.string().describe("ISO timestamp the series was computed."),
 });
 
@@ -1237,6 +1253,9 @@ registry.registerPath({
     "happens on a non-paused, budgeted, funded brand — the same conditions the accounts 'active' verdict checks, observed after the fact). currentMrrUsd " +
     "is NOT reconstructed — it is the LIVE accounts-audit MRR (fleet active daily budget × 30), the SAME number GET /internal/stats/accounts renders, so " +
     "the two tabs reconcile; the last daily point (realized spend so far today) legitimately lags currentMrrUsd. Aggregate totals only — no per-org data. " +
+    "Also returns committedMrr: the COMMITTED MRR/ARR run-rate over time (monthly + weekly, each with growth) — Σ active daily budget × 30, what the fleet " +
+    "is CONTRACTED to bill (distinct from realized spend). Committed MRR is a point-in-time snapshot that cannot be reconstructed from spend, so it is " +
+    "persisted as a daily snapshot recorded GOING FORWARD (no historical backfill); the current-period point equals currentMrrUsd (reconciles) and ARR = MRR × 12. " +
     "Windows are trailing and end at today (UTC): daily default 90 (max 365), weekly default 26 (max 104), monthly default 12 (max 36). All amounts in USD.",
   tags: ["Internal"],
   request: {

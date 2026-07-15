@@ -54,7 +54,9 @@ describe("buildRevenueHistory — integration via injected deps", () => {
     orgs: string[];
     dailyCents: Record<string, Record<string, number>>;
     currentMrrUsd: number;
-    capture?: { startedAfter?: string };
+    activeCount?: number;
+    snapshots?: Array<{ date: string; mrrUsd: number }>;
+    capture?: { startedAfter?: string; recorded?: { dailyBudgetUsd: number; activeCount: number } };
   }): RevenueHistoryDeps {
     return {
       featureMemberships: async () => fixture.orgs.map((orgId) => ({ orgId })),
@@ -62,7 +64,15 @@ describe("buildRevenueHistory — integration via injected deps", () => {
         if (fixture.capture) fixture.capture.startedAfter = startedAfterIso;
         return new Map(Object.entries(fixture.dailyCents[orgId] ?? {}));
       },
-      currentMrrUsd: async () => fixture.currentMrrUsd,
+      currentFleetStats: async () => ({
+        mrrUsd: fixture.currentMrrUsd,
+        dailyBudgetUsd: fixture.currentMrrUsd / 30,
+        activeCount: fixture.activeCount ?? 0,
+      }),
+      recordCommittedSnapshot: async (dailyBudgetUsd, activeCount) => {
+        if (fixture.capture) fixture.capture.recorded = { dailyBudgetUsd, activeCount };
+      },
+      readCommittedSnapshots: async () => fixture.snapshots ?? [],
     };
   }
 
@@ -108,6 +118,47 @@ describe("buildRevenueHistory — integration via injected deps", () => {
 
     // The all-time fetch uses the inception floor, NOT the trailing-window lower bound.
     expect(capture.startedAfter).toBe("2020-01-01T00:00:00.000Z");
+
+    // Committed MRR current period reconciles with the live MRR; ARR = MRR × 12.
+    expect(history.committedMrr.currentMrrUsd).toBe(12345.67);
+    expect(history.committedMrr.currentArrUsd).toBe(12345.67 * 12);
+    const lastMonth = history.committedMrr.monthly[history.committedMrr.monthly.length - 1];
+    expect(lastMonth).toMatchObject({ period: "2026-07", mrrUsd: 12345.67, arrUsd: 12345.67 * 12 });
+    const lastWeek = history.committedMrr.weekly[history.committedMrr.weekly.length - 1];
+    expect(lastWeek.mrrUsd).toBe(12345.67);
+    expect(lastWeek.arrUsd).toBe(12345.67 * 12);
+  });
+
+  it("committed MRR series: past periods from recorded snapshots, current period = live MRR, growth + ARR coherent", async () => {
+    const capture: { recorded?: { dailyBudgetUsd: number; activeCount: number } } = {};
+    const history = await buildRevenueHistory(
+      COLD,
+      NOW,
+      { days: 3, weeks: 2, months: 3 },
+      deps({
+        orgs: ["orgA"],
+        dailyCents: { orgA: { "2026-07-15": 4000 } },
+        currentMrrUsd: 3000, // live current-month committed MRR
+        activeCount: 4,
+        // June has two snapshots (last one = end-of-June run-rate $2000); May has one ($1000).
+        snapshots: [
+          { date: "2026-05-20", mrrUsd: 1000 },
+          { date: "2026-06-10", mrrUsd: 1500 },
+          { date: "2026-06-28", mrrUsd: 2000 },
+        ],
+        capture,
+      }),
+    );
+
+    // Today's snapshot recorded going forward (budget = mrr/30, active count passed through).
+    expect(capture.recorded).toEqual({ dailyBudgetUsd: 100, activeCount: 4 });
+
+    // Monthly: May $1000 → June $2000 (last snapshot) → July $3000 (live). Growth point-over-point.
+    expect(history.committedMrr.monthly.map((m) => [m.period, m.mrrUsd, m.arrUsd, m.growthPct])).toEqual([
+      ["2026-05", 1000, 12000, null],
+      ["2026-06", 2000, 24000, 100],
+      ["2026-07", 3000, 36000, 50],
+    ]);
   });
 
   it("empty cold-email universe → zero totals + empty since-inception line, never throws", async () => {
