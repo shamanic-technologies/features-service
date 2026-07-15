@@ -3032,6 +3032,177 @@
           "daily",
           "asOf"
         ]
+      },
+      "ActiveUsersByUserResponse": {
+        "type": "object",
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "orgId": {
+                  "type": "string",
+                  "description": "Internal org UUID."
+                },
+                "orgExternalId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Clerk org id (org_...); lets the admin resolve the org display name. null if unset."
+                },
+                "ownerEmail": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The org owner's email (earliest-created user). null if the org has no users. Label fallback."
+                },
+                "brands": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "brandId": {
+                        "type": "string",
+                        "description": "Brand UUID."
+                      },
+                      "brandName": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "brandDomain": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Brand domain — the admin's label fallback after Clerk org name / owner email."
+                      }
+                    },
+                    "required": [
+                      "brandId",
+                      "brandName",
+                      "brandDomain"
+                    ]
+                  },
+                  "description": "Every cold-email brand of the org (id + name + domain). Label fallback (brand domain)."
+                },
+                "firstActiveDay": {
+                  "type": "string",
+                  "description": "Earliest UTC day (`YYYY-MM-DD`) the org billed cold-email spend (inception)."
+                },
+                "lastActiveDay": {
+                  "type": "string",
+                  "description": "Latest UTC day (`YYYY-MM-DD`) the org billed cold-email spend."
+                },
+                "firstActiveWeek": {
+                  "type": "string",
+                  "description": "ISO-week label (`YYYY-Www`) of the first active day."
+                },
+                "lastActiveWeek": {
+                  "type": "string",
+                  "description": "ISO-week label (`YYYY-Www`) of the last active day."
+                },
+                "firstActiveMonth": {
+                  "type": "string",
+                  "description": "Calendar-month label (`YYYY-MM`) of the first active day."
+                },
+                "lastActiveMonth": {
+                  "type": "string",
+                  "description": "Calendar-month label (`YYYY-MM`) of the last active day."
+                },
+                "retentionWeeks": {
+                  "type": "integer",
+                  "description": "Retention window in ISO weeks = inclusive span between the first and last active week ((lastWeekMonday − firstWeekMonday)/7 + 1). A user active in exactly one week → 1."
+                },
+                "activeThisWeek": {
+                  "type": "boolean",
+                  "description": "Whether the org was active at least once in the current ISO week (tab count / filter)."
+                },
+                "activeThisMonth": {
+                  "type": "boolean",
+                  "description": "Whether the org was active at least once in the current calendar month (tab count / filter)."
+                },
+                "activeDays": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Distinct active UTC days (`YYYY-MM-DD`), ascending — the day-by-day drill-down."
+                },
+                "activeWeeks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Distinct active ISO weeks (`YYYY-Www`), ascending — the week-by-week drill-down."
+                },
+                "activeMonths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Distinct active calendar months (`YYYY-MM`), ascending — the month-by-month drill-down."
+                }
+              },
+              "required": [
+                "orgId",
+                "orgExternalId",
+                "ownerEmail",
+                "brands",
+                "firstActiveDay",
+                "lastActiveDay",
+                "firstActiveWeek",
+                "lastActiveWeek",
+                "firstActiveMonth",
+                "lastActiveMonth",
+                "retentionWeeks",
+                "activeThisWeek",
+                "activeThisMonth",
+                "activeDays",
+                "activeWeeks",
+                "activeMonths"
+              ]
+            },
+            "description": "One row per user (org) EVER active (≥1 billed cold-email day), sorted most-recently-active first."
+          },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "totalUsers": {
+                "type": "integer",
+                "description": "Number of users ever active (= users.length)."
+              },
+              "activeThisWeekCount": {
+                "type": "integer",
+                "description": "Users active at least once in the current ISO week."
+              },
+              "activeThisMonthCount": {
+                "type": "integer",
+                "description": "Users active at least once in the current calendar month."
+              }
+            },
+            "required": [
+              "totalUsers",
+              "activeThisWeekCount",
+              "activeThisMonthCount"
+            ]
+          },
+          "currentWeek": {
+            "type": "string",
+            "description": "Current ISO-week label (`YYYY-Www`) — the boundary the activeThisWeek flag / tab count uses."
+          },
+          "currentMonth": {
+            "type": "string",
+            "description": "Current calendar-month label (`YYYY-MM`) — the boundary the activeThisMonth flag / tab count uses."
+          },
+          "asOf": {
+            "type": "string",
+            "description": "ISO timestamp the breakdown was computed."
+          }
+        },
+        "required": [
+          "users",
+          "stats",
+          "currentWeek",
+          "currentMonth",
+          "asOf"
+        ]
       }
     },
     "parameters": {}
@@ -6793,6 +6964,63 @@
                   "required": [
                     "error"
                   ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/stats/active-users-by-user": {
+      "get": {
+        "summary": "Fleet-wide per-user active history (internal, api-key; staff-gated at api-service)",
+        "description": "Cross-org, fleet-wide PER-USER breakdown of the active-users history — one row per USER (a distinct org with an active, funded, non-paused cold-email brand) EVER active, carrying that user's active months / weeks / days SINCE INCEPTION plus a pre-derived summary (first/last active month, first/last active week, retention-window-in-weeks) and current-week / current-month 'active at least once' flags for the admin tab counts. SAME universe + SAME 'active' notion as GET /internal/stats/active-users: an active day = a day of real billed cold-email spend (the accounts active-verdict — not paused, had a budget, funded — observed after the fact). 'Inception' goes back to each org's earliest billed cold-email day; an org that was never active is OMITTED. PER-ORG rows are allowed because this is a staff-only admin surface (staff-gated at api-service, like the accounts audit); each row carries identity (Clerk org id, owner email, brand name/domain) for labelling. Does NOT change GET /internal/stats/active-users (aggregate counts) — this is an additive per-user companion. Aggregate + per-user stay coherent (same realized-activity signal).",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-user active history rows + tab-count stats + current week/month",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveUsersByUserResponse"
                 }
               }
             }
