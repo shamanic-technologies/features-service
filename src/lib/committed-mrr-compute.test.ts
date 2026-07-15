@@ -1,4 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// active-users-compute (imported for bucket helpers) transitively pulls accounts-compute → the db module.
+// Stub it so this pure-logic suite needs no DB connection.
+vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import { buildCommittedMrrHistory, bucketizeCommitted } from "./committed-mrr-compute.js";
 import { enumerateBuckets, bucketOf } from "./active-users-compute.js";
