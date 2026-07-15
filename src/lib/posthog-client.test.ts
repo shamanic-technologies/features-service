@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 
 process.env.POSTHOG_API_HOST = "https://eu.posthog.com";
 process.env.POSTHOG_PROJECT_ID = "171095";
-process.env.POSTHOG_API_KEY = "phx_test_key";
+process.env.POSTHOG_PERSONAL_API_KEY = "phx_test_key";
 
 const { fetchDashboardReturnsByOrg } = await import("./posthog-client.js");
 
@@ -73,9 +73,9 @@ describe("fetchDashboardReturnsByOrg", () => {
   });
 
   it("fails loud when POSTHOG_* config is missing", async () => {
-    const saved = process.env.POSTHOG_API_KEY;
-    delete process.env.POSTHOG_API_KEY;
+    const saved = process.env.POSTHOG_PERSONAL_API_KEY;
+    delete process.env.POSTHOG_PERSONAL_API_KEY;
     await expect(fetchDashboardReturnsByOrg(NOW)).rejects.toThrow(/not configured/);
-    process.env.POSTHOG_API_KEY = saved;
+    process.env.POSTHOG_PERSONAL_API_KEY = saved;
   });
 });
