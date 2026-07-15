@@ -557,16 +557,33 @@ row (name = `workflowDynastyName`, grain = `resolved.grain`).
 **Conversion tracker** (`conversionTracker`): `needed` = goal ∈ {signup, formSubmission, purchase};
 `observedConversions` = the goal's `fetchConversionCounts` count (null for websiteVisit/positiveReply — the
 visit/reply IS the outcome); `firing` = INFERRED `observed > 0` (a clean installed/verified boolean is a KNOWN
-GAP → `inferred:true` always). **Known gaps are explicit null** under `notTrackedYet` (dashboard-return
-frequency = PostHog-only, budget-change history, pause history) — never fabricated. The billed-spend
-active-day timeline (cheap, already tracked) IS included (`activeDays`).
+GAP → `inferred:true` always). The billed-spend active-day timeline (cheap, already tracked) IS included
+(`activeDays`).
+
+**`notTrackedYet.dashboardReturnFrequency` is a REAL per-org PostHog signal (features-service#576).** It KEEPS
+its slot under `notTrackedYet` for response-path stability with the dashboard, but is now populated (not the
+old literal null). Per (org, brand) row it carries the org's dashboard-RETURN signal — `{ sessions7d,
+sessions30d, pageviews7d, pageviews30d, lastSeen, daysSinceLastSeen }` — so the board flags disengaged-but-paying
+customers. Source: ONE fleet-wide HogQL scan of `$pageview` events grouped by `person.properties.org_id` (=
+the Clerk org id = the row's `orgExternalId`, NOT the internal org UUID), sessions counted via
+`$session_id` (a "return" = a distinct session), via `src/lib/posthog-client.ts` `fetchDashboardReturnsByOrg`
+(POST `{POSTHOG_API_HOST}/api/projects/{POSTHOG_PROJECT_ID}/query/`, `Authorization: Bearer {POSTHOG_API_KEY}`
+personal API key). Fetched ONCE per board build (dep-injected), joined per row on `orgExternalId`. **Fail-SOFT**
+— PostHog unreachable / unconfigured / no data ⇒ explicit `null` on every row (NEVER a fabricated count, NEVER a
+502), the SAME display-enrichment pattern as the /revenue conversion-count tiles + sequences series (the
+`posthog-client` itself is fail-LOUD; `buildCustomerHealthBoard` wraps the one call soft). The other two
+(`budgetChangeHistory`, `pauseHistory`) remain genuine explicit-null gaps.
 
 **Fail loud** — no fabricated defaults; a stale membership the forwarded org doesn't own (BrandOwnershipError)
 is the ONE documented per-pair skip (enrichment nulled, row still listed — mirrors handlePublicRevenue). Reuses
-existing env only (LEAD/BILLING/BRAND/CAMPAIGN/CLIENT/HUMAN/RUNS/EMAIL_GATEWAY) — NO new env var. Additive/dormant:
-needs an **api-service proxy** (`/v1/...` mirror) + the admin-dashboard page as follow-ups (separate repos).
+existing env (LEAD/BILLING/BRAND/CAMPAIGN/CLIENT/HUMAN/RUNS/EMAIL_GATEWAY) + the **NEW shared `POSTHOG_API_HOST`
+/ `POSTHOG_PROJECT_ID` / `POSTHOG_API_KEY`** (prod + staging). The board self-activates the return signal once
+those are set; until then `dashboardReturnFrequency` is null fleet-wide (dormant-safe, no breakage). Additive:
+needs an **api-service proxy** (`/v1/...` mirror) + the admin-dashboard page as follow-ups (separate repos; the
+dashboard currently types the field as null — rendering it is a separate follow-up).
 Same prod-only-balance gotcha as the accounts audit (billing balance → stripe-service, no staging runtime → the
-whole board 502s on staging; **verify on PROD**). Triage: STAGING → feature. (PR #572, set 2026-07-15.)
+whole board 502s on staging; **verify on PROD**). Triage: STAGING → feature. (PR #572; PostHog signal PR TBD,
+features-service#576, set 2026-07-15.)
 
 ## `pipeline-activity` signup/form-submission `.actual` = REAL observed conversions, NEVER `clicks × rate` (PR #513)
 

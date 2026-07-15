@@ -16,6 +16,7 @@ import type { WorkflowProjectionResponse } from "../routes/workflow-projection.j
 import type { SalesEconomics } from "./funnel-registry.js";
 import type { Goal } from "./goals.js";
 import type { ConversionCounts } from "./conversion-counts-client.js";
+import type { DashboardReturnSignal } from "./posthog-client.js";
 import { BrandOwnershipError } from "./sales-economics-client.js";
 
 const NOW = new Date("2026-07-15T12:00:00.000Z");
@@ -134,6 +135,10 @@ function makeDeps(fixtures: {
     workflow?: WorkflowProjectionResponse["rows"];
     throwOwnership?: boolean;
   }>;
+  /** Per-org dashboard-return signal keyed on the Clerk org id (orgExternalId). Absent → empty map. */
+  dashboardReturns?: Map<string, DashboardReturnSignal>;
+  /** When true, the dashboard-returns dep throws (exercises the fail-soft degrade → null on every row). */
+  dashboardReturnsThrow?: boolean;
 }): CustomerHealthDeps {
   const audit: AccountsAudit = {
     rows: fixtures.accounts,
@@ -170,6 +175,10 @@ function makeDeps(fixtures: {
       return a ? audienceEnvelope(brandId, a) : null;
     },
     workflowProjection: async (_f, brandId) => workflowResponse(fixtures.perBrand[brandId]?.workflow ?? []),
+    dashboardReturns: async () => {
+      if (fixtures.dashboardReturnsThrow) throw new Error("posthog unreachable");
+      return fixtures.dashboardReturns ?? new Map<string, DashboardReturnSignal>();
+    },
   };
 }
 
@@ -341,5 +350,47 @@ describe("buildCustomerHealthBoard", () => {
     expect(t.needed).toBe(true);
     expect(t.observedConversions).toBe(0);
     expect(t.firing).toBe(false);
+  });
+
+  it("dashboardReturnFrequency: PostHog signal joined per org (orgExternalId); orgs with no PostHog data → null", async () => {
+    const signal: DashboardReturnSignal = {
+      sessions7d: 9,
+      sessions30d: 40,
+      pageviews7d: 55,
+      pageviews30d: 220,
+      lastSeen: "2026-07-14T10:00:00.000Z",
+      daysSinceLastSeen: 1,
+    };
+    const deps = makeDeps({
+      accounts: [
+        account({ orgId: "i", brandId: "bi", status: "active" }), // orgExternalId org_i → has signal
+        account({ orgId: "j", brandId: "bj", status: "active" }), // orgExternalId org_j → no signal → null
+      ],
+      recencies: [recency("i", "2026-07-14"), recency("j", "2026-07-13")],
+      perBrand: {
+        bi: { economics: econ(100), goal: "signup", revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, audiences: [] },
+        bj: { economics: econ(100), goal: "signup", revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, audiences: [] },
+      },
+      dashboardReturns: new Map([["org_i", signal]]),
+    });
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, deps);
+    const byId = Object.fromEntries(board.customers.map((c) => [c.brandId, c]));
+    expect(byId.bi.notTrackedYet.dashboardReturnFrequency).toEqual(signal);
+    expect(byId.bj.notTrackedYet.dashboardReturnFrequency).toBeNull();
+    // the other two gaps stay explicit null
+    expect(byId.bi.notTrackedYet.budgetChangeHistory).toBeNull();
+    expect(byId.bi.notTrackedYet.pauseHistory).toBeNull();
+  });
+
+  it("dashboardReturns fails → fail-soft: dashboardReturnFrequency null on every row, board still built", async () => {
+    const deps = makeDeps({
+      accounts: [account({ orgId: "k", brandId: "bk", status: "active" })],
+      recencies: [recency("k", "2026-07-11")],
+      perBrand: { bk: { economics: econ(100), goal: "signup", revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, audiences: [] } },
+      dashboardReturnsThrow: true,
+    });
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, deps);
+    expect(board.customers).toHaveLength(1);
+    expect(board.customers[0].notTrackedYet.dashboardReturnFrequency).toBeNull();
   });
 });
