@@ -52,6 +52,7 @@ import {
 } from "../lib/send-forecast-compute.js";
 import { buildAccountsAudit, type AccountsAudit } from "../lib/accounts-compute.js";
 import { buildActiveUsersHistory, type ActiveUsersHistory } from "../lib/active-users-compute.js";
+import { buildActiveUsersByUser, type ActiveUsersByUser } from "../lib/active-users-by-user-compute.js";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
@@ -1720,6 +1721,51 @@ export async function handleActiveUsers(
   res.json(await inflight);
 }
 
+// ── GET /internal/stats/active-users-by-user ─────────────────────────────────
+
+const activeUsersByUserCache: PublicCache = new Map();
+// Single-flight guard — a miss triggers a per-org runs-service + client-service fan-out; the admin page
+// loads this once, but a concurrent double-load (or cache expiry mid-flight) would otherwise fan out twice.
+const activeUsersByUserInFlight = new Map<string, Promise<ActiveUsersByUser>>();
+
+/** Test seam — reset the in-memory per-user active-history cache + in-flight guard. */
+export function __resetActiveUsersByUserCache(): void {
+  activeUsersByUserCache.clear();
+  activeUsersByUserInFlight.clear();
+}
+
+/**
+ * GET /internal/stats/active-users-by-user — the PER-USER breakdown of the aggregate active-users
+ * history. One row per user (org) EVER active (billed cold-email spend), carrying that user's active
+ * months / weeks / days SINCE INCEPTION, a pre-derived summary (first/last active month, first/last
+ * active week, retention-window-in-weeks), and current-week / current-month "active at least once"
+ * flags for the admin tab counts. Same universe + same "active" notion as GET /internal/stats/active-users.
+ * Staff-gated upstream at api-service (per-org rows allowed on this internal surface). 60s cache.
+ */
+export async function handleActiveUsersByUser(res: import("express").Response): Promise<void> {
+  const cacheKey = "active-users-by-user";
+  const cached = getPublicCache<ActiveUsersByUser>(activeUsersByUserCache, cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  // Single-flight: concurrent callers join the one in-flight build; slot cleared on settle.
+  let inflight = activeUsersByUserInFlight.get(cacheKey);
+  if (!inflight) {
+    inflight = (async () => {
+      const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
+      const coldCsv = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug)).join(",");
+      const payload = await buildActiveUsersByUser(coldCsv, new Date());
+      setPublicCache(activeUsersByUserCache, cacheKey, payload);
+      return payload;
+    })();
+    activeUsersByUserInFlight.set(cacheKey, inflight);
+    inflight.finally(() => activeUsersByUserInFlight.delete(cacheKey));
+  }
+  res.json(await inflight);
+}
+
 // ── GET /public/stats/ranked ─────────────────────────────────────────────────
 
 router.get("/public/stats/ranked", async (req, res) => {
@@ -1792,6 +1838,17 @@ router.get("/internal/stats/active-users", apiKeyOnly, async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] Internal stats active-users error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /internal/stats/active-users-by-user (api-key only; staff-gated upstream at api-service) ──
+
+router.get("/internal/stats/active-users-by-user", apiKeyOnly, async (_req, res) => {
+  try {
+    await handleActiveUsersByUser(res);
+  } catch (error) {
+    console.error("[features-service] Internal stats active-users-by-user error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
