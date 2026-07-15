@@ -582,7 +582,7 @@ those are set; until then `dashboardReturnFrequency` is null fleet-wide (dormant
 needs an **api-service proxy** (`/v1/...` mirror) + the admin-dashboard page as follow-ups (separate repos; the
 dashboard currently types the field as null — rendering it is a separate follow-up).
 Same prod-only-balance gotcha as the accounts audit (billing balance → stripe-service, no staging runtime → the
-whole board 502s on staging; **verify on PROD**). Triage: STAGING → feature. (PR #572; PostHog signal PR TBD,
+whole board 502s on staging; **verify on PROD**). Triage: STAGING → feature. (PR #572; PostHog signal PR #577,
 features-service#576, set 2026-07-15.)
 
 ## `pipeline-activity` signup/form-submission `.actual` = REAL observed conversions, NEVER `clicks × rate` (PR #513)
