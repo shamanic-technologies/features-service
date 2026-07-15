@@ -51,6 +51,7 @@ import {
   type SendForecastSummary,
 } from "../lib/send-forecast-compute.js";
 import { buildAccountsAudit, type AccountsAudit } from "../lib/accounts-compute.js";
+import { buildActiveUsersHistory, type ActiveUsersHistory } from "../lib/active-users-compute.js";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
@@ -1649,6 +1650,76 @@ export async function handleAccounts(res: import("express").Response): Promise<v
   res.json(payload);
 }
 
+// ── GET /internal/stats/active-users ─────────────────────────────────────────
+
+const DEFAULT_ACTIVE_USERS_WINDOWS = { days: 90, weeks: 26, months: 12 };
+const MAX_ACTIVE_USERS_WINDOWS = { days: 365, weeks: 104, months: 36 };
+
+const activeUsersCache: PublicCache = new Map();
+// Single-flight guard — a miss triggers a per-org runs-service fan-out; the admin page loads this once
+// but a concurrent double-load (or cache expiry mid-flight) would otherwise run the fan-out twice.
+const activeUsersInFlight = new Map<string, Promise<ActiveUsersHistory>>();
+
+/** Test seam — reset the in-memory active-users cache + in-flight guard. */
+export function __resetActiveUsersCache(): void {
+  activeUsersCache.clear();
+  activeUsersInFlight.clear();
+}
+
+/** Parse an optional trailing-window count: default when absent, clamp to [1, max], 400 on non-numeric. */
+function parseWindow(raw: string | undefined, def: number, max: number): number {
+  if (raw === undefined) return def;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) throw new Error(`invalid window value: ${raw}`);
+  return Math.min(n, max);
+}
+
+/**
+ * GET /internal/stats/active-users — GLOBAL (cross-org, fleet-wide) HISTORY of active users (distinct
+ * orgs with an active, funded, non-paused cold-email brand) bucketed monthly / weekly / daily, each with
+ * period-over-period growth, plus the LIVE current total (the accounts-audit active-user count). The
+ * history is reconstructed from per-day ACTUALIZED cold-email spend (a billed-spend day = the active
+ * verdict observed after the fact). Aggregate counts only. See active-users-compute.ts. 60s cache.
+ */
+export async function handleActiveUsers(
+  query: { days?: string; weeks?: string; months?: string },
+  res: import("express").Response,
+): Promise<void> {
+  let windows: { days: number; weeks: number; months: number };
+  try {
+    windows = {
+      days: parseWindow(query.days, DEFAULT_ACTIVE_USERS_WINDOWS.days, MAX_ACTIVE_USERS_WINDOWS.days),
+      weeks: parseWindow(query.weeks, DEFAULT_ACTIVE_USERS_WINDOWS.weeks, MAX_ACTIVE_USERS_WINDOWS.weeks),
+      months: parseWindow(query.months, DEFAULT_ACTIVE_USERS_WINDOWS.months, MAX_ACTIVE_USERS_WINDOWS.months),
+    };
+  } catch {
+    res.status(400).json({ error: "days/weeks/months must be positive integers" });
+    return;
+  }
+
+  const cacheKey = `active-users:${windows.days}:${windows.weeks}:${windows.months}`;
+  const cached = getPublicCache<ActiveUsersHistory>(activeUsersCache, cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  // Single-flight: concurrent same-key callers join the one in-flight build; slot cleared on settle.
+  let inflight = activeUsersInFlight.get(cacheKey);
+  if (!inflight) {
+    inflight = (async () => {
+      const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
+      const coldCsv = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug)).join(",");
+      const payload = await buildActiveUsersHistory(coldCsv, new Date(), windows);
+      setPublicCache(activeUsersCache, cacheKey, payload);
+      return payload;
+    })();
+    activeUsersInFlight.set(cacheKey, inflight);
+    inflight.finally(() => activeUsersInFlight.delete(cacheKey));
+  }
+  res.json(await inflight);
+}
+
 // ── GET /public/stats/ranked ─────────────────────────────────────────────────
 
 router.get("/public/stats/ranked", async (req, res) => {
@@ -1707,6 +1778,20 @@ router.get("/internal/stats/accounts", apiKeyOnly, async (_req, res) => {
     await handleAccounts(res);
   } catch (error) {
     console.error("[features-service] Internal stats accounts error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /internal/stats/active-users (api-key only; staff-gated upstream at api-service) ──────────
+
+router.get("/internal/stats/active-users", apiKeyOnly, async (req, res) => {
+  try {
+    await handleActiveUsers(
+      { days: req.query.days as string | undefined, weeks: req.query.weeks as string | undefined, months: req.query.months as string | undefined },
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] Internal stats active-users error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
