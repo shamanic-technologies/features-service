@@ -51,6 +51,7 @@ import {
   type SendForecastSummary,
 } from "../lib/send-forecast-compute.js";
 import { buildAccountsAudit, type AccountsAudit } from "../lib/accounts-compute.js";
+import { buildCustomerHealthBoard, type CustomerHealthBoard } from "../lib/customer-health-compute.js";
 import { buildActiveUsersHistory, type ActiveUsersHistory } from "../lib/active-users-compute.js";
 import { buildRevenueHistory, type RevenueHistory } from "../lib/revenue-history-compute.js";
 import { buildActiveUsersByUser, type ActiveUsersByUser } from "../lib/active-users-by-user-compute.js";
@@ -1652,6 +1653,52 @@ export async function handleAccounts(res: import("express").Response): Promise<v
   res.json(payload);
 }
 
+// ── GET /internal/stats/customer-health ──────────────────────────────────────
+
+const customerHealthCache: PublicCache = new Map();
+// Single-flight guard — a miss triggers a per-customer fan-out to SEVERAL heavy cross-service composites
+// (economics, revenue engine, audience stats, workflow projection). The admin page loads this once, but a
+// concurrent double-load (or cache expiry mid-flight) would otherwise run the whole fleet fan-out twice.
+const customerHealthInFlight = new Map<string, Promise<CustomerHealthBoard>>();
+
+/** Test seam — reset the in-memory customer-health cache + in-flight guard. */
+export function __resetCustomerHealthCache(): void {
+  customerHealthCache.clear();
+  customerHealthInFlight.clear();
+}
+
+/**
+ * GET /internal/stats/customer-health — GLOBAL (cross-org, fleet-wide) "Customer Success" health board:
+ * one ready-composed row per cold-email customer (org × brand), currently-active first, each with a
+ * green/yellow/red health badge, identity, recency/retention, optimization goal, conversion-tracker
+ * context, breakeven CAC (= LTR), full economics, realized CAC/ROI/%CAC, an audiences rollup + best
+ * audience, best workflow, and current status. ALL metrics computed + owned here; the dashboard renders
+ * only. See customer-health-compute.ts. 60s in-memory cache, same pattern as the other /internal/stats/* audits.
+ */
+export async function handleCustomerHealth(res: import("express").Response): Promise<void> {
+  const cacheKey = "customer-health";
+  const cached = getPublicCache<CustomerHealthBoard>(customerHealthCache, cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  // Single-flight: concurrent callers join the one in-flight build; slot cleared on settle.
+  let inflight = customerHealthInFlight.get(cacheKey);
+  if (!inflight) {
+    inflight = (async () => {
+      const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
+      const coldCsv = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug)).join(",");
+      const payload = await buildCustomerHealthBoard(coldCsv, new Date());
+      setPublicCache(customerHealthCache, cacheKey, payload);
+      return payload;
+    })();
+    customerHealthInFlight.set(cacheKey, inflight);
+    inflight.finally(() => customerHealthInFlight.delete(cacheKey));
+  }
+  res.json(await inflight);
+}
+
 // ── GET /internal/stats/active-users ─────────────────────────────────────────
 
 const DEFAULT_ACTIVE_USERS_WINDOWS = { days: 90, weeks: 26, months: 12 };
@@ -1887,6 +1934,17 @@ router.get("/internal/stats/accounts", apiKeyOnly, async (_req, res) => {
     await handleAccounts(res);
   } catch (error) {
     console.error("[features-service] Internal stats accounts error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /internal/stats/customer-health (api-key only; staff-gated upstream at api-service) ───────
+
+router.get("/internal/stats/customer-health", apiKeyOnly, async (_req, res) => {
+  try {
+    await handleCustomerHealth(res);
+  } catch (error) {
+    console.error("[features-service] Internal stats customer-health error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

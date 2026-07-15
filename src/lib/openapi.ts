@@ -629,6 +629,7 @@ const audienceStatsEvidenceSchema = z.object({
   completedRuns: z.number().describe("Completed runs behind this audience's cost evidence."),
   firstRunAt: z.string().datetime().nullable(),
   lastRunAt: z.string().datetime().nullable(),
+  memberCount: z.number().describe("Distinct MEMBER count of the audience (people served under it — human-service membership provenance). The addressable pool size; contacted ⊆ memberCount. Remaining-to-contact = memberCount − contacted; %used = contacted / memberCount. 0 when the audience has no members."),
   contacted: z.number().describe("Audience-scoped contacted-recipient count from email-gateway broadcast stats."),
   opened: z.number().describe("Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."),
   websiteClicks: z.number().describe("Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."),
@@ -1011,6 +1012,138 @@ registry.registerPath({
   tags: ["Internal"],
   responses: {
     200: { description: "Per-account rows + fleet financial stats", content: { "application/json": { schema: accountsResponseRef } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Server error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /internal/stats/customer-health ─────────────────────────────────────────
+
+const salesEconomicsSchema = z.object({
+  lifetimeRevenueUsd: z.number(),
+  replyToMeetingPct: z.number(),
+  visitToMeetingPct: z.number(),
+  meetingToClosePct: z.number(),
+  visitToSignupPct: z.number(),
+  signupToPaidClientPct: z.number(),
+  visitToClosePct: z.number(),
+  visitToPaidClientPct: z.number().optional(),
+  replyToPaidClientPct: z.number().optional(),
+  visitToFormSubmissionPct: z.number().optional(),
+  formSubmissionToPaidClientPct: z.number().optional(),
+}).describe("The brand's OWN saved conversion economics (all rates + LTR). null when the brand saved none.");
+
+const customerHealthRowSchema = z.object({
+  orgId: z.string().describe("Internal org UUID."),
+  orgExternalId: z.string().nullable().describe("Clerk org id (org_...); lets the admin resolve the org display name. null if unset."),
+  ownerEmail: z.string().nullable().describe("The org owner's email (earliest-created user). null if the org has no users."),
+  brandId: z.string().describe("Brand UUID."),
+  brandName: z.string().nullable(),
+  brandDomain: z.string().nullable(),
+  featureSlug: z.string().nullable().describe("The cold-email feature this row's economics / projection are computed for. null when the pair carries no membership."),
+  firstActiveDay: z.string().nullable().describe("Earliest UTC day (`YYYY-MM-DD`) the org billed cold-email spend. null when never active."),
+  lastActiveDay: z.string().nullable().describe("Latest UTC day (`YYYY-MM-DD`) the org billed cold-email spend. null when never active."),
+  retentionWeeks: z.number().int().nullable().describe("Retention window in ISO weeks (inclusive span between first and last active week). null when never active."),
+  activeThisWeek: z.boolean(),
+  activeThisMonth: z.boolean(),
+  activeDays: z.array(z.string()).describe("The de-facto active-day timeline from billed spend (distinct UTC days, ascending)."),
+  status: z.enum(["active", "paused", "inactive"]).describe("Same composition as GET /internal/stats/accounts (pause > active > inactive; active needs budget > 0 AND funded/auto-topup)."),
+  dailyBudgetUsd: z.number().nullable(),
+  orgBalanceUsd: z.number().describe("Org SPENDABLE balance in USD (display)."),
+  orgActualBalanceUsd: z.number().describe("Org ACTUAL balance in USD (the active-verdict figure)."),
+  autoTopupEnabled: z.boolean(),
+  optimizationGoal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply", "formSubmission"]).nullable().describe("The brand's 'Maximising X' goal (canonical camelCase). null when the brand saved no recognised goal."),
+  conversionTracker: z.object({
+    needed: z.boolean().describe("Whether the goal requires a client-site conversion tracker (signup / formSubmission / purchase → true; websiteVisit / positiveReply / meetingBooked → false)."),
+    observedConversions: z.number().nullable().describe("Observed attributed conversions of the goal's kind (lead-service tracker). null for goals with no discrete conversion event (websiteVisit / positiveReply) or unknown goal."),
+    firing: z.boolean().nullable().describe("INFERRED tracker health: observedConversions > 0. null when a tracker is not needed (n/a) or no count is available. A clean installed-and-verified boolean is a KNOWN GAP — this is the approximation."),
+    inferred: z.literal(true).describe("Always true — `firing` is inferred from observed counts, not a real install/verify signal."),
+  }),
+  breakevenCacUsd: z.number().nullable().describe("Breakeven CAC (USD) = max acquisition cost before unprofitable = brand LTR. null with no own economics."),
+  ltrUsd: z.number().nullable().describe("Lifetime revenue per customer (LTR / LTV), USD. Same value as breakevenCacUsd."),
+  economics: salesEconomicsSchema.nullable(),
+  currentEconomics: z.object({
+    realizedSpendUsd: z.number().nullable().describe("Realized (billed) acquisition spend, USD. null when not computed (no own economics)."),
+    expectedPipelineUsd: z.number().nullable().describe("Expected pipeline, USD (revenue-engine EV total). null when incomputable."),
+    currentCacUsd: z.number().nullable().describe("Realized cost to acquire one paying customer, USD = (cacPct/100) × LTR. null when incomputable."),
+    roiMultiple: z.number().nullable().describe("LTR / CAC = pipeline / spend. ≥ 1 ⟺ CAC below breakeven. null when spend or pipeline is 0/unknown."),
+    cacPct: z.number().nullable().describe("CAC as a share of LTR, percent = spend / pipeline × 100. null when incomputable."),
+  }),
+  audiences: z.object({
+    count: z.number().int().describe("Number of the brand's active audiences with evidence."),
+    totalSize: z.number().int().describe("Total addressable members across the brand's audiences (Σ memberCount)."),
+    totalRemaining: z.number().int().describe("Total remaining-to-contact (Σ max(memberCount − contacted, 0))."),
+    pctUsed: z.number().nullable().describe("% of the addressable pool already contacted = Σcontacted / Σsize × 100. null when totalSize is 0."),
+  }),
+  bestAudience: z.object({
+    audienceId: z.string(),
+    name: z.string(),
+    cacUsd: z.number().nullable().describe("The audience's CAC (cost per goal outcome) USD — cpc for visit-driven goals, cppr for reply-driven. null when unmeasured."),
+    size: z.number().int(),
+    remaining: z.number().int(),
+    pctRemaining: z.number().nullable(),
+  }).nullable().describe("The single best-performing audience by CAC. null when there is no goal to rank on or no audiences."),
+  bestWorkflow: z.object({
+    workflowDynastySlug: z.string(),
+    name: z.string().nullable(),
+    cacUsd: z.number().describe("Best (lowest) projected cost per outcome, USD, for the brand's goal."),
+    grain: z.enum(["crossOrg", "brand", "audience"]).describe("Which grain the number comes from: crossOrg (fleet benchmark) | brand | audience."),
+  }).nullable().describe("The single best workflow/model by CAC + its grain. null when no goal or no ranked workflow."),
+  health: z.object({
+    badge: z.enum(["green", "yellow", "red"]).describe("red = not active (paused/inactive/no budget); green = active AND ROI ≥ 1 AND audience not near-exhausted; yellow = active but ROI < 1 (or unknown) OR audience near-exhausted."),
+    inputs: z.object({
+      active: z.boolean(),
+      hasBudget: z.boolean(),
+      roiMultiple: z.number().nullable(),
+      roiHealthy: z.boolean(),
+      audiencePctUsed: z.number().nullable(),
+      audienceNearExhausted: z.boolean(),
+      audienceNearExhaustedThresholdPct: z.number().describe("The %used threshold above which an audience is 'near exhausted' (a yellow flag)."),
+    }).describe("The inputs the badge was derived from (so the front can explain the badge)."),
+  }),
+  notTrackedYet: z.object({
+    dashboardReturnFrequency: z.null().describe("Per-day dashboard-return frequency (PostHog only) — not wired into features-service yet."),
+    budgetChangeHistory: z.null().describe("Daily-budget change-history timeline — not persisted yet."),
+    pauseHistory: z.null().describe("Pause on/off history timeline — not persisted yet."),
+  }).describe("Signals that are KNOWN GAPS — explicit null so the front never fabricates them (separate backend requests)."),
+});
+
+const customerHealthStatsSchema = z.object({
+  totalCustomers: z.number().int(),
+  activeCount: z.number().int(),
+  pausedCount: z.number().int(),
+  inactiveCount: z.number().int(),
+  greenCount: z.number().int(),
+  yellowCount: z.number().int(),
+  redCount: z.number().int(),
+});
+
+const customerHealthResponseSchema = z.object({
+  customers: z.array(customerHealthRowSchema).describe("One ready-composed health row per cold-email customer (org × brand), currently-active first."),
+  stats: customerHealthStatsSchema,
+  asOf: z.string().describe("ISO timestamp the board was computed."),
+});
+
+const customerHealthResponseRef = registry.register("CustomerHealthResponse", customerHealthResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/stats/customer-health",
+  summary: "Fleet-wide customer-success health board (internal, api-key; staff-gated at api-service)",
+  description:
+    "Cross-org, fleet-wide 'Customer Success' health board — one ready-composed row per cold-email customer (org × brand), currently-active " +
+    "first, with a green/yellow/red health badge. Every metric is computed + owned here; the admin dashboard renders only (no browser math, no " +
+    "per-row fan-out). Each row carries: identity (org + brand, owner email, Clerk org id); recency + retention (first/last active day, retention " +
+    "weeks, active-day timeline from billed spend); the brand's optimization goal; conversion-tracker context (whether a tracker is NEEDED for the " +
+    "goal + an INFERRED firing flag from observed conversion counts — a clean installed/verified boolean is a known gap); breakeven CAC (= brand " +
+    "LTR); full conversion economics + LTR; realized CAC / ROI / %CAC (roiMultiple = pipeline/spend = LTR/CAC; cacPct = spend/pipeline = CAC/LTR — " +
+    "coherent by construction, own-economics only); an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single " +
+    "best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). " +
+    "Health: red = not active; green = active AND ROI ≥ 1 AND audience not near-exhausted; yellow = active but ROI < 1 (or unknown) OR audience " +
+    "near-exhausted. Known gaps (dashboard-return frequency, budget-change history, pause history) are explicit null under notTrackedYet — never fabricated.",
+  tags: ["Internal"],
+  responses: {
+    200: { description: "Per-customer health rows + fleet stats", content: { "application/json": { schema: customerHealthResponseRef } } },
     401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
     500: { description: "Server error", content: { "application/json": { schema: errorResponse } } },
   },

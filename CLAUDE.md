@@ -518,6 +518,56 @@ prod-only-dependency gotcha (railway-vars skill). Verified working on prod v0.72
 rows, 10 active / 22 inactive, `totalDailyBudgetUsd`=Σ active budgets, `mrr`=×30, `arr`=×365.
 (Set 2026-07-01.)
 
+## `GET /internal/stats/customer-health` — fleet "Customer Success" health board (api-key, staff-gated at api-service)
+
+Cross-org, fleet-wide list of every cold-email customer (org × brand) — the SAME universe as the accounts
+audit + active-users — for the admin "Customer Success" page. **One ready-composed HEALTH ROW per (org,
+brand), currently-active first, a green/yellow/red badge each. ALL metrics computed + owned HERE; the
+dashboard renders only (no browser math, no per-row fan-out).** Handler `handleCustomerHealth`
+(`src/routes/public.ts`), pure assembly in `src/lib/customer-health-compute.ts` (`buildCustomerHealthBoard`,
+injectable deps). 60s in-memory cache + **single-flight** (`__resetCustomerHealthCache` seam) — a miss fans
+out per customer to SEVERAL heavy composites, so the single-flight guard is load-bearing (stampede rule).
+
+**GRAIN = (org, brand)**, same as `/internal/stats/accounts` (economics/goal/audiences/workflows are all
+brand-scoped). **Reuses the fleet composites wholesale** rather than re-enumerating: `buildAccountsAudit`
+(identity + status + budget + balance) + `buildActiveUsersByUser` (per-org recency + retention). Then per
+(org, brand) it enriches via the SAME computes the dashboard's own pages use — `computeFeatureRevenue`
+(ROI), `computeAudienceStats` (audiences), `computeWorkflowProjection` (best workflow) — so a health-row
+number never disagrees with the drill-down it summarizes. The EXACT cold feature per pair comes from a
+per-slug `fetchFeatureMemberships` enumeration (the CSV call drops which feature a pair belongs to).
+
+**Economics coherent BY CONSTRUCTION (owned formula).** `breakevenCacUsd = ltrUsd = economics.lifetimeRevenueUsd`;
+the revenue engine's `costEconomics` gives `roiMultiple = pipeline/spend` and `cacPct = spend/pipeline×100`;
+`currentCacUsd = (cacPct/100)×LTR`. So `roiMultiple = LTR/CAC`, `cacPct = CAC/LTR×100` — **GREEN's "ROI ≥ 1"
+⟺ "CAC ≤ breakeven" ⟺ "%CAC ≤ 100%"**, one condition three views. These are surfaced **ONLY with the brand's
+OWN saved economics** (`fetchBrandSavedEconomicsWithGoal`, source="user"); with no own economics the pipeline
+would fall back to a cross-brand AVERAGE, so every economics-derived field is explicit **null** instead (never
+an averaged ROI dressed as the brand's own) — and the revenue engine is not even called for those brands.
+
+**Health badge (owned thresholds):** `red` = not active (paused/inactive/no budget); `green` = active AND
+ROI ≥ 1 AND audience not near-exhausted (`pctUsed < 80`); `yellow` = active but ROI < 1 (or unknown) OR
+audience `pctUsed ≥ 80`. The badge + its INPUTS are both returned (`health.inputs`).
+
+**Audience size/remaining/%used** derive from `AudienceStatsRow.evidence.memberCount` — a NEW field added to
+the audience evidence (`memberCount` = distinct member emails, ALREADY fetched for the outcome join, so free;
+additive, `toMatchObject` tests unaffected). remaining = memberCount − contacted, %used = contacted/memberCount.
+Best audience = the goal-ranked `audiences[0]`; best workflow = the lowest-positive `resolved.costPerOutcomeUsd`
+row (name = `workflowDynastyName`, grain = `resolved.grain`).
+
+**Conversion tracker** (`conversionTracker`): `needed` = goal ∈ {signup, formSubmission, purchase};
+`observedConversions` = the goal's `fetchConversionCounts` count (null for websiteVisit/positiveReply — the
+visit/reply IS the outcome); `firing` = INFERRED `observed > 0` (a clean installed/verified boolean is a KNOWN
+GAP → `inferred:true` always). **Known gaps are explicit null** under `notTrackedYet` (dashboard-return
+frequency = PostHog-only, budget-change history, pause history) — never fabricated. The billed-spend
+active-day timeline (cheap, already tracked) IS included (`activeDays`).
+
+**Fail loud** — no fabricated defaults; a stale membership the forwarded org doesn't own (BrandOwnershipError)
+is the ONE documented per-pair skip (enrichment nulled, row still listed — mirrors handlePublicRevenue). Reuses
+existing env only (LEAD/BILLING/BRAND/CAMPAIGN/CLIENT/HUMAN/RUNS/EMAIL_GATEWAY) — NO new env var. Additive/dormant:
+needs an **api-service proxy** (`/v1/...` mirror) + the admin-dashboard page as follow-ups (separate repos).
+Same prod-only-balance gotcha as the accounts audit (billing balance → stripe-service, no staging runtime → the
+whole board 502s on staging; **verify on PROD**). Triage: STAGING → feature. (Set 2026-07-15.)
+
 ## `pipeline-activity` signup/form-submission `.actual` = REAL observed conversions, NEVER `clicks × rate` (PR #513)
 
 The signup + form-submission daily bars split cleanly: **`.actual` (today + past days) = the REAL,
