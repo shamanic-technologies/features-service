@@ -41,6 +41,7 @@ import { buildAccountsAudit, type AccountsAudit, type AccountRow, type AccountSt
 import { buildActiveUsersByUser, type ActiveUsersByUser, type ActiveUserRow } from "./active-users-by-user-compute.js";
 import { fetchBrandSavedEconomicsWithGoal, BrandOwnershipError, type EffectiveEconomics } from "./sales-economics-client.js";
 import { fetchConversionCounts, type ConversionCounts } from "./conversion-counts-client.js";
+import { fetchDashboardReturnsByOrg, type DashboardReturnSignal } from "./posthog-client.js";
 import { computeAudienceStats, type AudienceStatsEnvelope } from "./audience-stats-compute.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { getFunnel, type SalesEconomics } from "./funnel-registry.js";
@@ -129,10 +130,15 @@ interface HealthInputs {
   audienceNearExhaustedThresholdPct: number;
 }
 
-/** The three signals we do NOT track yet — surfaced as explicit null so the front never fabricates them. */
+/**
+ * Signals surfaced under `notTrackedYet` — explicit null so the front never fabricates them.
+ * `dashboardReturnFrequency` IS now tracked (per-org PostHog return signal); it keeps its slot here for
+ * response-path stability with the dashboard, and is null only when PostHog is unreachable/unconfigured
+ * or the org has no dashboard activity. The other two remain genuine gaps.
+ */
 interface NotTrackedYet {
-  /** Per-day dashboard-return frequency (PostHog only) — not wired into features-service. */
-  dashboardReturnFrequency: null;
+  /** Per-org dashboard-return frequency from PostHog (sessions 7d/30d + last-seen). null when PostHog has no data / is unreachable / is unconfigured. */
+  dashboardReturnFrequency: DashboardReturnSignal | null;
   /** Daily-budget change history timeline — not persisted. */
   budgetChangeHistory: null;
   /** Pause on/off history timeline — not persisted. */
@@ -240,6 +246,8 @@ export interface CustomerHealthDeps {
   audienceStats: (featureSlug: string, brandId: string, orgId: string, goal: Goal) => Promise<AudienceStatsEnvelope | null>;
   /** Workflow projection for one (org, brand, goal). */
   workflowProjection: (featureSlug: string, brandId: string, orgId: string, goal: Goal) => Promise<WorkflowProjectionResponse>;
+  /** Per-org dashboard-return signal for the WHOLE fleet (PostHog), keyed on the Clerk org id (= orgExternalId). Fail-loud; the builder wraps it soft. */
+  dashboardReturns: (now: Date) => Promise<Map<string, DashboardReturnSignal>>;
 }
 
 const REAL_DEPS: CustomerHealthDeps = {
@@ -248,6 +256,7 @@ const REAL_DEPS: CustomerHealthDeps = {
   activeUsersByUser: buildActiveUsersByUser,
   savedEconomicsWithGoal: fetchBrandSavedEconomicsWithGoal,
   conversionCounts: fetchConversionCounts,
+  dashboardReturns: fetchDashboardReturnsByOrg,
   brandRevenue: async (featureSlug, brandId, orgId, economics) => {
     const funnel = getFunnel(featureSlug);
     const headers: DownstreamHeaders = { orgId, featureSlug };
@@ -424,13 +433,22 @@ export async function buildCustomerHealthBoard(
   //    to know which cold feature a pair belongs to we enumerate ONE call per cold slug (there are ~5) and
   //    tag each pair with the slug it matched — the feature drives the funnel + the feature-scoped cost reads.
   const coldSlugs = coldEmailSlugsCsv ? coldEmailSlugsCsv.split(",").filter((s) => s.length > 0).sort() : [];
-  const [audit, byUser, membershipsBySlug] = await Promise.all([
+  const [audit, byUser, membershipsBySlug, dashboardReturns] = await Promise.all([
     deps.accountsAudit(coldEmailSlugsCsv, now),
     deps.activeUsersByUser(coldEmailSlugsCsv, now),
     mapWithConcurrency(coldSlugs, CUSTOMER_FANOUT_CONCURRENCY, async (slug): Promise<{ slug: string; memberships: FeatureMembership[] }> => ({
       slug,
       memberships: await deps.featureMemberships(slug),
     })),
+    // Dashboard-return signal is DISPLAY ENRICHMENT — one fleet-wide PostHog read, fail-SOFT: a PostHog
+    // blip / missing config degrades `dashboardReturnFrequency` to null on EVERY row (never a fabricated
+    // count, never a 502), exactly like the /revenue conversion-count tiles + sequences series.
+    deps.dashboardReturns(now).catch((error): Map<string, DashboardReturnSignal> | null => {
+      console.warn(
+        `[features-service] customer-health dashboard-return enrichment failed (degrading to null): ${(error as Error).message}`,
+      );
+      return null;
+    }),
   ]);
 
   const recencyByOrg = new Map<string, ActiveUserRow>(byUser.users.map((u) => [u.orgId, u]));
@@ -559,7 +577,14 @@ export async function buildCustomerHealthBoard(
       bestAudience,
       bestWorkflow,
       health,
-      notTrackedYet: { dashboardReturnFrequency: null, budgetChangeHistory: null, pauseHistory: null },
+      notTrackedYet: {
+        // Per-org signal, joined on the Clerk org id (orgExternalId). null when PostHog degraded (map is
+        // null), the org has no external id, or the org had no dashboard activity in the window.
+        dashboardReturnFrequency:
+          (account.orgExternalId && dashboardReturns?.get(account.orgExternalId)) || null,
+        budgetChangeHistory: null,
+        pauseHistory: null,
+      },
     };
   });
 
