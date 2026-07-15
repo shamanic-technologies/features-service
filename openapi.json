@@ -3033,6 +3033,160 @@
           "asOf"
         ]
       },
+      "RevenueHistoryResponse": {
+        "type": "object",
+        "properties": {
+          "totalRevenueUsd": {
+            "type": "number",
+            "description": "Cumulative realized revenue since inception (all orgs, all time), in USD (2-decimal)."
+          },
+          "currentMrrUsd": {
+            "type": "number",
+            "description": "LIVE MRR — fleet active daily budget × 30 (the accounts-audit verdict). Matches the mrrUsd the admin page already renders from GET /internal/stats/accounts."
+          },
+          "monthly": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "period": {
+                  "type": "string",
+                  "description": "Bucket label — `YYYY-MM-DD` (daily), `YYYY-Www` ISO week (weekly), or `YYYY-MM` (monthly)."
+                },
+                "periodStart": {
+                  "type": "string",
+                  "description": "UTC start date of the bucket (`YYYY-MM-DD`): the day, the ISO week's Monday, or the month's 1st. For charting."
+                },
+                "revenueUsd": {
+                  "type": "number",
+                  "description": "Realized revenue (summed actual cold-email spend, all orgs) in this bucket, in USD (2-decimal)."
+                },
+                "growthPct": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Period-over-period growth vs the previous bucket, in percent (1-decimal). null on the first bucket or when the previous bucket is 0."
+                }
+              },
+              "required": [
+                "period",
+                "periodStart",
+                "revenueUsd",
+                "growthPct"
+              ]
+            },
+            "description": "Trailing calendar-month revenue buckets (oldest→newest)."
+          },
+          "weekly": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "period": {
+                  "type": "string",
+                  "description": "Bucket label — `YYYY-MM-DD` (daily), `YYYY-Www` ISO week (weekly), or `YYYY-MM` (monthly)."
+                },
+                "periodStart": {
+                  "type": "string",
+                  "description": "UTC start date of the bucket (`YYYY-MM-DD`): the day, the ISO week's Monday, or the month's 1st. For charting."
+                },
+                "revenueUsd": {
+                  "type": "number",
+                  "description": "Realized revenue (summed actual cold-email spend, all orgs) in this bucket, in USD (2-decimal)."
+                },
+                "growthPct": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Period-over-period growth vs the previous bucket, in percent (1-decimal). null on the first bucket or when the previous bucket is 0."
+                }
+              },
+              "required": [
+                "period",
+                "periodStart",
+                "revenueUsd",
+                "growthPct"
+              ]
+            },
+            "description": "Trailing ISO-week revenue buckets (oldest→newest)."
+          },
+          "daily": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "period": {
+                  "type": "string",
+                  "description": "Bucket label — `YYYY-MM-DD` (daily), `YYYY-Www` ISO week (weekly), or `YYYY-MM` (monthly)."
+                },
+                "periodStart": {
+                  "type": "string",
+                  "description": "UTC start date of the bucket (`YYYY-MM-DD`): the day, the ISO week's Monday, or the month's 1st. For charting."
+                },
+                "revenueUsd": {
+                  "type": "number",
+                  "description": "Realized revenue (summed actual cold-email spend, all orgs) in this bucket, in USD (2-decimal)."
+                },
+                "growthPct": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Period-over-period growth vs the previous bucket, in percent (1-decimal). null on the first bucket or when the previous bucket is 0."
+                }
+              },
+              "required": [
+                "period",
+                "periodStart",
+                "revenueUsd",
+                "growthPct"
+              ]
+            },
+            "description": "Trailing UTC-day revenue buckets (oldest→newest)."
+          },
+          "sinceInceptionDaily": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "period": {
+                  "type": "string",
+                  "description": "Bucket label — `YYYY-MM-DD` (daily), `YYYY-Www` ISO week (weekly), or `YYYY-MM` (monthly)."
+                },
+                "periodStart": {
+                  "type": "string",
+                  "description": "UTC start date of the bucket (`YYYY-MM-DD`): the day, the ISO week's Monday, or the month's 1st. For charting."
+                },
+                "revenueUsd": {
+                  "type": "number",
+                  "description": "Realized revenue (summed actual cold-email spend, all orgs) in this bucket, in USD (2-decimal)."
+                },
+                "growthPct": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Period-over-period growth vs the previous bucket, in percent (1-decimal). null on the first bucket or when the previous bucket is 0."
+                }
+              },
+              "required": [
+                "period",
+                "periodStart",
+                "revenueUsd",
+                "growthPct"
+              ]
+            },
+            "description": "Per-day realized-revenue line from the first billed day to today (the 'MRR over time' series)."
+          },
+          "asOf": {
+            "type": "string",
+            "description": "ISO timestamp the series was computed."
+          }
+        },
+        "required": [
+          "totalRevenueUsd",
+          "currentMrrUsd",
+          "monthly",
+          "weekly",
+          "daily",
+          "sinceInceptionDaily",
+          "asOf"
+        ]
+      },
       "ActiveUsersByUserResponse": {
         "type": "object",
         "properties": {
@@ -6946,6 +7100,119 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ActiveUsersHistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid window parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/stats/revenue": {
+      "get": {
+        "summary": "Fleet-wide realized-revenue history (internal, api-key; staff-gated at api-service)",
+        "description": "Cross-org, fleet-wide HISTORY of REALIZED REVENUE (summed ACTUALIZED cold-email spend across all orgs) bucketed monthly, weekly, and daily, each with a period-over-period growth rate; plus the total since inception, a per-day-since-inception line (the 'MRR over time' series), and the current live MRR. This is the MONEY twin of GET /internal/stats/active-users — the exact same per-day actualized cold-email spend signal, summed in dollars instead of thresholded to a distinct-org headcount. A day of real billed cold-email spend is realized revenue that day (spend only happens on a non-paused, budgeted, funded brand — the same conditions the accounts 'active' verdict checks, observed after the fact). currentMrrUsd is NOT reconstructed — it is the LIVE accounts-audit MRR (fleet active daily budget × 30), the SAME number GET /internal/stats/accounts renders, so the two tabs reconcile; the last daily point (realized spend so far today) legitimately lags currentMrrUsd. Aggregate totals only — no per-org data. Windows are trailing and end at today (UTC): daily default 90 (max 365), weekly default 26 (max 104), monthly default 12 (max 36). All amounts in USD.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365,
+              "description": "Trailing days in the daily series (default 90, max 365)."
+            },
+            "required": false,
+            "description": "Trailing days in the daily series (default 90, max 365).",
+            "name": "days",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 104,
+              "description": "Trailing ISO weeks in the weekly series (default 26, max 104)."
+            },
+            "required": false,
+            "description": "Trailing ISO weeks in the weekly series (default 26, max 104).",
+            "name": "weeks",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 36,
+              "description": "Trailing months in the monthly series (default 12, max 36)."
+            },
+            "required": false,
+            "description": "Trailing months in the monthly series (default 12, max 36).",
+            "name": "months",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revenue history (monthly/weekly/daily + growth), total since inception, per-day line, and current MRR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueHistoryResponse"
                 }
               }
             }

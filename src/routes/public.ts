@@ -52,6 +52,7 @@ import {
 } from "../lib/send-forecast-compute.js";
 import { buildAccountsAudit, type AccountsAudit } from "../lib/accounts-compute.js";
 import { buildActiveUsersHistory, type ActiveUsersHistory } from "../lib/active-users-compute.js";
+import { buildRevenueHistory, type RevenueHistory } from "../lib/revenue-history-compute.js";
 import { buildActiveUsersByUser, type ActiveUsersByUser } from "../lib/active-users-by-user-compute.js";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
@@ -1766,6 +1767,68 @@ export async function handleActiveUsersByUser(res: import("express").Response): 
   res.json(await inflight);
 }
 
+// ── GET /internal/stats/revenue ──────────────────────────────────────────────
+
+const DEFAULT_REVENUE_WINDOWS = { days: 90, weeks: 26, months: 12 };
+const MAX_REVENUE_WINDOWS = { days: 365, weeks: 104, months: 36 };
+
+const revenueHistoryCache: PublicCache = new Map();
+// Single-flight guard — a miss triggers a per-org runs-service fan-out; the admin page loads this once but
+// a concurrent double-load (or cache expiry mid-flight) would otherwise run the fan-out twice.
+const revenueHistoryInFlight = new Map<string, Promise<RevenueHistory>>();
+
+/** Test seam — reset the in-memory revenue-history cache + in-flight guard. */
+export function __resetRevenueHistoryCache(): void {
+  revenueHistoryCache.clear();
+  revenueHistoryInFlight.clear();
+}
+
+/**
+ * GET /internal/stats/revenue — GLOBAL (cross-org, fleet-wide) HISTORY of realized revenue (summed
+ * ACTUALIZED cold-email spend across all orgs) bucketed monthly / weekly / daily, each with period-over-
+ * period growth; plus the total since inception, a per-day-since-inception line ("MRR over time"), and the
+ * LIVE current MRR (accounts-audit fleet active daily budget × 30). Same universe + same "active = real
+ * billed cold-email spend" signal as GET /internal/stats/active-users. Aggregate totals only. 60s cache.
+ */
+export async function handleRevenueHistory(
+  query: { days?: string; weeks?: string; months?: string },
+  res: import("express").Response,
+): Promise<void> {
+  let windows: { days: number; weeks: number; months: number };
+  try {
+    windows = {
+      days: parseWindow(query.days, DEFAULT_REVENUE_WINDOWS.days, MAX_REVENUE_WINDOWS.days),
+      weeks: parseWindow(query.weeks, DEFAULT_REVENUE_WINDOWS.weeks, MAX_REVENUE_WINDOWS.weeks),
+      months: parseWindow(query.months, DEFAULT_REVENUE_WINDOWS.months, MAX_REVENUE_WINDOWS.months),
+    };
+  } catch {
+    res.status(400).json({ error: "days/weeks/months must be positive integers" });
+    return;
+  }
+
+  const cacheKey = `revenue:${windows.days}:${windows.weeks}:${windows.months}`;
+  const cached = getPublicCache<RevenueHistory>(revenueHistoryCache, cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  // Single-flight: concurrent same-key callers join the one in-flight build; slot cleared on settle.
+  let inflight = revenueHistoryInFlight.get(cacheKey);
+  if (!inflight) {
+    inflight = (async () => {
+      const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
+      const coldCsv = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug)).join(",");
+      const payload = await buildRevenueHistory(coldCsv, new Date(), windows);
+      setPublicCache(revenueHistoryCache, cacheKey, payload);
+      return payload;
+    })();
+    revenueHistoryInFlight.set(cacheKey, inflight);
+    inflight.finally(() => revenueHistoryInFlight.delete(cacheKey));
+  }
+  res.json(await inflight);
+}
+
 // ── GET /public/stats/ranked ─────────────────────────────────────────────────
 
 router.get("/public/stats/ranked", async (req, res) => {
@@ -1849,6 +1912,20 @@ router.get("/internal/stats/active-users-by-user", apiKeyOnly, async (_req, res)
     await handleActiveUsersByUser(res);
   } catch (error) {
     console.error("[features-service] Internal stats active-users-by-user error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /internal/stats/revenue (api-key only; staff-gated upstream at api-service) ───────────────
+
+router.get("/internal/stats/revenue", apiKeyOnly, async (req, res) => {
+  try {
+    await handleRevenueHistory(
+      { days: req.query.days as string | undefined, weeks: req.query.weeks as string | undefined, months: req.query.months as string | undefined },
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] Internal stats revenue error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
