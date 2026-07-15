@@ -26,6 +26,8 @@ import { buildAccountsAudit } from "./accounts-compute.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { addUtcDays } from "./send-forecast-compute.js";
 import { bucketOf, enumerateBuckets, type Granularity } from "./active-users-compute.js";
+import { recordCommittedMrrSnapshotSoft, readCommittedMrrSnapshotsSoft } from "./committed-mrr-store.js";
+import { buildCommittedMrrHistory, type CommittedMrrHistory } from "./committed-mrr-compute.js";
 
 /** Cap the per-org runs-service fan-out so a cold-Neon sibling is not hit with N sockets at once. */
 const ORG_FANOUT_CONCURRENCY = 6;
@@ -67,6 +69,14 @@ export interface RevenueHistory {
   daily: RevenueBucket[];
   /** Per-day realized-revenue series since inception (the "MRR over time" line) — every day from the first billed day to today. */
   sinceInceptionDaily: RevenueBucket[];
+  /**
+   * COMMITTED MRR/ARR over time (monthly + weekly, each with growth) — the point-in-time run-rate the fleet
+   * is CONTRACTED to bill (Σ active daily budget × 30), NOT realized spend. Recorded as daily snapshots
+   * going forward; the current-period point equals `currentMrrUsd` (reconciles with the accounts audit),
+   * ARR = MRR × 12. Additive + non-breaking to the realized series above; degrades to the current live
+   * point only if the snapshot store is unavailable.
+   */
+  committedMrr: CommittedMrrHistory;
   asOf: string;
 }
 
@@ -75,14 +85,23 @@ export interface RevenueHistoryDeps {
   featureMemberships: (featureSlugsCsv: string) => Promise<Array<{ orgId: string }>>;
   /** Map of UTC day → actual cold-email spend (cents) for the org, since `startedAfterIso`. */
   orgDailySpendCents: (orgId: string, coldEmailSlugsCsv: string, startedAfterIso: string) => Promise<Map<string, number>>;
-  /** LIVE fleet MRR (accounts-audit active daily budget × 30, USD). */
-  currentMrrUsd: (coldEmailSlugsCsv: string, now: Date) => Promise<number>;
+  /** LIVE fleet committed stats (accounts-audit): MRR (budget × 30), daily budget, active count — all USD. */
+  currentFleetStats: (coldEmailSlugsCsv: string, now: Date) => Promise<{ mrrUsd: number; dailyBudgetUsd: number; activeCount: number }>;
+  /** Persist today's committed-budget snapshot (fail-soft; recorded going forward, no boot backfill). */
+  recordCommittedSnapshot: (dailyBudgetUsd: number, activeCount: number, now: Date) => Promise<void>;
+  /** Read committed snapshots on/after a `YYYY-MM-DD` lower bound → {date, mrrUsd} oldest→newest (fail-soft → []). */
+  readCommittedSnapshots: (sinceIso: string) => Promise<Array<{ date: string; mrrUsd: number }>>;
 }
 
 const REAL_DEPS: RevenueHistoryDeps = {
   featureMemberships: async (csv) => (await fetchFeatureMemberships(csv)).map((m) => ({ orgId: m.orgId })),
   orgDailySpendCents: fetchOrgDailySpendCents,
-  currentMrrUsd: async (csv, now) => (await buildAccountsAudit(csv, now)).stats.mrrUsd,
+  currentFleetStats: async (csv, now) => {
+    const s = (await buildAccountsAudit(csv, now)).stats;
+    return { mrrUsd: s.mrrUsd, dailyBudgetUsd: s.totalDailyBudgetUsd, activeCount: s.activeCount };
+  },
+  recordCommittedSnapshot: recordCommittedMrrSnapshotSoft,
+  readCommittedSnapshots: readCommittedMrrSnapshotsSoft,
 };
 
 /** Round a cents amount to whole USD dollars-and-cents (2 decimals), FP-safe. */
@@ -142,15 +161,29 @@ export async function buildRevenueHistory(
   const memberships = coldEmailSlugsCsv ? await deps.featureMemberships(coldEmailSlugsCsv) : [];
   const orgIds = [...new Set(memberships.map((m) => m.orgId))];
 
-  // 2. Per-org ALL-TIME daily-spend map (capped fan-out) + the live MRR (accounts verdict), in parallel.
-  //    One all-time fetch per org feeds every series: the trailing windows just ignore out-of-window days.
-  const [orgDayEntries, currentMrrUsd] = await Promise.all([
+  // 2. Per-org ALL-TIME daily-spend map (capped fan-out) + the live fleet committed stats (accounts verdict),
+  //    in parallel. One all-time fetch per org feeds every series: the trailing windows ignore out-of-window days.
+  const [orgDayEntries, fleet] = await Promise.all([
     mapWithConcurrency(orgIds, ORG_FANOUT_CONCURRENCY, async (orgId): Promise<[string, Map<string, number>]> => {
       return [orgId, await deps.orgDailySpendCents(orgId, coldEmailSlugsCsv, INCEPTION_FLOOR_ISO)];
     }),
-    coldEmailSlugsCsv ? deps.currentMrrUsd(coldEmailSlugsCsv, now) : Promise.resolve(0),
+    coldEmailSlugsCsv ? deps.currentFleetStats(coldEmailSlugsCsv, now) : Promise.resolve({ mrrUsd: 0, dailyBudgetUsd: 0, activeCount: 0 }),
   ]);
   const orgDailyCents = new Map(orgDayEntries);
+  const currentMrrUsd = fleet.mrrUsd;
+
+  // 2b. COMMITTED MRR: record today's committed-budget snapshot (going forward, fail-soft), then read the
+  //     recorded snapshots over the displayed window and build the monthly/weekly committed series. The
+  //     current-period point uses the LIVE MRR, so it reconciles with the accounts audit by construction.
+  let committedMrr: CommittedMrrHistory = buildCommittedMrrHistory([], currentMrrUsd, now, { weeks: windows.weeks, months: windows.months });
+  if (coldEmailSlugsCsv) {
+    await deps.recordCommittedSnapshot(fleet.dailyBudgetUsd, fleet.activeCount, now);
+    const committedSinceIso = [monthlyBuckets[0]?.periodStart, weeklyBuckets[0]?.periodStart]
+      .filter((s): s is string => Boolean(s))
+      .reduce((a, b) => (a < b ? a : b), todayIso);
+    const snapshots = await deps.readCommittedSnapshots(committedSinceIso);
+    committedMrr = buildCommittedMrrHistory(snapshots, currentMrrUsd, now, { weeks: windows.weeks, months: windows.months });
+  }
 
   // 3. Total since inception = sum every org's every billed day.
   let totalCents = 0;
@@ -181,6 +214,7 @@ export async function buildRevenueHistory(
     weekly: bucketizeRevenue(orgDailyCents, weeklyBuckets, "week"),
     daily: bucketizeRevenue(orgDailyCents, dailyBuckets, "day"),
     sinceInceptionDaily,
+    committedMrr,
     asOf: now.toISOString(),
   };
 }
