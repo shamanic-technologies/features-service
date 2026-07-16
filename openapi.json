@@ -2834,7 +2834,12 @@
                 "dailyBudgetUsd": {
                   "type": "number",
                   "nullable": true,
-                  "description": "Brand's configured daily spend ceiling in USD. Null when unset/paused."
+                  "description": "NET brand daily budget in USD (post per-org usage discount = gross × (1 − discount)) — what the org actually pays; the staff metrics-page figure. NET == GROSS for an org with no discount. Null when unset/paused."
+                },
+                "grossDailyBudgetUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "GROSS (list-price) brand daily budget in USD, before the org usage discount. Additive — the undiscounted figure, and the basis the ACTIVE verdict + row sort compute on. Null when unset/paused."
                 },
                 "orgBalanceUsd": {
                   "type": "number",
@@ -2866,6 +2871,7 @@
                 "brandName",
                 "brandDomain",
                 "dailyBudgetUsd",
+                "grossDailyBudgetUsd",
                 "orgBalanceUsd",
                 "orgActualBalanceUsd",
                 "autoTopupEnabled",
@@ -2878,15 +2884,27 @@
             "properties": {
               "totalDailyBudgetUsd": {
                 "type": "number",
-                "description": "Sum of daily budget over ACTIVE rows only (USD; paused/inactive excluded)."
+                "description": "Σ NET daily budget over ACTIVE rows only (USD; post per-org usage discount; paused/inactive excluded). The staff metrics-page figure."
               },
               "mrrUsd": {
                 "type": "number",
-                "description": "totalDailyBudgetUsd × 30."
+                "description": "NET MRR = totalDailyBudgetUsd × 30."
               },
               "arrUsd": {
                 "type": "number",
-                "description": "totalDailyBudgetUsd × 365."
+                "description": "NET ARR = totalDailyBudgetUsd × 365."
+              },
+              "grossTotalDailyBudgetUsd": {
+                "type": "number",
+                "description": "Σ GROSS (list-price) daily budget over ACTIVE rows only (USD; pre-discount). Additive."
+              },
+              "grossMrrUsd": {
+                "type": "number",
+                "description": "GROSS MRR = grossTotalDailyBudgetUsd × 30."
+              },
+              "grossArrUsd": {
+                "type": "number",
+                "description": "GROSS ARR = grossTotalDailyBudgetUsd × 365."
               },
               "activeCount": {
                 "type": "integer"
@@ -2905,6 +2923,9 @@
               "totalDailyBudgetUsd",
               "mrrUsd",
               "arrUsd",
+              "grossTotalDailyBudgetUsd",
+              "grossMrrUsd",
+              "grossArrUsd",
               "activeCount",
               "pausedCount",
               "inactiveCount",
@@ -3570,11 +3591,11 @@
         "properties": {
           "totalRevenueUsd": {
             "type": "number",
-            "description": "Cumulative realized revenue since inception (all orgs, all time), in USD (2-decimal)."
+            "description": "Cumulative NET realized revenue since inception (all orgs, all time; post per-org usage discount), in USD (2-decimal)."
           },
           "currentMrrUsd": {
             "type": "number",
-            "description": "LIVE MRR — fleet active daily budget × 30 (the accounts-audit verdict). Matches the mrrUsd the admin page already renders from GET /internal/stats/accounts."
+            "description": "LIVE NET MRR — fleet active daily budget (post per-org usage discount) × 30. Matches the NET mrrUsd the admin page renders from GET /internal/stats/accounts."
           },
           "monthly": {
             "type": "array",
@@ -3591,7 +3612,7 @@
                 },
                 "revenueUsd": {
                   "type": "number",
-                  "description": "Realized revenue (summed actual cold-email spend, all orgs) in this bucket, in USD (2-decimal)."
+                  "description": "NET realized revenue (summed NET actual cold-email spend after per-org usage discount, all orgs) in this bucket, in USD (2-decimal)."
                 },
                 "growthPct": {
                   "type": "number",
@@ -3623,7 +3644,7 @@
                 },
                 "revenueUsd": {
                   "type": "number",
-                  "description": "Realized revenue (summed actual cold-email spend, all orgs) in this bucket, in USD (2-decimal)."
+                  "description": "NET realized revenue (summed NET actual cold-email spend after per-org usage discount, all orgs) in this bucket, in USD (2-decimal)."
                 },
                 "growthPct": {
                   "type": "number",
@@ -3655,7 +3676,7 @@
                 },
                 "revenueUsd": {
                   "type": "number",
-                  "description": "Realized revenue (summed actual cold-email spend, all orgs) in this bucket, in USD (2-decimal)."
+                  "description": "NET realized revenue (summed NET actual cold-email spend after per-org usage discount, all orgs) in this bucket, in USD (2-decimal)."
                 },
                 "growthPct": {
                   "type": "number",
@@ -3687,7 +3708,7 @@
                 },
                 "revenueUsd": {
                   "type": "number",
-                  "description": "Realized revenue (summed actual cold-email spend, all orgs) in this bucket, in USD (2-decimal)."
+                  "description": "NET realized revenue (summed NET actual cold-email spend after per-org usage discount, all orgs) in this bucket, in USD (2-decimal)."
                 },
                 "growthPct": {
                   "type": "number",
@@ -3709,11 +3730,11 @@
             "properties": {
               "currentMrrUsd": {
                 "type": "number",
-                "description": "LIVE committed MRR — fleet active daily budget × 30 (the accounts-audit verdict). The current-period point of monthly/weekly equals this (reconciles with GET /internal/stats/accounts)."
+                "description": "LIVE NET committed MRR — fleet active daily budget (post per-org usage discount) × 30. The current-period point of monthly/weekly equals this (reconciles with GET /internal/stats/accounts mrrUsd)."
               },
               "currentArrUsd": {
                 "type": "number",
-                "description": "LIVE committed ARR = currentMrrUsd × 12, in USD."
+                "description": "LIVE NET committed ARR = currentMrrUsd × 12, in USD."
               },
               "monthly": {
                 "type": "array",
@@ -3730,11 +3751,11 @@
                     },
                     "mrrUsd": {
                       "type": "number",
-                      "description": "Committed MRR as of this period (the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal)."
+                      "description": "NET committed MRR as of this period (post per-org usage discount; the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal)."
                     },
                     "arrUsd": {
                       "type": "number",
-                      "description": "Committed ARR = mrrUsd × 12, in USD (2-decimal)."
+                      "description": "NET committed ARR = mrrUsd × 12, in USD (2-decimal)."
                     },
                     "growthPct": {
                       "type": "number",
@@ -3767,11 +3788,11 @@
                     },
                     "mrrUsd": {
                       "type": "number",
-                      "description": "Committed MRR as of this period (the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal)."
+                      "description": "NET committed MRR as of this period (post per-org usage discount; the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal)."
                     },
                     "arrUsd": {
                       "type": "number",
-                      "description": "Committed ARR = mrrUsd × 12, in USD (2-decimal)."
+                      "description": "NET committed ARR = mrrUsd × 12, in USD (2-decimal)."
                     },
                     "growthPct": {
                       "type": "number",
@@ -7626,7 +7647,7 @@
     "/internal/stats/accounts": {
       "get": {
         "summary": "Fleet-wide cold-email customer accounts audit (internal, api-key; staff-gated at api-service)",
-        "description": "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with its daily budget, the org's spendable credit balance, and a 3-way status, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). Status precedence paused > active > inactive: 'paused' iff the campaign-service brand pause is set (campaigns HELD, budget kept); else 'active' iff dailyBudgetUsd > 0 && (autoTopupEnabled || orgActualBalanceUsd > dailyBudgetUsd) — the ACTUAL balance (actualized usage only), NOT the spendable balance (which subtracts in-flight provisioned holds); else 'inactive'. All rows (active + paused + inactive) are LISTED, never dropped. Stats sum ACTIVE rows only (a paused brand is not spending). All money + the status determination are computed here; the dashboard renders only.",
+        "description": "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with its daily budget, the org's spendable credit balance, and a 3-way status, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). Status precedence paused > active > inactive: 'paused' iff the campaign-service brand pause is set (campaigns HELD, budget kept); else 'active' iff dailyBudgetUsd > 0 && (autoTopupEnabled || orgActualBalanceUsd > dailyBudgetUsd) — the ACTUAL balance (actualized usage only), NOT the spendable balance (which subtracts in-flight provisioned holds); else 'inactive'. All rows (active + paused + inactive) are LISTED, never dropped. Stats sum ACTIVE rows only (a paused brand is not spending). MONEY IS NET (post per-org usage discount, owned by billing-service): dailyBudgetUsd + totalDailyBudgetUsd/MRR/ARR are gross × (1 − discount) — what the org actually pays; GROSS (list-price) twins are additive (grossDailyBudgetUsd, stats.gross*) and are the basis the ACTIVE verdict + sort compute on, so the discount never changes who is active (NET == GROSS for a non-discounted org). All money + the status determination are computed here; the dashboard renders only.",
         "tags": [
           "Internal"
         ],
@@ -7853,7 +7874,7 @@
     "/internal/stats/revenue": {
       "get": {
         "summary": "Fleet-wide realized-revenue history (internal, api-key; staff-gated at api-service)",
-        "description": "Cross-org, fleet-wide HISTORY of REALIZED REVENUE (summed ACTUALIZED cold-email spend across all orgs) bucketed monthly, weekly, and daily, each with a period-over-period growth rate; plus the total since inception, a per-day-since-inception line (the 'MRR over time' series), and the current live MRR. This is the MONEY twin of GET /internal/stats/active-users — the exact same per-day actualized cold-email spend signal, summed in dollars instead of thresholded to a distinct-org headcount. A day of real billed cold-email spend is realized revenue that day (spend only happens on a non-paused, budgeted, funded brand — the same conditions the accounts 'active' verdict checks, observed after the fact). currentMrrUsd is NOT reconstructed — it is the LIVE accounts-audit MRR (fleet active daily budget × 30), the SAME number GET /internal/stats/accounts renders, so the two tabs reconcile; the last daily point (realized spend so far today) legitimately lags currentMrrUsd. Aggregate totals only — no per-org data. Also returns committedMrr: the COMMITTED MRR/ARR run-rate over time (monthly + weekly, each with growth) — Σ active daily budget × 30, what the fleet is CONTRACTED to bill (distinct from realized spend). Committed MRR is a point-in-time snapshot that cannot be reconstructed from spend, so it is persisted as a daily snapshot recorded GOING FORWARD (no historical backfill); the current-period point equals currentMrrUsd (reconciles) and ARR = MRR × 12. Windows are trailing and end at today (UTC): daily default 90 (max 365), weekly default 26 (max 104), monthly default 12 (max 36). All amounts in USD.",
+        "description": "Cross-org, fleet-wide HISTORY of NET REALIZED REVENUE (summed ACTUALIZED cold-email spend after each org's usage discount, all orgs) bucketed monthly, weekly, and daily, each with a period-over-period growth rate; plus the total since inception, a per-day-since-inception line (the 'MRR over time' series), and the current live MRR. This is the MONEY twin of GET /internal/stats/active-users — the exact same per-day actualized cold-email spend signal, summed in dollars instead of thresholded to a distinct-org headcount. A day of real billed cold-email spend is realized revenue that day (spend only happens on a non-paused, budgeted, funded brand — the same conditions the accounts 'active' verdict checks, observed after the fact). currentMrrUsd is NOT reconstructed — it is the LIVE accounts-audit MRR (fleet active daily budget × 30), the SAME number GET /internal/stats/accounts renders, so the two tabs reconcile; the last daily point (realized spend so far today) legitimately lags currentMrrUsd. Aggregate totals only — no per-org data. Also returns committedMrr: the COMMITTED MRR/ARR run-rate over time (monthly + weekly, each with growth) — Σ active daily budget × 30, what the fleet is CONTRACTED to bill (distinct from realized spend). Committed MRR is a point-in-time snapshot that cannot be reconstructed from spend, so it is persisted as a daily snapshot recorded GOING FORWARD (no historical backfill); the current-period point equals currentMrrUsd (reconciles) and ARR = MRR × 12. Windows are trailing and end at today (UTC): daily default 90 (max 365), weekly default 26 (max 104), monthly default 12 (max 36). All amounts in USD.",
         "tags": [
           "Internal"
         ],

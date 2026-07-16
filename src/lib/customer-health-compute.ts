@@ -555,7 +555,9 @@ export async function buildCustomerHealthBoard(
       inferred: true,
     };
 
-    const hasBudget = account.dailyBudgetUsd != null && account.dailyBudgetUsd > 0;
+    // Use the GROSS budget for the health board (unchanged by the accounts-audit net-money switch — the
+    // net figure is for the staff metrics page; the Customer Success board keeps the list-price budget).
+    const hasBudget = account.grossDailyBudgetUsd != null && account.grossDailyBudgetUsd > 0;
     const health = composeHealth(account.status, hasBudget, currentEconomics.roiMultiple, audiencesRollup.pctUsed);
 
     void ownershipSkipped; // enrichment already nulled above; retained for readability of the skip path
@@ -575,7 +577,7 @@ export async function buildCustomerHealthBoard(
       activeThisMonth: recency?.activeThisMonth ?? false,
       activeDays: recency?.activeDays ?? [],
       status: account.status,
-      dailyBudgetUsd: account.dailyBudgetUsd,
+      dailyBudgetUsd: account.grossDailyBudgetUsd,
       orgBalanceUsd: account.orgBalanceUsd,
       orgActualBalanceUsd: account.orgActualBalanceUsd,
       autoTopupEnabled: account.autoTopupEnabled,
