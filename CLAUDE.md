@@ -1,5 +1,43 @@
 # Features Service — CLAUDE.md
 
+## Staff admin metrics `/internal/stats/{accounts,revenue}` are NET (post per-org usage discount) — money IN-PLACE net, GROSS additive, verdict stays on GROSS (PR #592, v0.93.1)
+
+The staff admin metrics page (`admin.distribute.you/metrics`) renders fleet money features-service serves
+via the api-service staff-gated proxy. It is **NET** (what we actually collect after each org's usage
+discount), not GROSS (list price) — discounted orgs exist, so GROSS overstated.
+
+- **`/internal/stats/accounts` (`buildAccountsAudit`)** — per-brand `dailyBudgetUsd` + fleet
+  `stats.totalDailyBudgetUsd`/`mrrUsd`/`arrUsd` are **NET** (`gross × (1 − orgDiscount/100)`, `applyDiscount`).
+  GROSS is exposed **additively** (`grossDailyBudgetUsd`, `stats.grossTotalDailyBudgetUsd`/`grossMrrUsd`/`grossArrUsd`).
+  **The ACTIVE verdict + row sort compute on GROSS** (`accountStatus(grossBudget, …)`, sort on
+  `grossDailyBudgetUsd`) — the discount NEVER changes who is active (locked no-go). NET == GROSS for a
+  non-discounted org → those rows byte-unchanged. Discount read once per org from billing
+  `GET /internal/accounts/by-org/:orgId/usage-discount` → `{ discount_percent }` (0..100; **404 → 0**,
+  same neutral-not-found mapping as the balance 404→0); `fetchOrgUsageDiscountPct` in `accounts-client.ts`.
+  features-service READS the discount, never computes it.
+- **`/internal/stats/revenue`** — `currentMrrUsd` + committed MRR/ARR are NET automatically (they read the
+  accounts-audit net `stats.mrrUsd`/`totalDailyBudgetUsd` via `currentFleetStats`; committed snapshots now
+  record the net budget going forward — past snapshots stay gross, minor transition drift, self-corrects).
+  Realized-spend buckets read runs' **frozen-NET twin `netActualCostInUsdCents`** on
+  `/v1/stats/public/costs/timeseries` (`selectBucketActualCents`, `revenue-history-client.ts`).
+
+**Why in-place (not additive-only) on the STAFF surface:** the AC is consumer-observable ("admin shows
+net"). Putting net INTO the existing fields the admin already renders (`dailyBudgetUsd`/`mrrUsd`/`revenueUsd`)
+makes the admin show net with **ZERO dashboard change** (distribute.you is main=prod Vercel, no staging
+buffer — avoiding a cross-repo/cross-env coordination). Gross stays available via the additive `gross*`
+fields. `customer-health` (in-process reuse of `buildAccountsAudit`, out of scope) was repointed to
+`grossDailyBudgetUsd` to preserve its behavior.
+
+**Realized-revenue NET is DORMANT + self-activating until runs ships net-on-timeseries.** The frozen-net
+twin is live on the UNTIMED `/v1/stats/public/costs` (runs#179) but **NOT yet on `/costs/timeseries`**
+(verified via api-registry + a live call — timeseries buckets carry only gross today; runs is shipping it
+in parallel). `selectBucketActualCents` prefers `netActualCostInUsdCents`; when absent it **falls back to
+GROSS with a loud one-shot `console.warn`** (= today's number — the LIVE staff Revenue view must not break)
+and self-activates to NET the instant runs deploys the twin. A bucket missing BOTH fields fails loud
+(corruption). This gross-fallback-with-warn is the correct transition for a LIVE surface with an
+unshipped-producer dependency — distinct from the customer-facing `?pricing=net` doctrine (fail-loud 502)
+which only applies to an opt-in surface with an "X% off" banner and no live consumer yet. (Set 2026-07-16.)
+
 ## `?pricing=gross|net` — GROSS (default) vs NET on the cost-metric endpoints; NET reads runs-service's FROZEN net, NEVER a read-time discount multiply (supersedes PR #510)
 
 The customer-facing cost-metric endpoints (`/revenue`, `/stats` + `/features/:slug/stats`,
