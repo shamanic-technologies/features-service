@@ -146,6 +146,35 @@ export async function fetchOrgBalance(orgId: string): Promise<OrgBalance> {
 }
 
 /**
+ * The org's platform-usage discount percentage (0..100), from billing-service
+ * `GET /internal/accounts/by-org/:orgId/usage-discount` → `{ discount_percent }` (user-less internal
+ * read — api-key only, org in path). Billing OWNS the per-org usage discount; features-service reads it
+ * and NEVER computes/derives it. A known org with NO discount returns `discount_percent = 0` (billing
+ * contract). An org with no billing account (404) has no discount → 0 (same documented-not-found→neutral
+ * mapping as the balance 404→0; a 502 here would 500 the whole fleet audit on one unfunded org). Any
+ * OTHER non-OK fails loud.
+ */
+export async function fetchOrgUsageDiscountPct(orgId: string): Promise<number> {
+  const { url, apiKey } = billingConfig();
+  const response = await fetchWithRetry(`${url}/internal/accounts/by-org/${encodeURIComponent(orgId)}/usage-discount`, {
+    headers: { "x-api-key": apiKey },
+  });
+
+  if (response.status === 404) return 0; // no billing account ⇒ no discount (neutral)
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`[features-service] billing-service /internal/accounts/by-org/:orgId/usage-discount failed (${response.status}): ${body}`);
+  }
+
+  const data = (await response.json()) as { discount_percent?: number };
+  const pct = Number(data.discount_percent);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+    throw new Error(`[features-service] billing-service usage-discount returned invalid discount_percent: ${JSON.stringify(data.discount_percent)}`);
+  }
+  return pct;
+}
+
+/**
  * Org Clerk external id + owner email. Two client-service reads:
  *   - GET /internal/orgs/:orgId          → { id, externalId, name }  (the org record)
  *   - GET /internal/users?orgId=&limit=  → owner = earliest-created user's email

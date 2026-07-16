@@ -35,17 +35,23 @@ function econ(ltr: number): SalesEconomics {
 }
 
 function account(over: Partial<AccountRow> & { orgId: string; brandId: string; status: AccountStatus }): AccountRow {
-  return {
+  const merged: AccountRow = {
     orgExternalId: `org_${over.orgId}`,
     ownerEmail: `${over.orgId}@ex.com`,
     brandName: `Brand ${over.brandId}`,
     brandDomain: `${over.brandId}.com`,
     dailyBudgetUsd: 50,
+    grossDailyBudgetUsd: 50,
     orgBalanceUsd: 1000,
     orgActualBalanceUsd: 1000,
     autoTopupEnabled: false,
     ...over,
   };
+  // Customer-health reads the GROSS budget; keep it in sync when a test overrides only dailyBudgetUsd.
+  if (over.dailyBudgetUsd !== undefined && over.grossDailyBudgetUsd === undefined) {
+    merged.grossDailyBudgetUsd = over.dailyBudgetUsd;
+  }
+  return merged;
 }
 
 function recency(orgId: string, lastActiveDay: string, retentionWeeks = 4): ActiveUserRow {
@@ -142,7 +148,7 @@ function makeDeps(fixtures: {
 }): CustomerHealthDeps {
   const audit: AccountsAudit = {
     rows: fixtures.accounts,
-    stats: { totalDailyBudgetUsd: 0, mrrUsd: 0, arrUsd: 0, activeCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
+    stats: { totalDailyBudgetUsd: 0, mrrUsd: 0, arrUsd: 0, grossTotalDailyBudgetUsd: 0, grossMrrUsd: 0, grossArrUsd: 0, activeCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
     asOf: NOW.toISOString(),
   };
   const byUser: ActiveUsersByUser = {
