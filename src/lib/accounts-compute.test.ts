@@ -21,6 +21,8 @@ function deps(fixture: {
   // Optional auto-topup flag per org; defaults to false.
   autoTopup?: Record<string, boolean>;
   identity?: Record<string, OrgIdentity>;
+  // Optional per-org usage-discount percent (0..100); defaults to 0 (no discount → net == gross).
+  discountPct?: Record<string, number>;
   budgetUsd: Record<string, number | null>; // keyed by brandId
   paused?: Record<string, boolean>; // keyed by brandId
   brands?: Record<string, BrandBasic>;
@@ -33,6 +35,7 @@ function deps(fixture: {
       autoTopupEnabled: fixture.autoTopup?.[orgId] ?? false,
     }),
     orgIdentity: async (orgId) => fixture.identity?.[orgId] ?? { orgExternalId: null, ownerEmail: null },
+    orgDiscountPct: async (orgId) => fixture.discountPct?.[orgId] ?? 0,
     brandDailyBudgetUsd: async (brandId) => fixture.budgetUsd[brandId] ?? null,
     brandPaused: async (brandId) => fixture.paused?.[brandId] ?? false,
     brandsBasic: async (ids) => new Map(ids.map((id) => [id, fixture.brands?.[id] ?? { name: null, domain: null }])),
@@ -114,14 +117,21 @@ describe("buildAccountsAudit", () => {
     expect(byBrand.b1.orgActualBalanceUsd).toBe(100);
     expect(byBrand.b1.autoTopupEnabled).toBe(false);
     expect(byBrand.b1.dailyBudgetUsd).toBe(10);
+    // No discount in this fixture → net == gross on every row.
+    expect(byBrand.b1.grossDailyBudgetUsd).toBe(10);
+    expect(byBrand.b5.dailyBudgetUsd).toBe(20);
+    expect(byBrand.b5.grossDailyBudgetUsd).toBe(20);
     // Missing identity / brand info → null, still listed.
     expect(byBrand.b3.orgExternalId).toBeNull();
     expect(byBrand.b3.brandName).toBeNull();
 
-    // Stats: active budgets 10 + 20 = 30 (paused b6's 40 is NOT counted).
+    // Stats: active budgets 10 + 20 = 30 (paused b6's 40 is NOT counted). No discount → net == gross.
     expect(r.stats.totalDailyBudgetUsd).toBe(30);
     expect(r.stats.mrrUsd).toBe(900);
     expect(r.stats.arrUsd).toBe(30 * 365);
+    expect(r.stats.grossTotalDailyBudgetUsd).toBe(30);
+    expect(r.stats.grossMrrUsd).toBe(900);
+    expect(r.stats.grossArrUsd).toBe(30 * 365);
     expect(r.stats.activeCount).toBe(2);
     expect(r.stats.pausedCount).toBe(1);
     expect(r.stats.inactiveCount).toBe(3);
@@ -202,11 +212,65 @@ describe("buildAccountsAudit", () => {
       totalDailyBudgetUsd: 0,
       mrrUsd: 0,
       arrUsd: 0,
+      grossTotalDailyBudgetUsd: 0,
+      grossMrrUsd: 0,
+      grossArrUsd: 0,
       activeCount: 0,
       pausedCount: 0,
       inactiveCount: 0,
       totalCount: 0,
     });
+  });
+
+  it("applies the per-org usage discount to NET money while keeping GROSS additive + the active verdict on gross", async () => {
+    const d = deps({
+      memberships: [
+        { orgId: "o_disc", brandId: "b_disc" }, // 25% discount, budget 20 → net 15
+        { orgId: "o_full", brandId: "b_full" }, // no discount, budget 40 → net 40
+      ],
+      balanceUsd: { o_disc: 1000, o_full: 1000 },
+      budgetUsd: { b_disc: 20, b_full: 40 },
+      discountPct: { o_disc: 25 }, // o_full defaults to 0
+    });
+
+    const r = await buildAccountsAudit(COLD, NOW, d);
+    const byBrand = Object.fromEntries(r.rows.map((row) => [row.brandId, row]));
+
+    // Discounted row: displayed (net) budget reduced, gross preserved.
+    expect(byBrand.b_disc.dailyBudgetUsd).toBe(15); // 20 × (1 − 0.25)
+    expect(byBrand.b_disc.grossDailyBudgetUsd).toBe(20);
+    expect(byBrand.b_disc.status).toBe("active"); // verdict on gross 20 vs balance 1000
+
+    // Undiscounted row: net == gross.
+    expect(byBrand.b_full.dailyBudgetUsd).toBe(40);
+    expect(byBrand.b_full.grossDailyBudgetUsd).toBe(40);
+
+    // Fleet NET primary = 15 + 40 = 55; GROSS twins = 20 + 40 = 60.
+    expect(r.stats.totalDailyBudgetUsd).toBe(55);
+    expect(r.stats.mrrUsd).toBe(55 * 30);
+    expect(r.stats.arrUsd).toBe(55 * 365);
+    expect(r.stats.grossTotalDailyBudgetUsd).toBe(60);
+    expect(r.stats.grossMrrUsd).toBe(60 * 30);
+    expect(r.stats.grossArrUsd).toBe(60 * 365);
+    expect(r.stats.activeCount).toBe(2);
+  });
+
+  it("discount does NOT flip the active verdict — an org active on gross budget but where net < balance stays active", async () => {
+    // Gross budget 20 > actual balance 18 → INACTIVE on gross. A 50% discount would make net 10 < 18,
+    // which would WRONGLY read active if the verdict used net. Verdict must stay on gross → inactive.
+    const d = deps({
+      memberships: [{ orgId: "o1", brandId: "b1" }],
+      balanceUsd: { o1: 18 },
+      budgetUsd: { b1: 20 },
+      discountPct: { o1: 50 },
+    });
+    const r = await buildAccountsAudit(COLD, NOW, d);
+    const row = r.rows[0];
+    expect(row.grossDailyBudgetUsd).toBe(20);
+    expect(row.dailyBudgetUsd).toBe(10); // net displayed
+    expect(row.status).toBe("inactive"); // gross 20 >= balance 18 → inactive (unchanged by discount)
+    expect(r.stats.totalDailyBudgetUsd).toBe(0); // no active rows
+    expect(r.stats.activeCount).toBe(0);
   });
 
   it("sorts active → paused → inactive, then by daily budget desc", async () => {
