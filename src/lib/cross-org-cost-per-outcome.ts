@@ -392,10 +392,13 @@ export interface WorkflowCostRow {
   spentUsd: number;
   observedClicks: number;
   observedPositiveReplies: number;
-  /** Populated cost-per-outcome for the objective — projected cascade floor (parent = fleet unit cost)
-   * so it is NEVER null when the workflow has spend and economics exist. Null only at cold start (no
-   * fleet economics) or for a projected objective whose rate is absent. This is the LIFETIME (all-history)
-   * pooled rate — what the workflow has cost per outcome over all history. */
+  /** Populated cost-per-outcome for the objective — real ratio when the outcome was observed, else the
+   * own-spend floor (`max(spent, 0) = spent`, crossOrg being the top grain: no cross-workflow parent), so
+   * it is NEVER null when the workflow has spend and economics exist. Null only at cold start (no fleet
+   * economics) or for a projected objective whose rate is absent. This is the LIFETIME (all-history) rate
+   * — what the workflow has cost per outcome over all history. A 0-outcome workflow reads its OWN spend
+   * (honest "spent $X, produced nothing"), NOT the fleet average — so consumers that pick a "best" per
+   * outcome MUST exclude 0-outcome workflows (a workflow with 0 of the outcome is not the best at it). */
   costPerOutcomeUsd: number | null;
   /** The workflow's RECENT going rate: the trailing-window moving-average cost-per-outcome over its most
    * recent ~windowOutcomes of the objective's base outcomes (same window semantics as the fleet
@@ -408,19 +411,21 @@ export interface WorkflowCostRow {
 /**
  * Per-workflow (dynasty) cross-org cost-per-outcome for ONE objective, guaranteed to POPULATE when the
  * workflow has spend: the unit costs run through the PROJECTED cost-engine (`projectedCostPerOutcome`),
- * flooring to `max(spent, fleetParentCost)` when the outcome denominator is 0 — so a workflow with spend
- * but 0 tracked outcomes yields a rankable floor instead of null. Projected objectives push the floored
- * unit costs through the fleet-mean economics. Sorted by spend desc.
+ * flooring to `max(spent, 0) = spent` when the outcome denominator is 0 — so a workflow with spend but
+ * 0 tracked outcomes yields its OWN spend, never a cross-workflow pooled average. crossOrg is the TOP
+ * grain of the cost cascade (a workflow's cost has no coarser parent — the fleet-pooled cross-workflow
+ * rate is NOT its parent), so its 0-outcome base case is own spend, matching the workflow-projection
+ * ladder. Projected objectives push the own-spend-floored unit costs through the fleet-mean economics.
+ * Sorted by spend desc.
  *
- * Pure: caller supplies per-dynasty evidence + the fleet parent unit costs (fleet-wide CPC / CPPR) + the
- * fleet-mean economics. `projectedFloor` is injected (= cost-engine `projectedCostPerOutcome`) to keep
- * this lib free of a cost-engine import cycle and to make the floor rule explicit at the call site.
+ * Pure: caller supplies per-dynasty evidence + the fleet-mean economics. `projectedFloor` is injected
+ * (= cost-engine `projectedCostPerOutcome`) to keep this lib free of a cost-engine import cycle and to
+ * make the floor rule explicit at the call site; passing `null` as the parent floors 0-outcome to own
+ * spend (the crossOrg base case).
  */
 export function buildWorkflowCostPerOutcome(params: {
   objective: Goal;
   rows: WorkflowGrainInput[];
-  fleetParentClickUsd: number | null;
-  fleetParentReplyUsd: number | null;
   fleetEcon: ProjectionEconomics | null;
   projectedFloor: (spentUsd: number, observedCount: number, parentCost: number | null) => number;
   /** Per-dynasty RECENT trailing-window cost-per-outcome (see `recentWindowCostPerOutcome`), keyed by
@@ -428,12 +433,14 @@ export function buildWorkflowCostPerOutcome(params: {
    * the map (or mapping to null) → `recentCostPerOutcomeUsd: null`. */
   recentByDynasty?: Map<string, number | null>;
 }): WorkflowCostRow[] {
-  const { objective, rows, fleetParentClickUsd, fleetParentReplyUsd, fleetEcon, projectedFloor, recentByDynasty } = params;
+  const { objective, rows, fleetEcon, projectedFloor, recentByDynasty } = params;
 
   return rows
     .map((r): WorkflowCostRow => {
-      const clickUsd = projectedFloor(r.spentUsd, r.clicks, fleetParentClickUsd);
-      const replyUsd = projectedFloor(r.spentUsd, r.replies, fleetParentReplyUsd);
+      // crossOrg is the top grain: a 0-outcome workflow floors to its OWN spend (parent = null), never a
+      // cross-workflow pooled average.
+      const clickUsd = projectedFloor(r.spentUsd, r.clicks, null);
+      const replyUsd = projectedFloor(r.spentUsd, r.replies, null);
       const costPerOutcomeUsd = fleetEcon
         ? objectiveCostPerOutcome(objective, { clickUsd, replyUsd }, fleetEcon)
         : null;

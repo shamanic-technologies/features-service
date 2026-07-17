@@ -302,32 +302,32 @@ describe("recentWindowCostPerOutcome", () => {
 describe("buildWorkflowCostPerOutcome", () => {
   const fleetEcon = buildLenientProjectionEconomics(FULL_ECON);
 
-  it("populates cost even when the outcome denominator is 0 (projected floor), sorts by spend desc", () => {
+  it("0-outcome workflow floors to its OWN spend (crossOrg top grain, NOT a cross-workflow pool), sorts by spend desc", () => {
     const rows = buildWorkflowCostPerOutcome({
       objective: "websiteVisit",
       rows: [
         { workflowDynastySlug: "small", workflowDynastyName: "Small", spentUsd: 10, clicks: 5, replies: 0 },
         { workflowDynastySlug: "big-noclicks", workflowDynastyName: "Big", spentUsd: 100, clicks: 0, replies: 0 },
+        { workflowDynastySlug: "husk", workflowDynastyName: "Husk", spentUsd: 3, clicks: 0, replies: 0 },
       ],
-      fleetParentClickUsd: 2,
-      fleetParentReplyUsd: 4,
       fleetEcon,
       projectedFloor: projectedCostPerOutcome,
     });
-    // sorted by spend desc → big first
-    expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["big-noclicks", "small"]);
-    // big has 0 clicks → CPC floored to max(spent=100, parent=2) = 100 (never null)
+    // sorted by spend desc → big, small, husk
+    expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["big-noclicks", "small", "husk"]);
+    // big has 0 clicks → CPC floored to its OWN spend max(100, 0) = 100 (never null)
     expect(rows[0].costPerOutcomeUsd).toBe(100);
-    // small has 5 clicks / $10 → CPC = $2
+    // small has 5 clicks / $10 → real ratio CPC = $2
     expect(rows[1].costPerOutcomeUsd).toBe(2);
+    // husk: 0 clicks, spent $3 → floors to its OWN spend $3, NOT a fleet pooled average — this is why a
+    // "best per outcome" consumer must exclude 0-outcome workflows (else this $3 husk wins with 0 clicks).
+    expect(rows[2].costPerOutcomeUsd).toBe(3);
   });
 
   it("null economics → costPerOutcomeUsd null (cold start)", () => {
     const rows = buildWorkflowCostPerOutcome({
       objective: "signup",
       rows: [{ workflowDynastySlug: "w", workflowDynastyName: "W", spentUsd: 10, clicks: 5, replies: 1 }],
-      fleetParentClickUsd: null,
-      fleetParentReplyUsd: null,
       fleetEcon: null,
       projectedFloor: projectedCostPerOutcome,
     });
@@ -341,8 +341,6 @@ describe("buildWorkflowCostPerOutcome", () => {
         { workflowDynastySlug: "a", workflowDynastyName: "A", spentUsd: 100, clicks: 50, replies: 0 },
         { workflowDynastySlug: "b", workflowDynastyName: "B", spentUsd: 10, clicks: 5, replies: 0 },
       ],
-      fleetParentClickUsd: 2,
-      fleetParentReplyUsd: 4,
       fleetEcon,
       projectedFloor: projectedCostPerOutcome,
       recentByDynasty: new Map<string, number | null>([["a", 3.5]]), // only 'a' has a recent value
@@ -358,8 +356,6 @@ describe("buildWorkflowCostPerOutcome", () => {
     const rows = buildWorkflowCostPerOutcome({
       objective: "websiteVisit",
       rows: [{ workflowDynastySlug: "a", workflowDynastyName: "A", spentUsd: 10, clicks: 5, replies: 0 }],
-      fleetParentClickUsd: 2,
-      fleetParentReplyUsd: 4,
       fleetEcon,
       projectedFloor: projectedCostPerOutcome,
     });
