@@ -347,6 +347,39 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(res.body.sortMetric).toBe("cpc");
   });
 
+  it("goal=whatsappConversation sorts by CPC and exposes the click-based outcome (cpcCents + websiteClicks) — WhatsApp-link click IS the outcome", async () => {
+    fetchSpy = mockFetch();
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=whatsappConversation")
+      .set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.goal).toBe("whatsappConversation");
+    // Click-driven → ranks on CPC, reusing the existing click evidence (no new event pipeline).
+    expect(res.body.sortMetric).toBe("cpc");
+    // cost-per-outcome = cpcCents; outcome count = evidence.websiteClicks (clicks on the WhatsApp link).
+    expect(res.body.audiences[0].metrics.cpcCents).toBe(50);
+    expect(res.body.audiences[0].evidence.websiteClicks).toBe(20);
+    // whatsapp is NOT a conversion-tracker goal → the converted-lead-emails read is never made.
+    const convUrl = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).find((u: string) => u.includes("converted-lead-emails"));
+    expect(convUrl).toBeUndefined();
+  });
+
+  it("goal=whatsapp_conversations (snake) and the 'WhatsApp conversations' display value both normalise to whatsappConversation", async () => {
+    fetchSpy = mockFetch();
+    let res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=whatsapp_conversations")
+      .set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.goal).toBe("whatsappConversation");
+    fetchSpy = mockFetch();
+    res = await request(app)
+      .get(`/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=${encodeURIComponent("WhatsApp conversations")}`)
+      .set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.goal).toBe("whatsappConversation");
+    expect(res.body.sortMetric).toBe("cpc");
+  });
+
   it("goal=formSubmission attributes real per-audience form submissions via membership ∩ matched-lead emails", async () => {
     // conversion emails (matched-lead canonical, lowercased) — a1,a3 in audience-a; b2 in audience-b.
     const CONVERSION_EMAILS = ["a1", "a3", "b2"];

@@ -452,6 +452,35 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     expect(a.resolved.costPerOutcomeUsd).not.toBeCloseTo(a.resolved.costPerPaidClientUsd, 3);
   });
 
+  it("whatsapp_conversations: costPerOutcome = RAW CPC (the WhatsApp-link click); NO paid-client/ROI economics (null-safe)", async () => {
+    // brand-service exposes NO whatsapp→paid rate, so costPerPaidClient / ROI / CAC read null.
+    mockFetch({ economics: ECONOMICS });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=whatsappConversation`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.objective).toBe("whatsapp_conversations");
+    expect(res.body.goal).toBe("whatsappConversation");
+    const a = rowFor(res.body, "dyn-a");
+    // brand grain has 25 clicks → MEASURED → resolves at brand (cpc $20). The click IS the outcome.
+    expect(a.resolved.grain).toBe("brand");
+    expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(20, 3);
+    // No paid-client rate for whatsapp → null (never a false number), and ROI/CAC follow null.
+    expect(a.resolved.costPerPaidClientUsd).toBeNull();
+    expect(a.resolved.roiMultiple).toBeNull();
+    expect(a.resolved.cacPct).toBeNull();
+    expect(a.estimatesByGrain.brand.projected.costPerPaidClientUsd).toBeNull();
+    // recommendedBudget still rides the (non-null) cost-per-outcome = CPC.
+    expect(res.body.recommendedWorkflowDynastySlug).not.toBeNull();
+    expect(res.body.recommendedBudgetUsd).toBeGreaterThan(0);
+  });
+
+  it("whatsapp_conversations accepts the snake spelling too (whatsapp_conversations)", async () => {
+    mockFetch({ economics: ECONOMICS });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=whatsapp_conversations`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.objective).toBe("whatsapp_conversations");
+    expect(res.body.goal).toBe("whatsappConversation");
+  });
+
   it("DEFECT 2 — positive_replies: costPerOutcome (CPPR) ≠ costPerPaidClient; they differ by the reply→paid rate", async () => {
     // Repro brand's saved economics: reply→paid = 15%. Brand ran wf-a WITH replies (measured) so it
     // resolves at the brand grain: CPPR = $500/5 = $100; paid client = 100 / 0.15 = 666.67. They MUST differ.

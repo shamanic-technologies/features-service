@@ -510,8 +510,8 @@ const workflowProjectionEconomicsSchema = z.object({
 
 const workflowProjectionResponseSchema = z.object({
   featureSlug: z.string(),
-  objective: z.enum(["meeting-booked", "self-serve", "signup", "purchase", "website_visits", "positive_replies", "form_submissions"]).describe("Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params."),
-  goal: z.enum(["meetingBooked", "signup", "purchase", "websiteVisit", "positiveReply", "formSubmission"]).describe("Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup."),
+  objective: z.enum(["meeting-booked", "self-serve", "signup", "purchase", "website_visits", "positive_replies", "form_submissions", "whatsapp_conversations"]).describe("Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params. whatsapp_conversations is a click-outcome goal (cost-per-outcome = CPC; no paid-client/ROI economics — those read null)."),
+  goal: z.enum(["meetingBooked", "signup", "purchase", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).describe("Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup."),
   economics: workflowProjectionEconomicsSchema.nullable().describe("Null only at cold start (no effective economics) — rows still emit with null projected."),
   rows: z.array(workflowProjectionRowSchema),
   recommendedWorkflowDynastySlug: z.string().nullable().describe("Dynasty of the row with the lowest resolved.costPerOutcomeUsd. Null when none has usable data."),
@@ -536,7 +536,7 @@ registry.registerPath({
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — conversion economics are brand-scoped."),
       audienceId: z.string().optional().describe("Optional audience UUID context (echoed via audience rows). Audience rows always enumerate ALL of the brand's active audiences that ran the workflow."),
-      goal: z.string().optional().describe("Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase), snake (website_visits/positive_replies/form_submissions), and kebab. Also accepted via `objective`. Defaults to meeting-booked."),
+      goal: z.string().optional().describe("Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase/whatsappConversation), snake (website_visits/positive_replies/form_submissions/whatsapp_conversations), kebab, and the whatsapp display value ('WhatsApp conversations'). Also accepted via `objective`. Defaults to meeting-booked. whatsapp_conversations is a click-outcome goal — cost-per-outcome = CPC, no paid-client/ROI economics."),
       objective: z.string().optional().describe("Alias of `goal` (snake/kebab spelling). Either param is accepted."),
       budgetUsd: z.string().optional().describe("Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface)."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (each grain's unitCosts + projected cost-per-outcome, resolved.costPerOutcomeUsd, roiMultiple, cacPct, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the discounted figures, sourced from runs-service's FROZEN net cost amounts at every grain of the crossOrg→brand→audience ladder (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. Non-money fields (counts, rates, economics rates) are identical either way."),
@@ -679,9 +679,9 @@ const audienceStatsRowSchema = z.object({
 const audienceStatsResponseSchema = z.object({
   featureSlug: z.string(),
   brandId: z.string(),
-  goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply", "formSubmission"]),
+  goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]),
   brandProfileId: z.string().nullable(),
-  sortMetric: z.enum(["cpc", "cppr"]).describe("signup / websiteVisit / formSubmission sort by CPC (visit-driven); meetingBooked / purchase / positiveReply sort by CPPR."),
+  sortMetric: z.enum(["cpc", "cppr"]).describe("signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / positiveReply sort by CPPR."),
   audiences: z.array(audienceStatsRowSchema).describe("Audience rows sorted ascending by sortMetric, with null metric values last."),
 });
 
@@ -701,7 +701,7 @@ registry.registerPath({
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
-      goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply"]).describe("Active optimization goal (required). signup + websiteVisit sort by CPC; meetingBooked / purchase / positiveReply sort by CPPR. snake_case single-step spellings (website_visits / positive_replies) are also accepted."),
+      goal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).describe("Active optimization goal (required). signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every per-audience MONEY metric (metrics.cpcCents / cpprCents / cpfsCents + the brand-parent cascade). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (evidence counts, conversion.rate) are identical either way. NOTE: campaign-service reads metrics.cpcCents byte-equal — it does NOT send pricing, so it always gets gross."),
       brandProfileId: z.string().optional().describe("Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted."),
       campaignId: z.string().optional().describe("Optional single-campaign scope for the STATS. Audiences themselves stay brand-wide (they are brand-scoped entities); only the per-audience cost + outcome numerators narrow to this campaign. Absent → brand-wide numbers, byte-identical to today. Present → cost sourced from runs-service filtered by campaignId (still grouped by audienceId) and outcomes read from the email-gateway campaign scope (only this campaign's contacted/opened/clicked/replied). Powers the dashboard's per-campaign audience view."),
