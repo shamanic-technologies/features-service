@@ -8,7 +8,7 @@ import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal,
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
-import { matchSingleStepGoal, matchFormSubmissionGoal, type SingleStepGoal, type Goal } from "../lib/goals.js";
+import { matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, type SingleStepGoal, type Goal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
@@ -32,8 +32,11 @@ const TARGET_OUTCOMES_PER_MONTH = 10;
 // signup alias. The `objective` echo is the canonical snake spelling; the `goal` echo is the canonical
 // camel spelling (= brand-service CurrentGoal). Both request params are normalised (any of the fleet's
 // snake/camel/kebab spellings) via matchSingleStepGoal / matchFormSubmissionGoal.
-export type Objective = "meeting-booked" | "self-serve" | "signup" | "purchase" | "website_visits" | "positive_replies" | "form_submissions";
-export type GoalEcho = "meetingBooked" | "signup" | "purchase" | "websiteVisit" | "positiveReply" | "formSubmission";
+// whatsapp_conversations is a SINGLE-STEP, CLICK-outcome goal (the click on the brand's WhatsApp link
+// IS a started conversation). Its cost-per-outcome = CPC and it carries NO paid-client/ROI economics
+// (brand-service exposes no whatsapp→paid rate) — see outcomeCostForGoal / paidClientCostForGoal.
+export type Objective = "meeting-booked" | "self-serve" | "signup" | "purchase" | "website_visits" | "positive_replies" | "form_submissions" | "whatsapp_conversations";
+export type GoalEcho = "meetingBooked" | "signup" | "purchase" | "websiteVisit" | "positiveReply" | "formSubmission" | "whatsappConversation";
 
 // ── Response shape (3-grain ladder + resolved pick) ──────────────────────────
 
@@ -142,6 +145,9 @@ function paidClientCostForGoal(
   formSubmissionGoal: boolean,
 ): number | null {
   const p = projectOutcomeCosts(econ, unitCosts);
+  // whatsapp_conversations has NO paid-client rate (brand-service exposes none) → null, null-safe. The
+  // click on the WhatsApp link IS the tracked outcome; there is no downstream paid-client economics.
+  if (objective === "whatsapp_conversations") return null;
   if (singleStepGoal === "websiteVisit") return p.costPerVisitPaidClientUsd;
   if (singleStepGoal === "positiveReply") return p.costPerReplyPaidClientUsd;
   if (formSubmissionGoal) return p.costPerFormSubmissionPaidClientUsd;
@@ -168,6 +174,9 @@ function outcomeCostForGoal(
   formSubmissionGoal: boolean,
 ): number | null {
   const p = projectOutcomeCosts(econ, unitCosts);
+  // whatsapp_conversations: the click on the WhatsApp link IS the outcome (a started conversation) →
+  // its RAW unit cost = CPC (reuses the existing click evidence), exactly like websiteVisit.
+  if (objective === "whatsapp_conversations") return unitCosts.clickUsd;
   // Single-step goals: the visit / reply IS the tracked outcome → its RAW unit cost (CPC / CPPR), NOT
   // the downstream paid-client cost (that is costPerPaidClient, which differs by the visit/reply→paid
   // rate). Returning the paid-client cost here made cost-per-outcome == cost-per-paid-client — an
@@ -257,6 +266,8 @@ function grainHasObservedOutcome(
 ): boolean {
   if (singleStepGoal === "positiveReply") return ev.observedPositiveReplies > 0;
   if (singleStepGoal === "websiteVisit") return ev.observedClicks > 0;
+  // whatsapp_conversations is click-driven (the WhatsApp-link click IS the outcome).
+  if (objective === "whatsapp_conversations") return ev.observedClicks > 0;
   if (objective === "signup" || objective === "self-serve" || objective === "form_submissions")
     return ev.observedClicks > 0;
   // meeting-booked / purchase funnel from BOTH channels → either observed outcome makes it measured.
@@ -335,10 +346,12 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
 
   const singleStepGoal: SingleStepGoal | null = goalParam ? matchSingleStepGoal(goalParam) : null;
   const formSubmissionGoal: boolean = goalParam ? matchFormSubmissionGoal(goalParam) !== null : false;
+  const whatsappGoal: boolean = goalParam ? matchWhatsappGoal(goalParam) !== null : false;
   const objective: Objective =
     singleStepGoal === "websiteVisit" ? "website_visits"
       : singleStepGoal === "positiveReply" ? "positive_replies"
       : formSubmissionGoal ? "form_submissions"
+      : whatsappGoal ? "whatsapp_conversations"
       : goalParam === "self-serve" || goalParam === "signup" || goalParam === "purchase"
         ? goalParam
         : "meeting-booked";
@@ -347,6 +360,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     objective === "website_visits" ? "websiteVisit"
       : objective === "positive_replies" ? "positiveReply"
       : objective === "form_submissions" ? "formSubmission"
+      : objective === "whatsapp_conversations" ? "whatsappConversation"
       : objective === "purchase" ? "purchase"
       : objective === "self-serve" || objective === "signup" ? "signup"
       : "meetingBooked";
