@@ -80,6 +80,48 @@ export function matchFormSubmissionGoal(raw: string): "formSubmission" | null {
 }
 
 /**
+ * The `whatsappConversation` goal — a SINGLE-STEP, CLICK-driven optimization goal where the desired
+ * outcome is that a recipient STARTS A WHATSAPP CONVERSATION by clicking the brand's WhatsApp link.
+ * Because the WhatsApp link IS the outreach click destination, a click on it IS a started conversation:
+ * the goal REUSES the existing click evidence/tracking that backs the website-visit / CPC metrics — it
+ * is NOT a new event pipeline or click type. So the outcome cost = cost-per-click (CPC) and the outcome
+ * count = clicks, exactly like `websiteVisit`'s OUTCOME metric.
+ *
+ * Distinct from the `SingleStepGoal` family (`websiteVisit` / `positiveReply`) because brand-service
+ * exposes NO whatsapp→paid conversion rate for it — so it carries no paid-client / ROI economics
+ * (those read null, null-safe) and must NOT be fed through `singleStepRateDecimal` (which would fail
+ * loud on the absent rate). It is a CLICK-outcome goal, nothing more.
+ *
+ * Kept OUT of the shared `Goal` enum so the cross-org public cost surfaces (which iterate `GOALS`) stay
+ * byte-unchanged; it is accepted only on the two surfaces that render a goal-scoped outcome (per-audience
+ * stats + per-workflow projection). See ExtendedGoal below.
+ */
+export type WhatsappGoal = "whatsappConversation";
+
+/**
+ * Recognise the `whatsappConversation` goal from ANY of the fleet's spellings — runtime camelCase
+ * (`whatsappConversation`, brand-service CurrentGoal + campaign-service currentGoal), stored/dashboard
+ * snake_case (`whatsapp_conversations`), kebab, and the human display value ("WhatsApp conversations").
+ * Separator- and case-insensitive input tolerance (NOT a silent fallback for missing data). Returns the
+ * canonical camelCase `whatsappConversation`, or null when `raw` is not the whatsapp goal.
+ */
+export function matchWhatsappGoal(raw: string): WhatsappGoal | null {
+  const norm = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  return norm === "whatsappconversation" || norm === "whatsappconversations" ? "whatsappConversation" : null;
+}
+
+/**
+ * The goal vocabulary the goal-scoped OUTCOME surfaces (per-audience stats + per-workflow projection)
+ * accept: the shared `Goal` enum PLUS the click-outcome `whatsappConversation`. Broader than `Goal`
+ * on purpose — `whatsappConversation` is deliberately not part of the shared enum (see WhatsappGoal).
+ */
+export type ExtendedGoal = Goal | WhatsappGoal;
+
+/** True for any value in the ExtendedGoal vocabulary (`Goal` ∪ `whatsappConversation`). */
+export const isExtendedGoal = (value: unknown): value is ExtendedGoal =>
+  isGoal(value) || value === "whatsappConversation";
+
+/**
  * Map brand-service's STORED `OptimizationGoal` enum to the canonical Goal. This is the exact enum
  * `GET /internal/brands/:id/sales-economics` returns on `salesEconomics.optimizationGoal`:
  * `signups | booked_meetings | sales | website_visits | positive_replies | form_submissions`.

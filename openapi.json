@@ -1634,9 +1634,10 @@
               "purchase",
               "website_visits",
               "positive_replies",
-              "form_submissions"
+              "form_submissions",
+              "whatsapp_conversations"
             ],
-            "description": "Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params."
+            "description": "Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params. whatsapp_conversations is a click-outcome goal (cost-per-outcome = CPC; no paid-client/ROI economics — those read null)."
           },
           "goal": {
             "type": "string",
@@ -1646,7 +1647,8 @@
               "purchase",
               "websiteVisit",
               "positiveReply",
-              "formSubmission"
+              "formSubmission",
+              "whatsappConversation"
             ],
             "description": "Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup."
           },
@@ -2314,7 +2316,8 @@
               "purchase",
               "websiteVisit",
               "positiveReply",
-              "formSubmission"
+              "formSubmission",
+              "whatsappConversation"
             ]
           },
           "brandProfileId": {
@@ -2327,7 +2330,7 @@
               "cpc",
               "cppr"
             ],
-            "description": "signup / websiteVisit / formSubmission sort by CPC (visit-driven); meetingBooked / purchase / positiveReply sort by CPPR."
+            "description": "signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / positiveReply sort by CPPR."
           },
           "audiences": {
             "type": "array",
@@ -5348,10 +5351,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase), snake (website_visits/positive_replies/form_submissions), and kebab. Also accepted via `objective`. Defaults to meeting-booked."
+              "description": "Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase/whatsappConversation), snake (website_visits/positive_replies/form_submissions/whatsapp_conversations), kebab, and the whatsapp display value ('WhatsApp conversations'). Also accepted via `objective`. Defaults to meeting-booked. whatsapp_conversations is a click-outcome goal — cost-per-outcome = CPC, no paid-client/ROI economics."
             },
             "required": false,
-            "description": "Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase), snake (website_visits/positive_replies/form_submissions), and kebab. Also accepted via `objective`. Defaults to meeting-booked.",
+            "description": "Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase/whatsappConversation), snake (website_visits/positive_replies/form_submissions/whatsapp_conversations), kebab, and the whatsapp display value ('WhatsApp conversations'). Also accepted via `objective`. Defaults to meeting-booked. whatsapp_conversations is a click-outcome goal — cost-per-outcome = CPC, no paid-client/ROI economics.",
             "name": "goal",
             "in": "query"
           },
@@ -5453,9 +5456,10 @@
                         "purchase",
                         "website_visits",
                         "positive_replies",
-                        "form_submissions"
+                        "form_submissions",
+                        "whatsapp_conversations"
                       ],
-                      "description": "Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params."
+                      "description": "Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params. whatsapp_conversations is a click-outcome goal (cost-per-outcome = CPC; no paid-client/ROI economics — those read null)."
                     },
                     "goal": {
                       "type": "string",
@@ -5465,7 +5469,8 @@
                         "purchase",
                         "websiteVisit",
                         "positiveReply",
-                        "formSubmission"
+                        "formSubmission",
+                        "whatsappConversation"
                       ],
                       "description": "Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup."
                     },
@@ -6365,12 +6370,14 @@
                 "meetingBooked",
                 "purchase",
                 "websiteVisit",
-                "positiveReply"
+                "positiveReply",
+                "formSubmission",
+                "whatsappConversation"
               ],
-              "description": "Active optimization goal (required). signup + websiteVisit sort by CPC; meetingBooked / purchase / positiveReply sort by CPPR. snake_case single-step spellings (website_visits / positive_replies) are also accepted."
+              "description": "Active optimization goal (required). signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet."
             },
             "required": true,
-            "description": "Active optimization goal (required). signup + websiteVisit sort by CPC; meetingBooked / purchase / positiveReply sort by CPPR. snake_case single-step spellings (website_visits / positive_replies) are also accepted.",
+            "description": "Active optimization goal (required). signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet.",
             "name": "goal",
             "in": "query"
           },
@@ -6494,7 +6501,8 @@
                         "purchase",
                         "websiteVisit",
                         "positiveReply",
-                        "formSubmission"
+                        "formSubmission",
+                        "whatsappConversation"
                       ]
                     },
                     "brandProfileId": {
@@ -6507,7 +6515,7 @@
                         "cpc",
                         "cppr"
                       ],
-                      "description": "signup / websiteVisit / formSubmission sort by CPC (visit-driven); meetingBooked / purchase / positiveReply sort by CPPR."
+                      "description": "signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / positiveReply sort by CPPR."
                     },
                     "audiences": {
                       "type": "array",

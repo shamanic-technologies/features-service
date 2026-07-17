@@ -9,7 +9,7 @@ import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, typ
 import { fetchEmailOutcomes } from "./email-status-client.js";
 import { observedCostPerOutcome, projectedCostPerOutcome } from "./cost-engine.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
-import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, type Goal } from "./goals.js";
+import { isExtendedGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, type ExtendedGoal } from "./goals.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 
 export type SortMetric = "cpc" | "cppr";
@@ -79,7 +79,7 @@ export interface AudienceStatsRow {
 export interface AudienceStatsEnvelope {
   featureSlug: string;
   brandId: string;
-  goal: Goal;
+  goal: ExtendedGoal;
   brandProfileId: string | null;
   sortMetric: SortMetric;
   audiences: AudienceStatsRow[];
@@ -157,11 +157,14 @@ function readFiniteNumber(value: unknown, field: string): number {
   return parsed;
 }
 
-function sortMetricForGoal(goal: Goal): SortMetric {
-  // signup + websiteVisit + formSubmission rank on cost-per-click/visit (the visit is the outcome
-  // proxy — all three are visit-driven); meetingBooked / purchase / positiveReply rank on
+function sortMetricForGoal(goal: ExtendedGoal): SortMetric {
+  // signup + websiteVisit + formSubmission + whatsappConversation rank on cost-per-click/visit (the
+  // click IS the outcome — all four are click-driven; for whatsappConversation the click on the
+  // WhatsApp link IS a started conversation); meetingBooked / purchase / positiveReply rank on
   // cost-per-positive-reply.
-  return goal === "signup" || goal === "websiteVisit" || goal === "formSubmission" ? "cpc" : "cppr";
+  return goal === "signup" || goal === "websiteVisit" || goal === "formSubmission" || goal === "whatsappConversation"
+    ? "cpc"
+    : "cppr";
 }
 
 const VALID_STATUSES: readonly AudienceStatus[] = ["active", "paused", "archived"];
@@ -381,13 +384,13 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
   if (!brandId) {
     return { ok: false, status: 400, error: "brandId query parameter is required" };
   }
-  // Normalise the single-step + form-submission goal fleet spellings (snake/kebab → canonical camel)
-  // before validating.
+  // Normalise the single-step + form-submission + whatsapp goal fleet spellings (snake/kebab/display →
+  // canonical camel) before validating.
   const normalizedGoal = goalParam
-    ? (matchSingleStepGoal(goalParam) ?? matchFormSubmissionGoal(goalParam) ?? goalParam)
+    ? (matchSingleStepGoal(goalParam) ?? matchFormSubmissionGoal(goalParam) ?? matchWhatsappGoal(goalParam) ?? goalParam)
     : undefined;
-  if (!isGoal(normalizedGoal)) {
-    return { ok: false, status: 400, error: "goal query parameter is required and must be one of: signup, meetingBooked, purchase, websiteVisit, positiveReply, formSubmission" };
+  if (!isExtendedGoal(normalizedGoal)) {
+    return { ok: false, status: 400, error: "goal query parameter is required and must be one of: signup, meetingBooked, purchase, websiteVisit, positiveReply, formSubmission, whatsappConversation" };
   }
 
   const parsedStatuses = parseStatuses(statusesParam);
