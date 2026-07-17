@@ -6401,6 +6401,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "Optional single-campaign scope for the STATS. Audiences themselves stay brand-wide (they are brand-scoped entities); only the per-audience cost + outcome numerators narrow to this campaign. Absent → brand-wide numbers, byte-identical to today. Present → cost sourced from runs-service filtered by campaignId (still grouped by audienceId) and outcomes read from the email-gateway campaign scope (only this campaign's contacted/opened/clicked/replied). Powers the dashboard's per-campaign audience view."
+            },
+            "required": false,
+            "description": "Optional single-campaign scope for the STATS. Audiences themselves stay brand-wide (they are brand-scoped entities); only the per-audience cost + outcome numerators narrow to this campaign. Absent → brand-wide numbers, byte-identical to today. Present → cost sourced from runs-service filtered by campaignId (still grouped by audienceId) and outcomes read from the email-gateway campaign scope (only this campaign's contacted/opened/clicked/replied). Powers the dashboard's per-campaign audience view.",
+            "name": "campaignId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "Optional positive integer row limit after sorting."
             },
             "required": false,

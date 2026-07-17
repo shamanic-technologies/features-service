@@ -209,6 +209,9 @@ async function fetchAudienceCosts(
   // Every per-audience cpc/cppr/cpfs + the brand-parent cascade derives from these cents, so the whole
   // ranking comes out net + coherent by construction.
   pricing: Pricing = "gross",
+  // Optional CAMPAIGN scope: when present, add a runs `campaignId` filter so the cost numerator counts
+  // only spend tagged to that campaign (still grouped by audienceId). Omitted → brand-wide (byte-identical).
+  scopeCampaignId?: string,
 ): Promise<Map<string, AudienceCostEvidence>> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -226,6 +229,9 @@ async function fetchAudienceCosts(
     brandId,
     featureSlugs: featureSlug,
   });
+  // Campaign scope narrows the numerator to spend tagged to this campaign (runs supports a campaignId
+  // filter alongside groupBy=audienceId). brandId stays so the query remains brand-bounded.
+  if (scopeCampaignId) params.set("campaignId", scopeCampaignId);
 
   const response = await fetchWithRetry(`${baseUrl}/v1/stats/costs?${params}`, {
     headers: buildHeaders(apiKey, identity.orgId, { ...identity, brandId }),
@@ -286,13 +292,18 @@ async function fetchAudienceOutcomes(
   // same intersection as form submissions. null when NOT the signup goal, or when lead-service didn't
   // serve them → each audience's signups stays ABSENT (never a false 0).
   signupEmails: Set<string> | null = null,
+  // Optional CAMPAIGN scope: when present, the email-gateway outcome flags are read from the campaign
+  // scope (only this campaign's contacted/opened/clicked/replied), not the brand aggregate. Audience
+  // MEMBERSHIP stays brand-wide (audiences are brand-scoped); only the OUTCOME numerator narrows.
+  // Omitted → brand-wide (byte-identical).
+  scopeCampaignId?: string,
 ): Promise<{ perAudience: Map<string, AudienceOutcomeEvidence>; brandGrain: AudienceOutcomeEvidence }> {
   const perAudience = await Promise.all(
     audiences.map(async (a) => ({ audienceId: a.id, emails: await fetchAudienceMemberEmails(a.id, identity) })),
   );
 
   const allEmails = [...new Set(perAudience.flatMap((p) => p.emails))];
-  const outcomesByEmail = await fetchEmailOutcomes(brandId, allEmails, identity);
+  const outcomesByEmail = await fetchEmailOutcomes(brandId, allEmails, identity, scopeCampaignId);
 
   const result = new Map<string, AudienceOutcomeEvidence>();
   for (const { audienceId, emails } of perAudience) {
@@ -362,6 +373,10 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
   const explicitBrandProfileId = req.query.brandProfileId as string | undefined;
   const limitParam = req.query.limit as string | undefined;
   const statusesParam = req.query.statuses as string | undefined;
+  // Optional single-campaign scope for the STATS (audiences themselves stay brand-wide). Absent →
+  // brand-wide numbers, byte-identical to today. Present → cost + outcome numerators narrow to this
+  // campaign (runs campaignId filter + email-gateway campaign scope).
+  const scopeCampaignId = (req.query.campaignId as string | undefined)?.trim() || undefined;
 
   if (!brandId) {
     return { ok: false, status: 400, error: "brandId query parameter is required" };
@@ -412,8 +427,8 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
   const signupEmails = normalizedGoal === "signup" ? await fetchSignupEmailsSoft(brandId) : null;
 
   const [costs, outcomesResult] = await Promise.all([
-    fetchAudienceCosts(brandId, featureSlug, identity, pricing),
-    fetchAudienceOutcomes(brandId, audiences, identity, formSubmissionEmails, signupEmails),
+    fetchAudienceCosts(brandId, featureSlug, identity, pricing, scopeCampaignId),
+    fetchAudienceOutcomes(brandId, audiences, identity, formSubmissionEmails, signupEmails, scopeCampaignId),
   ]);
   const outcomes = outcomesResult.perAudience;
 

@@ -626,4 +626,104 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     // audience-a (33.33¢, brand-floored) now sorts ahead of audience-b (50¢, real).
     expect(res.body.audiences[0].audienceId).toBe("audience-a");
   });
+
+  // ── Optional campaign scope (?campaignId=) ──────────────────────────────────
+  // Under campaign scope, only a SUBSET of each audience's members were contacted/clicked WITHIN the
+  // campaign, and the runs cost numerator is filtered to that campaign's spend. Audiences stay brand-wide.
+  const CAMP_CONTACTED = new Set<string>([...EMAILS_A.slice(0, 4), ...EMAILS_B.slice(0, 10)]);
+  function mockFetchCampaignAware(): ReturnType<typeof vi.spyOn> {
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = urlOf(input);
+      if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+      if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
+      if (url.includes("human:3000/orgs/audiences")) {
+        return new Response(JSON.stringify({
+          audiences: [
+            { id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: { seniorities: ["c_suite"] } },
+            { id: "audience-b", brandId: "brand-1", name: "Founders", status: "active", filters: { titles: ["founder"] } },
+          ],
+          total: 2, limit: 200, offset: 0,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) {
+        return new Response(JSON.stringify({ current: { id: "brand-profile-1", brandId: "brand-1", version: 3, fields: {}, createdAt: "2026-01-01T00:00:00Z" }, versions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("runs:3000/v1/stats/costs")) {
+        const campaignId = new URL(url).searchParams.get("campaignId");
+        // Campaign-filtered spend is smaller than the brand-wide total; brand-wide when no filter.
+        const groups = campaignId
+          ? [costGroup("audience-a", 1200, 2), costGroup("audience-b", 400, 1)]
+          : [costGroup("audience-a", 3000, 3), costGroup("audience-b", 1000, 2)];
+        return new Response(JSON.stringify({ groups }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("email:3000/orgs/status")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { brandId?: string; campaignId?: string; items: Array<{ email: string }> };
+        const campaignScoped = Boolean(body.campaignId);
+        const results = body.items.map(({ email }) => {
+          const hit = campaignScoped ? CAMP_CONTACTED.has(email) : true;
+          const flags = { contacted: hit, opened: hit, clicked: hit, replied: false, replyClassification: null };
+          // Campaign scope → put flags under broadcast.campaign; brand scope → broadcast.brand.
+          return { email, broadcast: campaignScoped ? { campaign: flags, brand: null } : { brand: flags } };
+        });
+        return new Response(JSON.stringify({ results }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+  }
+
+  it("?campaignId= scopes cost (runs campaignId filter) + outcomes (email-gateway campaign scope)", async () => {
+    fetchSpy = mockFetchCampaignAware();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=websiteVisit&campaignId=camp-1")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
+    // Cost is the campaign-filtered spend; clicks are the campaign-scoped member counts.
+    // audience-a: 4 of 10 members clicked in-campaign, spend 1200 → cpc 300.
+    expect(byId["audience-a"].evidence.totalCostInUsdCents).toBe(1200);
+    expect(byId["audience-a"].evidence.websiteClicks).toBe(4);
+    expect(byId["audience-a"].metrics.cpcCents).toBe(300);
+    // audience-b: 10 of 20 members clicked in-campaign, spend 400 → cpc 40.
+    expect(byId["audience-b"].evidence.totalCostInUsdCents).toBe(400);
+    expect(byId["audience-b"].evidence.websiteClicks).toBe(10);
+    expect(byId["audience-b"].metrics.cpcCents).toBe(40);
+
+    // runs cost fetch carried the campaignId filter (still grouped by audienceId).
+    const costUrl = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).find((u: string) => u.includes("runs:3000")) ?? "";
+    expect(costUrl).toContain("groupBy=audienceId");
+    expect(costUrl).toContain("campaignId=camp-1");
+    // email-gateway status was driven by a campaignId body field (NOT brandId).
+    const statusCall = fetchSpy.mock.calls.find((c: any[]) => urlOf(c[0]).includes("email:3000/orgs/status"));
+    const statusBody = JSON.parse(String((statusCall?.[1] as any)?.body ?? "{}"));
+    expect(statusBody.campaignId).toBe("camp-1");
+    expect(statusBody.brandId).toBeUndefined();
+  });
+
+  it("omitting campaignId is brand-wide + byte-identical (no runs campaignId filter, brand-scope email body)", async () => {
+    fetchSpy = mockFetchCampaignAware();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=websiteVisit")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
+    // Brand-wide: all members contacted/clicked, brand-wide spend.
+    expect(byId["audience-a"].evidence.totalCostInUsdCents).toBe(3000);
+    expect(byId["audience-a"].evidence.websiteClicks).toBe(10);
+    expect(byId["audience-a"].metrics.cpcCents).toBe(300);
+    expect(byId["audience-b"].evidence.totalCostInUsdCents).toBe(1000);
+    expect(byId["audience-b"].evidence.websiteClicks).toBe(20);
+    expect(byId["audience-b"].metrics.cpcCents).toBe(50);
+
+    // No campaignId filter reaches runs; email body drives on brandId (brand scope).
+    const costUrl = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).find((u: string) => u.includes("runs:3000")) ?? "";
+    expect(costUrl).not.toContain("campaignId=");
+    const statusCall = fetchSpy.mock.calls.find((c: any[]) => urlOf(c[0]).includes("email:3000/orgs/status"));
+    const statusBody = JSON.parse(String((statusCall?.[1] as any)?.body ?? "{}"));
+    expect(statusBody.brandId).toBe("brand-1");
+    expect(statusBody.campaignId).toBeUndefined();
+  });
 });

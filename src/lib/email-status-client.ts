@@ -60,16 +60,26 @@ export interface EmailOutcome {
 }
 
 /**
- * Per-email brand-scoped outcome flags from email-gateway POST /orgs/status.
- * Reads the broadcast `brand` scope booleans (contacted / opened / clicked) + positive-reply
+ * Per-email outcome flags from email-gateway POST /orgs/status.
+ *
+ * Reads the broadcast outcome-scope booleans (contacted / opened / clicked) + positive-reply
  * (replied AND replyClassification === "positive"). Used to aggregate outcomes per audience
  * after resolving email->audience membership from human-service. Fails loud on transport /
  * non-OK error.
+ *
+ * Scope is driven by BODY fields (email-gateway ignores identity headers for filtering):
+ * - BRAND scope (default, `scopeCampaignId` omitted): body sends `brandId`, response carries
+ *   `broadcast.brand` (BOOL_OR across the brand's campaigns). Byte-identical to the historical
+ *   brand-wide behavior for every existing caller.
+ * - CAMPAIGN scope (`scopeCampaignId` present): body sends `campaignId` (email-gateway campaign
+ *   mode takes precedence over brandId), response carries `broadcast.campaign` — the outcome
+ *   flags scoped to that single campaign. Powers the dashboard's per-campaign audience view.
  */
 export async function fetchEmailOutcomes(
   brandId: string,
   emails: string[],
   headers: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
+  scopeCampaignId?: string,
 ): Promise<Map<string, EmailOutcome>> {
   const result = new Map<string, EmailOutcome>();
   if (emails.length === 0) return result;
@@ -80,6 +90,7 @@ export async function fetchEmailOutcomes(
     throw new Error("EMAIL_GATEWAY_SERVICE_URL or EMAIL_GATEWAY_SERVICE_API_KEY not configured");
   }
 
+  const campaignScoped = Boolean(scopeCampaignId);
   const reqHeaders: Record<string, string> = {
     "Content-Type": "application/json",
     "x-api-key": apiKey,
@@ -88,13 +99,22 @@ export async function fetchEmailOutcomes(
   };
   if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
   if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
-  if (headers.campaignId) reqHeaders["x-campaign-id"] = headers.campaignId;
+  // Tracing header follows the actual scope: the campaign under stats when campaign-scoped,
+  // else the inbound identity campaign (email-gateway ignores it for filtering either way).
+  const traceCampaignId = scopeCampaignId ?? headers.campaignId;
+  if (traceCampaignId) reqHeaders["x-campaign-id"] = traceCampaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
+
+  // Filtering is driven by body fields (campaignId takes precedence over brandId, per the
+  // email-gateway /orgs/status contract). Campaign scope → send campaignId; else send brandId.
+  const body: Record<string, unknown> = { items: emails.map((email) => ({ email })) };
+  if (campaignScoped) body.campaignId = scopeCampaignId;
+  else body.brandId = brandId;
 
   const response = await fetchWithRetry(`${url}/orgs/status`, {
     method: "POST",
     headers: reqHeaders,
-    body: JSON.stringify({ brandId, items: emails.map((email) => ({ email })) }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
     const text = await response.text();
@@ -102,15 +122,15 @@ export async function fetchEmailOutcomes(
   }
 
   const data = (await response.json()) as {
-    results: Array<{ email: string; broadcast?: { brand?: OutcomeScope | null } }>;
+    results: Array<{ email: string; broadcast?: { brand?: OutcomeScope | null; campaign?: OutcomeScope | null } }>;
   };
   for (const item of data.results) {
-    const brand = item.broadcast?.brand ?? null;
+    const scope = (campaignScoped ? item.broadcast?.campaign : item.broadcast?.brand) ?? null;
     result.set(item.email, {
-      contacted: Boolean(brand?.contacted),
-      opened: Boolean(brand?.opened),
-      clicked: Boolean(brand?.clicked),
-      positiveReply: Boolean(brand?.replied) && brand?.replyClassification === "positive",
+      contacted: Boolean(scope?.contacted),
+      opened: Boolean(scope?.opened),
+      clicked: Boolean(scope?.clicked),
+      positiveReply: Boolean(scope?.replied) && scope?.replyClassification === "positive",
     });
   }
   return result;
