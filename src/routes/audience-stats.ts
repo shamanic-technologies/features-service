@@ -32,6 +32,9 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
       limit: req.query.limit,
       brandProfileId: req.query.brandProfileId,
       pricing,
+      // Campaign scope is part of the cache key so campaign-scoped and brand-wide snapshots never
+      // collide. Absent → dropped by buildScopeKey → key byte-identical to the brand-wide request.
+      campaignId: req.query.campaignId,
     });
     const result = await servedCached<ComputeResult>({
       view: "audience-stats",
