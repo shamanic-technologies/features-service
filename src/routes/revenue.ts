@@ -482,7 +482,9 @@ function buildLensBody(
       clicked: Boolean(person.signals.clicked),
       clickedAt: person.signalDates?.clicked ?? null,
       repliedPositive: Boolean(person.signals.positiveReply),
-      repliedPositiveAt: person.signalDates?.positiveReply ?? null,
+      // Gate the timestamp on the positive classification, NOT email-gateway's sentiment-agnostic
+      // `firstRepliedAt` — a negative/neutral-only replier must carry a null date (matches the boolean).
+      repliedPositiveAt: person.signals.positiveReply ? (person.signalDates?.positiveReply ?? null) : null,
       meetingBooked: Boolean(person.signals.meeting),
       meetingBookedAt: person.signalDates?.meeting ?? null,
       purchased: Boolean(person.signals.closeWin),
