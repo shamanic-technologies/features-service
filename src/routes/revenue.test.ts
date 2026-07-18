@@ -556,6 +556,24 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(100, 6); // 2 × 50
   });
 
+  it("lens path — a clicked lead that replied NEGATIVELY carries repliedPositive=false AND repliedPositiveAt=null despite a firstRepliedAt overlay", async () => {
+    // lneg clicked (→ appears under website_visits) and replied NEGATIVELY (signals.positiveReply=false),
+    // but email-gateway's sentiment-agnostic firstRepliedAt populates signalDates.positiveReply. The
+    // per-lead date must stay null (contract: null unless positive-classified) — same as the boolean.
+    const negLead = leadRow({ leadId: "lneg", email: "neg@x.com", clicked: true, replied: true, replyClassification: "negative", lead: { firstName: "Neg", lastName: "X", photoUrl: null, organization: { id: "on", name: "OrgN", logoUrl: null } } });
+    mockFetch({
+      economics: SINGLE_STEP_ECON,
+      leads: [negLead, ...LENS_LEADS],
+      timestamps: { "neg@x.com": { firstContactedAt: "2026-06-20T09:00:00.000Z", firstClickedAt: "2026-06-20T10:00:00.000Z", firstRepliedAt: "2026-06-21T09:00:00.000Z" } },
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=website_visits").set(AUTH);
+    expect(res.status).toBe(200);
+    const neg = res.body.leads.find((l: any) => l.leadId === "lneg");
+    expect(neg).toBeDefined();
+    expect(neg.repliedPositive).toBe(false);
+    expect(neg.repliedPositiveAt).toBeNull();
+  });
+
   it("lens=positive_replies — reply leads; prob == replyToPaidClient; revenue == (rate/100)·LTR (single step)", async () => {
     mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=positive_replies").set(AUTH);
