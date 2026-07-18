@@ -168,8 +168,11 @@ export interface LeadRow {
    * date is real (no synthesis): null when the signal fired but the date is unknown, or not fired.
    *   - opened         ← email-gateway `firstOpenedAt`   (a known open timestamp IS the signal)
    *   - clicked        ← email-gateway `firstClickedAt`  (website-visit; the signup-goal's observed outcome)
-   *   - repliedPositive← `positiveReply` signal (replied && replyClassification "positive"), dated by
-   *     email-gateway `firstRepliedAt`. The SAME positive-reply classification the booked-meetings lens
+   *   - repliedPositive← `positiveReply` signal (replied && replyClassification "positive"). The date is
+   *     email-gateway `firstRepliedAt` BUT gated on the positive classification — a negative/neutral-only
+   *     replier (firstRepliedAt present, positiveReply signal false) carries a NULL date, matching the
+   *     boolean, so consumers dating positive replies off the timestamp never surface a non-positive reply.
+   *     The SAME positive-reply classification the booked-meetings lens
    *     (P=replyToMeeting) + audience-stats positiveReplies use — distinct from `meetingBooked` (the
    *     reply is the meeting-goal engagement signal, the booked meeting is its downstream outcome).
    *   - meetingBooked  ← instantly manual-qualification `meetingBookedAt` (the meeting-goal outcome)
@@ -524,7 +527,9 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     clicked: Boolean(person.signals.clicked),
     clickedAt: person.signalDates?.clicked ?? null,
     repliedPositive: Boolean(person.signals.positiveReply),
-    repliedPositiveAt: person.signalDates?.positiveReply ?? null,
+    // Gate the timestamp on the positive classification, NOT email-gateway's sentiment-agnostic
+    // `firstRepliedAt` — a negative/neutral-only replier must carry a null date (matches the boolean).
+    repliedPositiveAt: person.signals.positiveReply ? (person.signalDates?.positiveReply ?? null) : null,
     meetingBooked: Boolean(person.signals.meeting),
     meetingBookedAt: person.signalDates?.meeting ?? null,
     purchased: Boolean(person.signals.closeWin),
