@@ -609,8 +609,20 @@ the Clerk org id = the row's `orgExternalId`, NOT the internal org UUID), sessio
 ONCE per board build (dep-injected), joined per row on `orgExternalId`. **Fail-SOFT** — key-service / PostHog
 unreachable / provider-not-registered / no data ⇒ explicit `null` on every row (NEVER a fabricated count, NEVER
 a 502), the SAME display-enrichment pattern as the /revenue conversion-count tiles + sequences series (the
-`posthog-client` itself is fail-LOUD; `buildCustomerHealthBoard` wraps the one call soft). The other two
-(`budgetChangeHistory`, `pauseHistory`) remain genuine explicit-null gaps.
+`posthog-client` itself is fail-LOUD; `buildCustomerHealthBoard` wraps the one call soft).
+
+**`budgetChangeHistory` + `pauseHistory` are now TRACKED too — per-(org,brand) forward-only timelines consumed
+from the producers (billing / campaign).** billing-service `GET /internal/brands/:brandId/daily-budget/history`
+(→ `[{dailyBudgetUsd, changedAt}]`) + campaign-service `GET /brands/:brandId/pause-history` (→ `[{paused,
+transitionedAt}]`), both api-key + `x-org-id`, oldest-first, via `src/lib/history-clients.ts`
+(`fetchBudgetChangeHistory` / `fetchPauseHistory`). Shapes CONFORM to the DEPLOYED producer contracts (verified
+live via api-registry — billing returns cents, converted to USD here), NOT a guess. Fetched PER customer inside
+the enrichment fan-out, each **fail-SOFT independently** (own `.catch → null`): a billing blip nulls only
+`budgetChangeHistory`, a campaign blip nulls only `pauseHistory`, neither degrades the row's economics or the
+board. **Forward-only ⇒ an empty array is a legitimate "tracked, nothing yet" state, DISTINCT from `null` =
+"couldn't read"** — do NOT collapse `[]`→`null`. All three `notTrackedYet` fields are now real signals kept in
+that slot for response-path stability with the dashboard. No new env var (reuses BILLING/CAMPAIGN). (Consumer
+wiring for billing-service#266 + campaign-service#270; features-service#576 shipped the PostHog twin.)
 
 **The PostHog personal API key is resolved from KEY-SERVICE, NOT a features-service env var (do NOT
 re-introduce a `POSTHOG_*_API_KEY` Railway var).** The fleet's single secret source is key-service platform
