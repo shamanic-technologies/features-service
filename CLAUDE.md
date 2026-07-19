@@ -181,6 +181,27 @@ recommended workflow rides `outcomeCostForGoal` (unchanged) — this touches ONL
 ROI + CAC. `ProjectedOutcomeCosts` is an internal lib type (NOT a response schema) → no OpenAPI regen.
 (Set 2026-07-07.)
 
+## Goal vocabulary — a NEW optimization goal goes in the CANONICAL `Goal` enum + `GOALS`, NEVER a parallel "ExtendedGoal" side-type
+
+When adding an optimization goal (or renaming one), put it in the shared `Goal` enum + the `GOALS`
+array and RIPPLE it through EVERY consumer — cross-org public/staff surfaces (`objectiveCostPerOutcome`,
+`windowBaseOutcome`, `OBJECTIVE_GOAL_BUCKET`, `buildObjectiveAverages`, `normalizeObjective`,
+`matchOptimizationGoal`), customer-health, workflow-projection `goalToProjectionInputs`, the OpenAPI
+enums. Do **NOT** create a parallel `ExtendedGoal = Goal | <new>` type to keep the goal OUT of `GOALS`
+just so the `GOALS`-iterating cross-org/admin surfaces "stay byte-unchanged" — that bounded-blast-radius
+dodge is a smell (two vocabularies, two names for one concept) and gets rejected ("no extended concept
+remove that shit"). One fleet vocabulary is the rule, even when it means touching the staff analytics +
+the admin dashboard. A goal with no paid-client economics (e.g. `whatsappConversation`) is still a plain
+`Goal` member — its outcome cost is just CPC and its paid/ROI fields read null (null-safe).
+
+**Non-breaking rollout across the cross-org response contract = a TRANSITIONAL byte-equal alias, not a
+side-type.** When the rename changes a `Record<Goal,…>` response key the out-of-repo admin reads (e.g.
+`avgCostPerOutcomeByObjective.purchase` → `.websitePurchase`), keep the OLD key as a transitional alias
+(`{ ...objectives, purchase: objectives.websitePurchase }`) so the admin keeps rendering during the fleet
+rename, and drop the alias once the consumer migrates (expand-contract). (Set 2026-07-19: `ExtendedGoal`
+introduced for `sales`/`websitePurchase`, then `whatsappConversation` — removed entirely across PRs
+#617/#622; `sales`+`websitePurchase`+`whatsappConversation` are now first-class `Goal` members.)
+
 ## SINGLE-STEP optimization goals — `websiteVisit` (visit→paid) + `positiveReply` (reply→paid)
 
 Two beta brand goals convert straight to a paid client in ONE step, NOT through the multi-step
