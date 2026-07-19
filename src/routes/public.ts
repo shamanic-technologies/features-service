@@ -1248,16 +1248,9 @@ export async function handleWorkflowCostPerOutcome(
     }
   }
 
-  // Fleet parent unit costs (crossOrg CPC / CPPR) — the cascade floor the projected engine falls back to.
-  let totalSpent = 0, totalClicks = 0, totalReplies = 0;
-  for (const r of byDynasty.values()) {
-    totalSpent += r.spentUsd;
-    totalClicks += r.clicks;
-    totalReplies += r.replies;
-  }
-  const fleetParentClickUsd = totalClicks > 0 && totalSpent > 0 ? totalSpent / totalClicks : null;
-  const fleetParentReplyUsd = totalReplies > 0 && totalSpent > 0 ? totalSpent / totalReplies : null;
-
+  // crossOrg is the top grain of the per-workflow cost cascade: a 0-outcome workflow floors to its OWN
+  // spend (parent = null in buildWorkflowCostPerOutcome), NOT a cross-workflow pooled average — so no
+  // fleet-parent unit cost is computed here.
   const fleetEcon = meanFleetEconomics(perBrandEconomics);
   const todayIso = new Date().toISOString().slice(0, 10);
   const dynastyInputs = [...byDynasty.values()];
@@ -1272,8 +1265,6 @@ export async function handleWorkflowCostPerOutcome(
     workflows: buildWorkflowCostPerOutcome({
       objective,
       rows: dynastyInputs,
-      fleetParentClickUsd,
-      fleetParentReplyUsd,
       fleetEcon,
       projectedFloor: projectedCostPerOutcome,
       recentByDynasty,
