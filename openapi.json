@@ -2315,7 +2315,6 @@
             "enum": [
               "signup",
               "meetingBooked",
-              "purchase",
               "websitePurchase",
               "sales",
               "websiteVisit",
@@ -3040,7 +3039,8 @@
                     "sales",
                     "websiteVisit",
                     "positiveReply",
-                    "formSubmission"
+                    "formSubmission",
+                    "whatsappConversation"
                   ],
                   "description": "The brand's 'Maximising X' goal (canonical camelCase). websitePurchase = renamed former purchase; sales = combined-sales goal. null when the brand saved no recognised goal."
                 },
@@ -6401,7 +6401,6 @@
               "enum": [
                 "signup",
                 "meetingBooked",
-                "purchase",
                 "websitePurchase",
                 "sales",
                 "websiteVisit",
@@ -6533,7 +6532,6 @@
                       "enum": [
                         "signup",
                         "meetingBooked",
-                        "purchase",
                         "websitePurchase",
                         "sales",
                         "websiteVisit",
@@ -8184,6 +8182,11 @@
                           "nullable": true,
                           "description": "Fleet-average projected cost per SALE (combined goal — a paying client won via EITHER the visit→paid OR reply→paid path, valued at CLTV)."
                         },
+                        "whatsappConversation": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average cost per WhatsApp conversation (CPC — the click on the brand's WhatsApp link IS the started conversation; no paid-client economics)."
+                        },
                         "purchase": {
                           "type": "number",
                           "nullable": true,
@@ -8197,7 +8200,8 @@
                         "formSubmission",
                         "meetingBooked",
                         "websitePurchase",
-                        "sales"
+                        "sales",
+                        "whatsappConversation"
                       ],
                       "description": "Fleet-average cost-per-outcome per optimization objective. Each = mean across client brands of that brand's best-workflow value; null when no brand is backed for the objective."
                     },
@@ -8631,6 +8635,11 @@
                           "nullable": true,
                           "description": "Fleet-average projected cost per SALE (combined goal — a paying client won via EITHER the visit→paid OR reply→paid path, valued at CLTV)."
                         },
+                        "whatsappConversation": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average cost per WhatsApp conversation (CPC — the click on the brand's WhatsApp link IS the started conversation; no paid-client economics)."
+                        },
                         "purchase": {
                           "type": "number",
                           "nullable": true,
@@ -8644,7 +8653,8 @@
                         "formSubmission",
                         "meetingBooked",
                         "websitePurchase",
-                        "sales"
+                        "sales",
+                        "whatsappConversation"
                       ],
                       "description": "Pooled LIFETIME (all-history) cost-per-outcome per objective — total fleet spend ÷ total fleet outcomes, projected objectives through the fleet-mean economics. The window→∞ limit of cost-per-outcome-trend. Null where the objective is unbacked; never a false $0."
                     },

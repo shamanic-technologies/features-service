@@ -681,7 +681,7 @@ const audienceStatsRowSchema = z.object({
 const audienceStatsResponseSchema = z.object({
   featureSlug: z.string(),
   brandId: z.string(),
-  goal: z.enum(["signup", "meetingBooked", "purchase", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]),
+  goal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]),
   brandProfileId: z.string().nullable(),
   sortMetric: z.enum(["cpc", "cppr"]).describe("signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR."),
   audiences: z.array(audienceStatsRowSchema).describe("Audience rows sorted ascending by sortMetric, with null metric values last."),
@@ -703,7 +703,7 @@ registry.registerPath({
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
-      goal: z.enum(["signup", "meetingBooked", "purchase", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).describe("Active optimization goal (required). signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet."),
+      goal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).describe("Active optimization goal (required). signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every per-audience MONEY metric (metrics.cpcCents / cpprCents / cpfsCents + the brand-parent cascade). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (evidence counts, conversion.rate) are identical either way. NOTE: campaign-service reads metrics.cpcCents byte-equal — it does NOT send pricing, so it always gets gross."),
       brandProfileId: z.string().optional().describe("Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted."),
       campaignId: z.string().optional().describe("Optional single-campaign scope for the STATS. Audiences themselves stay brand-wide (they are brand-scoped entities); only the per-audience cost + outcome numerators narrow to this campaign. Absent → brand-wide numbers, byte-identical to today. Present → cost sourced from runs-service filtered by campaignId (still grouped by audienceId) and outcomes read from the email-gateway campaign scope (only this campaign's contacted/opened/clicked/replied). Powers the dashboard's per-campaign audience view."),
@@ -1058,7 +1058,7 @@ const customerHealthRowSchema = z.object({
   orgBalanceUsd: z.number().describe("Org SPENDABLE balance in USD (display)."),
   orgActualBalanceUsd: z.number().describe("Org ACTUAL balance in USD (the active-verdict figure)."),
   autoTopupEnabled: z.boolean(),
-  optimizationGoal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission"]).nullable().describe("The brand's 'Maximising X' goal (canonical camelCase). websitePurchase = renamed former purchase; sales = combined-sales goal. null when the brand saved no recognised goal."),
+  optimizationGoal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).nullable().describe("The brand's 'Maximising X' goal (canonical camelCase). websitePurchase = renamed former purchase; sales = combined-sales goal. null when the brand saved no recognised goal."),
   conversionTracker: z.object({
     needed: z.boolean().describe("Whether the goal requires a client-site conversion tracker (signup / formSubmission / purchase → true; websiteVisit / positiveReply / meetingBooked → false)."),
     observedConversions: z.number().nullable().describe("Observed attributed conversions of the goal's kind (lead-service tracker). null for goals with no discrete conversion event (websiteVisit / positiveReply) or unknown goal."),
@@ -1360,6 +1360,7 @@ const objectiveAveragesSchema = z.object({
   meetingBooked: z.number().nullable().describe("Fleet-average projected cost per meeting booked."),
   websitePurchase: z.number().nullable().describe("Fleet-average projected cost per website purchase (multi-step self-serve/meeting close — RENAMED from `purchase`)."),
   sales: z.number().nullable().describe("Fleet-average projected cost per SALE (combined goal — a paying client won via EITHER the visit→paid OR reply→paid path, valued at CLTV)."),
+  whatsappConversation: z.number().nullable().describe("Fleet-average cost per WhatsApp conversation (CPC — the click on the brand's WhatsApp link IS the started conversation; no paid-client economics)."),
   purchase: z.number().nullable().optional().describe("TRANSITIONAL byte-equal alias of `websitePurchase` — kept so the admin dashboard's existing `.purchase` key keeps rendering during the fleet rename. Migrate to `websitePurchase`; this alias will be dropped."),
 }).describe("Fleet-average cost-per-outcome per optimization objective. Each = mean across client brands of that brand's best-workflow value; null when no brand is backed for the objective.");
 

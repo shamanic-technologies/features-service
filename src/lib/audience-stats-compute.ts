@@ -9,7 +9,7 @@ import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, typ
 import { fetchEmailOutcomes } from "./email-status-client.js";
 import { observedCostPerOutcome, projectedCostPerOutcome } from "./cost-engine.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
-import { isExtendedGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type ExtendedGoal } from "./goals.js";
+import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 
 export type SortMetric = "cpc" | "cppr";
@@ -89,7 +89,7 @@ export interface AudienceStatsRow {
 export interface AudienceStatsEnvelope {
   featureSlug: string;
   brandId: string;
-  goal: ExtendedGoal;
+  goal: Goal;
   brandProfileId: string | null;
   sortMetric: SortMetric;
   audiences: AudienceStatsRow[];
@@ -183,7 +183,7 @@ function readFiniteNumber(value: unknown, field: string): number {
   return parsed;
 }
 
-function sortMetricForGoal(goal: ExtendedGoal): SortMetric {
+function sortMetricForGoal(goal: Goal): SortMetric {
   // signup + websiteVisit + formSubmission + whatsappConversation rank on cost-per-click/visit (the
   // click IS the outcome — all four are click-driven; for whatsappConversation the click on the
   // WhatsApp link IS a started conversation); meetingBooked / purchase / positiveReply / websitePurchase /
@@ -433,7 +433,7 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
        matchWebsitePurchaseGoal(goalParam) ??
        goalParam)
     : undefined;
-  if (!isExtendedGoal(normalizedGoal)) {
+  if (!isGoal(normalizedGoal)) {
     return { ok: false, status: 400, error: "goal query parameter is required and must be one of: signup, meetingBooked, websitePurchase, sales, websiteVisit, positiveReply, formSubmission, whatsappConversation" };
   }
 

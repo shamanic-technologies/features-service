@@ -130,6 +130,8 @@ export function goalToProjectionInputs(goal: Goal): {
       return { objective: "website_purchase", goalEcho: "websitePurchase", singleStepGoal: null, formSubmissionGoal: false };
     case "sales":
       return { objective: "sales", goalEcho: "sales", singleStepGoal: null, formSubmissionGoal: false };
+    case "whatsappConversation":
+      return { objective: "whatsapp_conversations", goalEcho: "whatsappConversation", singleStepGoal: null, formSubmissionGoal: false };
     case "signup":
       return { objective: "signup", goalEcho: "signup", singleStepGoal: null, formSubmissionGoal: false };
     case "meetingBooked":

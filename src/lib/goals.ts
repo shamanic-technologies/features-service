@@ -33,9 +33,9 @@
  * cross-org response keeps a transitional byte-equal `purchase` alias of `websitePurchase` so the admin
  * dashboard keeps rendering until it migrates.
  */
-export type Goal = "signup" | "meetingBooked" | "websitePurchase" | "sales" | "websiteVisit" | "positiveReply" | "formSubmission";
+export type Goal = "signup" | "meetingBooked" | "websitePurchase" | "sales" | "websiteVisit" | "positiveReply" | "formSubmission" | "whatsappConversation";
 
-export const GOALS: readonly Goal[] = ["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission"] as const;
+export const GOALS: readonly Goal[] = ["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"] as const;
 
 export const isGoal = (value: unknown): value is Goal =>
   typeof value === "string" && (GOALS as readonly string[]).includes(value);
@@ -98,21 +98,15 @@ export function matchFormSubmissionGoal(raw: string): "formSubmission" | null {
  * Distinct from the `SingleStepGoal` family (`websiteVisit` / `positiveReply`) because brand-service
  * exposes NO whatsapp→paid conversion rate for it — so it carries no paid-client / ROI economics
  * (those read null, null-safe) and must NOT be fed through `singleStepRateDecimal` (which would fail
- * loud on the absent rate). It is a CLICK-outcome goal, nothing more.
+ * loud on the absent rate). It is a CLICK-outcome goal, nothing more — its cost-per-outcome = CPC,
+ * exactly like `websiteVisit`. It is a FIRST-CLASS `Goal` member (one fleet vocabulary — no separate
+ * "extended" concept); the cross-org surfaces that iterate `GOALS` treat its outcome cost as CPC and
+ * leave its paid-client/ROI figures null.
  *
- * Kept OUT of the shared `Goal` enum so the cross-org public cost surfaces (which iterate `GOALS`) stay
- * byte-unchanged; it is accepted only on the surfaces that render a goal-scoped outcome (per-audience
- * stats + per-workflow projection). See ExtendedGoal below. (Unlike `sales` / `websitePurchase`, which
- * ARE first-class `Goal` members, whatsapp genuinely has no paid-client economics — a click-outcome only.)
+ * `WhatsappGoal` / `CombinedSalesGoal` / `WebsitePurchaseGoal` are just literal aliases naming the
+ * matcher return types below; all three are members of `Goal`.
  */
 export type WhatsappGoal = "whatsappConversation";
-
-/**
- * `sales` (COMBINED goal — a paying client won via EITHER visit→paid OR reply→paid, valued at CLTV) and
- * `websitePurchase` (the RENAMED former `purchase` goal, the multi-step self-serve/meeting close funnel)
- * are FIRST-CLASS `Goal` members — the whole fleet speaks one vocabulary. These aliases only name the
- * literal for the matcher signatures below.
- */
 export type CombinedSalesGoal = "sales";
 export type WebsitePurchaseGoal = "websitePurchase";
 
@@ -154,18 +148,6 @@ export function matchWebsitePurchaseGoal(raw: string): WebsitePurchaseGoal | nul
 }
 
 /**
- * The goal vocabulary the goal-scoped OUTCOME surfaces (per-audience stats + per-workflow projection +
- * revenue lens) accept: the shared `Goal` enum (now incl. `sales` + `websitePurchase`) PLUS the
- * click-outcome `whatsappConversation`, which is the ONLY member outside `Goal` (it has no paid-client
- * economics, so the cross-org GOALS-iterating surfaces skip it — see WhatsappGoal).
- */
-export type ExtendedGoal = Goal | WhatsappGoal;
-
-/** True for any value in the ExtendedGoal vocabulary (`Goal` ∪ `whatsappConversation`). */
-export const isExtendedGoal = (value: unknown): value is ExtendedGoal =>
-  isGoal(value) || value === "whatsappConversation";
-
-/**
  * Map brand-service's STORED `OptimizationGoal` enum to the canonical Goal. This is the exact enum
  * `GET /internal/brands/:id/sales-economics` returns on `salesEconomics.optimizationGoal`:
  * `signups | booked_meetings | sales | website_visits | positive_replies | form_submissions`.
@@ -182,6 +164,7 @@ export function matchOptimizationGoal(raw: string): Goal | null {
   if (matchFormSubmissionGoal(raw)) return "formSubmission";
   if (matchCombinedSalesGoal(raw)) return "sales";
   if (matchWebsitePurchaseGoal(raw)) return "websitePurchase"; // incl. legacy `purchase`/`website_purchase`
+  if (matchWhatsappGoal(raw)) return "whatsappConversation";
   switch (raw) {
     case "signups":
     case "signup":
