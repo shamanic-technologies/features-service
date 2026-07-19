@@ -8,7 +8,7 @@ import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal,
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
-import { matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, type SingleStepGoal, type Goal } from "../lib/goals.js";
+import { matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type SingleStepGoal, type Goal } from "../lib/goals.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
@@ -35,8 +35,12 @@ const TARGET_OUTCOMES_PER_MONTH = 10;
 // whatsapp_conversations is a SINGLE-STEP, CLICK-outcome goal (the click on the brand's WhatsApp link
 // IS a started conversation). Its cost-per-outcome = CPC and it carries NO paid-client/ROI economics
 // (brand-service exposes no whatsapp→paid rate) — see outcomeCostForGoal / paidClientCostForGoal.
-export type Objective = "meeting-booked" | "self-serve" | "signup" | "purchase" | "website_visits" | "positive_replies" | "form_submissions" | "whatsapp_conversations";
-export type GoalEcho = "meetingBooked" | "signup" | "purchase" | "websiteVisit" | "positiveReply" | "formSubmission" | "whatsappConversation";
+// website_purchase is the RENAMED former `purchase` objective (multi-step self-serve / meeting close).
+// sales is the NEW COMBINED goal (a paying client won via EITHER the visit→paid OR the reply→paid path,
+// valued at CLTV) — its cost-per-outcome == cost-per-paid-client == cost-per-sale (the outcome IS the
+// paying client). See outcomeCostForGoal / paidClientCostForGoal.
+export type Objective = "meeting-booked" | "self-serve" | "signup" | "website_purchase" | "sales" | "website_visits" | "positive_replies" | "form_submissions" | "whatsapp_conversations";
+export type GoalEcho = "meetingBooked" | "signup" | "websitePurchase" | "sales" | "websiteVisit" | "positiveReply" | "formSubmission" | "whatsappConversation";
 
 // ── Response shape (3-grain ladder + resolved pick) ──────────────────────────
 
@@ -123,12 +127,43 @@ export function goalToProjectionInputs(goal: Goal): {
     case "formSubmission":
       return { objective: "form_submissions", goalEcho: "formSubmission", singleStepGoal: null, formSubmissionGoal: true };
     case "purchase":
-      return { objective: "purchase", goalEcho: "purchase", singleStepGoal: null, formSubmissionGoal: false };
+      // The `Goal` enum's canonical multi-step-close member — echoed under its RENAMED vocabulary
+      // (website_purchase / websitePurchase) on this surface. (Internal callers like customer-health
+      // pass the shared `Goal`, whose member stays `purchase`; the rename is echo-only here.)
+      return { objective: "website_purchase", goalEcho: "websitePurchase", singleStepGoal: null, formSubmissionGoal: false };
     case "signup":
       return { objective: "signup", goalEcho: "signup", singleStepGoal: null, formSubmissionGoal: false };
     case "meetingBooked":
       return { objective: "meeting-booked", goalEcho: "meetingBooked", singleStepGoal: null, formSubmissionGoal: false };
   }
+}
+
+type GoalInputs = { objective: Objective; goal: GoalEcho; singleStepGoal: SingleStepGoal | null; formSubmissionGoal: boolean };
+
+/**
+ * Resolve the request's `goal`/`objective` param (ANY fleet spelling) into the four compute inputs.
+ * ABSENT → meeting-booked default (preserved). PRESENT but UNRECOGNISED → `{ ok: false }` (the route
+ * returns 400 — unknown goal fails loud, never a silent default). Single source for the route so every
+ * goal — including the renamed `websitePurchase` and the new combined `sales` — routes identically.
+ */
+function resolveGoalInputs(raw: string | undefined): ({ ok: true } & GoalInputs) | { ok: false } {
+  if (raw == null || raw === "") {
+    return { ok: true, objective: "meeting-booked", goal: "meetingBooked", singleStepGoal: null, formSubmissionGoal: false };
+  }
+  const single = matchSingleStepGoal(raw);
+  if (single === "websiteVisit") return { ok: true, objective: "website_visits", goal: "websiteVisit", singleStepGoal: "websiteVisit", formSubmissionGoal: false };
+  if (single === "positiveReply") return { ok: true, objective: "positive_replies", goal: "positiveReply", singleStepGoal: "positiveReply", formSubmissionGoal: false };
+  if (matchFormSubmissionGoal(raw)) return { ok: true, objective: "form_submissions", goal: "formSubmission", singleStepGoal: null, formSubmissionGoal: true };
+  if (matchWhatsappGoal(raw)) return { ok: true, objective: "whatsapp_conversations", goal: "whatsappConversation", singleStepGoal: null, formSubmissionGoal: false };
+  if (matchCombinedSalesGoal(raw)) return { ok: true, objective: "sales", goal: "sales", singleStepGoal: null, formSubmissionGoal: false };
+  if (matchWebsitePurchaseGoal(raw)) return { ok: true, objective: "website_purchase", goal: "websitePurchase", singleStepGoal: null, formSubmissionGoal: false };
+  if (raw === "self-serve") return { ok: true, objective: "self-serve", goal: "signup", singleStepGoal: null, formSubmissionGoal: false };
+  if (raw === "signup" || raw === "signups") return { ok: true, objective: "signup", goal: "signup", singleStepGoal: null, formSubmissionGoal: false };
+  const meetingNorm = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (meetingNorm === "meetingbooked" || meetingNorm === "bookedmeetings" || meetingNorm === "bookedmeeting") {
+    return { ok: true, objective: "meeting-booked", goal: "meetingBooked", singleStepGoal: null, formSubmissionGoal: false };
+  }
+  return { ok: false };
 }
 
 /**
@@ -151,11 +186,14 @@ function paidClientCostForGoal(
   if (singleStepGoal === "websiteVisit") return p.costPerVisitPaidClientUsd;
   if (singleStepGoal === "positiveReply") return p.costPerReplyPaidClientUsd;
   if (formSubmissionGoal) return p.costPerFormSubmissionPaidClientUsd;
+  // COMBINED-SALES: the outcome IS the paying client (a sale won via EITHER path), so the paid-client
+  // cost == the outcome cost == cost-per-sale. ROI = CLTV / costPerSale.
+  if (objective === "sales") return p.costPerSaleUsd;
   // Each goal's paid-client cost chains through ITS OWN funnel (coherent: always ≥ that goal's outcome
-  // cost). signup/self-serve → visit→signup→paid; meeting-booked → the meeting→paid routes; purchase →
-  // the full self-serve+meeting close funnel. Do NOT collapse signup/meeting onto costPerPurchase — its
-  // rates are unrelated to their step and read incoherently below the goal's own outcome cost.
-  if (objective === "purchase") return p.costPerPurchaseUsd;
+  // cost). signup/self-serve → visit→signup→paid; meeting-booked → the meeting→paid routes; website
+  // purchase → the full self-serve+meeting close funnel. Do NOT collapse signup/meeting onto the close
+  // funnel — its rates are unrelated to their step and read incoherently below the goal's own cost.
+  if (objective === "website_purchase") return p.costPerPurchaseUsd;
   if (objective === "meeting-booked") return p.costPerMeetingPaidClientUsd;
   return p.costPerSignupPaidClientUsd; // signup / self-serve
 }
@@ -185,7 +223,10 @@ function outcomeCostForGoal(
   // positiveReply→CPPR) + the cross-org objective→cost doctrine ("the visit / reply IS the outcome").
   if (singleStepGoal === "websiteVisit") return unitCosts.clickUsd;
   if (singleStepGoal === "positiveReply") return unitCosts.replyUsd;
-  if (objective === "purchase") return p.costPerPurchaseUsd;
+  // COMBINED-SALES: the outcome IS a sale (paying client) via EITHER path → cost-per-sale (additive
+  // population expected-count, projectOutcomeCosts.costPerSaleUsd). Equals its cost-per-paid-client.
+  if (objective === "sales") return p.costPerSaleUsd;
+  if (objective === "website_purchase") return p.costPerPurchaseUsd;
   if (objective === "meeting-booked") return p.costPerMeetingBookedUsd;
   if (formSubmissionGoal) return p.costPerFormSubmissionUsd;
   return p.costPerSignupUsd; // signup / self-serve
@@ -344,26 +385,17 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     return res.status(400).json({ error: "brandId query parameter is required" });
   }
 
-  const singleStepGoal: SingleStepGoal | null = goalParam ? matchSingleStepGoal(goalParam) : null;
-  const formSubmissionGoal: boolean = goalParam ? matchFormSubmissionGoal(goalParam) !== null : false;
-  const whatsappGoal: boolean = goalParam ? matchWhatsappGoal(goalParam) !== null : false;
-  const objective: Objective =
-    singleStepGoal === "websiteVisit" ? "website_visits"
-      : singleStepGoal === "positiveReply" ? "positive_replies"
-      : formSubmissionGoal ? "form_submissions"
-      : whatsappGoal ? "whatsapp_conversations"
-      : goalParam === "self-serve" || goalParam === "signup" || goalParam === "purchase"
-        ? goalParam
-        : "meeting-booked";
-  // Canonical camel goal echo (= brand-service CurrentGoal). self-serve aliases signup.
-  const goal: GoalEcho =
-    objective === "website_visits" ? "websiteVisit"
-      : objective === "positive_replies" ? "positiveReply"
-      : objective === "form_submissions" ? "formSubmission"
-      : objective === "whatsapp_conversations" ? "whatsappConversation"
-      : objective === "purchase" ? "purchase"
-      : objective === "self-serve" || objective === "signup" ? "signup"
-      : "meetingBooked";
+  // Resolve the queried goal → (objective echo, goal echo, singleStep flag, form flag) across every
+  // fleet spelling. An ABSENT goalParam defaults to meeting-booked (preserved); a PRESENT but
+  // UNRECOGNISED goalParam FAILS LOUD (400) rather than silently defaulting.
+  const resolved = resolveGoalInputs(goalParam);
+  if (!resolved.ok) {
+    return res.status(400).json({
+      error:
+        "goal must be one of: signup, meetingBooked, websitePurchase, sales, websiteVisit, positiveReply, formSubmission, whatsappConversation (snake/kebab spellings also accepted)",
+    });
+  }
+  const { objective, goal, singleStepGoal, formSubmissionGoal } = resolved;
   const budgetUsd = budgetRaw != null && budgetRaw !== "" ? Number(budgetRaw) : null;
 
   // GROSS (default) vs NET pricing. Omitted → gross → byte-identical to today.
@@ -456,6 +488,11 @@ export async function computeWorkflowProjection(input: {
           s2pc: economics.signupToPaidClientPct / 100,
           ...(singleStepGoal === "websiteVisit" ? { v2pc: singleStepRateDecimal(economics, "websiteVisit") } : {}),
           ...(singleStepGoal === "positiveReply" ? { r2pc: singleStepRateDecimal(economics, "positiveReply") } : {}),
+          // COMBINED sales unions BOTH single-step paid-client rates (visit→paid + reply→paid) — read
+          // both fail-loud (a producer gap fails, never a substituted 0). costPerSaleUsd needs both.
+          ...(objective === "sales"
+            ? { v2pc: singleStepRateDecimal(economics, "websiteVisit"), r2pc: singleStepRateDecimal(economics, "positiveReply") }
+            : {}),
           ...(formSubmissionGoal ? formSubmissionRatesDecimal(economics) : {}),
         }
       : null;
@@ -473,6 +510,10 @@ export async function computeWorkflowProjection(input: {
           replyToMeetingPct: economics.replyToMeetingPct,
           ...(singleStepGoal === "websiteVisit" ? { visitToPaidClientPct: economics.visitToPaidClientPct } : {}),
           ...(singleStepGoal === "positiveReply" ? { replyToPaidClientPct: economics.replyToPaidClientPct } : {}),
+          // COMBINED sales echoes BOTH single-step paid-client rates it unions.
+          ...(objective === "sales"
+            ? { visitToPaidClientPct: economics.visitToPaidClientPct, replyToPaidClientPct: economics.replyToPaidClientPct }
+            : {}),
           ...(formSubmissionGoal
             ? {
                 visitToFormSubmissionPct: economics.visitToFormSubmissionPct,

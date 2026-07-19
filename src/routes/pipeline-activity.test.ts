@@ -109,8 +109,8 @@ const DEFAULT_AUDIENCE_COSTS: Record<string, string> = { "aud-a": "10000", "aud-
 // lead-service conversion-counts-by-day default: a brand with ZERO real tracked conversions
 // (the AC2 verification-brand shape — byDay all-empty, undated all-zero).
 const EMPTY_CONVERSION_BY_DAY = {
-  byDay: { signup: {}, meeting_booked: {}, form_submission: {}, purchase: {} },
-  undated: { signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 },
+  byDay: { signup: {}, meeting_booked: {}, form_submission: {}, sale: {} },
+  undated: { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 },
 };
 
 function mockFetch(opts: {
@@ -417,9 +417,9 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
           signup: { "2026-06-17": 3, "2026-06-15": 9 },
           meeting_booked: {},
           form_submission: { "2026-06-17": 2 },
-          purchase: {},
+          sale: {},
         },
-        undated: { signup: 1, meeting_booked: 0, form_submission: 4, purchase: 0 },
+        undated: { signup: 1, meeting_booked: 0, form_submission: 4, sale: 0 },
       },
     });
 

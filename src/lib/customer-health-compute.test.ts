@@ -92,7 +92,7 @@ function audienceRow(id: string, memberCount: number, contacted: number, cpcCent
       websiteClicks: contacted,
       positiveReplies: 0,
     },
-    metrics: { cpcCents, cpprCents: null, cpfsCents: null, cpsCents: null },
+    metrics: { cpcCents, cpprCents: null, cpfsCents: null, cpsCents: null, cpsaleCents: null },
   };
 }
 
@@ -175,7 +175,7 @@ function makeDeps(fixtures: {
       return { economics: f?.economics ?? null, goal: f?.goal ?? null };
     },
     conversionCounts: async (brandId) =>
-      fixtures.perBrand[brandId]?.counts ?? { signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 },
+      fixtures.perBrand[brandId]?.counts ?? { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 },
     brandRevenue: async (_f, brandId) => {
       const r = fixtures.perBrand[brandId]?.revenue;
       if (!r) throw new Error(`no revenue fixture for ${brandId}`);
@@ -210,7 +210,7 @@ describe("buildCustomerHealthBoard", () => {
         ba: {
           economics: econ(100),
           goal: "signup",
-          counts: { signup: 5, meeting_booked: 0, form_submission: 0, purchase: 0 },
+          counts: { signup: 5, meeting_booked: 0, form_submission: 0, sale: 0 },
           revenue: { actualCostUsd: 50, expectedPipelineUsd: 100, roiMultiple: 2, cacPct: 50 },
           audiences: [audienceRow("aud1", 100, 20, 500), audienceRow("aud2", 50, 40, 800)],
           workflow: [wfRow("wf-x", "Workflow X", 5, "brand"), wfRow("wf-y", "Workflow Y", 9, "crossOrg")],
@@ -386,7 +386,7 @@ describe("buildCustomerHealthBoard", () => {
         bh: {
           economics: econ(100),
           goal: "formSubmission",
-          counts: { signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 },
+          counts: { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 },
           revenue: { actualCostUsd: 10, expectedPipelineUsd: 50, roiMultiple: 5, cacPct: 20 },
           audiences: [],
         },

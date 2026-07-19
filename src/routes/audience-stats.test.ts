@@ -500,6 +500,99 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(res.body.audiences.every((r: any) => r.metrics.cpsCents === null)).toBe(true);
   });
 
+  for (const goalSpelling of ["sales", "websitePurchase"] as const) {
+    it(`goal=${goalSpelling} attributes real per-audience SALES via membership ∩ matched-lead sale emails (event=sale)`, async () => {
+      const CONVERSION_EMAILS = ["a1", "a3", "b2"];
+      fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = urlOf(input);
+        if (url.includes("lead:3000/internal/brands/brand-1/converted-lead-emails")) {
+          expect(new URL(url).searchParams.get("event")).toBe("sale"); // RENAMED from "purchase"
+          return new Response(JSON.stringify({ emails: CONVERSION_EMAILS }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+        if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
+        if (url.includes("human:3000/orgs/audiences")) {
+          return new Response(JSON.stringify({
+            audiences: [
+              { id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: { seniorities: ["c_suite"] } },
+              { id: "audience-b", brandId: "brand-1", name: "Founders", status: "active", filters: { titles: ["founder"] } },
+            ],
+            total: 2, limit: 200, offset: 0,
+          }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) {
+          return new Response(JSON.stringify({ current: { id: "brand-profile-1", brandId: "brand-1", version: 3, fields: {}, createdAt: "2026-01-01T00:00:00Z" }, versions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (url.includes("runs:3000/v1/stats/costs")) {
+          return new Response(JSON.stringify({ groups: [costGroup("audience-a", 3000, 3), costGroup("audience-b", 1000, 2)] }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (url.includes("email:3000/orgs/status")) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { items: Array<{ email: string }> };
+          const results = body.items.map(({ email }) => ({ email, broadcast: { brand: { contacted: true, opened: true, clicked: true, replied: POSITIVE.has(email), replyClassification: POSITIVE.has(email) ? "positive" : null } } }));
+          return new Response(JSON.stringify({ results }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+      }) as unknown as ReturnType<typeof vi.spyOn>;
+
+      const res = await request(app)
+        .get(`/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=${goalSpelling}`)
+        .set(AUTH);
+
+      expect(res.status).toBe(200);
+      expect(res.body.goal).toBe(goalSpelling);
+      expect(res.body.sortMetric).toBe("cppr"); // both sale-terminating goals are reply-inclusive close goals
+      const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
+      // audience-a: 2 members converted (a1,a3), spend 3000 → cpsale 1500. audience-b: 1 (b2), spend 1000 → 1000.
+      expect(byId["audience-a"].evidence.sales).toBe(2);
+      expect(byId["audience-a"].metrics.cpsaleCents).toBe(1500);
+      expect(byId["audience-b"].evidence.sales).toBe(1);
+      expect(byId["audience-b"].metrics.cpsaleCents).toBe(1000);
+    });
+  }
+
+  it("legacy `purchase` goal spelling normalises to websitePurchase + reads sale attribution", async () => {
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = urlOf(input);
+      if (url.includes("converted-lead-emails")) {
+        expect(new URL(url).searchParams.get("event")).toBe("sale");
+        return new Response(JSON.stringify({ emails: ["a1"] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+      if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
+      if (url.includes("human:3000/orgs/audiences")) {
+        return new Response(JSON.stringify({ audiences: [{ id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: null }], total: 1, limit: 200, offset: 0 }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) return new Response(JSON.stringify({ current: null, versions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.includes("runs:3000/v1/stats/costs")) return new Response(JSON.stringify({ groups: [costGroup("audience-a", 2000, 1)] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.includes("email:3000/orgs/status")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { items: Array<{ email: string }> };
+        return new Response(JSON.stringify({ results: body.items.map(({ email }) => ({ email, broadcast: { brand: { contacted: true, opened: false, clicked: true, replied: false, replyClassification: null } } })) }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as unknown as ReturnType<typeof vi.spyOn>;
+    const res = await request(app).get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=purchase").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.goal).toBe("websitePurchase"); // legacy purchase → renamed echo
+  });
+
+  it("goal=sales degrades to absent sales (null cpsale, never $0) when lead-service is unavailable", async () => {
+    fetchSpy = mockFetch(); // default returns {} for converted-lead-emails → client throws → soft-degrades
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=sales")
+      .set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.audiences.every((r: any) => r.evidence.sales === undefined)).toBe(true);
+    expect(res.body.audiences.every((r: any) => r.metrics.cpsaleCents === null)).toBe(true);
+  });
+
+  it("unknown goal → 400 (fail loud, never a silent default)", async () => {
+    fetchSpy = mockFetch();
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=bogusGoal")
+      .set(AUTH);
+    expect(res.status).toBe(400);
+  });
+
   it("non-conversion goals never call the converted-lead-emails read and carry null cpfs/cps", async () => {
     fetchSpy = mockFetch();
     const res = await request(app)
@@ -512,6 +605,8 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(res.body.audiences.every((r: any) => r.evidence.formSubmissions === undefined)).toBe(true);
     expect(res.body.audiences.every((r: any) => r.metrics.cpsCents === null)).toBe(true);
     expect(res.body.audiences.every((r: any) => r.evidence.signups === undefined)).toBe(true);
+    expect(res.body.audiences.every((r: any) => r.metrics.cpsaleCents === null)).toBe(true);
+    expect(res.body.audiences.every((r: any) => r.evidence.sales === undefined)).toBe(true);
   });
 
   it("goal=positiveReply sorts by CPPR; snake_case (positive_replies) is accepted", async () => {

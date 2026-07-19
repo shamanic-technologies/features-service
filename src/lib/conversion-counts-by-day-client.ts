@@ -17,18 +17,19 @@ export interface ConversionCountsByDay {
     signup: Record<string, number>;
     meeting_booked: Record<string, number>;
     form_submission: Record<string, number>;
-    purchase: Record<string, number>;
+    // Terminal paying-client event — RENAMED from `purchase` to `sale` (lead-service slice).
+    sale: Record<string, number>;
   };
   undated: {
     signup: number;
     meeting_booked: number;
     form_submission: number;
-    purchase: number;
+    sale: number;
   };
 }
 
 type EventKey = keyof ConversionCountsByDay["byDay"];
-const EVENT_KEYS: EventKey[] = ["signup", "meeting_booked", "form_submission", "purchase"];
+const EVENT_KEYS: EventKey[] = ["signup", "meeting_booked", "form_submission", "sale"];
 
 function parseByDay(raw: unknown, event: string): Record<string, number> {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {

@@ -3,8 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { getFunnel, orP, singleStepRateDecimal, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
-import { matchSingleStepGoal } from "../lib/goals.js";
+import { getFunnel, orP, singleStepRateDecimal, combinedSaleProbability, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
+import { matchSingleStepGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal } from "../lib/goals.js";
 import { fetchEffectiveEconomics, type EffectiveEconomics } from "../lib/sales-economics-client.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
@@ -120,15 +120,16 @@ export interface Spend {
   // as cpsCents/totalCpcCents → cpfsCents × formSubmissionsCount ≈ committed spend). null when the count
   // is 0; ABSENT when the counts weren't served.
   cpfsCents?: number | null;
-  // REAL attributed PURCHASES (lead-service conversion tracker, event="purchase") for the brand — the
-  // Purchases tile's brand-level aggregate (features-service#476). Equivalent to signupsCount /
-  // salesMeetingsCount / formSubmissionsCount; the purchase count previously had no aggregate here
-  // (per-lead purchased only). 0 when none; ABSENT when lead-service didn't serve the counts.
-  purchasesCount?: number;
-  // REAL cost per purchase = committed spend ÷ purchasesCount (same COMMITTED denominator as the other
-  // cost-per-conversion figures → cppCents × purchasesCount ≈ committed spend). null when the count is
-  // 0 (no denominator — never a false $0); ABSENT when the counts weren't served.
-  cppCents?: number | null;
+  // REAL attributed SALES — paying clients won (lead-service conversion tracker, event="sale", RENAMED
+  // from "purchase") for the brand. The Sales tile's brand-level aggregate — the terminal outcome of
+  // BOTH the website-purchase goal and the combined-sales goal. Equivalent to signupsCount /
+  // salesMeetingsCount / formSubmissionsCount. 0 when none; ABSENT when lead-service didn't serve the
+  // counts (never a fabricated 0). (Renamed from purchasesCount — features-service combined-sales slice.)
+  salesCount?: number;
+  // REAL cost per sale = committed spend ÷ salesCount (same COMMITTED denominator as the other
+  // cost-per-conversion figures → cpSaleCents × salesCount ≈ committed spend). null when the count is
+  // 0 (no denominator — never a false $0); ABSENT when the counts weren't served. (Renamed from cppCents.)
+  cpSaleCents?: number | null;
   // REAL attributed positive replies for the brand — the single-step positive_replies goal's outcome,
   // the reply-goal sibling of signups/meetings/form-submissions. A positive reply is an email
   // engagement signal (NOT a lead-service conversion event), so it is sourced from the SAME deduped
@@ -164,11 +165,11 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: Convers
         signupsCount: counts.signup,
         salesMeetingsCount: counts.meeting_booked,
         formSubmissionsCount: counts.form_submission,
-        purchasesCount: counts.purchase,
+        salesCount: counts.sale,
         cpsCents: observedCostPerOutcome(committed, counts.signup),
         cpsmCents: observedCostPerOutcome(committed, counts.meeting_booked),
         cpfsCents: observedCostPerOutcome(committed, counts.form_submission),
-        cppCents: observedCostPerOutcome(committed, counts.purchase),
+        cpSaleCents: observedCostPerOutcome(committed, counts.sale),
       }
     : {};
 
@@ -390,8 +391,13 @@ const EMPTY_CONVERSION_OUTCOME_EMAILS: ConversionOutcomeEmails = { signup: null,
 // pCloseClick/pCloseReply, just expressed as probabilities instead of dollars.
 // website_visits / positive_replies are SINGLE-STEP lenses: per-lead EV = one paid-client rate × LTR
 // (visit→paid / reply→paid), NOT the multi-step sales close.
-export type Lens = "signups" | "booked-meetings" | "sales" | "website_visits" | "positive_replies";
-export const LENS_VALUES: readonly Lens[] = ["signups", "booked-meetings", "sales", "website_visits", "positive_replies"];
+// website_purchase = the RENAMED former `sales` lens (multi-step self-serve / meeting close funnel).
+// sales = the NEW COMBINED goal (a paying client won via EITHER visit→paid OR reply→paid); per-LEAD
+// probability combines the two paths as a probabilistic OR (a lead converts at most once) — see
+// lensProbability + combinedSaleProbability. Do NOT confuse it with the population expected-count SUM
+// (costPerSaleUsd) used by the projection surface.
+export type Lens = "signups" | "booked-meetings" | "website_purchase" | "sales" | "website_visits" | "positive_replies";
+export const LENS_VALUES: readonly Lens[] = ["signups", "booked-meetings", "website_purchase", "sales", "website_visits", "positive_replies"];
 
 const pct = (n: number): number => n / 100;
 
@@ -416,12 +422,24 @@ function lensProbability(lens: Lens, signals: Record<string, boolean>, e: SalesE
       return clicked ? pct(e.visitToSignupPct) : null;
     case "booked-meetings":
       return positiveReply ? pct(e.replyToMeetingPct) : null;
-    case "sales": {
+    case "website_purchase": {
+      // RENAMED former `sales` lens — the multi-step self-serve / meeting close funnel (unchanged math).
       if (!clicked && !positiveReply) return null;
       const pClick = orP(pct(e.visitToClosePct), pct(e.visitToMeetingPct) * pct(e.meetingToClosePct));
       const pReply = pct(e.replyToMeetingPct) * pct(e.meetingToClosePct);
       if (clicked && positiveReply) return orP(pClick, pReply);
       return clicked ? pClick : pReply;
+    }
+    case "sales": {
+      // COMBINED-sales goal — per-LEAD probability of becoming a SALE (paying client, valued at CLTV)
+      // via EITHER the visit→paid (v2pc) OR the reply→paid (r2pc) single-step path. A lead converts at
+      // most once → the two paths combine as a probabilistic OR (orP), NEVER a sum (which could exceed 1
+      // and double-counts a both-paths lead). This is the per-lead twin of the projection's ADDITIVE
+      // population expected-count. Fails loud when a rate field is absent (singleStepRateDecimal).
+      if (!clicked && !positiveReply) return null;
+      const v2pc = singleStepRateDecimal(e, "websiteVisit");
+      const r2pc = singleStepRateDecimal(e, "positiveReply");
+      return combinedSaleProbability(v2pc, r2pc, clicked, positiveReply);
     }
     case "website_visits":
       // SINGLE STEP: a visiting (clicked) lead converts to a paid client at visitToPaidClientPct.
@@ -743,11 +761,17 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     return res.status(400).json({ error: "brandId query parameter is required" });
   }
 
-  // Normalise the single-step lens's fleet spellings (camel/kebab → canonical snake) before validating.
+  // Normalise every lens's fleet spellings (camel/kebab/legacy → canonical) before validating.
+  //   single-step: websiteVisit → website_visits, positiveReply → positive_replies
+  //   COMBINED sales: sales / combinedSales → sales
+  //   website purchase (RENAMED former `sales` close funnel): websitePurchase / website_purchase /
+  //     legacy `purchase` → website_purchase
   const singleStepLens = lensParam ? matchSingleStepGoal(lensParam) : null;
   const normalizedLens =
     singleStepLens === "websiteVisit" ? "website_visits"
       : singleStepLens === "positiveReply" ? "positive_replies"
+      : lensParam && matchCombinedSalesGoal(lensParam) ? "sales"
+      : lensParam && matchWebsitePurchaseGoal(lensParam) ? "website_purchase"
       : lensParam;
   if (normalizedLens !== undefined && !LENS_VALUES.includes(normalizedLens as Lens)) {
     return res.status(400).json({ error: `lens must be one of: ${LENS_VALUES.join(", ")}` });
