@@ -13,7 +13,7 @@
  * matching audience-stats' sort metric).
  */
 
-import { GOALS, matchSingleStepGoal, matchFormSubmissionGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
+import { GOALS, matchSingleStepGoal, matchFormSubmissionGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, matchWhatsappGoal, type Goal } from "./goals.js";
 import {
   projectOutcomeCosts,
   type ProjectionEconomics,
@@ -45,6 +45,7 @@ export function normalizeObjective(raw: string | undefined): Goal | null {
   if (matchFormSubmissionGoal(raw)) return "formSubmission";
   if (matchCombinedSalesGoal(raw)) return "sales";
   if (matchWebsitePurchaseGoal(raw)) return "websitePurchase"; // incl. legacy `purchase`
+  if (matchWhatsappGoal(raw)) return "whatsappConversation";
   switch (raw) {
     case "signup":
     case "self-serve":
@@ -97,6 +98,9 @@ export function objectiveCostPerOutcome(
   econ: ProjectionEconomics,
 ): number | null {
   if (goal === "websiteVisit") return unitCosts.clickUsd;
+  // whatsappConversation: the click on the brand's WhatsApp link IS the started conversation → CPC, like
+  // websiteVisit (no paid-client economics; the outcome IS the click).
+  if (goal === "whatsappConversation") return unitCosts.clickUsd;
   if (goal === "positiveReply") return unitCosts.replyUsd;
   const p = projectOutcomeCosts(econ, unitCosts);
   switch (goal) {
@@ -212,7 +216,7 @@ export function buildObjectiveAverages(
   perBrandEconomics: SalesEconomics[],
 ): { objectives: ObjectiveAverages; brandCount: number } {
   const perObjectiveBrandBests: Record<Goal, number[]> = {
-    websiteVisit: [], positiveReply: [], signup: [], formSubmission: [], meetingBooked: [], websitePurchase: [], sales: [],
+    websiteVisit: [], positiveReply: [], signup: [], formSubmission: [], meetingBooked: [], websitePurchase: [], sales: [], whatsappConversation: [],
   };
   let brandCount = 0;
 
@@ -504,6 +508,9 @@ export const OBJECTIVE_GOAL_BUCKET: Record<Goal, readonly Goal[]> = {
   meetingBooked: ["meetingBooked", "websitePurchase"],
   websitePurchase: ["websitePurchase"],
   sales: ["sales"],
+  // Click-outcome goal (the WhatsApp-link click IS the outcome) — its own CPC denominator, like a
+  // single-outcome objective; not folded into the websiteVisit CPC bucket.
+  whatsappConversation: ["whatsappConversation"],
 };
 
 /** True when a brand whose optimization goal is `goal` contributes to `objective`'s cost bucket. */
