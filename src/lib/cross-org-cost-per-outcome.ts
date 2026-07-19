@@ -13,7 +13,7 @@
  * matching audience-stats' sort metric).
  */
 
-import { GOALS, matchSingleStepGoal, matchFormSubmissionGoal, type Goal } from "./goals.js";
+import { GOALS, matchSingleStepGoal, matchFormSubmissionGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
 import {
   projectOutcomeCosts,
   type ProjectionEconomics,
@@ -43,6 +43,8 @@ export function normalizeObjective(raw: string | undefined): Goal | null {
   const single = matchSingleStepGoal(raw);
   if (single) return single;
   if (matchFormSubmissionGoal(raw)) return "formSubmission";
+  if (matchCombinedSalesGoal(raw)) return "sales";
+  if (matchWebsitePurchaseGoal(raw)) return "websitePurchase"; // incl. legacy `purchase`
   switch (raw) {
     case "signup":
     case "self-serve":
@@ -51,8 +53,6 @@ export function normalizeObjective(raw: string | undefined): Goal | null {
     case "meeting-booked":
     case "meeting_booked":
       return "meetingBooked";
-    case "purchase":
-      return "purchase";
     default:
       return null;
   }
@@ -106,8 +106,10 @@ export function objectiveCostPerOutcome(
       return p.costPerFormSubmissionUsd;
     case "meetingBooked":
       return p.costPerMeetingBookedUsd;
-    case "purchase":
+    case "websitePurchase":
       return p.costPerPurchaseUsd;
+    case "sales":
+      return p.costPerSaleUsd;
     default:
       return null;
   }
@@ -123,8 +125,9 @@ export function windowBaseOutcome(goal: Goal, clicks: number, replies: number): 
     case "positiveReply":
       return replies;
     case "meetingBooked":
-    case "purchase":
-      return clicks + replies;
+    case "websitePurchase":
+    case "sales":
+      return clicks + replies; // multi-channel close / combined goals draw from both channels
     default:
       return clicks; // websiteVisit / signup / formSubmission
   }
@@ -209,7 +212,7 @@ export function buildObjectiveAverages(
   perBrandEconomics: SalesEconomics[],
 ): { objectives: ObjectiveAverages; brandCount: number } {
   const perObjectiveBrandBests: Record<Goal, number[]> = {
-    websiteVisit: [], positiveReply: [], signup: [], formSubmission: [], meetingBooked: [], purchase: [],
+    websiteVisit: [], positiveReply: [], signup: [], formSubmission: [], meetingBooked: [], websitePurchase: [], sales: [],
   };
   let brandCount = 0;
 
@@ -482,10 +485,12 @@ export function addUtcDays(iso: string, delta: number): string {
  * Which `optimizationGoal`s contribute to each objective's cost-per-outcome bucket.
  *
  * - **websiteVisit (CPC)** — every click-driven goal EXCEPT the reply-driven + meeting-driven ones
- *   (purchase closes via a meeting, so it belongs to the meeting bucket, not CPC).
+ *   (websitePurchase closes via a meeting, so it belongs to the meeting bucket, not CPC).
  * - **positiveReply / signup / formSubmission** — their own goal only.
- * - **meetingBooked** — meetingBooked + purchase (a purchase closes partly through a booked meeting).
- * - **purchase** — its own goal only.
+ * - **meetingBooked** — meetingBooked + websitePurchase (a website purchase closes partly through a meeting).
+ * - **websitePurchase** — its own goal only.
+ * - **sales** — its own goal only (the combined goal has its own denominator; the visit + reply channels
+ *   are already unioned inside its cost, so it is NOT folded into the CPC or reply buckets).
  *
  * A brand may fall in SEVERAL buckets (a `signup` brand feeds both CPC and cost-per-signup) — intended:
  * each card is a distinct ratio over a distinct denominator, and the same spend legitimately produced
@@ -496,8 +501,9 @@ export const OBJECTIVE_GOAL_BUCKET: Record<Goal, readonly Goal[]> = {
   positiveReply: ["positiveReply"],
   signup: ["signup"],
   formSubmission: ["formSubmission"],
-  meetingBooked: ["meetingBooked", "purchase"],
-  purchase: ["purchase"],
+  meetingBooked: ["meetingBooked", "websitePurchase"],
+  websitePurchase: ["websitePurchase"],
+  sales: ["sales"],
 };
 
 /** True when a brand whose optimization goal is `goal` contributes to `objective`'s cost bucket. */

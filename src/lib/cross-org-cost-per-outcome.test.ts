@@ -41,7 +41,9 @@ describe("normalizeObjective", () => {
     expect(normalizeObjective("meetingBooked")).toBe("meetingBooked");
     expect(normalizeObjective("self-serve")).toBe("signup");
     expect(normalizeObjective("signup")).toBe("signup");
-    expect(normalizeObjective("purchase")).toBe("purchase");
+    expect(normalizeObjective("purchase")).toBe("websitePurchase");
+    expect(normalizeObjective("website_purchase")).toBe("websitePurchase");
+    expect(normalizeObjective("sales")).toBe("sales");
   });
   it("returns null for unknown / missing", () => {
     expect(normalizeObjective(undefined)).toBeNull();
@@ -62,7 +64,8 @@ describe("objectiveCostPerOutcome", () => {
     expect(objectiveCostPerOutcome("signup", unit, econ)).toBe(p.costPerSignupUsd);
     expect(objectiveCostPerOutcome("formSubmission", unit, econ)).toBe(p.costPerFormSubmissionUsd);
     expect(objectiveCostPerOutcome("meetingBooked", unit, econ)).toBe(p.costPerMeetingBookedUsd);
-    expect(objectiveCostPerOutcome("purchase", unit, econ)).toBe(p.costPerPurchaseUsd);
+    expect(objectiveCostPerOutcome("websitePurchase", unit, econ)).toBe(p.costPerPurchaseUsd);
+    expect(objectiveCostPerOutcome("sales", unit, econ)).toBe(p.costPerSaleUsd);
   });
   it("CPC/CPPR are null when the corresponding unit cost is null", () => {
     expect(objectiveCostPerOutcome("websiteVisit", { clickUsd: null, replyUsd: 2 }, econ)).toBeNull();
@@ -77,7 +80,8 @@ describe("windowBaseOutcome", () => {
     expect(windowBaseOutcome("formSubmission", 10, 3)).toBe(10);
     expect(windowBaseOutcome("positiveReply", 10, 3)).toBe(3);
     expect(windowBaseOutcome("meetingBooked", 10, 3)).toBe(13);
-    expect(windowBaseOutcome("purchase", 10, 3)).toBe(13);
+    expect(windowBaseOutcome("websitePurchase", 10, 3)).toBe(13);
+    expect(windowBaseOutcome("sales", 10, 3)).toBe(13);
   });
 });
 
@@ -98,7 +102,7 @@ describe("buildObjectiveAverages", () => {
     const p1 = projectOutcomeCosts(buildLenientProjectionEconomics(FULL_ECON), { clickUsd: 1, replyUsd: 2 });
     const p2 = projectOutcomeCosts(buildLenientProjectionEconomics(e2), { clickUsd: 1, replyUsd: 2 });
     expect(objectives.meetingBooked!).toBeCloseTo((p1.costPerMeetingBookedUsd! + p2.costPerMeetingBookedUsd!) / 2, 6);
-    expect(objectives.purchase!).toBeCloseTo((p1.costPerPurchaseUsd! + p2.costPerPurchaseUsd!) / 2, 6);
+    expect(objectives.websitePurchase!).toBeCloseTo((p1.costPerPurchaseUsd! + p2.costPerPurchaseUsd!) / 2, 6);
     // every objective present in the map
     for (const g of OBJECTIVES) expect(g in objectives).toBe(true);
   });
@@ -147,7 +151,7 @@ describe("buildLifetimeObjectiveAverages", () => {
     const p = projectOutcomeCosts(fleetEcon, { clickUsd: 2, replyUsd: 4 });
     expect(objectives.signup).toBeCloseTo(p.costPerSignupUsd!, 6);
     expect(objectives.meetingBooked).toBeCloseTo(p.costPerMeetingBookedUsd!, 6);
-    expect(objectives.purchase).toBeCloseTo(p.costPerPurchaseUsd!, 6);
+    expect(objectives.websitePurchase).toBeCloseTo(p.costPerPurchaseUsd!, 6);
     for (const g of OBJECTIVES) expect(g in objectives).toBe(true);
   });
 
@@ -392,15 +396,17 @@ describe("matchOptimizationGoal (brand-service stored enum → Goal)", () => {
   it("maps every stored OptimizationGoal spelling", () => {
     expect(matchOptimizationGoal("signups")).toBe("signup");
     expect(matchOptimizationGoal("booked_meetings")).toBe("meetingBooked");
-    expect(matchOptimizationGoal("sales")).toBe("purchase");
+    expect(matchOptimizationGoal("sales")).toBe("sales");
     expect(matchOptimizationGoal("website_visits")).toBe("websiteVisit");
     expect(matchOptimizationGoal("positive_replies")).toBe("positiveReply");
     expect(matchOptimizationGoal("form_submissions")).toBe("formSubmission");
+    expect(matchOptimizationGoal("website_purchase")).toBe("websitePurchase");
+    expect(matchOptimizationGoal("sales")).toBe("sales");
   });
   it("also tolerates the runtime camel spellings", () => {
     expect(matchOptimizationGoal("signup")).toBe("signup");
     expect(matchOptimizationGoal("meetingBooked")).toBe("meetingBooked");
-    expect(matchOptimizationGoal("purchase")).toBe("purchase");
+    expect(matchOptimizationGoal("purchase")).toBe("websitePurchase");
   });
   it("returns null for an unrecognised value", () => {
     expect(matchOptimizationGoal("nonsense")).toBeNull();
@@ -413,22 +419,23 @@ describe("OBJECTIVE_GOAL_BUCKET", () => {
     expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).toEqual(["websiteVisit", "signup", "formSubmission"]);
     expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).not.toContain("positiveReply");
     expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).not.toContain("meetingBooked");
-    expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).not.toContain("purchase");
+    expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).not.toContain("websitePurchase");
   });
   it("each single-outcome objective is its own goal only", () => {
     expect(OBJECTIVE_GOAL_BUCKET.positiveReply).toEqual(["positiveReply"]);
     expect(OBJECTIVE_GOAL_BUCKET.signup).toEqual(["signup"]);
     expect(OBJECTIVE_GOAL_BUCKET.formSubmission).toEqual(["formSubmission"]);
-    expect(OBJECTIVE_GOAL_BUCKET.purchase).toEqual(["purchase"]);
+    expect(OBJECTIVE_GOAL_BUCKET.websitePurchase).toEqual(["websitePurchase"]);
+    expect(OBJECTIVE_GOAL_BUCKET.sales).toEqual(["sales"]);
   });
   it("meeting bucket = meetingBooked + purchase (purchase closes via meeting)", () => {
-    expect(OBJECTIVE_GOAL_BUCKET.meetingBooked).toEqual(["meetingBooked", "purchase"]);
+    expect(OBJECTIVE_GOAL_BUCKET.meetingBooked).toEqual(["meetingBooked", "websitePurchase"]);
   });
   it("goalInObjectiveBucket agrees with the table", () => {
     expect(goalInObjectiveBucket("websiteVisit", "signup")).toBe(true);
     expect(goalInObjectiveBucket("websiteVisit", "positiveReply")).toBe(false);
-    expect(goalInObjectiveBucket("meetingBooked", "purchase")).toBe(true);
-    expect(goalInObjectiveBucket("signup", "purchase")).toBe(false);
+    expect(goalInObjectiveBucket("meetingBooked", "websitePurchase")).toBe(true);
+    expect(goalInObjectiveBucket("signup", "websitePurchase")).toBe(false);
   });
 });
 
@@ -438,7 +445,7 @@ describe("bucketBrandsForObjective + merge", () => {
     brand("b-signup", "signup", 200, 40, 0),
     brand("b-reply", "positiveReply", 300, 5, 20),
     brand("b-meeting", "meetingBooked", 400, 10, 3),
-    brand("b-purchase", "purchase", 500, 8, 2),
+    brand("b-purchase", "websitePurchase", 500, 8, 2),
   ];
 
   it("cpc bucket excludes reply + meeting + purchase brands", () => {

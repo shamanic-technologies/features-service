@@ -126,11 +126,10 @@ export function goalToProjectionInputs(goal: Goal): {
       return { objective: "positive_replies", goalEcho: "positiveReply", singleStepGoal: "positiveReply", formSubmissionGoal: false };
     case "formSubmission":
       return { objective: "form_submissions", goalEcho: "formSubmission", singleStepGoal: null, formSubmissionGoal: true };
-    case "purchase":
-      // The `Goal` enum's canonical multi-step-close member — echoed under its RENAMED vocabulary
-      // (website_purchase / websitePurchase) on this surface. (Internal callers like customer-health
-      // pass the shared `Goal`, whose member stays `purchase`; the rename is echo-only here.)
+    case "websitePurchase":
       return { objective: "website_purchase", goalEcho: "websitePurchase", singleStepGoal: null, formSubmissionGoal: false };
+    case "sales":
+      return { objective: "sales", goalEcho: "sales", singleStepGoal: null, formSubmissionGoal: false };
     case "signup":
       return { objective: "signup", goalEcho: "signup", singleStepGoal: null, formSubmissionGoal: false };
     case "meetingBooked":
