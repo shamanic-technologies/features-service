@@ -23,6 +23,7 @@ import {
   buildCostPerOutcomeDistribution,
   buildWorkflowCostPerOutcome,
   recentWindowCostPerOutcome,
+  windowBaseOutcome,
   fetchFleetBrandEconomics,
   fetchGoalBucketDataset,
   bucketBrandsForObjective,
@@ -1368,6 +1369,190 @@ export async function handleWorkflowCostPerOutcome(
   }
 }
 
+// ── GET /public/stats/best-model-cost-per-outcome-trend ──────────────────────
+//
+// The dated cost-per-outcome trend of the SINGLE BEST cross-org workflow model — the drop-in replacement
+// for the landing's pooled /cost-per-outcome-trend, made COHERENT with the "best model" HEADLINE (the
+// min cost-per-outcome across workflows the landing reads from /public/stats/workflow-cost-per-outcome).
+// The pooled trend blended ALL ~21 workflows into one average (~$250) while the headline shows the best
+// single model (~$52) — two different metrics on the same card. This series plots the best model over
+// time so the line agrees with the headline.
+//
+// DESIGN CHOICE (documented) — the series is the currently-BEST workflow DYNASTY's OWN dated trailing-
+// window moving average, NOT a best-of-fleet envelope (per-day min across workflows). Rationale:
+//   • Coherent BY CONSTRUCTION with the headline: the best model is picked ONCE the SAME way the headline
+//     picks it (cheapest LIFETIME costPerOutcomeUsd among dynasties with the objective's OBSERVED base
+//     outcome > 0), then we plot THAT model's real cost history. The most-recent backed point is that
+//     model's recent cost (~$52-class), never the pooled ~$250.
+//   • Honest single-model line: every point is ONE real workflow's cost — never blended/pooled across
+//     workflows (the metric being eradicated) — and it is that model's ACTUAL trajectory, NOT a
+//     min-of-many-noisy-windows envelope (downward-biased, and jumps between workflows day-to-day = noisy
+//     for a marketing line).
+//   • Request-path-safe: it fetches only the ONE best dynasty's dated spend + outcomes (2 cross-service
+//     calls), NOT the O(dynasty-count) per-workflow dated fan-out that forced /workflow-cost-per-outcome's
+//     recent rate OFF the request path — so no background warm / persisted store is needed here.
+// Same trailing-window smoothing as /public/stats/cost-per-outcome-trend (reuses buildCostPerOutcomeTrend),
+// so it is a true drop-in. Cost points null where the best model's window is unbacked — never a false $0.
+
+interface BestModelCostPerOutcomeTrendPayload {
+  featureSlug: string;
+  objective: string;
+  windowOutcomes: number;
+  /** The single best workflow dynasty this series plots — the currently-cheapest by LIFETIME
+   * cost-per-outcome among dynasties with the objective's OBSERVED base outcome > 0 (the SAME pick the
+   * landing headline makes). Null when NO workflow has an observed outcome (cold start) → empty points. */
+  bestWorkflowDynastySlug: string | null;
+  bestWorkflowDynastyName: string | null;
+  /** The best model's LIFETIME cost-per-outcome (USD) — the headline number this trend's most-recent
+   * backed point tracks. Null when no best model exists. */
+  bestWorkflowLifetimeCostPerOutcomeUsd: number | null;
+  /** Dated moving-average series for the best model (one point per trailing display day). Empty array
+   * when no best model exists (cold start). Same TrendPoint shape as /cost-per-outcome-trend. */
+  points: TrendPoint[];
+}
+
+const bestModelCostPerOutcomeTrendCache: PublicCache = new Map();
+
+/** Test seam — reset the in-memory best-model-cost-per-outcome-trend cache. */
+export function __resetBestModelCostPerOutcomeTrendCache(): void {
+  bestModelCostPerOutcomeTrendCache.clear();
+}
+
+export async function handleBestModelCostPerOutcomeTrend(
+  featureSlug: string | undefined,
+  objectiveParam: string | undefined,
+  daysParam: string | undefined,
+  windowParam: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  if (!featureSlug) {
+    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
+    return;
+  }
+  const objective = normalizeObjective(objectiveParam);
+  if (!objective) {
+    res.status(400).json({ error: "Query parameter 'objective' is required (one of the optimization goals)" });
+    return;
+  }
+
+  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
+  if (!feature) {
+    res.status(404).json({ error: "Feature not found" });
+    return;
+  }
+
+  // Same window/day sizing + clamps as the pooled /cost-per-outcome-trend (this is its best-model twin).
+  const parsedDays = parseInt(daysParam ?? "", 10);
+  const days = Number.isFinite(parsedDays) && parsedDays >= 1 ? Math.min(parsedDays, MAX_TREND_DAYS) : DEFAULT_TREND_DAYS;
+  const parsedWindow = parseInt(windowParam ?? "", 10);
+  const windowOutcomes =
+    Number.isFinite(parsedWindow) && parsedWindow >= 1 ? Math.min(parsedWindow, MAX_WINDOW_OUTCOMES) : DEFAULT_WINDOW_OUTCOMES;
+
+  const cacheKey = `best-model-trend:${featureSlug}:${objective}:${days}:${windowOutcomes}`;
+  const cached = getPublicCache<BestModelCostPerOutcomeTrendPayload>(bestModelCostPerOutcomeTrendCache, cacheKey);
+  if (cached) {
+    res.json(cached);
+    return;
+  }
+
+  // Pick the best model the SAME way the landing headline does: build the per-dynasty LIFETIME
+  // cost-per-outcome rows (the request-path-safe fan-out — single groupBy calls, NOT per-dynasty dated),
+  // exactly as /public/stats/workflow-cost-per-outcome does, then take the cheapest observed>0 dynasty.
+  const [workflows, costGroups, emailStats, perBrandEconomics] = await Promise.all([
+    fetchPublicWorkflows(featureSlug, "all"),
+    fetchPublicCosts(featureSlug, "workflowSlug"),
+    fetchPublicEmailStats(featureSlug, "workflowSlug"),
+    fetchFleetBrandEconomics(featureSlug),
+  ]);
+
+  const chains = buildUpgradeChains(workflows);
+  const { costMap, aggregatedOutcomes } = aggregateAcrossChains(chains, costGroups, emailStats, "workflowSlug");
+  const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
+
+  const byDynasty = new Map<string, WorkflowGrainInput>();
+  for (const [slug, cost] of costMap) {
+    const wf = workflowBySlug.get(slug);
+    if (!wf) continue;
+    const outcomes = aggregatedOutcomes.get(slug) ?? {};
+    const spentUsd = cost.totalCostInUsdCents / 100;
+    const clicks = outcomes.recipientsClicked ?? 0;
+    const replies = outcomes.recipientsRepliesPositive ?? 0;
+    const existing = byDynasty.get(wf.workflowDynastySlug);
+    if (existing) {
+      existing.spentUsd += spentUsd;
+      existing.clicks += clicks;
+      existing.replies += replies;
+    } else {
+      byDynasty.set(wf.workflowDynastySlug, {
+        workflowDynastySlug: wf.workflowDynastySlug,
+        workflowDynastyName: wf.workflowDynastyName,
+        spentUsd,
+        clicks,
+        replies,
+      });
+    }
+  }
+
+  const fleetEcon = meanFleetEconomics(perBrandEconomics);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const rows = buildWorkflowCostPerOutcome({
+    objective,
+    rows: [...byDynasty.values()],
+    fleetEcon,
+    projectedFloor: projectedCostPerOutcome,
+  });
+
+  // Best model = cheapest LIFETIME cost-per-outcome among dynasties with the objective's OBSERVED base
+  // outcome > 0. A 0-outcome workflow reads its OWN spend (never a cross-workflow average), so it is NOT
+  // the best AT producing the outcome — the SAME observed>0 filter the landing headline applies.
+  let best: WorkflowCostRow | null = null;
+  for (const r of rows) {
+    const observed = windowBaseOutcome(objective, r.observedClicks, r.observedPositiveReplies);
+    if (observed <= 0 || r.costPerOutcomeUsd == null || r.costPerOutcomeUsd <= 0) continue;
+    if (best == null || r.costPerOutcomeUsd < (best.costPerOutcomeUsd as number)) best = r;
+  }
+
+  let points: TrendPoint[] = [];
+  if (best) {
+    // Fetch ONLY the best dynasty's dated spend + dated outcomes (2 calls — request-path-safe), then plot
+    // its OWN trailing-window moving average via the SAME builder the pooled trend uses. Never pooled.
+    const [spendByDay, dayFields] = await Promise.all([
+      fetchDynastySpendByDay(featureSlug, best.workflowDynastySlug),
+      fetchPublicEmailStats(featureSlug, "day", undefined, best.workflowDynastySlug),
+    ]);
+    const outcomesByDay = new Map<string, DayOutcome>();
+    for (const [day, fields] of dayFields) {
+      if (day === "__total__") continue;
+      outcomesByDay.set(day, {
+        clicks: fields.recipientsClicked ?? 0,
+        replies: fields.recipientsRepliesPositive ?? 0,
+      });
+    }
+    points = buildCostPerOutcomeTrend({
+      objective,
+      todayIso,
+      days,
+      windowOutcomes,
+      maxLookbackDays: MAX_TREND_LOOKBACK_DAYS,
+      spendByDay,
+      outcomesByDay,
+      fleetEcon,
+    });
+  }
+
+  const payload: BestModelCostPerOutcomeTrendPayload = {
+    featureSlug,
+    objective,
+    windowOutcomes,
+    bestWorkflowDynastySlug: best?.workflowDynastySlug ?? null,
+    bestWorkflowDynastyName: best?.workflowDynastyName ?? null,
+    bestWorkflowLifetimeCostPerOutcomeUsd: best?.costPerOutcomeUsd ?? null,
+    points,
+  };
+  setPublicCache(bestModelCostPerOutcomeTrendCache, cacheKey, payload);
+  res.json(payload);
+}
+
 // ── GET /public/stats/cost-per-outcome-lifetime ──────────────────────────────
 //
 // The staff admin table's "All-time avg" column (extends #485). Cross-org (fleet-wide) LIFETIME pooled
@@ -2026,6 +2211,23 @@ router.get("/public/stats/workflow-cost-per-outcome", async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] Public stats workflow-cost-per-outcome error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/best-model-cost-per-outcome-trend ──────────────────────
+
+router.get("/public/stats/best-model-cost-per-outcome-trend", async (req, res) => {
+  try {
+    await handleBestModelCostPerOutcomeTrend(
+      req.query.featureSlug as string | undefined,
+      req.query.objective as string | undefined,
+      req.query.days as string | undefined,
+      req.query.windowOutcomes as string | undefined,
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] Public stats best-model-cost-per-outcome-trend error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
