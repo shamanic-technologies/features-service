@@ -984,16 +984,34 @@ totalClicks, totalPositiveReplies, brandCount }`. Cached via the shared `PublicC
 `/public/stats/X` → `/v1/public/features/X` per-route pattern). Triage: STAGING → promoted to main
 (features-service v0.84.0 / api-service v0.83.0). (Set 2026-07-09, PR #496.)
 
-### Trend + lifetime are GOAL-BUCKETED — each objective sums ONLY the brands whose goal is relevant
+### Trend + lifetime + distribution are GOAL-BUCKETED — EXCEPT `positiveReply` which is GOAL-AGNOSTIC (raw measured, fleet-wide, "observed across every brand")
 
-`cost-per-outcome-trend` + `cost-per-outcome-lifetime` DO NOT sum fleet-wide spend/outcomes anymore —
-each objective's spend + clicks/replies come from ONLY the brands whose `optimizationGoal` sits in that
-objective's bucket, so a meeting/reply-optimizing brand no longer dilutes the CPC card. Buckets
+`cost-per-outcome-trend` + `cost-per-outcome-lifetime` + `cost-per-outcome-distribution` DO NOT sum
+fleet-wide spend/outcomes for the BUCKETED objectives — each sums ONLY the brands whose `optimizationGoal`
+sits in that objective's bucket, so a meeting/reply-optimizing brand no longer dilutes the CPC card. Buckets
 (`OBJECTIVE_GOAL_BUCKET`, `cross-org-cost-per-outcome.ts`): **cpc(websiteVisit) = {websiteVisit, signup,
 formSubmission}** (every click-driven goal except reply/meeting — purchase closes via a meeting so it is
-NOT here); **positiveReply/signup/formSubmission/purchase = own goal only**; **meetingBooked =
+NOT here); **signup/formSubmission/purchase/sales/whatsapp = own goal only**; **meetingBooked =
 {meetingBooked, purchase}**. A brand may fall in several buckets (a signup brand feeds cpc AND
 cost-per-signup) — intended; each card is a distinct ratio over a distinct denominator.
+
+**`positiveReply` is the EXCEPTION — GOAL-AGNOSTIC (`GOAL_AGNOSTIC_OBJECTIVES` = `["positiveReply"]`,
+`isGoalAgnosticObjective`).** A positive reply is a RAW MEASURED fact produced by EVERY cold-email brand
+(anyone can hit reply to any brand's outreach), and the public homepage headlines its cost as the fleet-wide
+average CAC ("the average cost of acquisition observed across every brand we run"). So `bucketBrandsForObjective`
+returns the WHOLE dataset for `positiveReply` — its trend/lifetime/distribution pool spend + replies over ALL
+contributing brands, NOT only `optimizationGoal=positiveReply` brands. Scoping it to the tiny reply-goal subset
+(PR #499) made the headline a biased, small-denominator metric whose weekly delta swung on noise — contradicting
+the "every brand" claim. **Reconciliation with PR #499 (which ADDED the bucketing on purpose):** #499 conflated
+two concerns. Its dilution fix stays CORRECT + RETAINED for the PROJECTED objectives (signup/formSubmission/
+meetingBooked/purchase/sales — pushing a brand's spend through economics is only meaningful for brands whose
+funnel those economics describe) AND for **websiteVisit CPC** (a click is also raw-measured, but #499 deliberately
+excludes reply/meeting brands whose link-light copy yields incidental, artificially-low click rates, and the CPC
+card carries NO fleet-wide public claim — the metric's scope matches its consumer's claim). **whatsappConversation**
+stays own-goal because its outcome (a WhatsApp-link click) requires a WhatsApp link in the email → NOT produced
+fleet-wide. So only `positiveReply` flips to goal-agnostic; everything else keeps #499's scoping. Husk/false-$0
+handling unchanged (a brand with 0 replies contributes its spend to the pooled denominator but no distribution
+data point; 0 fleet replies → null, never $0).
 
 **Bucketing is CONSUMER-SIDE composition, not a read-side derivation of a missing tag** — runs/email cost
 rows carry NO goal tag (0 of ~42k), so features-service enumerates the feature's brands
