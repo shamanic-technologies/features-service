@@ -394,7 +394,7 @@ const EMPTY_CONVERSION_OUTCOME_EMAILS: ConversionOutcomeEmails = { signup: null,
 // website_purchase = the RENAMED former `sales` lens (multi-step self-serve / meeting close funnel).
 // sales = the NEW COMBINED goal (a paying client won via EITHER visit→paid OR reply→paid); per-LEAD
 // probability combines the two paths as a probabilistic OR (a lead converts at most once) — see
-// lensProbability + combinedSaleProbability. Do NOT confuse it with the population expected-count SUM
+// lensProbability + combinedSaleProbability. Do NOT confuse it with the best-channel-MIN cost-per-sale
 // (costPerSaleUsd) used by the projection surface.
 export type Lens = "signups" | "booked-meetings" | "website_purchase" | "sales" | "website_visits" | "positive_replies";
 export const LENS_VALUES: readonly Lens[] = ["signups", "booked-meetings", "website_purchase", "sales", "website_visits", "positive_replies"];
