@@ -1118,9 +1118,15 @@ const customerHealthRowSchema = z.object({
       lastSeen: z.string().nullable().describe("ISO timestamp of the org's most recent dashboard pageview in the window. null when none."),
       daysSinceLastSeen: z.number().int().nullable().describe("Whole days between lastSeen and the board's asOf. null when lastSeen is null."),
     }).nullable().describe("Per-org dashboard-return frequency from PostHog (sessions 7d/30d + last-seen), keyed on the Clerk org id. null when PostHog has no data / is unreachable / is unconfigured — never fabricated."),
-    budgetChangeHistory: z.null().describe("Daily-budget change-history timeline — not persisted yet."),
-    pauseHistory: z.null().describe("Pause on/off history timeline — not persisted yet."),
-  }).describe("dashboardReturnFrequency is a real PostHog signal (null when no data / degraded); budgetChangeHistory + pauseHistory are KNOWN GAPS — explicit null so the front never fabricates them."),
+    budgetChangeHistory: z.array(z.object({
+      dailyBudgetUsd: z.number().describe("Daily budget in USD after this change (0 = explicit pause)."),
+      changedAt: z.string().describe("ISO timestamp the budget was set to this value."),
+    })).nullable().describe("Daily-budget change timeline (billing-service, forward-only, oldest-first). Empty array = tracked, no changes yet; null = read failed / unconfigured — never fabricated."),
+    pauseHistory: z.array(z.object({
+      paused: z.boolean().describe("New pause state after this flip (true = paused, false = resumed)."),
+      transitionedAt: z.string().describe("ISO timestamp of the flip."),
+    })).nullable().describe("Pause on/off transition timeline (campaign-service, forward-only, oldest-first). Empty array = tracked, no flips yet; null = read failed / unconfigured — never fabricated."),
+  }).describe("All three are now TRACKED upstream (dashboardReturnFrequency = PostHog; budgetChangeHistory = billing; pauseHistory = campaign). Each is null only when its producer is unreachable/unconfigured (fail-soft); an empty history array means tracked-but-nothing-yet. Never fabricated."),
 });
 
 const customerHealthStatsSchema = z.object({
@@ -1155,7 +1161,7 @@ registry.registerPath({
     "coherent by construction, own-economics only); an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single " +
     "best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). " +
     "Health: red = not active; green = active AND ROI ≥ 1 AND audience not near-exhausted; yellow = active but ROI < 1 (or unknown) OR audience " +
-    "near-exhausted. Under notTrackedYet: dashboardReturnFrequency is a REAL per-org PostHog return signal (sessions 7d/30d + last-seen; null when PostHog has no data / is degraded); budget-change history + pause history remain explicit-null gaps — never fabricated.",
+    "near-exhausted. Under notTrackedYet (all three now TRACKED upstream, null only on a fail-soft producer degrade): dashboardReturnFrequency = per-org PostHog return signal (sessions 7d/30d + last-seen); budgetChangeHistory = billing-service forward-only daily-budget change timeline; pauseHistory = campaign-service forward-only pause on/off timeline. Empty array = tracked-but-nothing-yet; never fabricated.",
   tags: ["Internal"],
   responses: {
     200: { description: "Per-customer health rows + fleet stats", content: { "application/json": { schema: customerHealthResponseRef } } },

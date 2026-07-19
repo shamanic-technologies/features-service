@@ -42,6 +42,12 @@ import { buildActiveUsersByUser, type ActiveUsersByUser, type ActiveUserRow } fr
 import { fetchBrandSavedEconomicsWithGoal, BrandOwnershipError, type EffectiveEconomics } from "./sales-economics-client.js";
 import { fetchConversionCounts, type ConversionCounts } from "./conversion-counts-client.js";
 import { fetchDashboardReturnsByOrg, type DashboardReturnSignal } from "./posthog-client.js";
+import {
+  fetchBudgetChangeHistory,
+  fetchPauseHistory,
+  type BudgetChangeEntry,
+  type PauseTransition,
+} from "./history-clients.js";
 import { computeAudienceStats, type AudienceStatsEnvelope } from "./audience-stats-compute.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { getFunnel, type SalesEconomics } from "./funnel-registry.js";
@@ -131,18 +137,21 @@ interface HealthInputs {
 }
 
 /**
- * Signals surfaced under `notTrackedYet` — explicit null so the front never fabricates them.
- * `dashboardReturnFrequency` IS now tracked (per-org PostHog return signal); it keeps its slot here for
- * response-path stability with the dashboard, and is null only when PostHog is unreachable/unconfigured
- * or the org has no dashboard activity. The other two remain genuine gaps.
+ * Signals that once lived under `notTrackedYet` — all three are now TRACKED upstream and kept in this
+ * slot for response-path stability with the dashboard. Each is null ONLY when its producer is
+ * unreachable / unconfigured (fail-soft) or the entity has no history yet — never a fabricated value.
+ * `dashboardReturnFrequency` = per-org PostHog return signal; `budgetChangeHistory` = billing-service
+ * forward-only daily-budget change timeline; `pauseHistory` = campaign-service forward-only pause on/off
+ * timeline. (Forward-only: entries begin when each producer shipped; an empty array is a legitimate
+ * "tracked, nothing yet" state, distinct from null = "couldn't read".)
  */
 interface NotTrackedYet {
   /** Per-org dashboard-return frequency from PostHog (sessions 7d/30d + last-seen). null when PostHog has no data / is unreachable / is unconfigured. */
   dashboardReturnFrequency: DashboardReturnSignal | null;
-  /** Daily-budget change history timeline — not persisted. */
-  budgetChangeHistory: null;
-  /** Pause on/off history timeline — not persisted. */
-  pauseHistory: null;
+  /** Daily-budget change timeline (billing-service, forward-only, oldest-first). Empty array = no changes yet; null = read failed/unconfigured. */
+  budgetChangeHistory: BudgetChangeEntry[] | null;
+  /** Pause on/off transition timeline (campaign-service, forward-only, oldest-first). Empty array = no flips yet; null = read failed/unconfigured. */
+  pauseHistory: PauseTransition[] | null;
 }
 
 export interface CustomerHealthRow {
@@ -248,6 +257,10 @@ export interface CustomerHealthDeps {
   workflowProjection: (featureSlug: string, brandId: string, orgId: string, goal: Goal) => Promise<WorkflowProjectionResponse>;
   /** Per-org dashboard-return signal for the WHOLE fleet (PostHog), keyed on the Clerk org id (= orgExternalId). Fail-loud; the builder wraps it soft. */
   dashboardReturns: (now: Date) => Promise<Map<string, DashboardReturnSignal>>;
+  /** Per-(org, brand) daily-budget change history (billing). Fail-loud; the builder wraps it soft (→ null). */
+  budgetHistory: (brandId: string, orgId: string) => Promise<BudgetChangeEntry[]>;
+  /** Per-(org, brand) pause on/off transition history (campaign). Fail-loud; the builder wraps it soft (→ null). */
+  pauseHistory: (brandId: string, orgId: string) => Promise<PauseTransition[]>;
 }
 
 const REAL_DEPS: CustomerHealthDeps = {
@@ -257,6 +270,8 @@ const REAL_DEPS: CustomerHealthDeps = {
   savedEconomicsWithGoal: fetchBrandSavedEconomicsWithGoal,
   conversionCounts: fetchConversionCounts,
   dashboardReturns: fetchDashboardReturnsByOrg,
+  budgetHistory: fetchBudgetChangeHistory,
+  pauseHistory: fetchPauseHistory,
   brandRevenue: async (featureSlug, brandId, orgId, economics) => {
     const funnel = getFunnel(featureSlug);
     const headers: DownstreamHeaders = { orgId, featureSlug };
@@ -470,6 +485,21 @@ export async function buildCustomerHealthBoard(
     const featureSlug = pairFeature.get(pairKey) ?? null;
     const recency = recencyByOrg.get(account.orgId) ?? null;
 
+    // Budget-change + pause history (billing / campaign) — per-(org, brand) DISPLAY ENRICHMENT, each
+    // fail-SOFT to null so a billing/campaign blip degrades only its own column, never the row's economics
+    // or the whole board (mirrors the PostHog dashboard-return degrade). Independent of featureSlug /
+    // economics, so fetched outside the main enrichment try. An empty array = "tracked, no history yet".
+    const [budgetChangeHistory, pauseHistory] = await Promise.all([
+      deps.budgetHistory(account.brandId, account.orgId).catch((error): BudgetChangeEntry[] | null => {
+        console.warn(`[features-service] customer-health budget-history soft-degrade (org=${account.orgId} brand=${account.brandId}): ${(error as Error).message}`);
+        return null;
+      }),
+      deps.pauseHistory(account.brandId, account.orgId).catch((error): PauseTransition[] | null => {
+        console.warn(`[features-service] customer-health pause-history soft-degrade (org=${account.orgId} brand=${account.brandId}): ${(error as Error).message}`);
+        return null;
+      }),
+    ]);
+
     let economics: SalesEconomics | null = null;
     let goal: Goal | null = null;
     let conversionCounts: ConversionCounts = { signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 };
@@ -596,8 +626,8 @@ export async function buildCustomerHealthBoard(
         // null), the org has no external id, or the org had no dashboard activity in the window.
         dashboardReturnFrequency:
           (account.orgExternalId && dashboardReturns?.get(account.orgExternalId)) || null,
-        budgetChangeHistory: null,
-        pauseHistory: null,
+        budgetChangeHistory,
+        pauseHistory,
       },
     };
   });
