@@ -181,6 +181,32 @@ recommended workflow rides `outcomeCostForGoal` (unchanged) — this touches ONL
 ROI + CAC. `ProjectedOutcomeCosts` is an internal lib type (NOT a response schema) → no OpenAPI regen.
 (Set 2026-07-07.)
 
+## COMBINED-`sales` goal cost = the BEST converting channel (`min` of visit→paid vs reply→paid), NEVER the population SUM (supersedes #615)
+
+`projectOutcomeCosts(...).costPerSaleUsd` (the combined-`sales` goal's cost-per-outcome == cost-per-paid
+client, drives its ranking + headline ROI/CAC on `workflow-projection` + the cross-org objective surfaces)
+= **`min(clickUsd/v2pc, replyUsd/r2pc)` = `1 / max(visitPaidPerBudget, replyPaidPerBudget)`** — the
+CHEAPER of the two single-step paid-client costs (visit→paid, reply→paid). A sale is won via the BEST
+channel, so combined-sales reduces to the best of its two single-step goals and is coherent by
+construction (≥ the best channel; can NEVER read below either single path).
+
+**Do NOT restore the population-SUM `salesPerBudget = (1/clickUsd)·v2pc + (1/replyUsd)·r2pc` (#615).** The
+SUM adds the channels' sales-per-budget, so a workflow merely CHEAP on a near-zero-conversion channel
+(e.g. clicks at 0.5% visit→paid) had its cost-per-sale DILUTED below its real, higher-converting reply
+channel — it (a) RANKED the wrong workflow best (rewarded cheap-on-visits over genuinely-good-at-converting)
+and (b) produced a combined headline cost BELOW every per-audience row (internally incoherent). Repro
+(features-service#630): LTR $2500, visit→paid 0.5%, reply→paid 20% — SUM gave Dawn $204/sale (< its own
+$240 reply-path cost) and headline 12.2x over a best-audience 8.7x; MIN gives Dawn $240, Granite $230 →
+Sales picks Granite = the positiveReply goal's pick (the reply path IS this brand's real acquisition
+route). Same doctrine as the per-goal `costPerPaidClient` section above: no combined/downstream cost may
+read cheaper than the honest single-path cost.
+
+The per-LEAD sale probability (`combinedSaleProbability`, revenue lens EV) STAYS the `orP` of the two
+paths — a DISTINCT quantity (a lead converts at most once, P ≤ 1), not a cost-ranking one. Do NOT conflate
+the two combinations. `costPerSaleUsd` shape unchanged (internal lib field) → no OpenAPI regen; auto-flows
+to `objectiveCostPerOutcome` (cross-org) + `paidClientCostForGoal`/`outcomeCostForGoal` (workflow-projection).
+(Set 2026-07-19.)
+
 ## Goal vocabulary — a NEW optimization goal goes in the CANONICAL `Goal` enum + `GOALS`, NEVER a parallel "ExtendedGoal" side-type
 
 When adding an optimization goal (or renaming one), put it in the shared `Goal` enum + the `GOALS`

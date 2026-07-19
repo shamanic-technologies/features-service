@@ -567,7 +567,7 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     expect(res.status).toBe(502);
   });
 
-  it("COMBINED sales goal: cost-per-outcome == cost-per-paid-client == cost-per-sale (additive population count); ROI = CLTV / cost-per-sale", async () => {
+  it("COMBINED sales goal: cost-per-outcome == cost-per-paid-client == cost-per-sale (best-channel MIN); ROI = CLTV / cost-per-sale", async () => {
     const SINGLE = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 20 };
     mockFetch({ economics: SINGLE });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=sales`).set(AUTH);
@@ -579,18 +579,18 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     expect(res.body.economics.replyToPaidClientPct).toBe(20);
     const a = rowFor(res.body, "dyn-a");
     expect(a.resolved.grain).toBe("brand"); // measured (brand has clicks + replies)
-    // brand unit costs: cpc $20, cppr $100. salesPerBudget = (1/20)·0.05 + (1/100)·0.20 = 0.0045 → $222.22.
-    // The two channels ADD (linearity of expectation over the population).
-    const expectedSaleCost = 1 / ((1 / 20) * 0.05 + (1 / 100) * 0.2);
+    // brand unit costs: cpc $20, cppr $100. visit path = 20/0.05 = $400 ; reply path = 100/0.20 = $500.
+    // Combined = MIN (the best-converting channel), NEVER below either single path.
+    const expectedSaleCost = Math.min(20 / 0.05, 100 / 0.2); // 400
     expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(expectedSaleCost, 2);
-    expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(222.222, 2);
+    expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(400, 2);
     // For the combined goal the OUTCOME *is* the paying client → the two are EQUAL (unlike single-step,
     // where they differ by the visit/reply→paid rate).
     expect(a.resolved.costPerPaidClientUsd).toBeCloseTo(a.resolved.costPerOutcomeUsd, 6);
-    // ROI = CLTV / cost-per-sale = 1000 / 222.22 = 4.5 ; cacPct = 100 / ROI.
+    // ROI = CLTV / cost-per-sale = 1000 / 400 = 2.5 ; cacPct = 100 / ROI.
     expect(a.resolved.roiMultiple).toBeCloseTo(1000 / a.resolved.costPerPaidClientUsd, 5);
-    expect(a.resolved.roiMultiple).toBeCloseTo(4.5, 3);
-    expect(a.resolved.cacPct).toBeCloseTo(100 / 4.5, 3);
+    expect(a.resolved.roiMultiple).toBeCloseTo(2.5, 3);
+    expect(a.resolved.cacPct).toBeCloseTo(100 / 2.5, 3);
   });
 
   it("COMBINED sales with a paid-client rate ABSENT → fail loud (502)", async () => {
