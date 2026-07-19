@@ -1486,6 +1486,30 @@ describe("GET /public/stats/cost-per-outcome-trend (goal-bucketed)", () => {
     expect(latest.windowOutcomeCount).toBe(100);
     expect(latest.costPerOutcomeUsd).toBeCloseTo(2, 6);
   });
+
+  it("positiveReply window is GOAL-AGNOSTIC — pools EVERY brand's spend + replies (website-visit brand included)", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    mockBucketedFetch({
+      memberships: [
+        { orgId: "org-A", brandId: "brand-visit", workflowSlug: "wf-1" },
+        { orgId: "org-B", brandId: "brand-reply", workflowSlug: "wf-2" },
+      ],
+      brands: {
+        // a website-visit-goal brand STILL produces (incidental) positive replies — its spend + replies count
+        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 10 }] },
+        "brand-reply": { goal: "positive_replies", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "90000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 30 }] },
+      },
+    });
+
+    const res = await request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=positiveReply&windowOutcomes=50");
+    expect(res.status).toBe(200);
+    const latest = res.body.points.at(-1);
+    // spend pooled over BOTH brands: 200 + 900 = 1100; replies 10 + 30 = 40 → CPPR 27.5 (not the
+    // reply-brand-only 900/30 = 30 the old goal-bucketed path produced)
+    expect(latest.windowSpentUsd).toBeCloseTo(1100, 6);
+    expect(latest.windowOutcomeCount).toBe(40);
+    expect(latest.costPerOutcomeUsd).toBeCloseTo(27.5, 6);
+  });
 });
 
 describe("goal-bucket dataset single-flight (no cold-cache stampede)", () => {
@@ -1587,7 +1611,7 @@ describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
     __resetGoalBucketDatasetCache();
   });
 
-  it("each objective pools ONLY its bucket's brands — CPC excludes the reply brand's spend", async () => {
+  it("CPC stays goal-BUCKETED (excludes reply brand) but CPPR is goal-AGNOSTIC (pools every brand's spend÷replies)", async () => {
     mockFindFirst.mockResolvedValue(MOCK_FEATURE);
     mockBucketedFetch({
       memberships: [
@@ -1595,7 +1619,7 @@ describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
         { orgId: "org-B", brandId: "brand-reply", workflowSlug: "wf-2" },
       ],
       brands: {
-        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "40000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 200, repliesPositive: 0 }] },
+        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "40000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 200, repliesPositive: 6 }] },
         "brand-reply": { goal: "positive_replies", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "90000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 30 }] },
       },
     });
@@ -1604,10 +1628,11 @@ describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
     expect(res.status).toBe(200);
     expect(res.body.brandCount).toBe(2);
     expect(res.body.totalSpentUsd).toBeCloseTo(1300, 6); // 400 + 900 (all bucketable brands)
-    // CPC pools the visit brand ONLY: 400/200 = 2 (the reply brand's $900 is NOT in the CPC bucket)
+    // CPC pools the visit brand ONLY: 400/200 = 2 (the reply brand's $900 is NOT in the CPC bucket — #499 preserved)
     expect(res.body.avgCostPerOutcomeByObjective.websiteVisit).toBeCloseTo(2, 6);
-    // CPPR pools the reply brand ONLY: 900/30 = 30
-    expect(res.body.avgCostPerOutcomeByObjective.positiveReply).toBeCloseTo(30, 6);
+    // CPPR is goal-agnostic: pools BOTH brands → total spend 1300 ÷ total replies 36 = 36.11
+    // (the website-visit brand's $400 + its 6 incidental replies both count — a reply is a fleet-wide fact)
+    expect(res.body.avgCostPerOutcomeByObjective.positiveReply).toBeCloseTo(1300 / 36, 5);
     // no signup/meeting brand → those buckets are empty → null (never a false $0)
     expect(res.body.avgCostPerOutcomeByObjective.signup).toBeNull();
     expect(res.body.avgCostPerOutcomeByObjective.meetingBooked).toBeNull();
@@ -1716,6 +1741,30 @@ describe("GET /public/stats/cost-per-outcome-distribution (goal-bucketed, per-br
     expect(res.body.buckets.reduce((a: number, b: { count: number }) => a + b.count, 0)).toBe(2);
     // no per-brand id/value leaks on the public payload
     expect(JSON.stringify(res.body)).not.toContain("b-visit-1");
+  });
+
+  it("positiveReply distribution is GOAL-AGNOSTIC — every brand that produced replies contributes a data point", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    mockBucketedFetch({
+      memberships: [
+        { orgId: "org-A", brandId: "b-visit", workflowSlug: "wf-1" },
+        { orgId: "org-B", brandId: "b-signup", workflowSlug: "wf-2" },
+        { orgId: "org-C", brandId: "b-reply", workflowSlug: "wf-3" },
+      ],
+      brands: {
+        // off-goal brands STILL contribute their own CPPR data point (spend ÷ their replies)
+        "b-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 10 }] }, // CPPR 20
+        "b-signup": { goal: "signups", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "30000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 80, repliesPositive: 10 }] }, // CPPR 30
+        "b-reply": { goal: "positive_replies", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "40000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 10 }] }, // CPPR 40
+      },
+    });
+
+    const res = await request(app).get("/public/stats/cost-per-outcome-distribution?featureSlug=sales-cold-email-outreach&objective=positiveReply&buckets=4");
+    expect(res.status).toBe(200);
+    expect(res.body.brandCount).toBe(3); // ALL three brands contribute — not just the positiveReply-goal one
+    expect(res.body.min).toBeCloseTo(20, 6);
+    expect(res.body.max).toBeCloseTo(40, 6);
+    expect(res.body.mean).toBeCloseTo(30, 6);
   });
 
   it("empty/soft when fewer than 2 brands have a usable cost — buckets [], scalars null, never a false $0", async () => {
