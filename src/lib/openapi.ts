@@ -1062,7 +1062,7 @@ const customerHealthRowSchema = z.object({
   orgBalanceUsd: z.number().describe("Org SPENDABLE balance in USD (display)."),
   orgActualBalanceUsd: z.number().describe("Org ACTUAL balance in USD (the active-verdict figure)."),
   autoTopupEnabled: z.boolean(),
-  optimizationGoal: z.enum(["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply", "formSubmission"]).nullable().describe("The brand's 'Maximising X' goal (canonical camelCase). null when the brand saved no recognised goal."),
+  optimizationGoal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission"]).nullable().describe("The brand's 'Maximising X' goal (canonical camelCase). websitePurchase = renamed former purchase; sales = combined-sales goal. null when the brand saved no recognised goal."),
   conversionTracker: z.object({
     needed: z.boolean().describe("Whether the goal requires a client-site conversion tracker (signup / formSubmission / purchase → true; websiteVisit / positiveReply / meetingBooked → false)."),
     observedConversions: z.number().nullable().describe("Observed attributed conversions of the goal's kind (lead-service tracker). null for goals with no discrete conversion event (websiteVisit / positiveReply) or unknown goal."),
@@ -1362,13 +1362,15 @@ const objectiveAveragesSchema = z.object({
   signup: z.number().nullable().describe("Fleet-average projected cost per self-serve signup."),
   formSubmission: z.number().nullable().describe("Fleet-average projected cost per form submission."),
   meetingBooked: z.number().nullable().describe("Fleet-average projected cost per meeting booked."),
-  purchase: z.number().nullable().describe("Fleet-average projected cost per purchase/close."),
+  websitePurchase: z.number().nullable().describe("Fleet-average projected cost per website purchase (multi-step self-serve/meeting close — RENAMED from `purchase`)."),
+  sales: z.number().nullable().describe("Fleet-average projected cost per SALE (combined goal — a paying client won via EITHER the visit→paid OR reply→paid path, valued at CLTV)."),
+  purchase: z.number().nullable().optional().describe("TRANSITIONAL byte-equal alias of `websitePurchase` — kept so the admin dashboard's existing `.purchase` key keeps rendering during the fleet rename. Migrate to `websitePurchase`; this alias will be dropped."),
 }).describe("Fleet-average cost-per-outcome per optimization objective. Each = mean across client brands of that brand's best-workflow value; null when no brand is backed for the objective.");
 
 const publicCostProjectionResponseSchema = z.object({
   featureSlug: z.string(),
   avgCostPerMeetingBooked: z.number().nullable().describe("Legacy (Wave 1) alias of avgCostPerOutcomeByObjective.meetingBooked. Null when no brand has usable economics."),
-  avgCostPerPurchase: z.number().nullable().describe("Legacy (Wave 1) alias of avgCostPerOutcomeByObjective.purchase. Null when no brand has usable economics."),
+  avgCostPerPurchase: z.number().nullable().describe("Legacy (Wave 1) alias of avgCostPerOutcomeByObjective.websitePurchase (renamed from purchase; the field name stays for admin back-compat). Null when no brand has usable economics."),
   avgCostPerOutcomeByObjective: objectiveAveragesSchema,
   brandCount: z.number().int().describe("Number of client brands with usable economics that contributed to the averages."),
 });

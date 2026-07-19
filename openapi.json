@@ -3057,12 +3057,13 @@
                   "enum": [
                     "signup",
                     "meetingBooked",
-                    "purchase",
+                    "websitePurchase",
+                    "sales",
                     "websiteVisit",
                     "positiveReply",
                     "formSubmission"
                   ],
-                  "description": "The brand's 'Maximising X' goal (canonical camelCase). null when the brand saved no recognised goal."
+                  "description": "The brand's 'Maximising X' goal (canonical camelCase). websitePurchase = renamed former purchase; sales = combined-sales goal. null when the brand saved no recognised goal."
                 },
                 "conversionTracker": {
                   "type": "object",
@@ -8164,7 +8165,7 @@
                     "avgCostPerPurchase": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Legacy (Wave 1) alias of avgCostPerOutcomeByObjective.purchase. Null when no brand has usable economics."
+                      "description": "Legacy (Wave 1) alias of avgCostPerOutcomeByObjective.websitePurchase (renamed from purchase; the field name stays for admin back-compat). Null when no brand has usable economics."
                     },
                     "avgCostPerOutcomeByObjective": {
                       "type": "object",
@@ -8194,10 +8195,20 @@
                           "nullable": true,
                           "description": "Fleet-average projected cost per meeting booked."
                         },
+                        "websitePurchase": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average projected cost per website purchase (multi-step self-serve/meeting close — RENAMED from `purchase`)."
+                        },
+                        "sales": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average projected cost per SALE (combined goal — a paying client won via EITHER the visit→paid OR reply→paid path, valued at CLTV)."
+                        },
                         "purchase": {
                           "type": "number",
                           "nullable": true,
-                          "description": "Fleet-average projected cost per purchase/close."
+                          "description": "TRANSITIONAL byte-equal alias of `websitePurchase` — kept so the admin dashboard's existing `.purchase` key keeps rendering during the fleet rename. Migrate to `websitePurchase`; this alias will be dropped."
                         }
                       },
                       "required": [
@@ -8206,7 +8217,8 @@
                         "signup",
                         "formSubmission",
                         "meetingBooked",
-                        "purchase"
+                        "websitePurchase",
+                        "sales"
                       ],
                       "description": "Fleet-average cost-per-outcome per optimization objective. Each = mean across client brands of that brand's best-workflow value; null when no brand is backed for the objective."
                     },
@@ -8630,10 +8642,20 @@
                           "nullable": true,
                           "description": "Fleet-average projected cost per meeting booked."
                         },
+                        "websitePurchase": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average projected cost per website purchase (multi-step self-serve/meeting close — RENAMED from `purchase`)."
+                        },
+                        "sales": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Fleet-average projected cost per SALE (combined goal — a paying client won via EITHER the visit→paid OR reply→paid path, valued at CLTV)."
+                        },
                         "purchase": {
                           "type": "number",
                           "nullable": true,
-                          "description": "Fleet-average projected cost per purchase/close."
+                          "description": "TRANSITIONAL byte-equal alias of `websitePurchase` — kept so the admin dashboard's existing `.purchase` key keeps rendering during the fleet rename. Migrate to `websitePurchase`; this alias will be dropped."
                         }
                       },
                       "required": [
@@ -8642,7 +8664,8 @@
                         "signup",
                         "formSubmission",
                         "meetingBooked",
-                        "purchase"
+                        "websitePurchase",
+                        "sales"
                       ],
                       "description": "Pooled LIFETIME (all-history) cost-per-outcome per objective — total fleet spend ÷ total fleet outcomes, projected objectives through the fleet-mean economics. The window→∞ limit of cost-per-outcome-trend. Null where the objective is unbacked; never a false $0."
                     },
