@@ -897,12 +897,16 @@ export async function handlePublicWorkflowEngagementLatency(
 interface PublicCostProjectionPayload {
   featureSlug: string;
   /** Legacy top-level fields (Wave 1 admin cards) — kept byte-equal to
-   * avgCostPerOutcomeByObjective.meetingBooked / .purchase. */
+   * avgCostPerOutcomeByObjective.meetingBooked / .websitePurchase. `avgCostPerPurchase` keeps its name
+   * (admin reads it) but now sources the renamed `websitePurchase` objective. */
   avgCostPerMeetingBooked: number | null;
   avgCostPerPurchase: number | null;
   /** Fleet-average cost-per-outcome for EVERY optimization objective (null where no brand is backed).
-   * websiteVisit / positiveReply = CPC / CPPR; the rest project through the funnel. Gap #1 (#485). */
-  avgCostPerOutcomeByObjective: ObjectiveAverages;
+   * websiteVisit / positiveReply = CPC / CPPR; the rest project through the funnel. Gap #1 (#485). Now
+   * carries `websitePurchase` (renamed) + the new combined `sales`, plus a TRANSITIONAL byte-equal
+   * `purchase` alias (== websitePurchase) so the admin dashboard keeps rendering until it migrates to the
+   * new key — drop the alias once distribute.you reads `websitePurchase`. */
+  avgCostPerOutcomeByObjective: ObjectiveAverages & { purchase: number | null };
   brandCount: number;
 }
 
@@ -989,8 +993,10 @@ export async function handlePublicCostProjection(
   const payload: PublicCostProjectionPayload = {
     featureSlug,
     avgCostPerMeetingBooked: objectives.meetingBooked,
-    avgCostPerPurchase: objectives.purchase,
-    avgCostPerOutcomeByObjective: objectives,
+    avgCostPerPurchase: objectives.websitePurchase, // legacy top-level alias → renamed objective
+    // Transitional `purchase` alias (== websitePurchase) keeps the admin's existing key working during
+    // the fleet rename; remove once distribute.you migrates to `websitePurchase`.
+    avgCostPerOutcomeByObjective: { ...objectives, purchase: objectives.websitePurchase },
     brandCount,
   };
   setPublicCache(costProjectionCache, featureSlug, payload);
@@ -1378,8 +1384,10 @@ export async function handleWorkflowCostPerOutcome(
 interface CostPerOutcomeLifetimePayload {
   featureSlug: string;
   /** Pooled all-history cost-per-outcome per objective (websiteVisit / positiveReply = pooled CPC / CPPR;
-   * the rest project through the fleet-mean economics). Null where the objective is unbacked. */
-  avgCostPerOutcomeByObjective: ObjectiveAverages;
+   * the rest project through the fleet-mean economics). Null where the objective is unbacked. Carries the
+   * renamed `websitePurchase` + new `sales`, plus a TRANSITIONAL byte-equal `purchase` alias (see the
+   * cost-projection payload) so the admin's existing `.purchase` key keeps working until it migrates. */
+  avgCostPerOutcomeByObjective: ObjectiveAverages & { purchase: number | null };
   /** Total cross-org fleet spend (USD, committed) over all dated history. */
   totalSpentUsd: number;
   /** Total cross-org clicks (website visits) over all dated history — the CPC denominator. */
@@ -1437,7 +1445,9 @@ export async function handleCostPerOutcomeLifetime(
 
   const payload: CostPerOutcomeLifetimePayload = {
     featureSlug,
-    avgCostPerOutcomeByObjective: objectives,
+    // Transitional `purchase` alias (== websitePurchase) — mirrors the cost-projection payload; drop once
+    // the admin dashboard reads `websitePurchase`.
+    avgCostPerOutcomeByObjective: { ...objectives, purchase: objectives.websitePurchase },
     totalSpentUsd,
     totalClicks,
     totalPositiveReplies,

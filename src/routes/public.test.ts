@@ -975,7 +975,12 @@ describe("GET /public/stats/cost-projection", () => {
     expect(res.body.avgCostPerPurchase).toBeCloseTo((p1.costPerPurchaseUsd! + p2.costPerPurchaseUsd!) / 2, 5);
     // Gap #1: all-objective averages; legacy top-level fields are byte-equal aliases + CPC/CPPR = min unit cost.
     expect(res.body.avgCostPerOutcomeByObjective.meetingBooked).toBe(res.body.avgCostPerMeetingBooked);
-    expect(res.body.avgCostPerOutcomeByObjective.purchase).toBe(res.body.avgCostPerPurchase);
+    // RENAMED: `websitePurchase` is the canonical key; the legacy top-level `avgCostPerPurchase` + the
+    // TRANSITIONAL `.purchase` alias both mirror it byte-equal (kept until the admin dashboard migrates).
+    expect(res.body.avgCostPerOutcomeByObjective.websitePurchase).toBe(res.body.avgCostPerPurchase);
+    expect(res.body.avgCostPerOutcomeByObjective.purchase).toBe(res.body.avgCostPerOutcomeByObjective.websitePurchase);
+    // NEW combined `sales` objective present in the map (null when no fleet brand is backed for it).
+    expect("sales" in res.body.avgCostPerOutcomeByObjective).toBe(true);
     expect(res.body.avgCostPerOutcomeByObjective.websiteVisit).toBeCloseTo(1, 5); // cheapest clickUsd = $10/10
     expect(res.body.avgCostPerOutcomeByObjective.positiveReply).toBeCloseTo(2, 5); // cheapest replyUsd = $10/5
   });

@@ -13,21 +13,29 @@
  *
  * Each goal maps to ONE projected cost-per-outcome the funnel can already compute from a brand's
  * effective sales-economics:
- *   - signup        → cost per self-serve signup (click → signup, visitToSignupPct)
- *   - meetingBooked → cost per booked meeting (click + reply routes)
- *   - purchase      → cost per paying close (full funnel)
- *   - websiteVisit  → cost per paid client via the SINGLE-STEP visit→paid rate (visitToPaidClientPct)
- *   - positiveReply → cost per paid client via the SINGLE-STEP reply→paid rate (replyToPaidClientPct)
- *   - formSubmission→ cost per form submission via the TWO-STEP click route (visitToFormSubmissionPct);
- *                     close economics ride visit→form→paid. Visit-driven, the sibling of signup.
+ *   - signup         → cost per self-serve signup (click → signup, visitToSignupPct)
+ *   - meetingBooked  → cost per booked meeting (click + reply routes)
+ *   - websitePurchase→ cost per paying close via the multi-step self-serve/meeting funnel (RENAMED from
+ *                      the former `purchase` goal)
+ *   - sales          → COMBINED goal: cost per SALE (paying client, valued at CLTV) won via EITHER the
+ *                      visit→paid OR the reply→paid single-step path; population expected-count = the two
+ *                      channels ADD, per-lead probability = orP. The outcome IS the paying client.
+ *   - websiteVisit   → cost per paid client via the SINGLE-STEP visit→paid rate (visitToPaidClientPct)
+ *   - positiveReply  → cost per paid client via the SINGLE-STEP reply→paid rate (replyToPaidClientPct)
+ *   - formSubmission → cost per form submission via the TWO-STEP click route (visitToFormSubmissionPct);
+ *                      close economics ride visit→form→paid. Visit-driven, the sibling of signup.
  *
  * websiteVisit / positiveReply are SINGLE-STEP goals: the paid-client conversion is one rate applied
  * to the click (visit) or positive-reply population — NOT the multi-step funnels the other goals use.
  * formSubmission is a TWO-STEP self-serve goal (visit → micro-conversion → paid), the sibling of signup.
+ * `sales` + `websitePurchase` are FIRST-CLASS Goal members (the whole fleet — including the cross-org
+ * public/staff surfaces that iterate GOALS — speaks one vocabulary). During the fleet rename the
+ * cross-org response keeps a transitional byte-equal `purchase` alias of `websitePurchase` so the admin
+ * dashboard keeps rendering until it migrates.
  */
-export type Goal = "signup" | "meetingBooked" | "purchase" | "websiteVisit" | "positiveReply" | "formSubmission";
+export type Goal = "signup" | "meetingBooked" | "websitePurchase" | "sales" | "websiteVisit" | "positiveReply" | "formSubmission";
 
-export const GOALS: readonly Goal[] = ["signup", "meetingBooked", "purchase", "websiteVisit", "positiveReply", "formSubmission"] as const;
+export const GOALS: readonly Goal[] = ["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission"] as const;
 
 export const isGoal = (value: unknown): value is Goal =>
   typeof value === "string" && (GOALS as readonly string[]).includes(value);
@@ -93,25 +101,17 @@ export function matchFormSubmissionGoal(raw: string): "formSubmission" | null {
  * loud on the absent rate). It is a CLICK-outcome goal, nothing more.
  *
  * Kept OUT of the shared `Goal` enum so the cross-org public cost surfaces (which iterate `GOALS`) stay
- * byte-unchanged; it is accepted only on the two surfaces that render a goal-scoped outcome (per-audience
- * stats + per-workflow projection). See ExtendedGoal below.
+ * byte-unchanged; it is accepted only on the surfaces that render a goal-scoped outcome (per-audience
+ * stats + per-workflow projection). See ExtendedGoal below. (Unlike `sales` / `websitePurchase`, which
+ * ARE first-class `Goal` members, whatsapp genuinely has no paid-client economics — a click-outcome only.)
  */
 export type WhatsappGoal = "whatsappConversation";
 
 /**
- * The COMBINED "Sales" goal — maximise the number of PAYING CLIENTS (valued at customer lifetime
- * revenue, CLTV) won through EITHER the website-visit path (click → paid, `visitToPaidClientPct`) OR
- * the positive-reply path (reply → paid, `replyToPaidClientPct`). It UNIONS the two single-step
- * paid-client rates the `websiteVisit` / `positiveReply` goals already own — brand-service serves both
- * on its sales-economics + effective layers, so this goal needs NO new brand field.
- *
- * The "website purchase" goal (`websitePurchase`) is the RENAMED former `purchase` goal — the
- * multi-step self-serve / meeting close funnel (buy on the website, possibly via a booked meeting). Its
- * internal canonical stays the `Goal` enum's `purchase` (so the cross-org / customer-health / public
- * surfaces that iterate `GOALS` stay byte-unchanged); the rename is realised as the ACCEPTED-input +
- * ECHOED-output vocabulary on the three goal-scoped surfaces (workflow-projection / audience-stats /
- * revenue). Both are kept OUT of the shared `Goal` enum for the same reason `whatsappConversation` is —
- * see ExtendedGoal.
+ * `sales` (COMBINED goal — a paying client won via EITHER visit→paid OR reply→paid, valued at CLTV) and
+ * `websitePurchase` (the RENAMED former `purchase` goal, the multi-step self-serve/meeting close funnel)
+ * are FIRST-CLASS `Goal` members — the whole fleet speaks one vocabulary. These aliases only name the
+ * literal for the matcher signatures below.
  */
 export type CombinedSalesGoal = "sales";
 export type WebsitePurchaseGoal = "websitePurchase";
@@ -155,32 +155,33 @@ export function matchWebsitePurchaseGoal(raw: string): WebsitePurchaseGoal | nul
 
 /**
  * The goal vocabulary the goal-scoped OUTCOME surfaces (per-audience stats + per-workflow projection +
- * revenue lens) accept: the shared `Goal` enum PLUS the click-outcome `whatsappConversation`, the
- * combined `sales`, and the renamed `websitePurchase`. Broader than `Goal` on purpose — those three are
- * deliberately NOT part of the shared enum so the cross-org / customer-health / public surfaces that
- * iterate `GOALS` stay byte-unchanged (see WhatsappGoal / CombinedSalesGoal / WebsitePurchaseGoal).
+ * revenue lens) accept: the shared `Goal` enum (now incl. `sales` + `websitePurchase`) PLUS the
+ * click-outcome `whatsappConversation`, which is the ONLY member outside `Goal` (it has no paid-client
+ * economics, so the cross-org GOALS-iterating surfaces skip it — see WhatsappGoal).
  */
-export type ExtendedGoal = Goal | WhatsappGoal | CombinedSalesGoal | WebsitePurchaseGoal;
+export type ExtendedGoal = Goal | WhatsappGoal;
 
-/** True for any value in the ExtendedGoal vocabulary. */
+/** True for any value in the ExtendedGoal vocabulary (`Goal` ∪ `whatsappConversation`). */
 export const isExtendedGoal = (value: unknown): value is ExtendedGoal =>
-  isGoal(value) || value === "whatsappConversation" || value === "sales" || value === "websitePurchase";
+  isGoal(value) || value === "whatsappConversation";
 
 /**
  * Map brand-service's STORED `OptimizationGoal` enum to the canonical Goal. This is the exact enum
  * `GET /internal/brands/:id/sales-economics` returns on `salesEconomics.optimizationGoal`:
  * `signups | booked_meetings | sales | website_visits | positive_replies | form_submissions`.
  *
- * The MULTI-STEP spellings differ from the runtime `CurrentGoal` (`signup` / `meetingBooked` /
- * `purchase`) that `normalizeObjective` accepts — the stored layer pluralises signups, says
- * `booked_meetings` for a booked meeting and `sales` for a purchase — so they need their own mapping
- * here (accepts the runtime camel spellings too, for tolerance). Returns null for an unrecognised
- * value (a brand with no recognised goal is excluded from every cost bucket, never mis-bucketed).
+ * The MULTI-STEP spellings differ from the runtime `CurrentGoal` — the stored layer pluralises signups,
+ * says `booked_meetings` for a booked meeting, `website_purchase` for the multi-step close goal, and
+ * `sales` for the NEW combined goal (post fleet-rename; the former `sales`=purchase mapping is gone).
+ * Accepts the runtime camel spellings + the legacy `purchase` (→ websitePurchase) for tolerance. Returns
+ * null for an unrecognised value (a brand with no recognised goal is excluded from every cost bucket).
  */
 export function matchOptimizationGoal(raw: string): Goal | null {
   const single = matchSingleStepGoal(raw);
   if (single) return single;
   if (matchFormSubmissionGoal(raw)) return "formSubmission";
+  if (matchCombinedSalesGoal(raw)) return "sales";
+  if (matchWebsitePurchaseGoal(raw)) return "websitePurchase"; // incl. legacy `purchase`/`website_purchase`
   switch (raw) {
     case "signups":
     case "signup":
@@ -188,9 +189,6 @@ export function matchOptimizationGoal(raw: string): Goal | null {
     case "booked_meetings":
     case "meetingBooked":
       return "meetingBooked";
-    case "sales":
-    case "purchase":
-      return "purchase";
     default:
       return null;
   }

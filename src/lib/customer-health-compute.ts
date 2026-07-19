@@ -317,7 +317,7 @@ const REAL_DEPS: CustomerHealthDeps = {
 };
 
 /** Goals that require a client-site conversion tracker (the micro/macro conversion happens off our platform). */
-const TRACKER_NEEDED_GOALS: ReadonlySet<Goal> = new Set<Goal>(["signup", "formSubmission", "purchase"]);
+const TRACKER_NEEDED_GOALS: ReadonlySet<Goal> = new Set<Goal>(["signup", "formSubmission", "websitePurchase", "sales"]);
 
 /** Map a goal to its observed conversion-count from the lead-service tracker (null when the goal has no discrete event). */
 function observedConversionsForGoal(goal: Goal | null, counts: ConversionCounts): number | null {
@@ -326,9 +326,9 @@ function observedConversionsForGoal(goal: Goal | null, counts: ConversionCounts)
       return counts.signup;
     case "formSubmission":
       return counts.form_submission;
-    case "purchase":
-      // The `Goal` enum's multi-step-close member (renamed "website purchase" on the goal-scoped
-      // surfaces); its terminal tracked event is `sale` (renamed from `purchase`).
+    case "websitePurchase": // multi-step self-serve/meeting close
+    case "sales": // combined goal — either path
+      // Both terminate in a paying client → the `sale` tracked event (renamed from `purchase`).
       return counts.sale;
     case "meetingBooked":
       return counts.meeting_booked;
