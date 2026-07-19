@@ -327,7 +327,9 @@ function observedConversionsForGoal(goal: Goal | null, counts: ConversionCounts)
     case "formSubmission":
       return counts.form_submission;
     case "purchase":
-      return counts.purchase;
+      // The `Goal` enum's multi-step-close member (renamed "website purchase" on the goal-scoped
+      // surfaces); its terminal tracked event is `sale` (renamed from `purchase`).
+      return counts.sale;
     case "meetingBooked":
       return counts.meeting_booked;
     default:
@@ -502,7 +504,7 @@ export async function buildCustomerHealthBoard(
 
     let economics: SalesEconomics | null = null;
     let goal: Goal | null = null;
-    let conversionCounts: ConversionCounts = { signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 };
+    let conversionCounts: ConversionCounts = { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 };
     let currentEconomics: CurrentEconomics = {
       realizedSpendUsd: null,
       expectedPipelineUsd: null,

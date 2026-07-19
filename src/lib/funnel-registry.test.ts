@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getFunnel, orP, projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal } from "./funnel-registry.js";
+import { getFunnel, orP, projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, combinedSaleProbability } from "./funnel-registry.js";
 
 const ECONOMICS = {
   lifetimeRevenueUsd: 1000,
@@ -145,6 +145,7 @@ describe("projectOutcomeCosts — expected cost per purchase / meeting", () => {
       costPerReplyPaidClientUsd: null,
       costPerFormSubmissionUsd: null,
       costPerFormSubmissionPaidClientUsd: null,
+      costPerSaleUsd: null,
     });
   });
 
@@ -160,6 +161,7 @@ describe("projectOutcomeCosts — expected cost per purchase / meeting", () => {
       costPerReplyPaidClientUsd: null,
       costPerFormSubmissionUsd: null,
       costPerFormSubmissionPaidClientUsd: null,
+      costPerSaleUsd: null,
     });
   });
 
@@ -294,6 +296,60 @@ describe("projectOutcomeCosts — TWO-STEP form_submissions goal (visit→form�
     expect(out.costPerFormSubmissionUsd).toBeNull();
     expect(out.costPerFormSubmissionPaidClientUsd).toBeNull();
     expect(out.costPerPurchaseUsd).not.toBeNull();
+  });
+});
+
+describe("COMBINED-sales goal — population expected-count (SUM) vs per-lead probability (OR)", () => {
+  // v2pc = 0.05 (visit→paid 5%), r2pc = 0.20 (reply→paid 20%)
+  const econ = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04, v2pc: 0.05, r2pc: 0.2 };
+
+  it("PROJECTION cost-per-sale = 1 / ((1/clickUsd)·v2pc + (1/replyUsd)·r2pc) — the two channels ADD (linearity of expectation)", () => {
+    const clickUsd = 10;
+    const replyUsd = 5;
+    // salesPerBudget = (1/10)·0.05 + (1/5)·0.20 = 0.005 + 0.04 = 0.045 → cost = 1/0.045 ≈ 22.222
+    const salesPerBudget = (1 / clickUsd) * econ.v2pc + (1 / replyUsd) * econ.r2pc;
+    const { costPerSaleUsd } = projectOutcomeCosts(econ, { clickUsd, replyUsd });
+    expect(costPerSaleUsd).toBeCloseTo(1 / salesPerBudget);
+    expect(costPerSaleUsd).toBeCloseTo(22.2222, 3);
+  });
+
+  it("cost-per-sale uses ONLY the click channel when there is no reply cost (and vice-versa)", () => {
+    expect(projectOutcomeCosts(econ, { clickUsd: 10, replyUsd: null }).costPerSaleUsd).toBeCloseTo(1 / ((1 / 10) * 0.05)); // 200
+    expect(projectOutcomeCosts(econ, { clickUsd: null, replyUsd: 5 }).costPerSaleUsd).toBeCloseTo(1 / ((1 / 5) * 0.2)); // 25
+  });
+
+  it("cost-per-sale null when neither channel funds a sale (zero-denominator gate, never a false $0)", () => {
+    expect(projectOutcomeCosts(econ, { clickUsd: null, replyUsd: null }).costPerSaleUsd).toBeNull();
+    const zeroRates = { ...econ, v2pc: 0, r2pc: 0 };
+    expect(projectOutcomeCosts(zeroRates, { clickUsd: 10, replyUsd: 5 }).costPerSaleUsd).toBeNull();
+    // legacy econ with no single-step rates → combined sale unbacked → null (never fabricated)
+    const legacy = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04 };
+    expect(projectOutcomeCosts(legacy, { clickUsd: 10, replyUsd: 5 }).costPerSaleUsd).toBeNull();
+  });
+
+  it("PER-LEAD probability combines the two paths as an OR — WORKED EXAMPLE: OR < SUM and ≤ 1", () => {
+    const v2pc = 0.05;
+    const r2pc = 0.2;
+    // clicked only → v2pc ; reply only → r2pc
+    expect(combinedSaleProbability(v2pc, r2pc, true, false)).toBeCloseTo(0.05, 10);
+    expect(combinedSaleProbability(v2pc, r2pc, false, true)).toBeCloseTo(0.2, 10);
+    // both paths → orP(0.05, 0.20) = 1 − 0.95·0.80 = 0.24
+    const both = combinedSaleProbability(v2pc, r2pc, true, true)!;
+    expect(both).toBeCloseTo(0.24, 10);
+    expect(both).toBeCloseTo(orP(v2pc, r2pc), 12);
+    // THE CORE INVARIANTS the AC demands, proven numerically:
+    expect(both).toBeLessThan(v2pc + r2pc); // OR (0.24) < SUM (0.25) — a lead cannot convert twice
+    expect(both).toBeGreaterThan(Math.max(v2pc, r2pc)); // ≥ the stronger single path
+    expect(both).toBeLessThanOrEqual(1); // never exceeds certainty (≤ 1×LTR once multiplied by LTR)
+    // neither path reached → filtered out (null, never 0)
+    expect(combinedSaleProbability(v2pc, r2pc, false, false)).toBeNull();
+  });
+
+  it("OR ≤ 1 even for extreme rates (both paths near-certain) — the sum would exceed 1", () => {
+    const both = combinedSaleProbability(0.9, 0.8, true, true)!;
+    expect(both).toBeCloseTo(1 - 0.1 * 0.2, 12); // 0.98
+    expect(both).toBeLessThanOrEqual(1);
+    expect(0.9 + 0.8).toBeGreaterThan(1); // the naive SUM (1.7) is an invalid probability — OR is correct
   });
 });
 

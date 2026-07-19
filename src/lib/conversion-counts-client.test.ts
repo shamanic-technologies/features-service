@@ -14,12 +14,12 @@ describe("fetchConversionCounts", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       seenUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
       seenHeaders = (init?.headers as Record<string, string>) ?? {};
-      return new Response(JSON.stringify({ counts: { signup: 4, meeting_booked: 2, form_submission: 7, purchase: 1 } }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ counts: { signup: 4, meeting_booked: 2, form_submission: 7, sale: 1 } }), { status: 200, headers: { "Content-Type": "application/json" } });
     });
 
     const res = await fetchConversionCounts("brand-1");
 
-    expect(res).toEqual({ signup: 4, meeting_booked: 2, form_submission: 7, purchase: 1 });
+    expect(res).toEqual({ signup: 4, meeting_booked: 2, form_submission: 7, sale: 1 });
     expect(seenUrl).toBe("http://lead:3000/internal/brands/brand-1/conversion-counts");
     expect(seenHeaders["x-api-key"]).toBe("lead-key");
     expect(seenHeaders["x-service-name"]).toBe("features-service");
@@ -30,10 +30,10 @@ describe("fetchConversionCounts", () => {
 
   it("returns zeros (not absent) when the brand has no conversions", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ counts: { signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 } }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      new Response(JSON.stringify({ counts: { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 } }), { status: 200, headers: { "Content-Type": "application/json" } }),
     );
     const res = await fetchConversionCounts("brand-1");
-    expect(res).toEqual({ signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 });
+    expect(res).toEqual({ signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 });
   });
 
   it("fails loud on a non-OK response (no silent fallback — a swallowed error would fake a count)", async () => {

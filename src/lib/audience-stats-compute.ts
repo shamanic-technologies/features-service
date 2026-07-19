@@ -9,7 +9,7 @@ import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, typ
 import { fetchEmailOutcomes } from "./email-status-client.js";
 import { observedCostPerOutcome, projectedCostPerOutcome } from "./cost-engine.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
-import { isExtendedGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, type ExtendedGoal } from "./goals.js";
+import { isExtendedGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type ExtendedGoal } from "./goals.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 
 export type SortMetric = "cpc" | "cppr";
@@ -44,6 +44,12 @@ interface AudienceOutcomeEvidence {
   // (lead-service conversion tracker), never a split of a brand total. Present ONLY for the signup goal;
   // ABSENT otherwise and when lead-service didn't serve the signup emails (never a fabricated 0).
   signups?: number;
+  // REAL per-audience SALES — paying clients won (lead-service conversion tracker, event="sale", RENAMED
+  // from "purchase") — the exact form-submission/signup mechanism, attributed by member-email ∩
+  // matched-lead sale-converted emails (never a split of the brand total). Present ONLY for the
+  // website-purchase OR combined-sales goals (both terminate in a `sale`); ABSENT otherwise and when
+  // lead-service didn't serve the sale emails (never a fabricated 0).
+  sales?: number;
 }
 
 /**
@@ -73,6 +79,10 @@ export interface AudienceStatsRow {
     // any goal other than signup or when the signup conversion emails weren't served. Not part of the
     // ranking (signup ranks on cpc, visit-driven).
     cpsCents: number | null;
+    // REAL cost per sale = audience-scoped spend / sales. OBSERVED (accounting): null when 0 sales OR 0
+    // attributed spend (never a false $0.00), and null for any goal other than websitePurchase / sales or
+    // when the sale conversion emails weren't served. Not part of the ranking (both goals rank on cppr).
+    cpsaleCents: number | null;
   };
 }
 
@@ -149,6 +159,22 @@ function fetchSignupEmailsSoft(brandId: string): Promise<Set<string> | null> {
   });
 }
 
+/**
+ * Fetch the brand's matched-lead SALE conversion emails (event="sale", RENAMED from "purchase") — the
+ * exact fetchSignupEmailsSoft mechanism — degrading to null (per-audience sale column ABSENT) on any
+ * failure. Display enrichment, so a pre-rollout / down lead-service never 502s the ranking. Absent ≠ 0:
+ * a fake 0 would fabricate a false cost-per-sale. Serves BOTH the website-purchase and combined-sales
+ * goals (both terminate in a `sale`).
+ */
+function fetchSaleEmailsSoft(brandId: string): Promise<Set<string> | null> {
+  return fetchConversionEmails(brandId, "sale").catch((err) => {
+    console.warn(
+      `[features-service] conversion-emails enrichment failed (degrading per-audience sales to absent): ${(err as Error).message}`,
+    );
+    return null;
+  });
+}
+
 function readFiniteNumber(value: unknown, field: string): number {
   const parsed = typeof value === "string" ? Number(value) : value;
   if (typeof parsed !== "number" || !Number.isFinite(parsed)) {
@@ -160,8 +186,8 @@ function readFiniteNumber(value: unknown, field: string): number {
 function sortMetricForGoal(goal: ExtendedGoal): SortMetric {
   // signup + websiteVisit + formSubmission + whatsappConversation rank on cost-per-click/visit (the
   // click IS the outcome — all four are click-driven; for whatsappConversation the click on the
-  // WhatsApp link IS a started conversation); meetingBooked / purchase / positiveReply rank on
-  // cost-per-positive-reply.
+  // WhatsApp link IS a started conversation); meetingBooked / purchase / positiveReply / websitePurchase /
+  // sales rank on cost-per-positive-reply (reply-inclusive close/combined goals).
   return goal === "signup" || goal === "websiteVisit" || goal === "formSubmission" || goal === "whatsappConversation"
     ? "cpc"
     : "cppr";
@@ -295,6 +321,10 @@ async function fetchAudienceOutcomes(
   // same intersection as form submissions. null when NOT the signup goal, or when lead-service didn't
   // serve them → each audience's signups stays ABSENT (never a false 0).
   signupEmails: Set<string> | null = null,
+  // The brand's matched-lead SALE conversion emails (lowercased), for the per-audience sale count — same
+  // intersection as signups/form submissions. null when NOT a sale-terminating goal (website-purchase /
+  // combined-sales), or when lead-service didn't serve them → each audience's sales stays ABSENT.
+  saleEmails: Set<string> | null = null,
   // Optional CAMPAIGN scope: when present, the email-gateway outcome flags are read from the campaign
   // scope (only this campaign's contacted/opened/clicked/replied), not the brand aggregate. Audience
   // MEMBERSHIP stays brand-wide (audiences are brand-scoped); only the OUTCOME numerator narrows.
@@ -317,8 +347,10 @@ async function fetchAudienceOutcomes(
     // clicked/replied member-grain counts). Only when we have the conversion-email set.
     let formSubmissions = formSubmissionEmails ? 0 : undefined;
     let signups = signupEmails ? 0 : undefined;
+    let sales = saleEmails ? 0 : undefined;
     const seenSubmitters = new Set<string>();
     const seenSignups = new Set<string>();
+    const seenSales = new Set<string>();
     for (const email of emails) {
       const o = outcomesByEmail.get(email);
       if (o) {
@@ -340,9 +372,16 @@ async function fetchAudienceOutcomes(
           signups = (signups ?? 0) + 1;
         }
       }
+      if (saleEmails) {
+        if (saleEmails.has(key) && !seenSales.has(key)) {
+          seenSales.add(key);
+          sales = (sales ?? 0) + 1;
+        }
+      }
     }
     if (formSubmissions !== undefined) agg.formSubmissions = formSubmissions;
     if (signups !== undefined) agg.signups = signups;
+    if (sales !== undefined) agg.sales = sales;
     result.set(audienceId, agg);
   }
 
@@ -387,10 +426,15 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
   // Normalise the single-step + form-submission + whatsapp goal fleet spellings (snake/kebab/display →
   // canonical camel) before validating.
   const normalizedGoal = goalParam
-    ? (matchSingleStepGoal(goalParam) ?? matchFormSubmissionGoal(goalParam) ?? matchWhatsappGoal(goalParam) ?? goalParam)
+    ? (matchSingleStepGoal(goalParam) ??
+       matchFormSubmissionGoal(goalParam) ??
+       matchWhatsappGoal(goalParam) ??
+       matchCombinedSalesGoal(goalParam) ??
+       matchWebsitePurchaseGoal(goalParam) ??
+       goalParam)
     : undefined;
   if (!isExtendedGoal(normalizedGoal)) {
-    return { ok: false, status: 400, error: "goal query parameter is required and must be one of: signup, meetingBooked, purchase, websiteVisit, positiveReply, formSubmission, whatsappConversation" };
+    return { ok: false, status: 400, error: "goal query parameter is required and must be one of: signup, meetingBooked, websitePurchase, sales, websiteVisit, positiveReply, formSubmission, whatsappConversation" };
   }
 
   const parsedStatuses = parseStatuses(statusesParam);
@@ -428,10 +472,15 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
   // ONLY for the signup goal, so every other goal's hot path is untouched. Fail-soft → null → the signup
   // column is absent, never a false 0.
   const signupEmails = normalizedGoal === "signup" ? await fetchSignupEmailsSoft(brandId) : null;
+  // Per-audience SALE attribution — the SAME conversion-tracker mechanism, fetched ONLY for the two
+  // sale-terminating goals (website-purchase = multi-step close, sales = combined). Fail-soft → null →
+  // the sale column is absent, never a false 0. Every other goal's hot path is untouched.
+  const saleEmails =
+    normalizedGoal === "websitePurchase" || normalizedGoal === "sales" ? await fetchSaleEmailsSoft(brandId) : null;
 
   const [costs, outcomesResult] = await Promise.all([
     fetchAudienceCosts(brandId, featureSlug, identity, pricing, scopeCampaignId),
-    fetchAudienceOutcomes(brandId, audiences, identity, formSubmissionEmails, signupEmails, scopeCampaignId),
+    fetchAudienceOutcomes(brandId, audiences, identity, formSubmissionEmails, signupEmails, saleEmails, scopeCampaignId),
   ]);
   const outcomes = outcomesResult.perAudience;
 
@@ -491,6 +540,13 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
         cpsCents:
           outcome.signups !== undefined
             ? observedCostPerOutcome(cost.totalCostInUsdCents, outcome.signups)
+            : null,
+        // OBSERVED (accounting): audience spend ÷ its real sales (paying clients). null when the count is
+        // absent (not a sale-terminating goal / emails not served) OR 0 (no denominator / no attributed
+        // spend) — never a false $0.00. Serves both website-purchase and combined-sales goals.
+        cpsaleCents:
+          outcome.sales !== undefined
+            ? observedCostPerOutcome(cost.totalCostInUsdCents, outcome.sales)
             : null,
       },
     });

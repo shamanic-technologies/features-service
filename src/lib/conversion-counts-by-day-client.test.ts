@@ -20,9 +20,9 @@ describe("fetchConversionCountsByDay", () => {
             signup: { "2026-07-08": 2, "2026-07-09": 1 },
             meeting_booked: {},
             form_submission: { "2026-07-09": 3 },
-            purchase: {},
+            sale: {},
           },
-          undated: { signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 },
+          undated: { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
@@ -33,7 +33,7 @@ describe("fetchConversionCountsByDay", () => {
     expect(res.byDay.signup).toEqual({ "2026-07-08": 2, "2026-07-09": 1 });
     expect(res.byDay.form_submission).toEqual({ "2026-07-09": 3 });
     expect(res.byDay.meeting_booked).toEqual({});
-    expect(res.undated).toEqual({ signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 });
+    expect(res.undated).toEqual({ signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 });
     expect(seenUrl).toBe("http://lead:3000/internal/brands/brand-1/conversion-counts-by-day");
     expect(seenHeaders["x-api-key"]).toBe("lead-key");
     expect(seenHeaders["x-service-name"]).toBe("features-service");
@@ -46,8 +46,8 @@ describe("fetchConversionCountsByDay", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          byDay: { signup: {}, meeting_booked: {}, form_submission: {}, purchase: {} },
-          undated: { signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 },
+          byDay: { signup: {}, meeting_booked: {}, form_submission: {}, sale: {} },
+          undated: { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
@@ -73,8 +73,8 @@ describe("fetchConversionCountsByDay", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          byDay: { signup: { "2026-07-09": "x" }, meeting_booked: {}, form_submission: {}, purchase: {} },
-          undated: { signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 },
+          byDay: { signup: { "2026-07-09": "x" }, meeting_booked: {}, form_submission: {}, sale: {} },
+          undated: { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
@@ -86,12 +86,12 @@ describe("fetchConversionCountsByDay", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          byDay: { signup: {}, meeting_booked: {}, form_submission: {}, purchase: {} },
+          byDay: { signup: {}, meeting_booked: {}, form_submission: {}, sale: {} },
           undated: { signup: 0, meeting_booked: 0, form_submission: 0 },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
     );
-    await expect(fetchConversionCountsByDay("brand-1")).rejects.toThrow(/undated\.purchase is not a finite number/);
+    await expect(fetchConversionCountsByDay("brand-1")).rejects.toThrow(/undated\.sale is not a finite number/);
   });
 });
