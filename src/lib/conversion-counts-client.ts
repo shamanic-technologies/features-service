@@ -9,7 +9,10 @@ export interface ConversionCounts {
   signup: number;
   meeting_booked: number;
   form_submission: number;
-  purchase: number;
+  // The terminal "win a paying client" event — RENAMED from `purchase` to `sale` (lead-service slice).
+  // A `sale` is the outcome of BOTH the website-purchase goal (multi-step close) and the combined-sales
+  // goal (paying client won via either path). features-service consumes it verbatim.
+  sale: number;
 }
 
 /**
@@ -47,7 +50,7 @@ export async function fetchConversionCounts(brandId: string): Promise<Conversion
     typeof c.signup !== "number" ||
     typeof c.meeting_booked !== "number" ||
     typeof c.form_submission !== "number" ||
-    typeof c.purchase !== "number"
+    typeof c.sale !== "number"
   ) {
     throw new Error("lead-service /internal/brands/:brandId/conversion-counts returned malformed counts");
   }
@@ -55,6 +58,6 @@ export async function fetchConversionCounts(brandId: string): Promise<Conversion
     signup: c.signup,
     meeting_booked: c.meeting_booked,
     form_submission: c.form_submission,
-    purchase: c.purchase,
+    sale: c.sale,
   };
 }

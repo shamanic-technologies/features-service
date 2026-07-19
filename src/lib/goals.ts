@@ -99,6 +99,24 @@ export function matchFormSubmissionGoal(raw: string): "formSubmission" | null {
 export type WhatsappGoal = "whatsappConversation";
 
 /**
+ * The COMBINED "Sales" goal — maximise the number of PAYING CLIENTS (valued at customer lifetime
+ * revenue, CLTV) won through EITHER the website-visit path (click → paid, `visitToPaidClientPct`) OR
+ * the positive-reply path (reply → paid, `replyToPaidClientPct`). It UNIONS the two single-step
+ * paid-client rates the `websiteVisit` / `positiveReply` goals already own — brand-service serves both
+ * on its sales-economics + effective layers, so this goal needs NO new brand field.
+ *
+ * The "website purchase" goal (`websitePurchase`) is the RENAMED former `purchase` goal — the
+ * multi-step self-serve / meeting close funnel (buy on the website, possibly via a booked meeting). Its
+ * internal canonical stays the `Goal` enum's `purchase` (so the cross-org / customer-health / public
+ * surfaces that iterate `GOALS` stay byte-unchanged); the rename is realised as the ACCEPTED-input +
+ * ECHOED-output vocabulary on the three goal-scoped surfaces (workflow-projection / audience-stats /
+ * revenue). Both are kept OUT of the shared `Goal` enum for the same reason `whatsappConversation` is —
+ * see ExtendedGoal.
+ */
+export type CombinedSalesGoal = "sales";
+export type WebsitePurchaseGoal = "websitePurchase";
+
+/**
  * Recognise the `whatsappConversation` goal from ANY of the fleet's spellings — runtime camelCase
  * (`whatsappConversation`, brand-service CurrentGoal + campaign-service currentGoal), stored/dashboard
  * snake_case (`whatsapp_conversations`), kebab, and the human display value ("WhatsApp conversations").
@@ -111,15 +129,42 @@ export function matchWhatsappGoal(raw: string): WhatsappGoal | null {
 }
 
 /**
- * The goal vocabulary the goal-scoped OUTCOME surfaces (per-audience stats + per-workflow projection)
- * accept: the shared `Goal` enum PLUS the click-outcome `whatsappConversation`. Broader than `Goal`
- * on purpose — `whatsappConversation` is deliberately not part of the shared enum (see WhatsappGoal).
+ * Recognise the COMBINED-sales goal from ANY of the fleet's spellings — runtime camelCase (`sales`, =
+ * brand-service CurrentGoal + campaign-service currentGoal), stored/dashboard snake_case (`sales`), and
+ * `combinedSales` / `combined_sales` / `combined-sales`. Separator- and case-insensitive input tolerance
+ * (NOT a silent fallback). Returns the canonical `sales`, or null when `raw` is not the combined goal.
  */
-export type ExtendedGoal = Goal | WhatsappGoal;
+export function matchCombinedSalesGoal(raw: string): CombinedSalesGoal | null {
+  const norm = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  return norm === "sales" || norm === "combinedsales" ? "sales" : null;
+}
 
-/** True for any value in the ExtendedGoal vocabulary (`Goal` ∪ `whatsappConversation`). */
+/**
+ * Recognise the "website purchase" goal (the RENAMED former `purchase` goal) from ANY of the fleet's
+ * spellings — runtime camelCase (`websitePurchase`), stored/dashboard snake_case (`website_purchase`),
+ * kebab, AND the LEGACY `purchase` / `purchases` spellings (campaign-service forwards the brand's
+ * `currentGoal`, which may still be the pre-rename `purchase` during the fleet transition). Separator-
+ * and case-insensitive input tolerance. Returns the canonical camel `websitePurchase`, or null.
+ */
+export function matchWebsitePurchaseGoal(raw: string): WebsitePurchaseGoal | null {
+  const norm = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  return norm === "websitepurchase" || norm === "websitepurchases" || norm === "purchase" || norm === "purchases"
+    ? "websitePurchase"
+    : null;
+}
+
+/**
+ * The goal vocabulary the goal-scoped OUTCOME surfaces (per-audience stats + per-workflow projection +
+ * revenue lens) accept: the shared `Goal` enum PLUS the click-outcome `whatsappConversation`, the
+ * combined `sales`, and the renamed `websitePurchase`. Broader than `Goal` on purpose — those three are
+ * deliberately NOT part of the shared enum so the cross-org / customer-health / public surfaces that
+ * iterate `GOALS` stay byte-unchanged (see WhatsappGoal / CombinedSalesGoal / WebsitePurchaseGoal).
+ */
+export type ExtendedGoal = Goal | WhatsappGoal | CombinedSalesGoal | WebsitePurchaseGoal;
+
+/** True for any value in the ExtendedGoal vocabulary. */
 export const isExtendedGoal = (value: unknown): value is ExtendedGoal =>
-  isGoal(value) || value === "whatsappConversation";
+  isGoal(value) || value === "whatsappConversation" || value === "sales" || value === "websitePurchase";
 
 /**
  * Map brand-service's STORED `OptimizationGoal` enum to the canonical Goal. This is the exact enum

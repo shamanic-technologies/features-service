@@ -24,8 +24,10 @@ import { fetchWithRetry } from "./fetch-retry.js";
  * (display enrichment, like the /revenue conversion-counts tiles) vs propagate.
  */
 
-/** A lead-service conversion event type (byte-equal the conversion tracker's `event` vocabulary). */
-export type ConversionEvent = "signup" | "meeting_booked" | "form_submission" | "purchase";
+/** A lead-service conversion event type (byte-equal the conversion tracker's `event` vocabulary).
+ * The terminal paying-client event is `sale` (RENAMED from `purchase` — lead-service slice); it backs
+ * the per-audience sale count for BOTH the website-purchase and combined-sales goals. */
+export type ConversionEvent = "signup" | "meeting_booked" | "form_submission" | "sale";
 
 /**
  * Fetch the distinct matched-lead canonical emails (lowercased) that have >=1 attributed conversion

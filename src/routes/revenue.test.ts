@@ -104,7 +104,7 @@ function qualRows(quals: Qualifications): unknown[] {
 }
 
 /** Route fetch mock keyed by URL substring. effective economics (saved set + cross-brand average) + leads + status timestamps + manual quals + platform stats + cost overridable. */
-function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; purchase: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean } = {}): void {
+function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; sale: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     // lead-service GET /internal/brands/:brandId/converted-lead-emails?event=<type> — per-lead SIGNUP /
@@ -519,9 +519,9 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(800, 6); // 2 leads × 400
   });
 
-  it("lens=sales — clicked-or-reply union; combined-OR per lead; both-signals > either single & ≤100", async () => {
+  it("lens=website_purchase — RENAMED former sales lens; multi-step self-serve/meeting close funnel (unchanged math)", async () => {
     mockFetch({ economics: ECONOMICS, leads: LENS_LEADS });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=sales").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=website_purchase").set(AUTH);
     expect(res.status).toBe(200);
     const byId = Object.fromEntries(res.body.leads.map((l: any) => [l.leadId, l]));
     expect(Object.keys(byId).sort()).toEqual(["lb", "lc", "lr"]); // cold excluded
@@ -534,15 +534,49 @@ describe("GET /features/:featureSlug/revenue", () => {
     // both = orP(0.0347, 0.12) = 0.150536 → 15.0536% / $150.536
     expect(byId.lb.conversionProbabilityPct).toBeCloseTo(15.0536, 6);
     expect(byId.lb.expectedRevenueUsd).toBeCloseTo(150.536, 6);
-    // both-signals strictly > either single, and ≤ 100
     expect(byId.lb.conversionProbabilityPct).toBeGreaterThan(byId.lc.conversionProbabilityPct);
     expect(byId.lb.conversionProbabilityPct).toBeGreaterThan(byId.lr.conversionProbabilityPct);
     expect(byId.lb.conversionProbabilityPct).toBeLessThanOrEqual(100);
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(34.7 + 120 + 150.536, 5);
   });
 
+  it("legacy `purchase` lens spelling still normalises to website_purchase (input tolerance)", async () => {
+    mockFetch({ economics: ECONOMICS, leads: LENS_LEADS });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=purchase").set(AUTH);
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.leads.map((l: any) => [l.leadId, l]));
+    expect(byId.lc.conversionProbabilityPct).toBeCloseTo(3.47, 6); // same as website_purchase
+  });
+
   // SINGLE-STEP lenses: EV per lead = one paid-client rate × LTR (no funnel chaining).
   const SINGLE_STEP_ECON = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 20 };
+
+  it("lens=sales (COMBINED) — per-lead sale probability = probabilistic OR of visit→paid & reply→paid; OR < sum & ≤ 1×LTR", async () => {
+    // v2pc=5%, r2pc=20%. Per-LEAD probability combines the two paths as an OR (a lead converts at most
+    // once) — NOT the population additive SUM (that's the projection surface, funnel-registry test).
+    mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=sales").set(AUTH);
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.leads.map((l: any) => [l.leadId, l]));
+    expect(Object.keys(byId).sort()).toEqual(["lb", "lc", "lr"]); // cold (no engagement) excluded
+    // clicked only → v2pc = 5% / $50
+    expect(byId.lc.conversionProbabilityPct).toBeCloseTo(5, 6);
+    expect(byId.lc.expectedRevenueUsd).toBeCloseTo(50, 6);
+    // reply only → r2pc = 20% / $200
+    expect(byId.lr.conversionProbabilityPct).toBeCloseTo(20, 6);
+    expect(byId.lr.expectedRevenueUsd).toBeCloseTo(200, 6);
+    // both paths → orP(0.05, 0.20) = 1 − 0.95·0.80 = 0.24 → 24% / $240.
+    // WORKED EXAMPLE (AC): OR (24) < SUM (5 + 20 = 25), and ≤ 100% (≤ 1×LTR = $1000). A naive SUM would
+    // read 25% here — wrong for a single lead that cannot convert twice.
+    expect(byId.lb.conversionProbabilityPct).toBeCloseTo(24, 6);
+    expect(byId.lb.conversionProbabilityPct).toBeLessThan(5 + 20); // OR strictly below the sum
+    expect(byId.lb.conversionProbabilityPct).toBeGreaterThan(byId.lc.conversionProbabilityPct);
+    expect(byId.lb.conversionProbabilityPct).toBeGreaterThan(byId.lr.conversionProbabilityPct);
+    expect(byId.lb.conversionProbabilityPct).toBeLessThanOrEqual(100);
+    expect(byId.lb.expectedRevenueUsd).toBeCloseTo(240, 6);
+    expect(byId.lb.expectedRevenueUsd).toBeLessThanOrEqual(SINGLE_STEP_ECON.lifetimeRevenueUsd); // ≤ 1×LTR
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(50 + 200 + 240, 5);
+  });
 
   it("lens=website_visits — clicked leads; prob == visitToPaidClient; revenue == (rate/100)·LTR (single step)", async () => {
     mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
@@ -611,9 +645,9 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("lens costEconomics — expectedConversions == sum(p); costPerConversionUsd == actualCostUsd / sum(p)", async () => {
     mockFetch({ economics: ECONOMICS, leads: LENS_LEADS, costCents: 8000 }); // $80 cost
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=sales").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=website_purchase").set(AUTH);
     expect(res.status).toBe(200);
-    // sales lens: lc=0.0347 + lr=0.12 + lb=0.150536 = 0.305236 (cold excluded)
+    // website_purchase lens: lc=0.0347 + lr=0.12 + lb=0.150536 = 0.305236 (cold excluded)
     const sumP = 0.0347 + 0.12 + 0.150536;
     expect(res.body.costEconomics.expectedConversions).toBeCloseTo(sumP, 6);
     expect(res.body.costEconomics.actualCostUsd).toBe(80);
@@ -926,8 +960,8 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend).not.toHaveProperty("cpsmCents");
     expect(res.body.spend).not.toHaveProperty("formSubmissionsCount");
     expect(res.body.spend).not.toHaveProperty("cpfsCents");
-    expect(res.body.spend).not.toHaveProperty("purchasesCount");
-    expect(res.body.spend).not.toHaveProperty("cppCents");
+    expect(res.body.spend).not.toHaveProperty("salesCount");
+    expect(res.body.spend).not.toHaveProperty("cpSaleCents");
   });
 
   it("spend — REAL conversions: signupsCount/salesMeetingsCount + cpsCents/cpsmCents = COMMITTED spend ÷ real count (features-service#461)", async () => {
@@ -935,7 +969,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
-      if (url.includes("/conversion-counts")) return json({ counts: { signup: 4, meeting_booked: 2, form_submission: 7, purchase: 1 } });
+      if (url.includes("/conversion-counts")) return json({ counts: { signup: 4, meeting_booked: 2, form_submission: 7, sale: 1 } });
       if (url.includes("/stats/costs")) {
         if (url.includes("startedAfter")) return json({ groups: [{ dimensions: {}, totalCostInUsdCents: "0", actualCostInUsdCents: "0", runCount: 0 }] });
         return json({ groups: [{ dimensions: { costName: "email-send-step-1" }, totalCostInUsdCents: "10000", actualCostInUsdCents: "6000", runCount: 0 }] });
@@ -964,9 +998,9 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.cpfsCents * res.body.spend.formSubmissionsCount).toBe(res.body.spend.totalSpentCents);
     // Purchases brand-level aggregate (#476) — the count tile purchases previously lacked. 1 tracked
     // → cpp = committed 10000 ÷ 1, same COMMITTED denominator as the others.
-    expect(res.body.spend.purchasesCount).toBe(1);
-    expect(res.body.spend.cppCents).toBe(10000 / 1);
-    expect(res.body.spend.cppCents * res.body.spend.purchasesCount).toBe(res.body.spend.totalSpentCents);
+    expect(res.body.spend.salesCount).toBe(1);
+    expect(res.body.spend.cpSaleCents).toBe(10000 / 1);
+    expect(res.body.spend.cpSaleCents * res.body.spend.salesCount).toBe(res.body.spend.totalSpentCents);
     // Positive replies (single-step positive_replies goal outcome): HAPPY_LEADS carries 1 positive
     // reply (== recipientsRepliesPositive.total), sourced from the leads snapshot (NOT conversion-counts)
     // → always present; cppr = committed 10000 ÷ 1. features-service#482.
@@ -977,7 +1011,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   });
 
   it("spend — REAL conversions null-denominator: 0 signups/meetings → cpsCents/cpsmCents null (never a false $0), count still 0", async () => {
-    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000, conversionCounts: { signup: 0, meeting_booked: 0, form_submission: 0, purchase: 0 } });
+    mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000, conversionCounts: { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 } });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.spend.signupsCount).toBe(0);
@@ -988,8 +1022,8 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.spend.formSubmissionsCount).toBe(0);
     expect(res.body.spend.cpfsCents).toBeNull();
     // 0 purchases → count 0 but cpp null (no denominator), never a false $0 (#476).
-    expect(res.body.spend.purchasesCount).toBe(0);
-    expect(res.body.spend.cppCents).toBeNull();
+    expect(res.body.spend.salesCount).toBe(0);
+    expect(res.body.spend.cpSaleCents).toBeNull();
     // HAPPY_LEADS still carries 1 positive reply (leads-sourced, independent of conversion-counts).
     expect(res.body.spend.positiveRepliesCount).toBe(1);
     expect(res.body.spend.cpprCents).toBe(7000 / 1);

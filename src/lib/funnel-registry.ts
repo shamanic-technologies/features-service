@@ -154,6 +154,26 @@ export interface ProjectedOutcomeCosts {
    * clients. costPerFormSubmissionPaidClientUsd = clickUsd / (v2fs·fs2pc). Drives costPerCloseUsd + ROI
    * for the form_submissions goal. Null when there is no click cost OR v2fs/fs2pc is unset / 0. */
   costPerFormSubmissionPaidClientUsd: number | null;
+  /**
+   * COMBINED-SALES goal (`sales`): cost per SALE — a paying client (valued at CLTV) won via EITHER the
+   * website-visit path (click → paid, v2pc) OR the positive-reply path (reply → paid, r2pc).
+   *
+   * POPULATION EXPECTED-COUNT combination — the two channels' sales-per-budget ADD (linearity of
+   * expectation over the whole population): spending on clicks yields (1/clickUsd)·v2pc sales, spending
+   * on replies yields (1/replyUsd)·r2pc sales, so
+   *   salesPerBudget = (1/clickUsd)·v2pc + (1/replyUsd)·r2pc
+   *   costPerSaleUsd = 1 / salesPerBudget
+   * The SUM is correct for a rankable EXPECTED COUNT across many leads — even if a single lead is
+   * reachable by both channels, E[total sales] = E[visit sales] + E[reply sales] by linearity, so no
+   * double-count adjustment applies at the population grain. This is DELIBERATELY different from the
+   * per-LEAD probability of a sale (revenue lens), which combines the two paths as a probabilistic OR
+   * (`orP`) because a single lead converts at most once (P ≤ 1). Do NOT swap the two combinations.
+   *
+   * For the combined-sales goal the OUTCOME *is* the paying client, so cost-per-outcome == cost-per-paid
+   * client == costPerSaleUsd (coherent — no visit/reply→paid rate separates them, unlike the single-step
+   * goals). ROI = CLTV / costPerSaleUsd. Null when neither channel funds a sale (both perBudget
+   * contributions 0 — zero-denominator gate), never a false $0. */
+  costPerSaleUsd: number | null;
 }
 
 export function projectOutcomeCosts(
@@ -207,6 +227,14 @@ export function projectOutcomeCosts(
       ? (1 / costs.clickUsd) * econ.v2fs * econ.fs2pc
       : 0;
 
+  // COMBINED-SALES goal — sales won via EITHER channel; population expected-count → the two channels'
+  // sales-per-budget ADD (linearity of expectation): visit path (click → paid, v2pc) + reply path
+  // (reply → paid, r2pc). costPerSale = 1 / salesPerBudget. This is the SUM combination — the per-LEAD
+  // probability (revenue lens) instead ORs the two paths; see costPerSaleUsd doc + orP.
+  const salesPerBudget =
+    (costs.clickUsd != null && econ.v2pc != null ? (1 / costs.clickUsd) * econ.v2pc : 0) +
+    (costs.replyUsd != null && econ.r2pc != null ? (1 / costs.replyUsd) * econ.r2pc : 0);
+
   return {
     costPerPurchaseUsd: closesPerBudget > 0 ? 1 / closesPerBudget : null,
     costPerMeetingBookedUsd: meetingsPerBudget > 0 ? 1 / meetingsPerBudget : null,
@@ -217,7 +245,24 @@ export function projectOutcomeCosts(
     costPerReplyPaidClientUsd: replyPaidPerBudget > 0 ? 1 / replyPaidPerBudget : null,
     costPerFormSubmissionUsd: formSubmissionsPerBudget > 0 ? 1 / formSubmissionsPerBudget : null,
     costPerFormSubmissionPaidClientUsd: formSubmissionPaidPerBudget > 0 ? 1 / formSubmissionPaidPerBudget : null,
+    costPerSaleUsd: salesPerBudget > 0 ? 1 / salesPerBudget : null,
   };
+}
+
+/**
+ * The per-LEAD probability that a single lead becomes a SALE for the COMBINED-sales goal — the
+ * probabilistic OR of the two paths available to THAT lead. A lead converts at most once, so the
+ * two paths combine via `orP` (P ≤ 1), NEVER a sum (a sum can exceed 1 and double-counts the both-paths
+ * lead). This is the per-lead twin of the population `costPerSaleUsd` (which SUMS by linearity):
+ *   clicked only          → v2pc
+ *   positive-reply only   → r2pc
+ *   clicked AND replied   → orP(v2pc, r2pc) = 1 − (1 − v2pc)(1 − r2pc)   (> max, < sum, ≤ 1)
+ * Returns null when the lead reached NEITHER engagement channel (no path → filtered from the lens).
+ */
+export function combinedSaleProbability(v2pc: number, r2pc: number, clicked: boolean, positiveReply: boolean): number | null {
+  if (!clicked && !positiveReply) return null;
+  if (clicked && positiveReply) return orP(v2pc, r2pc);
+  return clicked ? v2pc : r2pc;
 }
 
 /**

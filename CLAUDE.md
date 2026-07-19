@@ -880,6 +880,29 @@ Genuinely-unbacked dynasty (no recent clicks) → null, never a false $0. Depend
 resolution chain: workflow-service `/workflows/dynasty/slugs` api-key-only (v0.38.0) + email-gateway
 sending `workflowDynastySlug` (v0.25.1). (Set 2026-07-10.)
 
+## `workflow-cost-per-outcome` 0-outcome = OWN SPEND (crossOrg is the top grain — NO cross-workflow fleet parent); the LANDING headlines the best model, filtered observed>0 (features-service#612)
+
+`buildWorkflowCostPerOutcome` (`cross-org-cost-per-outcome.ts`) is per-WORKFLOW at the crossOrg
+org-scope, and **crossOrg is the TOP grain of the cost cascade**: a workflow's cost has NO coarser
+parent (the fleet-pooled cross-workflow rate is NOT its parent). So a 0-outcome workflow floors to its
+**OWN spend** (`projectedFloor(spent, 0, null) = max(spent, 0) = spent`), matching the
+workflow-projection ladder base case — NEVER a `totalSpend/totalOutcomes` pooled average summed over all
+dynasties. Do NOT re-introduce a `fleetParentClickUsd`/`fleetParentReplyUsd` floor here (removed
+v0.95.2): it conflated cross-org with cross-workflow and made a barely-spent 0-outcome workflow read the
+fleet average instead of the honest "spent $X, produced nothing". (`meanFleetEconomics`/`fleetEcon` is a
+different thing — cross-BRAND rate mean for the 4 PROJECTED objectives — and stays.)
+
+**Consumers that pick a "best" per outcome MUST filter `observed>0`, NOT a cost threshold.** Because a
+0-outcome workflow now reads its own (possibly low) spend, a dormant ~$48 husk (spent once, 0 clicks/0
+replies, never climbs) would be crowned "best cost per reply" PERMANENTLY if `min()` ran over all rows.
+The public landing (distribute.you `apps/landing`, PR #2791) headlines the best cross-org workflow per
+outcome = `min(costPerOutcomeUsd)` over workflows with the objective's OBSERVED base outcome > 0
+(`websiteVisit`→`observedClicks>0`, `positiveReply`→`observedPositiveReplies>0`) — the count filter is
+correct on BOTH the pre- and post-v0.95.2 backend; a cost-threshold filter would break. The landing is
+restricted to the 2 OBSERVED outcomes; it KILLED the goal-bucketed pooled-average / trend / histogram
+surfaces (a pooled avg headline diluted across brands/workflows that oscillate between goals). A workflow
+with 0 of the outcome is not the best AT producing it. (Set 2026-07-19.)
+
 ## Cross-org cost-per-outcome trio — ALL objectives, dated trend, per-workflow ratio (features-service#485)
 
 Three PLATFORM-WIDE (all-org, no-auth) cost-per-outcome surfaces for the staff admin analytics page,

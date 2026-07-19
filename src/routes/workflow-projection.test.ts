@@ -567,6 +567,60 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     expect(res.status).toBe(502);
   });
 
+  it("COMBINED sales goal: cost-per-outcome == cost-per-paid-client == cost-per-sale (additive population count); ROI = CLTV / cost-per-sale", async () => {
+    const SINGLE = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 20 };
+    mockFetch({ economics: SINGLE });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=sales`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.objective).toBe("sales");
+    expect(res.body.goal).toBe("sales");
+    // echoes BOTH single-step rates it unions
+    expect(res.body.economics.visitToPaidClientPct).toBe(5);
+    expect(res.body.economics.replyToPaidClientPct).toBe(20);
+    const a = rowFor(res.body, "dyn-a");
+    expect(a.resolved.grain).toBe("brand"); // measured (brand has clicks + replies)
+    // brand unit costs: cpc $20, cppr $100. salesPerBudget = (1/20)·0.05 + (1/100)·0.20 = 0.0045 → $222.22.
+    // The two channels ADD (linearity of expectation over the population).
+    const expectedSaleCost = 1 / ((1 / 20) * 0.05 + (1 / 100) * 0.2);
+    expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(expectedSaleCost, 2);
+    expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(222.222, 2);
+    // For the combined goal the OUTCOME *is* the paying client → the two are EQUAL (unlike single-step,
+    // where they differ by the visit/reply→paid rate).
+    expect(a.resolved.costPerPaidClientUsd).toBeCloseTo(a.resolved.costPerOutcomeUsd, 6);
+    // ROI = CLTV / cost-per-sale = 1000 / 222.22 = 4.5 ; cacPct = 100 / ROI.
+    expect(a.resolved.roiMultiple).toBeCloseTo(1000 / a.resolved.costPerPaidClientUsd, 5);
+    expect(a.resolved.roiMultiple).toBeCloseTo(4.5, 3);
+    expect(a.resolved.cacPct).toBeCloseTo(100 / 4.5, 3);
+  });
+
+  it("COMBINED sales with a paid-client rate ABSENT → fail loud (502)", async () => {
+    mockFetch({ economics: ECONOMICS }); // no visitToPaidClientPct / replyToPaidClientPct
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=sales`).set(AUTH);
+    expect(res.status).toBe(502);
+  });
+
+  it("website_purchase goal (renamed `purchase`): echoes website_purchase/websitePurchase; legacy `purchase` input still accepted", async () => {
+    mockFetch({ economics: ECONOMICS });
+    const wp = await request(app).get(`${URL_BASE}?brandId=b1&goal=websitePurchase`).set(AUTH);
+    expect(wp.status).toBe(200);
+    expect(wp.body.objective).toBe("website_purchase");
+    expect(wp.body.goal).toBe("websitePurchase");
+    const a = rowFor(wp.body, "dyn-a");
+    // Multi-step self-serve/meeting close funnel cost (unchanged math) — a real positive number.
+    expect(a.resolved.costPerOutcomeUsd).toBeGreaterThan(0);
+    // legacy `purchase` input → SAME renamed echo (input tolerance during the fleet transition)
+    mockFetch({ economics: ECONOMICS });
+    const legacy = await request(app).get(`${URL_BASE}?brandId=b1&goal=purchase`).set(AUTH);
+    expect(legacy.body.objective).toBe("website_purchase");
+    expect(legacy.body.goal).toBe("websitePurchase");
+  });
+
+  it("unknown goal → 400 (fail loud, never a silent meeting-booked default)", async () => {
+    mockFetch({ economics: ECONOMICS });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=bogusGoal`).set(AUTH);
+    expect(res.status).toBe(400);
+  });
+
   it("502 when a downstream source fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;

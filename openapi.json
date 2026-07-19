@@ -736,14 +736,14 @@
                 "nullable": true,
                 "description": "REAL cost per form submission = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / formSubmissionsCount, USD cents. So cpfsCents × formSubmissionsCount ≈ committed spend by construction. null when formSubmissionsCount is 0 (no denominator — never a false $0). ABSENT when formSubmissionsCount is absent. Real tracked data, not a projection."
               },
-              "purchasesCount": {
+              "salesCount": {
                 "type": "integer",
-                "description": "REAL attributed purchases (lead-service conversion tracker, event=purchase, deduped, excludes 'ping') for the brand — the Purchases tile's brand-level aggregate. Equivalent to signupsCount / salesMeetingsCount / formSubmissionsCount (the purchase count previously had no aggregate here — only per-lead purchased). 0 when none; ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. features-service#476."
+                "description": "REAL attributed SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase, deduped, excludes 'ping') for the brand — the Sales tile's brand-level aggregate, the terminal outcome of BOTH the website-purchase goal (multi-step close) and the combined-sales goal (paying client won via either path). Equivalent to signupsCount / salesMeetingsCount / formSubmissionsCount. 0 when none; ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (Renamed from purchasesCount — features-service combined-sales slice.)"
               },
-              "cppCents": {
+              "cpSaleCents": {
                 "type": "number",
                 "nullable": true,
-                "description": "REAL cost per purchase = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / purchasesCount, USD cents. So cppCents × purchasesCount ≈ committed spend by construction. null when purchasesCount is 0 (no denominator — never a false $0). ABSENT when purchasesCount is absent. Real tracked data, not a projection. features-service#476."
+                "description": "REAL cost per sale = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / salesCount, USD cents. So cpSaleCents × salesCount ≈ committed spend by construction. null when salesCount is 0 (no denominator — never a false $0). ABSENT when salesCount is absent. Real tracked data, not a projection. (Renamed from cppCents — features-service combined-sales slice.)"
               },
               "positiveRepliesCount": {
                 "type": "integer",
@@ -1631,26 +1631,28 @@
               "meeting-booked",
               "self-serve",
               "signup",
-              "purchase",
+              "website_purchase",
+              "sales",
               "website_visits",
               "positive_replies",
               "form_submissions",
               "whatsapp_conversations"
             ],
-            "description": "Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params. whatsapp_conversations is a click-outcome goal (cost-per-outcome = CPC; no paid-client/ROI economics — those read null)."
+            "description": "Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params. website_purchase is the RENAMED former `purchase` goal (multi-step self-serve/meeting close; legacy `purchase` input still accepted). sales is the COMBINED goal (a paying client won via EITHER visit→paid OR reply→paid, valued at CLTV; cost-per-outcome == cost-per-sale). whatsapp_conversations is a click-outcome goal (cost-per-outcome = CPC; no paid-client/ROI economics — those read null). A present-but-unrecognised goal fails loud (400)."
           },
           "goal": {
             "type": "string",
             "enum": [
               "meetingBooked",
               "signup",
-              "purchase",
+              "websitePurchase",
+              "sales",
               "websiteVisit",
               "positiveReply",
               "formSubmission",
               "whatsappConversation"
             ],
-            "description": "Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup."
+            "description": "Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup. websitePurchase = renamed former purchase goal; sales = combined-sales goal."
           },
           "economics": {
             "type": "object",
@@ -1789,7 +1791,7 @@
                             "costPerPaidClientUsd": {
                               "type": "number",
                               "nullable": true,
-                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."
+                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
                             },
                             "costPerMeetingBookedUsd": {
                               "type": "number",
@@ -1882,7 +1884,7 @@
                             "costPerPaidClientUsd": {
                               "type": "number",
                               "nullable": true,
-                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."
+                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
                             },
                             "costPerMeetingBookedUsd": {
                               "type": "number",
@@ -1975,7 +1977,7 @@
                             "costPerPaidClientUsd": {
                               "type": "number",
                               "nullable": true,
-                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."
+                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
                             },
                             "costPerMeetingBookedUsd": {
                               "type": "number",
@@ -2314,6 +2316,8 @@
               "signup",
               "meetingBooked",
               "purchase",
+              "websitePurchase",
+              "sales",
               "websiteVisit",
               "positiveReply",
               "formSubmission",
@@ -2330,7 +2334,7 @@
               "cpc",
               "cppr"
             ],
-            "description": "signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / positiveReply sort by CPPR."
+            "description": "signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR."
           },
           "audiences": {
             "type": "array",
@@ -2516,6 +2520,10 @@
                     "signups": {
                       "type": "number",
                       "description": "REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups."
+                    },
+                    "sales": {
+                      "type": "number",
+                      "description": "REAL per-audience SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase), attributed by intersecting the audience's member emails with the brand's matched-lead sale conversion emails — the SAME membership join as signups/form-submissions, never a split of the brand total. Present ONLY for the website-purchase OR combined-sales goals (both terminate in a `sale`); ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per sale = totalCostInUsdCents / sales."
                     }
                   },
                   "required": [
@@ -2552,13 +2560,19 @@
                       "type": "number",
                       "nullable": true,
                       "description": "REAL cost per signup (OBSERVED) = totalCostInUsdCents / signups. Null when signups is 0/absent (not the signup goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (signup sorts on cpc)."
+                    },
+                    "cpsaleCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "REAL cost per sale (OBSERVED) = totalCostInUsdCents / sales. Null when sales is 0/absent (not the website-purchase / combined-sales goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (both goals sort on cppr)."
                     }
                   },
                   "required": [
                     "cpcCents",
                     "cpprCents",
                     "cpfsCents",
-                    "cpsCents"
+                    "cpsCents",
+                    "cpsaleCents"
                   ]
                 }
               },
@@ -5204,14 +5218,15 @@
               "enum": [
                 "signups",
                 "booked-meetings",
+                "website_purchase",
                 "sales",
                 "website_visits",
                 "positive_replies"
               ],
-              "description": "Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), sales=click and/or positive reply (combined-OR paid-close), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged."
+              "description": "Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), website_purchase=click and/or positive reply, multi-step self-serve/meeting close (RENAMED from the former `sales` lens; legacy `purchase` spelling still accepted), sales=COMBINED goal — click and/or positive reply, per-lead sale probability = probabilistic OR of visit→paid (P=visitToPaidClient) and reply→paid (P=replyToPaidClient) (a lead converts at most once; ≤1×LTR), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged."
             },
             "required": false,
-            "description": "Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), sales=click and/or positive reply (combined-OR paid-close), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged.",
+            "description": "Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), website_purchase=click and/or positive reply, multi-step self-serve/meeting close (RENAMED from the former `sales` lens; legacy `purchase` spelling still accepted), sales=COMBINED goal — click and/or positive reply, per-lead sale probability = probabilistic OR of visit→paid (P=visitToPaidClient) and reply→paid (P=replyToPaidClient) (a lead converts at most once; ≤1×LTR), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged.",
             "name": "lens",
             "in": "query"
           },
@@ -5387,10 +5402,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase/whatsappConversation), snake (website_visits/positive_replies/form_submissions/whatsapp_conversations), kebab, and the whatsapp display value ('WhatsApp conversations'). Also accepted via `objective`. Defaults to meeting-booked. whatsapp_conversations is a click-outcome goal — cost-per-outcome = CPC, no paid-client/ROI economics."
+              "description": "Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/websitePurchase/sales/whatsappConversation), snake (website_visits/positive_replies/form_submissions/website_purchase/whatsapp_conversations), kebab, the legacy `purchase` spelling (→ websitePurchase), `combinedSales` (→ sales), and the whatsapp display value ('WhatsApp conversations'). Also accepted via `objective`. Defaults to meeting-booked; a present-but-unrecognised goal fails loud (400). websitePurchase = renamed former purchase (multi-step close). sales = COMBINED goal (paying client via either visit→paid OR reply→paid, valued at CLTV). whatsapp_conversations is a click-outcome goal — cost-per-outcome = CPC, no paid-client/ROI economics."
             },
             "required": false,
-            "description": "Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/purchase/whatsappConversation), snake (website_visits/positive_replies/form_submissions/whatsapp_conversations), kebab, and the whatsapp display value ('WhatsApp conversations'). Also accepted via `objective`. Defaults to meeting-booked. whatsapp_conversations is a click-outcome goal — cost-per-outcome = CPC, no paid-client/ROI economics.",
+            "description": "Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/websitePurchase/sales/whatsappConversation), snake (website_visits/positive_replies/form_submissions/website_purchase/whatsapp_conversations), kebab, the legacy `purchase` spelling (→ websitePurchase), `combinedSales` (→ sales), and the whatsapp display value ('WhatsApp conversations'). Also accepted via `objective`. Defaults to meeting-booked; a present-but-unrecognised goal fails loud (400). websitePurchase = renamed former purchase (multi-step close). sales = COMBINED goal (paying client via either visit→paid OR reply→paid, valued at CLTV). whatsapp_conversations is a click-outcome goal — cost-per-outcome = CPC, no paid-client/ROI economics.",
             "name": "goal",
             "in": "query"
           },
@@ -5489,26 +5504,28 @@
                         "meeting-booked",
                         "self-serve",
                         "signup",
-                        "purchase",
+                        "website_purchase",
+                        "sales",
                         "website_visits",
                         "positive_replies",
                         "form_submissions",
                         "whatsapp_conversations"
                       ],
-                      "description": "Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params. whatsapp_conversations is a click-outcome goal (cost-per-outcome = CPC; no paid-client/ROI economics — those read null)."
+                      "description": "Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params. website_purchase is the RENAMED former `purchase` goal (multi-step self-serve/meeting close; legacy `purchase` input still accepted). sales is the COMBINED goal (a paying client won via EITHER visit→paid OR reply→paid, valued at CLTV; cost-per-outcome == cost-per-sale). whatsapp_conversations is a click-outcome goal (cost-per-outcome = CPC; no paid-client/ROI economics — those read null). A present-but-unrecognised goal fails loud (400)."
                     },
                     "goal": {
                       "type": "string",
                       "enum": [
                         "meetingBooked",
                         "signup",
-                        "purchase",
+                        "websitePurchase",
+                        "sales",
                         "websiteVisit",
                         "positiveReply",
                         "formSubmission",
                         "whatsappConversation"
                       ],
-                      "description": "Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup."
+                      "description": "Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup. websitePurchase = renamed former purchase goal; sales = combined-sales goal."
                     },
                     "economics": {
                       "type": "object",
@@ -5647,7 +5664,7 @@
                                       "costPerPaidClientUsd": {
                                         "type": "number",
                                         "nullable": true,
-                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."
+                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
                                       },
                                       "costPerMeetingBookedUsd": {
                                         "type": "number",
@@ -5740,7 +5757,7 @@
                                       "costPerPaidClientUsd": {
                                         "type": "number",
                                         "nullable": true,
-                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."
+                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
                                       },
                                       "costPerMeetingBookedUsd": {
                                         "type": "number",
@@ -5833,7 +5850,7 @@
                                       "costPerPaidClientUsd": {
                                         "type": "number",
                                         "nullable": true,
-                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, else the multi-step purchase funnel)."
+                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
                                       },
                                       "costPerMeetingBookedUsd": {
                                         "type": "number",
@@ -6405,15 +6422,17 @@
                 "signup",
                 "meetingBooked",
                 "purchase",
+                "websitePurchase",
+                "sales",
                 "websiteVisit",
                 "positiveReply",
                 "formSubmission",
                 "whatsappConversation"
               ],
-              "description": "Active optimization goal (required). signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet."
+              "description": "Active optimization goal (required). signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet."
             },
             "required": true,
-            "description": "Active optimization goal (required). signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet.",
+            "description": "Active optimization goal (required). signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet.",
             "name": "goal",
             "in": "query"
           },
@@ -6535,6 +6554,8 @@
                         "signup",
                         "meetingBooked",
                         "purchase",
+                        "websitePurchase",
+                        "sales",
                         "websiteVisit",
                         "positiveReply",
                         "formSubmission",
@@ -6551,7 +6572,7 @@
                         "cpc",
                         "cppr"
                       ],
-                      "description": "signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / positiveReply sort by CPPR."
+                      "description": "signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR."
                     },
                     "audiences": {
                       "type": "array",
@@ -6737,6 +6758,10 @@
                               "signups": {
                                 "type": "number",
                                 "description": "REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups."
+                              },
+                              "sales": {
+                                "type": "number",
+                                "description": "REAL per-audience SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase), attributed by intersecting the audience's member emails with the brand's matched-lead sale conversion emails — the SAME membership join as signups/form-submissions, never a split of the brand total. Present ONLY for the website-purchase OR combined-sales goals (both terminate in a `sale`); ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per sale = totalCostInUsdCents / sales."
                               }
                             },
                             "required": [
@@ -6773,13 +6798,19 @@
                                 "type": "number",
                                 "nullable": true,
                                 "description": "REAL cost per signup (OBSERVED) = totalCostInUsdCents / signups. Null when signups is 0/absent (not the signup goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (signup sorts on cpc)."
+                              },
+                              "cpsaleCents": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "REAL cost per sale (OBSERVED) = totalCostInUsdCents / sales. Null when sales is 0/absent (not the website-purchase / combined-sales goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (both goals sort on cppr)."
                               }
                             },
                             "required": [
                               "cpcCents",
                               "cpprCents",
                               "cpfsCents",
-                              "cpsCents"
+                              "cpsCents",
+                              "cpsaleCents"
                             ]
                           }
                         },
