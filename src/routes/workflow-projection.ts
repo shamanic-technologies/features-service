@@ -224,8 +224,9 @@ function outcomeCostForGoal(
   // positiveReply→CPPR) + the cross-org objective→cost doctrine ("the visit / reply IS the outcome").
   if (singleStepGoal === "websiteVisit") return unitCosts.clickUsd;
   if (singleStepGoal === "positiveReply") return unitCosts.replyUsd;
-  // COMBINED-SALES: the outcome IS a sale (paying client) via EITHER path → cost-per-sale (additive
-  // population expected-count, projectOutcomeCosts.costPerSaleUsd). Equals its cost-per-paid-client.
+  // COMBINED-SALES: the outcome IS a sale (paying client) via the BEST channel → cost-per-sale
+  // (best-channel MIN of visit→paid vs reply→paid, projectOutcomeCosts.costPerSaleUsd). Equals its
+  // cost-per-paid-client.
   if (objective === "sales") return p.costPerSaleUsd;
   if (objective === "website_purchase") return p.costPerPurchaseUsd;
   if (objective === "meeting-booked") return p.costPerMeetingBookedUsd;

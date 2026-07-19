@@ -155,23 +155,34 @@ export interface ProjectedOutcomeCosts {
    * for the form_submissions goal. Null when there is no click cost OR v2fs/fs2pc is unset / 0. */
   costPerFormSubmissionPaidClientUsd: number | null;
   /**
-   * COMBINED-SALES goal (`sales`): cost per SALE — a paying client (valued at CLTV) won via EITHER the
-   * website-visit path (click → paid, v2pc) OR the positive-reply path (reply → paid, r2pc).
+   * COMBINED-SALES goal (`sales`): cost per SALE — a paying client (valued at CLTV) won via the
+   * BEST-converting channel: the website-visit path (click → paid, v2pc) OR the positive-reply path
+   * (reply → paid, r2pc), whichever is CHEAPER per sale.
    *
-   * POPULATION EXPECTED-COUNT combination — the two channels' sales-per-budget ADD (linearity of
-   * expectation over the whole population): spending on clicks yields (1/clickUsd)·v2pc sales, spending
-   * on replies yields (1/replyUsd)·r2pc sales, so
-   *   salesPerBudget = (1/clickUsd)·v2pc + (1/replyUsd)·r2pc
-   *   costPerSaleUsd = 1 / salesPerBudget
-   * The SUM is correct for a rankable EXPECTED COUNT across many leads — even if a single lead is
-   * reachable by both channels, E[total sales] = E[visit sales] + E[reply sales] by linearity, so no
-   * double-count adjustment applies at the population grain. This is DELIBERATELY different from the
-   * per-LEAD probability of a sale (revenue lens), which combines the two paths as a probabilistic OR
-   * (`orP`) because a single lead converts at most once (P ≤ 1). Do NOT swap the two combinations.
+   * BEST-CHANNEL combination (MIN, NOT sum) — the combined cost per sale = the cheaper of the two
+   * single-step paid-client costs:
+   *   visitSaleUsd = clickUsd / v2pc   (= costPerVisitPaidClientUsd)
+   *   replySaleUsd = replyUsd / r2pc   (= costPerReplyPaidClientUsd)
+   *   costPerSaleUsd = min(visitSaleUsd, replySaleUsd) = 1 / max(visitPaidPerBudget, replyPaidPerBudget)
+   * The combined goal means "acquire a paying client via whatever path works best", so its cost is the
+   * BEST single channel's cost — and thus can NEVER read below either single-path cost.
+   *
+   * Why MIN, not the population-SUM `(1/clickUsd)·v2pc + (1/replyUsd)·r2pc`: the SUM adds the two
+   * channels' sales-per-budget, so a workflow that is merely CHEAP on a near-zero-conversion channel
+   * (e.g. clicks at 0.5% visit→paid) has its cost-per-sale DILUTED DOWN below its real, higher-converting
+   * channel — rewarding a workflow that is cheap-on-visits over one that is genuinely good at converting.
+   * The SUM also let the combined headline read BELOW every per-audience row (incoherent) and ranked the
+   * wrong workflow best. MIN ties combined-sales to the BEST of its two single-step goals, so it is
+   * coherent by construction (≥ the best channel, matches whichever single-step goal wins for the brand)
+   * and ranks on REAL paid-client acquisition on the meaningful path (features-service#630).
+   *
+   * This is DISTINCT from the per-LEAD probability of a sale (revenue lens, `combinedSaleProbability`),
+   * which ORs the two paths (`orP`) because a single lead converts at most once (P ≤ 1) — that is a
+   * per-lead EV question, not a cost-ranking one; do NOT conflate the two.
    *
    * For the combined-sales goal the OUTCOME *is* the paying client, so cost-per-outcome == cost-per-paid
-   * client == costPerSaleUsd (coherent — no visit/reply→paid rate separates them, unlike the single-step
-   * goals). ROI = CLTV / costPerSaleUsd. Null when neither channel funds a sale (both perBudget
+   * client == costPerSaleUsd (coherent — the visit/reply→paid rate is already baked into each channel's
+   * cost). ROI = CLTV / costPerSaleUsd. Null when neither channel funds a sale (both perBudget
    * contributions 0 — zero-denominator gate), never a false $0. */
   costPerSaleUsd: number | null;
 }
@@ -227,13 +238,12 @@ export function projectOutcomeCosts(
       ? (1 / costs.clickUsd) * econ.v2fs * econ.fs2pc
       : 0;
 
-  // COMBINED-SALES goal — sales won via EITHER channel; population expected-count → the two channels'
-  // sales-per-budget ADD (linearity of expectation): visit path (click → paid, v2pc) + reply path
-  // (reply → paid, r2pc). costPerSale = 1 / salesPerBudget. This is the SUM combination — the per-LEAD
-  // probability (revenue lens) instead ORs the two paths; see costPerSaleUsd doc + orP.
-  const salesPerBudget =
-    (costs.clickUsd != null && econ.v2pc != null ? (1 / costs.clickUsd) * econ.v2pc : 0) +
-    (costs.replyUsd != null && econ.r2pc != null ? (1 / costs.replyUsd) * econ.r2pc : 0);
+  // COMBINED-SALES goal — a sale won via the BEST-converting channel: cost per sale = the CHEAPER of the
+  // two single-step paid-client costs (visit→paid, reply→paid), i.e. 1 / max(visitPaidPerBudget,
+  // replyPaidPerBudget). MIN not SUM: the SUM adds the channels' sales-per-budget, diluting the cost
+  // below the best single channel and rewarding a workflow merely cheap on a low-conversion side channel
+  // (features-service#630). Reuses the single-step per-budget rates already computed above.
+  const bestSalePerBudget = Math.max(visitPaidPerBudget, replyPaidPerBudget);
 
   return {
     costPerPurchaseUsd: closesPerBudget > 0 ? 1 / closesPerBudget : null,
@@ -245,7 +255,7 @@ export function projectOutcomeCosts(
     costPerReplyPaidClientUsd: replyPaidPerBudget > 0 ? 1 / replyPaidPerBudget : null,
     costPerFormSubmissionUsd: formSubmissionsPerBudget > 0 ? 1 / formSubmissionsPerBudget : null,
     costPerFormSubmissionPaidClientUsd: formSubmissionPaidPerBudget > 0 ? 1 / formSubmissionPaidPerBudget : null,
-    costPerSaleUsd: salesPerBudget > 0 ? 1 / salesPerBudget : null,
+    costPerSaleUsd: bestSalePerBudget > 0 ? 1 / bestSalePerBudget : null,
   };
 }
 
@@ -253,7 +263,8 @@ export function projectOutcomeCosts(
  * The per-LEAD probability that a single lead becomes a SALE for the COMBINED-sales goal — the
  * probabilistic OR of the two paths available to THAT lead. A lead converts at most once, so the
  * two paths combine via `orP` (P ≤ 1), NEVER a sum (a sum can exceed 1 and double-counts the both-paths
- * lead). This is the per-lead twin of the population `costPerSaleUsd` (which SUMS by linearity):
+ * lead). This is a per-lead EV question (revenue lens), DISTINCT from the cost-ranking `costPerSaleUsd`
+ * (the best-channel MIN) — do not conflate the two combinations:
  *   clicked only          → v2pc
  *   positive-reply only   → r2pc
  *   clicked AND replied   → orP(v2pc, r2pc) = 1 − (1 − v2pc)(1 − r2pc)   (> max, < sum, ≤ 1)

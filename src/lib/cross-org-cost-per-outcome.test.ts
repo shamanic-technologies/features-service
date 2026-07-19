@@ -371,6 +371,8 @@ describe("buildWorkflowCostPerOutcome", () => {
 
 import {
   OBJECTIVE_GOAL_BUCKET,
+  GOAL_AGNOSTIC_OBJECTIVES,
+  isGoalAgnosticObjective,
   goalInObjectiveBucket,
   bucketBrandsForObjective,
   mergeSpendByDay,
@@ -467,14 +469,36 @@ describe("bucketBrandsForObjective + merge", () => {
     expect(mergeSpendByDay(bucket).get("2026-07-08")).toBe(900); // 400 + 500
   });
 
-  it("positiveReply bucket sums replies only from reply brands", () => {
+  it("positiveReply is GOAL-AGNOSTIC: pools replies across ALL brands, not just reply-goal brands", () => {
+    // A positive reply is produced by every cold-email brand regardless of its declared goal, so the
+    // bucket = the whole dataset (never filtered to optimizationGoal=positiveReply).
     const bucket = bucketBrandsForObjective(brands, "positiveReply");
-    expect(mergeOutcomesByDay(bucket).get("2026-07-08")).toEqual({ clicks: 5, replies: 20 });
+    expect(bucket.map((b) => b.brandId).sort()).toEqual([
+      "b-meeting",
+      "b-purchase",
+      "b-reply",
+      "b-signup",
+      "b-visit",
+    ]);
+    // clicks 50+40+5+10+8 = 113, replies 0+0+20+3+2 = 25 — every brand's outcomes counted
+    expect(mergeOutcomesByDay(bucket).get("2026-07-08")).toEqual({ clicks: 113, replies: 25 });
+    // spend pooled over every brand: 100+200+300+400+500 = 1500
+    expect(mergeSpendByDay(bucket).get("2026-07-08")).toBe(1500);
+  });
+});
+
+describe("isGoalAgnosticObjective / GOAL_AGNOSTIC_OBJECTIVES", () => {
+  it("positiveReply is goal-agnostic; websiteVisit + projected + whatsapp stay goal-bucketed", () => {
+    expect(isGoalAgnosticObjective("positiveReply")).toBe(true);
+    expect(GOAL_AGNOSTIC_OBJECTIVES).toEqual(["positiveReply"]);
+    for (const g of ["websiteVisit", "signup", "formSubmission", "meetingBooked", "websitePurchase", "sales", "whatsappConversation"] as const) {
+      expect(isGoalAgnosticObjective(g)).toBe(false);
+    }
   });
 });
 
 describe("buildBucketedLifetimeAverages", () => {
-  it("cost-per-click uses ONLY click-driven brands' pooled spend/clicks", () => {
+  it("cost-per-click uses ONLY click-driven brands' pooled spend/clicks (websiteVisit stays bucketed)", () => {
     const brands = [
       brand("b-visit", "websiteVisit", 100, 50, 0),
       brand("b-reply", "positiveReply", 900, 0, 30),
@@ -482,14 +506,23 @@ describe("buildBucketedLifetimeAverages", () => {
     const avgs = buildBucketedLifetimeAverages(brands);
     // websiteVisit = pooled CPC over the visit brand only: 100 / 50 = 2 (reply brand's $900 excluded)
     expect(avgs.websiteVisit).toBeCloseTo(2, 5);
-    // positiveReply = pooled CPPR over the reply brand only: 900 / 30 = 30
-    expect(avgs.positiveReply).toBeCloseTo(30, 5);
   });
 
-  it("empty bucket → null cost, never a false $0", () => {
-    const brands = [brand("b-visit", "websiteVisit", 100, 50, 0)];
+  it("positiveReply is GOAL-AGNOSTIC: pooled CPPR over EVERY brand's spend ÷ replies, not just reply brands", () => {
+    const brands = [
+      brand("b-visit", "websiteVisit", 100, 50, 0), // 0 replies — its $100 STILL counts toward fleet CPPR
+      brand("b-reply", "positiveReply", 900, 0, 30),
+    ];
     const avgs = buildBucketedLifetimeAverages(brands);
-    expect(avgs.positiveReply).toBeNull(); // no reply-goal brand
+    // pooled over ALL brands: total spend 1000 ÷ total replies 30 = 33.33 (the honest fleet-wide cost —
+    // the click brand's spend is real money that produced only its incidental replies)
+    expect(avgs.positiveReply).toBeCloseTo(1000 / 30, 5);
+  });
+
+  it("positiveReply null when NO brand produced any reply, never a false $0", () => {
+    const brands = [brand("b-visit", "websiteVisit", 100, 50, 0)]; // 0 replies fleet-wide → 0 denominator
+    const avgs = buildBucketedLifetimeAverages(brands);
+    expect(avgs.positiveReply).toBeNull();
   });
 });
 

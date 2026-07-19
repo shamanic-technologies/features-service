@@ -181,6 +181,32 @@ recommended workflow rides `outcomeCostForGoal` (unchanged) — this touches ONL
 ROI + CAC. `ProjectedOutcomeCosts` is an internal lib type (NOT a response schema) → no OpenAPI regen.
 (Set 2026-07-07.)
 
+## COMBINED-`sales` goal cost = the BEST converting channel (`min` of visit→paid vs reply→paid), NEVER the population SUM (supersedes #615)
+
+`projectOutcomeCosts(...).costPerSaleUsd` (the combined-`sales` goal's cost-per-outcome == cost-per-paid
+client, drives its ranking + headline ROI/CAC on `workflow-projection` + the cross-org objective surfaces)
+= **`min(clickUsd/v2pc, replyUsd/r2pc)` = `1 / max(visitPaidPerBudget, replyPaidPerBudget)`** — the
+CHEAPER of the two single-step paid-client costs (visit→paid, reply→paid). A sale is won via the BEST
+channel, so combined-sales reduces to the best of its two single-step goals and is coherent by
+construction (≥ the best channel; can NEVER read below either single path).
+
+**Do NOT restore the population-SUM `salesPerBudget = (1/clickUsd)·v2pc + (1/replyUsd)·r2pc` (#615).** The
+SUM adds the channels' sales-per-budget, so a workflow merely CHEAP on a near-zero-conversion channel
+(e.g. clicks at 0.5% visit→paid) had its cost-per-sale DILUTED below its real, higher-converting reply
+channel — it (a) RANKED the wrong workflow best (rewarded cheap-on-visits over genuinely-good-at-converting)
+and (b) produced a combined headline cost BELOW every per-audience row (internally incoherent). Repro
+(features-service#630): LTR $2500, visit→paid 0.5%, reply→paid 20% — SUM gave Dawn $204/sale (< its own
+$240 reply-path cost) and headline 12.2x over a best-audience 8.7x; MIN gives Dawn $240, Granite $230 →
+Sales picks Granite = the positiveReply goal's pick (the reply path IS this brand's real acquisition
+route). Same doctrine as the per-goal `costPerPaidClient` section above: no combined/downstream cost may
+read cheaper than the honest single-path cost.
+
+The per-LEAD sale probability (`combinedSaleProbability`, revenue lens EV) STAYS the `orP` of the two
+paths — a DISTINCT quantity (a lead converts at most once, P ≤ 1), not a cost-ranking one. Do NOT conflate
+the two combinations. `costPerSaleUsd` shape unchanged (internal lib field) → no OpenAPI regen; auto-flows
+to `objectiveCostPerOutcome` (cross-org) + `paidClientCostForGoal`/`outcomeCostForGoal` (workflow-projection).
+(Set 2026-07-19.)
+
 ## Goal vocabulary — a NEW optimization goal goes in the CANONICAL `Goal` enum + `GOALS`, NEVER a parallel "ExtendedGoal" side-type
 
 When adding an optimization goal (or renaming one), put it in the shared `Goal` enum + the `GOALS`
@@ -1005,16 +1031,34 @@ totalClicks, totalPositiveReplies, brandCount }`. Cached via the shared `PublicC
 `/public/stats/X` → `/v1/public/features/X` per-route pattern). Triage: STAGING → promoted to main
 (features-service v0.84.0 / api-service v0.83.0). (Set 2026-07-09, PR #496.)
 
-### Trend + lifetime are GOAL-BUCKETED — each objective sums ONLY the brands whose goal is relevant
+### Trend + lifetime + distribution are GOAL-BUCKETED — EXCEPT `positiveReply` which is GOAL-AGNOSTIC (raw measured, fleet-wide, "observed across every brand")
 
-`cost-per-outcome-trend` + `cost-per-outcome-lifetime` DO NOT sum fleet-wide spend/outcomes anymore —
-each objective's spend + clicks/replies come from ONLY the brands whose `optimizationGoal` sits in that
-objective's bucket, so a meeting/reply-optimizing brand no longer dilutes the CPC card. Buckets
+`cost-per-outcome-trend` + `cost-per-outcome-lifetime` + `cost-per-outcome-distribution` DO NOT sum
+fleet-wide spend/outcomes for the BUCKETED objectives — each sums ONLY the brands whose `optimizationGoal`
+sits in that objective's bucket, so a meeting/reply-optimizing brand no longer dilutes the CPC card. Buckets
 (`OBJECTIVE_GOAL_BUCKET`, `cross-org-cost-per-outcome.ts`): **cpc(websiteVisit) = {websiteVisit, signup,
 formSubmission}** (every click-driven goal except reply/meeting — purchase closes via a meeting so it is
-NOT here); **positiveReply/signup/formSubmission/purchase = own goal only**; **meetingBooked =
+NOT here); **signup/formSubmission/purchase/sales/whatsapp = own goal only**; **meetingBooked =
 {meetingBooked, purchase}**. A brand may fall in several buckets (a signup brand feeds cpc AND
 cost-per-signup) — intended; each card is a distinct ratio over a distinct denominator.
+
+**`positiveReply` is the EXCEPTION — GOAL-AGNOSTIC (`GOAL_AGNOSTIC_OBJECTIVES` = `["positiveReply"]`,
+`isGoalAgnosticObjective`).** A positive reply is a RAW MEASURED fact produced by EVERY cold-email brand
+(anyone can hit reply to any brand's outreach), and the public homepage headlines its cost as the fleet-wide
+average CAC ("the average cost of acquisition observed across every brand we run"). So `bucketBrandsForObjective`
+returns the WHOLE dataset for `positiveReply` — its trend/lifetime/distribution pool spend + replies over ALL
+contributing brands, NOT only `optimizationGoal=positiveReply` brands. Scoping it to the tiny reply-goal subset
+(PR #499) made the headline a biased, small-denominator metric whose weekly delta swung on noise — contradicting
+the "every brand" claim. **Reconciliation with PR #499 (which ADDED the bucketing on purpose):** #499 conflated
+two concerns. Its dilution fix stays CORRECT + RETAINED for the PROJECTED objectives (signup/formSubmission/
+meetingBooked/purchase/sales — pushing a brand's spend through economics is only meaningful for brands whose
+funnel those economics describe) AND for **websiteVisit CPC** (a click is also raw-measured, but #499 deliberately
+excludes reply/meeting brands whose link-light copy yields incidental, artificially-low click rates, and the CPC
+card carries NO fleet-wide public claim — the metric's scope matches its consumer's claim). **whatsappConversation**
+stays own-goal because its outcome (a WhatsApp-link click) requires a WhatsApp link in the email → NOT produced
+fleet-wide. So only `positiveReply` flips to goal-agnostic; everything else keeps #499's scoping. Husk/false-$0
+handling unchanged (a brand with 0 replies contributes its spend to the pooled denominator but no distribution
+data point; 0 fleet replies → null, never $0).
 
 **Bucketing is CONSUMER-SIDE composition, not a read-side derivation of a missing tag** — runs/email cost
 rows carry NO goal tag (0 of ~42k), so features-service enumerates the feature's brands

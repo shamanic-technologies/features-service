@@ -476,10 +476,14 @@ export function addUtcDays(iso: string, delta: number): string {
 
 // ── Goal-bucketed cost per outcome (per-brand-goal scoping) ───────────────────
 //
-// A brand's spend + outcomes count toward a cost-per-outcome CARD only when the brand's optimization
-// goal is RELEVANT to that card — otherwise a brand that optimizes for meetings/replies dilutes the
-// fleet CPC. So each objective's fleet spend + outcomes are summed over ONLY the brands whose declared
-// `optimizationGoal` sits in that objective's bucket below. Because runs/email cost rows are NOT
+// A GOAL-BUCKETED objective's spend + outcomes count toward its cost-per-outcome CARD only when the
+// brand's optimization goal is RELEVANT to that card — otherwise a brand that optimizes for meetings
+// dilutes the fleet CPC. So a bucketed objective's fleet spend + outcomes are summed over ONLY the brands
+// whose declared `optimizationGoal` sits in that objective's bucket below. A GOAL-AGNOSTIC objective
+// (`GOAL_AGNOSTIC_OBJECTIVES` — currently `positiveReply`) is the EXCEPTION: its outcome is a raw measured
+// fact produced fleet-wide and its consumer claims "observed across every brand we run", so it pools over
+// EVERY contributing brand regardless of goal (see `bucketBrandsForObjective` / `GOAL_AGNOSTIC_OBJECTIVES`).
+// Because runs/email cost rows are NOT
 // goal-tagged (0 of ~42k carry a non-null goal), the bucketing is done consumer-side: enumerate the
 // feature's brands, resolve each brand's goal (brand-service saved economics), fetch each brand's dated
 // spend (runs, brandId-filtered) + dated outcomes (email-gateway, brandId-filtered), then aggregate per
@@ -513,9 +517,45 @@ export const OBJECTIVE_GOAL_BUCKET: Record<Goal, readonly Goal[]> = {
   whatsappConversation: ["whatsappConversation"],
 };
 
-/** True when a brand whose optimization goal is `goal` contributes to `objective`'s cost bucket. */
+/** True when a brand whose optimization goal is `goal` contributes to `objective`'s cost bucket.
+ * Consulted ONLY for the goal-BUCKETED objectives — the goal-AGNOSTIC objectives (below) bypass the
+ * table entirely (every contributing brand counts), so this predicate is not the last word for them. */
 export function goalInObjectiveBucket(objective: Goal, goal: Goal): boolean {
   return OBJECTIVE_GOAL_BUCKET[objective].includes(goal);
+}
+
+/**
+ * Objectives whose cross-org cost-per-outcome is GOAL-AGNOSTIC: their outcome is a RAW MEASURED fact
+ * (an observed event, not a projection through economics) produced by the ENTIRE cold-email fleet
+ * regardless of a brand's declared `optimizationGoal`, AND the surface consuming it claims the number is
+ * "observed across every brand we run". So EVERY contributing brand's outcome + attributable spend counts
+ * — NOT only the brands whose declared goal matches. These bypass `OBJECTIVE_GOAL_BUCKET`.
+ *
+ * Currently just `positiveReply`. A positive reply can come from ANY cold-email recipient (hitting reply
+ * to any brand's outreach), and the public homepage headlines its cost as the fleet-wide average CAC
+ * ("the average cost of acquisition observed across every brand we run"). Scoping it to
+ * `optimizationGoal=positiveReply` brands (a tiny subset) made the headline a biased, small-denominator
+ * metric whose weekly delta swung on noise — directly contradicting the "every brand" claim.
+ *
+ * DELIBERATELY NOT goal-agnostic (kept goal-bucketed via `OBJECTIVE_GOAL_BUCKET`) — reconciles with
+ * PR #499, which added the bucketing on purpose:
+ *  - **websiteVisit (CPC)** — a click is also raw-measured, but #499 deliberately EXCLUDES reply/meeting
+ *    -goal brands whose link-light copy yields incidental, artificially-low click rates that dilute the
+ *    fleet CPC, and the CPC card carries NO fleet-wide public claim (staff-analytical). That deliberate
+ *    scoping is preserved: the metric's scope matches its consumer's claim (positiveReply claims "every
+ *    brand" → agnostic; CPC does not → optimized subset).
+ *  - **whatsappConversation** — its outcome (a WhatsApp-link click) requires a WhatsApp link in the email,
+ *    so it is NOT produced fleet-wide (only WhatsApp-goal brands generate it). Own-goal bucket stays.
+ *  - **the PROJECTED objectives** (signup / formSubmission / meetingBooked / websitePurchase / sales) —
+ *    each projects spend through a brand's conversion economics, which is only meaningful for brands whose
+ *    funnel those economics describe. Goal-relevance is load-bearing here; #499's bucketing is correct.
+ */
+export const GOAL_AGNOSTIC_OBJECTIVES: readonly Goal[] = ["positiveReply"];
+
+/** True when `objective`'s cost-per-outcome is pooled over ALL contributing brands regardless of their
+ * declared optimization goal (see `GOAL_AGNOSTIC_OBJECTIVES`). */
+export function isGoalAgnosticObjective(objective: Goal): boolean {
+  return GOAL_AGNOSTIC_OBJECTIVES.includes(objective);
 }
 
 /** One feature brand's goal + saved economics + its dated spend / outcome evidence (cross-org). */
@@ -529,8 +569,12 @@ export interface BucketedBrand {
   outcomesByDay: Map<string, DayOutcome>;
 }
 
-/** The brands of a feature that belong to `objective`'s cost bucket. */
+/** The brands of a feature that belong to `objective`'s cost bucket. A GOAL-AGNOSTIC objective
+ * (`positiveReply` — raw measured, produced fleet-wide, publicly claimed "across every brand") pools
+ * over EVERY contributing brand regardless of its declared goal; every other objective filters by the
+ * `OBJECTIVE_GOAL_BUCKET` table (PR #499's deliberate goal-relevance scoping). */
 export function bucketBrandsForObjective(brands: BucketedBrand[], objective: Goal): BucketedBrand[] {
+  if (isGoalAgnosticObjective(objective)) return brands;
   return brands.filter((b) => goalInObjectiveBucket(objective, b.goal));
 }
 

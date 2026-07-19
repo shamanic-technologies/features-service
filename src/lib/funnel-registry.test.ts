@@ -299,23 +299,36 @@ describe("projectOutcomeCosts — TWO-STEP form_submissions goal (visit→form�
   });
 });
 
-describe("COMBINED-sales goal — population expected-count (SUM) vs per-lead probability (OR)", () => {
+describe("COMBINED-sales goal — best-channel MIN cost (rank) vs per-lead probability (OR)", () => {
   // v2pc = 0.05 (visit→paid 5%), r2pc = 0.20 (reply→paid 20%)
   const econ = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04, v2pc: 0.05, r2pc: 0.2 };
 
-  it("PROJECTION cost-per-sale = 1 / ((1/clickUsd)·v2pc + (1/replyUsd)·r2pc) — the two channels ADD (linearity of expectation)", () => {
+  it("PROJECTION cost-per-sale = MIN(clickUsd/v2pc, replyUsd/r2pc) — the cheapest converting channel, NEVER below the best single path", () => {
     const clickUsd = 10;
     const replyUsd = 5;
-    // salesPerBudget = (1/10)·0.05 + (1/5)·0.20 = 0.005 + 0.04 = 0.045 → cost = 1/0.045 ≈ 22.222
-    const salesPerBudget = (1 / clickUsd) * econ.v2pc + (1 / replyUsd) * econ.r2pc;
-    const { costPerSaleUsd } = projectOutcomeCosts(econ, { clickUsd, replyUsd });
-    expect(costPerSaleUsd).toBeCloseTo(1 / salesPerBudget);
-    expect(costPerSaleUsd).toBeCloseTo(22.2222, 3);
+    // visit path = 10/0.05 = 200 ; reply path = 5/0.20 = 25 → MIN = 25 (the best channel, reply)
+    const { costPerSaleUsd, costPerVisitPaidClientUsd, costPerReplyPaidClientUsd } = projectOutcomeCosts(econ, { clickUsd, replyUsd });
+    expect(costPerSaleUsd).toBeCloseTo(25, 6);
+    expect(costPerSaleUsd).toBeCloseTo(Math.min(costPerVisitPaidClientUsd!, costPerReplyPaidClientUsd!), 10);
+    // coherence: the combined cost is never CHEAPER than either single-path cost (the SUM bug read below both)
+    expect(costPerSaleUsd!).toBeGreaterThanOrEqual(Math.min(200, 25) - 1e-9);
+    expect(costPerSaleUsd!).toBeLessThanOrEqual(200 + 1e-9);
+  });
+
+  it("ranks the workflow with the BEST converting channel, not the one merely cheap on a low-conversion channel (features-service#630 repro)", () => {
+    // Brand: visit→paid 0.5%, reply→paid 20% (the reply path is the real acquisition route).
+    const brand = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04, v2pc: 0.005, r2pc: 0.2 };
+    // Dawn: cheap clicks ($6.75) but only tied-good replies ($48). Granite: cheaper replies ($46).
+    const dawn = projectOutcomeCosts(brand, { clickUsd: 6.75, replyUsd: 48 }).costPerSaleUsd!;
+    const granite = projectOutcomeCosts(brand, { clickUsd: 20, replyUsd: 46 }).costPerSaleUsd!;
+    expect(dawn).toBeCloseTo(240, 4); // 48/0.20 — its best channel (reply), NOT diluted below by cheap visits
+    expect(granite).toBeCloseTo(230, 4); // 46/0.20 — the genuinely better reply workflow
+    expect(granite).toBeLessThan(dawn); // Sales picks Granite (lower cost/sale), matching the positiveReply goal
   });
 
   it("cost-per-sale uses ONLY the click channel when there is no reply cost (and vice-versa)", () => {
-    expect(projectOutcomeCosts(econ, { clickUsd: 10, replyUsd: null }).costPerSaleUsd).toBeCloseTo(1 / ((1 / 10) * 0.05)); // 200
-    expect(projectOutcomeCosts(econ, { clickUsd: null, replyUsd: 5 }).costPerSaleUsd).toBeCloseTo(1 / ((1 / 5) * 0.2)); // 25
+    expect(projectOutcomeCosts(econ, { clickUsd: 10, replyUsd: null }).costPerSaleUsd).toBeCloseTo(10 / 0.05); // 200 (visit path only)
+    expect(projectOutcomeCosts(econ, { clickUsd: null, replyUsd: 5 }).costPerSaleUsd).toBeCloseTo(5 / 0.2); // 25 (reply path only)
   });
 
   it("cost-per-sale null when neither channel funds a sale (zero-denominator gate, never a false $0)", () => {
