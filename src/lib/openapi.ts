@@ -1361,7 +1361,6 @@ const objectiveAveragesSchema = z.object({
   websitePurchase: z.number().nullable().describe("Fleet-average projected cost per website purchase (multi-step self-serve/meeting close — RENAMED from `purchase`)."),
   sales: z.number().nullable().describe("Fleet-average projected cost per SALE (combined goal — a paying client won via EITHER the visit→paid OR reply→paid path, valued at CLTV)."),
   whatsappConversation: z.number().nullable().describe("Fleet-average cost per WhatsApp conversation (CPC — the click on the brand's WhatsApp link IS the started conversation; no paid-client economics)."),
-  purchase: z.number().nullable().optional().describe("TRANSITIONAL byte-equal alias of `websitePurchase` — kept so the admin dashboard's existing `.purchase` key keeps rendering during the fleet rename. Migrate to `websitePurchase`; this alias will be dropped."),
 }).describe("Fleet-average cost-per-outcome per optimization objective. Each = mean across client brands of that brand's best-workflow value; null when no brand is backed for the objective.");
 
 const publicCostProjectionResponseSchema = z.object({
