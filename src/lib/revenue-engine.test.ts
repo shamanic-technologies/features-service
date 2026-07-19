@@ -741,6 +741,30 @@ describe("computeRevenue — opened/clicked/meeting/purchase flags + dates (feat
     expect(lead.purchased).toBe(false);
   });
 
+  // Bug: email-gateway's `firstRepliedAt` (→ signalDates.positiveReply) is sentiment-AGNOSTIC, so a
+  // negative/neutral-only replier gets a populated date while signals.positiveReply stays false. The
+  // per-lead `repliedPositiveAt` must honor its contract (null unless positive-classified) so the daily
+  // digest never surfaces a non-positive replier as a positive reply.
+  it("repliedPositiveAt is NULL when a lead replied but is NOT positive-classified, even with a firstRepliedAt date", () => {
+    const r = computeRevenue(PATHS, [
+      // negative-only replier: reply date present (sentiment-agnostic firstRepliedAt), positiveReply signal false
+      person({ leadId: "neg", signals: { contacted: true, positiveReply: false }, signalDates: { contacted: "2026-06-20T10:00:00.000Z", positiveReply: "2026-06-21T09:00:00.000Z" } }),
+      // neutral-only replier: same shape
+      person({ leadId: "neu", signals: { contacted: true, positiveReply: false }, signalDates: { contacted: "2026-06-20T10:00:00.000Z", positiveReply: "2026-06-21T12:00:00.000Z" } }),
+      // genuine positive replier: signal true + date → date surfaces
+      person({ leadId: "pos", signals: { contacted: true, positiveReply: true }, signalDates: { contacted: "2026-06-20T10:00:00.000Z", positiveReply: "2026-06-21T15:00:00.000Z" } }),
+    ]);
+    const byId = new Map(r.leads.map((l) => [l.leadId, l]));
+    // AC1/AC2: not positive-classified → both false and null (never the sentiment-agnostic date)
+    expect([byId.get("neg")!.repliedPositive, byId.get("neg")!.repliedPositiveAt]).toEqual([false, null]);
+    expect([byId.get("neu")!.repliedPositive, byId.get("neu")!.repliedPositiveAt]).toEqual([false, null]);
+    // AC3: positive-classified → true + its reply date
+    expect([byId.get("pos")!.repliedPositive, byId.get("pos")!.repliedPositiveAt]).toEqual([true, "2026-06-21T15:00:00.000Z"]);
+    // AC5: the positive-replies series still counts exactly the one positive lead (boolean-gated, unchanged)
+    const series = buildSignalSeries(r.leads, (l) => l.repliedPositive, (l) => l.repliedPositiveAt);
+    expect(series.total).toBe(1);
+  });
+
   it("opened/clicked counts never exceed the contacted snapshot — all from the same leads[]", () => {
     const r = computeRevenue(PATHS, [
       person({ leadId: "l1", signals: { contacted: true, open: true, clicked: true }, signalDates: { contacted: "2026-06-20T09:00:00.000Z", open: "2026-06-20T10:00:00.000Z", clicked: "2026-06-20T11:00:00.000Z" } }),

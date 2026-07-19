@@ -1391,7 +1391,7 @@
                 "repliedPositiveAt": {
                   "type": "string",
                   "nullable": true,
-                  "description": "ISO timestamp of first positive reply (email-gateway firstRepliedAt). Null when no positive reply, or replied with no known date. No synthesis."
+                  "description": "ISO timestamp of the first reply, surfaced ONLY when the reply is positive-classified (matches repliedPositive; date = email-gateway firstRepliedAt). Null when there is no positive reply — INCLUDING a negative/neutral-only replier (whose firstRepliedAt is deliberately NOT surfaced) — or positive with no known date. No synthesis."
                 },
                 "meetingBooked": {
                   "type": "boolean",
