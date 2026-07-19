@@ -1,32 +1,30 @@
 # Features Service — CLAUDE.md
 
-## Staff admin metrics `/internal/stats/{accounts,revenue}` are NET (post per-org usage discount) — money IN-PLACE net, GROSS additive, verdict stays on GROSS (PR #592, v0.93.1)
+## Staff admin metrics — DAILY BUDGET (+ its MRR/ARR projection) is the RAW configured value, NEVER discounted; realized-revenue stays NET (supersedes PR #592's discounted-budget)
 
-The staff admin metrics page (`admin.distribute.you/metrics`) renders fleet money features-service serves
-via the api-service staff-gated proxy. It is **NET** (what we actually collect after each org's usage
-discount), not GROSS (list price) — discounted orgs exist, so GROSS overstated.
+The per-org usage discount is a modifier on CHARGES only (frozen gross+net per cost row in the runs/billing
+ledger). The DAILY BUDGET is a **configuration ceiling, not a charge**, so the discount is NEVER applied to
+it: two orgs with the same configured budget show the SAME daily budget regardless of their discounts.
+PR #592 wrongly applied the discount to the budget display (an $8/day, 50%-discount org showed $4/day); that
+is reverted — the net/gross budget split (`grossDailyBudgetUsd`, `stats.gross*`, `applyDiscount`,
+`fetchOrgUsageDiscountPct`, the `usage-discount` fetch) is **DELETED** (a config budget has ONE true value,
+no "net budget"; the admin only ever read `dailyBudgetUsd`, so the gross* twins had zero external consumers).
 
-- **`/internal/stats/accounts` (`buildAccountsAudit`)** — per-brand `dailyBudgetUsd` + fleet
-  `stats.totalDailyBudgetUsd`/`mrrUsd`/`arrUsd` are **NET** (`gross × (1 − orgDiscount/100)`, `applyDiscount`).
-  GROSS is exposed **additively** (`grossDailyBudgetUsd`, `stats.grossTotalDailyBudgetUsd`/`grossMrrUsd`/`grossArrUsd`).
-  **The ACTIVE verdict + row sort compute on GROSS** (`accountStatus(grossBudget, …)`, sort on
-  `grossDailyBudgetUsd`) — the discount NEVER changes who is active (locked no-go). NET == GROSS for a
-  non-discounted org → those rows byte-unchanged. Discount read once per org from billing
-  `GET /internal/accounts/by-org/:orgId/usage-discount` → `{ discount_percent }` (0..100; **404 → 0**,
-  same neutral-not-found mapping as the balance 404→0); `fetchOrgUsageDiscountPct` in `accounts-client.ts`.
-  features-service READS the discount, never computes it.
-- **`/internal/stats/revenue`** — `currentMrrUsd` + committed MRR/ARR are NET automatically (they read the
-  accounts-audit net `stats.mrrUsd`/`totalDailyBudgetUsd` via `currentFleetStats`; committed snapshots now
-  record the net budget going forward — past snapshots stay gross, minor transition drift, self-corrects).
-  Realized-spend buckets read runs' **frozen-NET twin `netActualCostInUsdCents`** on
-  `/v1/stats/public/costs/timeseries` (`selectBucketActualCents`, `revenue-history-client.ts`).
+- **`/internal/stats/accounts` (`buildAccountsAudit`)** — per-brand `dailyBudgetUsd` = the RAW configured
+  billing daily-budget (undiscounted). Fleet `stats.totalDailyBudgetUsd`/`mrrUsd`/`arrUsd` are pure budget
+  projections (Σ active budget, × 30, × 365) → undiscounted too. The ACTIVE verdict + row sort gate on this
+  same raw budget vs the actual balance (no separate gross field). `customer-health` reads `dailyBudgetUsd`
+  directly.
+- **`/internal/stats/revenue`** — committed MRR/ARR (`currentMrrUsd`, `committedMrr.*`) are budget
+  projections (Σ active budget × 30) → **undiscounted** automatically (they read the accounts-audit
+  `stats.mrrUsd`/`totalDailyBudgetUsd`). **Realized-spend buckets STAY NET** (actual charges) — they read
+  runs' **frozen-NET twin `netActualCostInUsdCents`** on `/v1/stats/public/costs/timeseries`
+  (`selectBucketActualCents`, `revenue-history-client.ts`); those are real billed spend, so net is correct.
+  The distinction: budget-derived = undiscounted (config projection), realized-charge = net (money we bill).
 
-**Why in-place (not additive-only) on the STAFF surface:** the AC is consumer-observable ("admin shows
-net"). Putting net INTO the existing fields the admin already renders (`dailyBudgetUsd`/`mrrUsd`/`revenueUsd`)
-makes the admin show net with **ZERO dashboard change** (distribute.you is main=prod Vercel, no staging
-buffer — avoiding a cross-repo/cross-env coordination). Gross stays available via the additive `gross*`
-fields. `customer-health` (in-process reuse of `buildAccountsAudit`, out of scope) was repointed to
-`grossDailyBudgetUsd` to preserve its behavior.
+**Why in-place:** the admin renders `dailyBudgetUsd`/`mrrUsd` verbatim (no discount math of its own), so
+fixing the value at the source corrects the admin display with ZERO dashboard change (distribute.you is
+main=prod Vercel, no staging buffer).
 
 **Realized-revenue NET is DORMANT + self-activating until runs ships net-on-timeseries.** The frozen-net
 twin is live on the UNTIMED `/v1/stats/public/costs` (runs#179) but **NOT yet on `/costs/timeseries`**

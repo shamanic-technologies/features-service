@@ -976,8 +976,7 @@ const accountRowSchema = z.object({
   brandId: z.string().describe("Brand UUID."),
   brandName: z.string().nullable(),
   brandDomain: z.string().nullable(),
-  dailyBudgetUsd: z.number().nullable().describe("NET brand daily budget in USD (post per-org usage discount = gross × (1 − discount)) — what the org actually pays; the staff metrics-page figure. NET == GROSS for an org with no discount. Null when unset/paused."),
-  grossDailyBudgetUsd: z.number().nullable().describe("GROSS (list-price) brand daily budget in USD, before the org usage discount. Additive — the undiscounted figure, and the basis the ACTIVE verdict + row sort compute on. Null when unset/paused."),
+  dailyBudgetUsd: z.number().nullable().describe("The RAW configured brand daily budget in USD. The per-org usage discount is a charge modifier and is NEVER applied to this configuration ceiling — two orgs with the same configured budget show the same number regardless of their discounts. Null when unset/paused."),
   orgBalanceUsd: z.number().describe("Org SPENDABLE credit balance in USD (billing balance_cents/100; committed usage incl. provisioned holds subtracted; 0 if no funded wallet). Display only."),
   orgActualBalanceUsd: z.number().describe("Org ACTUAL credit balance in USD (billing actual_balance_cents/100; only ACTUALIZED usage subtracted). The figure the active verdict gates on."),
   autoTopupEnabled: z.boolean().describe("Whether the org has auto-topup enabled (billing has_auto_topup). An auto-topup org never runs dry → active regardless of momentary balance. false when absent."),
@@ -985,12 +984,9 @@ const accountRowSchema = z.object({
 });
 
 const accountsStatsSchema = z.object({
-  totalDailyBudgetUsd: z.number().describe("Σ NET daily budget over ACTIVE rows only (USD; post per-org usage discount; paused/inactive excluded). The staff metrics-page figure."),
-  mrrUsd: z.number().describe("NET MRR = totalDailyBudgetUsd × 30."),
-  arrUsd: z.number().describe("NET ARR = totalDailyBudgetUsd × 365."),
-  grossTotalDailyBudgetUsd: z.number().describe("Σ GROSS (list-price) daily budget over ACTIVE rows only (USD; pre-discount). Additive."),
-  grossMrrUsd: z.number().describe("GROSS MRR = grossTotalDailyBudgetUsd × 30."),
-  grossArrUsd: z.number().describe("GROSS ARR = grossTotalDailyBudgetUsd × 365."),
+  totalDailyBudgetUsd: z.number().describe("Σ RAW configured daily budget over ACTIVE rows only (USD; undiscounted — a budget is a config ceiling, not a charge; paused/inactive excluded). The staff metrics-page figure."),
+  mrrUsd: z.number().describe("MRR = totalDailyBudgetUsd × 30 (a budget projection, undiscounted)."),
+  arrUsd: z.number().describe("ARR = totalDailyBudgetUsd × 365 (a budget projection, undiscounted)."),
   activeCount: z.number().int(),
   pausedCount: z.number().int(),
   inactiveCount: z.number().int(),
@@ -1015,9 +1011,9 @@ registry.registerPath({
     "Status precedence paused > active > inactive: 'paused' iff the campaign-service brand pause is set (campaigns HELD, budget kept); " +
     "else 'active' iff dailyBudgetUsd > 0 && (autoTopupEnabled || orgActualBalanceUsd > dailyBudgetUsd) — the ACTUAL balance (actualized usage only), " +
     "NOT the spendable balance (which subtracts in-flight provisioned holds); else 'inactive'. All rows (active + paused + inactive) are LISTED, never dropped. " +
-    "Stats sum ACTIVE rows only (a paused brand is not spending). MONEY IS NET (post per-org usage discount, owned by billing-service): dailyBudgetUsd + " +
-    "totalDailyBudgetUsd/MRR/ARR are gross × (1 − discount) — what the org actually pays; GROSS (list-price) twins are additive (grossDailyBudgetUsd, " +
-    "stats.gross*) and are the basis the ACTIVE verdict + sort compute on, so the discount never changes who is active (NET == GROSS for a non-discounted org). " +
+    "Stats sum ACTIVE rows only (a paused brand is not spending). The daily budget is the RAW configured ceiling — the per-org usage discount is a " +
+    "charge modifier and is NEVER applied to it, so two orgs with the same configured budget show the same number regardless of their discounts; " +
+    "totalDailyBudgetUsd/MRR/ARR are pure budget projections (× 30 / × 365) and are undiscounted too. " +
     "All money + the status determination are computed here; the dashboard renders only.",
   tags: ["Internal"],
   responses: {
@@ -1232,21 +1228,21 @@ const revenueBucketSchema = z.object({
 const committedMrrBucketSchema = z.object({
   period: z.string().describe("Bucket label — `YYYY-MM` (monthly) or `YYYY-Www` ISO week (weekly)."),
   periodStart: z.string().describe("UTC start date of the bucket (`YYYY-MM-DD`): the month's 1st or the ISO week's Monday. For charting."),
-  mrrUsd: z.number().describe("NET committed MRR as of this period (post per-org usage discount; the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal)."),
-  arrUsd: z.number().describe("NET committed ARR = mrrUsd × 12, in USD (2-decimal)."),
+  mrrUsd: z.number().describe("Committed MRR as of this period (the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal). Budget projection (Σ active daily budget × 30) — UNDISCOUNTED (a budget is a config ceiling, not a charge)."),
+  arrUsd: z.number().describe("Committed ARR = mrrUsd × 12, in USD (2-decimal); undiscounted budget projection."),
   growthPct: z.number().nullable().describe("Point-over-point growth vs the previous EMITTED bucket, in percent (1-decimal). null on the first bucket or when the previous point is 0."),
 });
 
 const committedMrrHistorySchema = z.object({
-  currentMrrUsd: z.number().describe("LIVE NET committed MRR — fleet active daily budget (post per-org usage discount) × 30. The current-period point of monthly/weekly equals this (reconciles with GET /internal/stats/accounts mrrUsd)."),
-  currentArrUsd: z.number().describe("LIVE NET committed ARR = currentMrrUsd × 12, in USD."),
+  currentMrrUsd: z.number().describe("LIVE committed MRR — fleet active daily budget × 30 (UNDISCOUNTED budget projection). The current-period point of monthly/weekly equals this (reconciles with GET /internal/stats/accounts mrrUsd)."),
+  currentArrUsd: z.number().describe("LIVE committed ARR = currentMrrUsd × 12, in USD; undiscounted budget projection."),
   monthly: z.array(committedMrrBucketSchema).describe("Committed MRR/ARR by calendar month (oldest→newest). Past points come from real recorded daily snapshots; the current month is the live value. Periods with no recorded snapshot are omitted."),
   weekly: z.array(committedMrrBucketSchema).describe("Committed MRR/ARR by ISO week (oldest→newest). Same snapshot sourcing as monthly."),
 });
 
 const revenueHistoryResponseSchema = z.object({
   totalRevenueUsd: z.number().describe("Cumulative NET realized revenue since inception (all orgs, all time; post per-org usage discount), in USD (2-decimal)."),
-  currentMrrUsd: z.number().describe("LIVE NET MRR — fleet active daily budget (post per-org usage discount) × 30. Matches the NET mrrUsd the admin page renders from GET /internal/stats/accounts."),
+  currentMrrUsd: z.number().describe("LIVE committed MRR — fleet active daily budget × 30 (UNDISCOUNTED budget projection). Matches the mrrUsd the admin page renders from GET /internal/stats/accounts."),
   monthly: z.array(revenueBucketSchema).describe("Trailing calendar-month revenue buckets (oldest→newest)."),
   weekly: z.array(revenueBucketSchema).describe("Trailing ISO-week revenue buckets (oldest→newest)."),
   daily: z.array(revenueBucketSchema).describe("Trailing UTC-day revenue buckets (oldest→newest)."),

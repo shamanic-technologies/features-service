@@ -2851,12 +2851,7 @@
                 "dailyBudgetUsd": {
                   "type": "number",
                   "nullable": true,
-                  "description": "NET brand daily budget in USD (post per-org usage discount = gross × (1 − discount)) — what the org actually pays; the staff metrics-page figure. NET == GROSS for an org with no discount. Null when unset/paused."
-                },
-                "grossDailyBudgetUsd": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "GROSS (list-price) brand daily budget in USD, before the org usage discount. Additive — the undiscounted figure, and the basis the ACTIVE verdict + row sort compute on. Null when unset/paused."
+                  "description": "The RAW configured brand daily budget in USD. The per-org usage discount is a charge modifier and is NEVER applied to this configuration ceiling — two orgs with the same configured budget show the same number regardless of their discounts. Null when unset/paused."
                 },
                 "orgBalanceUsd": {
                   "type": "number",
@@ -2888,7 +2883,6 @@
                 "brandName",
                 "brandDomain",
                 "dailyBudgetUsd",
-                "grossDailyBudgetUsd",
                 "orgBalanceUsd",
                 "orgActualBalanceUsd",
                 "autoTopupEnabled",
@@ -2901,27 +2895,15 @@
             "properties": {
               "totalDailyBudgetUsd": {
                 "type": "number",
-                "description": "Σ NET daily budget over ACTIVE rows only (USD; post per-org usage discount; paused/inactive excluded). The staff metrics-page figure."
+                "description": "Σ RAW configured daily budget over ACTIVE rows only (USD; undiscounted — a budget is a config ceiling, not a charge; paused/inactive excluded). The staff metrics-page figure."
               },
               "mrrUsd": {
                 "type": "number",
-                "description": "NET MRR = totalDailyBudgetUsd × 30."
+                "description": "MRR = totalDailyBudgetUsd × 30 (a budget projection, undiscounted)."
               },
               "arrUsd": {
                 "type": "number",
-                "description": "NET ARR = totalDailyBudgetUsd × 365."
-              },
-              "grossTotalDailyBudgetUsd": {
-                "type": "number",
-                "description": "Σ GROSS (list-price) daily budget over ACTIVE rows only (USD; pre-discount). Additive."
-              },
-              "grossMrrUsd": {
-                "type": "number",
-                "description": "GROSS MRR = grossTotalDailyBudgetUsd × 30."
-              },
-              "grossArrUsd": {
-                "type": "number",
-                "description": "GROSS ARR = grossTotalDailyBudgetUsd × 365."
+                "description": "ARR = totalDailyBudgetUsd × 365 (a budget projection, undiscounted)."
               },
               "activeCount": {
                 "type": "integer"
@@ -2940,9 +2922,6 @@
               "totalDailyBudgetUsd",
               "mrrUsd",
               "arrUsd",
-              "grossTotalDailyBudgetUsd",
-              "grossMrrUsd",
-              "grossArrUsd",
               "activeCount",
               "pausedCount",
               "inactiveCount",
@@ -3648,7 +3627,7 @@
           },
           "currentMrrUsd": {
             "type": "number",
-            "description": "LIVE NET MRR — fleet active daily budget (post per-org usage discount) × 30. Matches the NET mrrUsd the admin page renders from GET /internal/stats/accounts."
+            "description": "LIVE committed MRR — fleet active daily budget × 30 (UNDISCOUNTED budget projection). Matches the mrrUsd the admin page renders from GET /internal/stats/accounts."
           },
           "monthly": {
             "type": "array",
@@ -3783,11 +3762,11 @@
             "properties": {
               "currentMrrUsd": {
                 "type": "number",
-                "description": "LIVE NET committed MRR — fleet active daily budget (post per-org usage discount) × 30. The current-period point of monthly/weekly equals this (reconciles with GET /internal/stats/accounts mrrUsd)."
+                "description": "LIVE committed MRR — fleet active daily budget × 30 (UNDISCOUNTED budget projection). The current-period point of monthly/weekly equals this (reconciles with GET /internal/stats/accounts mrrUsd)."
               },
               "currentArrUsd": {
                 "type": "number",
-                "description": "LIVE NET committed ARR = currentMrrUsd × 12, in USD."
+                "description": "LIVE committed ARR = currentMrrUsd × 12, in USD; undiscounted budget projection."
               },
               "monthly": {
                 "type": "array",
@@ -3804,11 +3783,11 @@
                     },
                     "mrrUsd": {
                       "type": "number",
-                      "description": "NET committed MRR as of this period (post per-org usage discount; the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal)."
+                      "description": "Committed MRR as of this period (the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal). Budget projection (Σ active daily budget × 30) — UNDISCOUNTED (a budget is a config ceiling, not a charge)."
                     },
                     "arrUsd": {
                       "type": "number",
-                      "description": "NET committed ARR = mrrUsd × 12, in USD (2-decimal)."
+                      "description": "Committed ARR = mrrUsd × 12, in USD (2-decimal); undiscounted budget projection."
                     },
                     "growthPct": {
                       "type": "number",
@@ -3841,11 +3820,11 @@
                     },
                     "mrrUsd": {
                       "type": "number",
-                      "description": "NET committed MRR as of this period (post per-org usage discount; the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal)."
+                      "description": "Committed MRR as of this period (the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal). Budget projection (Σ active daily budget × 30) — UNDISCOUNTED (a budget is a config ceiling, not a charge)."
                     },
                     "arrUsd": {
                       "type": "number",
-                      "description": "NET committed ARR = mrrUsd × 12, in USD (2-decimal)."
+                      "description": "Committed ARR = mrrUsd × 12, in USD (2-decimal); undiscounted budget projection."
                     },
                     "growthPct": {
                       "type": "number",
@@ -7732,7 +7711,7 @@
     "/internal/stats/accounts": {
       "get": {
         "summary": "Fleet-wide cold-email customer accounts audit (internal, api-key; staff-gated at api-service)",
-        "description": "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with its daily budget, the org's spendable credit balance, and a 3-way status, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). Status precedence paused > active > inactive: 'paused' iff the campaign-service brand pause is set (campaigns HELD, budget kept); else 'active' iff dailyBudgetUsd > 0 && (autoTopupEnabled || orgActualBalanceUsd > dailyBudgetUsd) — the ACTUAL balance (actualized usage only), NOT the spendable balance (which subtracts in-flight provisioned holds); else 'inactive'. All rows (active + paused + inactive) are LISTED, never dropped. Stats sum ACTIVE rows only (a paused brand is not spending). MONEY IS NET (post per-org usage discount, owned by billing-service): dailyBudgetUsd + totalDailyBudgetUsd/MRR/ARR are gross × (1 − discount) — what the org actually pays; GROSS (list-price) twins are additive (grossDailyBudgetUsd, stats.gross*) and are the basis the ACTIVE verdict + sort compute on, so the discount never changes who is active (NET == GROSS for a non-discounted org). All money + the status determination are computed here; the dashboard renders only.",
+        "description": "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with its daily budget, the org's spendable credit balance, and a 3-way status, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). Status precedence paused > active > inactive: 'paused' iff the campaign-service brand pause is set (campaigns HELD, budget kept); else 'active' iff dailyBudgetUsd > 0 && (autoTopupEnabled || orgActualBalanceUsd > dailyBudgetUsd) — the ACTUAL balance (actualized usage only), NOT the spendable balance (which subtracts in-flight provisioned holds); else 'inactive'. All rows (active + paused + inactive) are LISTED, never dropped. Stats sum ACTIVE rows only (a paused brand is not spending). The daily budget is the RAW configured ceiling — the per-org usage discount is a charge modifier and is NEVER applied to it, so two orgs with the same configured budget show the same number regardless of their discounts; totalDailyBudgetUsd/MRR/ARR are pure budget projections (× 30 / × 365) and are undiscounted too. All money + the status determination are computed here; the dashboard renders only.",
         "tags": [
           "Internal"
         ],
