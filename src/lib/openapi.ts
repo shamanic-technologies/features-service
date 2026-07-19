@@ -1403,6 +1403,22 @@ const workflowCostPerOutcomeResponseSchema = z.object({
   })).describe("One row per workflow dynasty, sorted by spend desc. Each row carries BOTH the lifetime cost-per-outcome and the recent trailing-window moving-average cost-per-outcome for the objective."),
 });
 
+const bestModelCostPerOutcomeTrendResponseSchema = z.object({
+  featureSlug: z.string(),
+  objective: z.string().describe("Canonical camelCase objective the series is for."),
+  windowOutcomes: z.number().int().describe("Target number of base outcomes each trailing moving-average window spans."),
+  bestWorkflowDynastySlug: z.string().nullable().describe("The single best workflow dynasty this series plots — the currently-cheapest by LIFETIME cost-per-outcome among dynasties with the objective's observed base outcome > 0 (the SAME pick /public/stats/workflow-cost-per-outcome's min makes). Null when no workflow has an observed outcome (cold start)."),
+  bestWorkflowDynastyName: z.string().nullable().describe("Display name of the best workflow dynasty. Null when no best model exists."),
+  bestWorkflowLifetimeCostPerOutcomeUsd: z.number().nullable().describe("The best model's LIFETIME cost-per-outcome (USD) — the headline number this trend's most-recent backed point tracks. Null when no best model exists."),
+  points: z.array(z.object({
+    date: z.string().describe("UTC day (YYYY-MM-DD) this moving-average point is anchored to."),
+    costPerOutcomeUsd: z.number().nullable().describe("The BEST model's moving-average cost-per-outcome over the trailing window ending at date — a SINGLE workflow's cost, never pooled across workflows. Null when the window is unbacked — never a false $0."),
+    windowOutcomeCount: z.number().describe("Count of the objective's base outcomes (clicks / replies / clicks+replies) inside the best model's window."),
+    windowSpentUsd: z.number().describe("The best model's spend (USD) over the window's days."),
+    windowStartDate: z.string().describe("First UTC day included in the trailing window."),
+  })).describe("Dense dated series of the best model's cost-per-outcome (one point per trailing display day). Empty when no best model exists (cold start)."),
+});
+
 const costPerOutcomeLifetimeResponseSchema = z.object({
   featureSlug: z.string(),
   avgCostPerOutcomeByObjective: objectiveAveragesSchema.describe(
@@ -1497,6 +1513,30 @@ registry.registerPath({
   },
   responses: {
     200: { description: "Per-workflow cross-org cost-per-outcome", content: { "application/json": { schema: workflowCostPerOutcomeResponseSchema } } },
+    400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/best-model-cost-per-outcome-trend ──────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/best-model-cost-per-outcome-trend",
+  summary: "Dated cost-per-outcome trend of the single BEST cross-org workflow model (public, no auth)",
+  description:
+    "Cross-org (fleet-wide) dated moving-average cost-per-outcome series of the SINGLE BEST workflow model for ONE objective — the drop-in replacement for the pooled /public/stats/cost-per-outcome-trend, made coherent with the 'best model' headline (min cost-per-outcome across workflows from /public/stats/workflow-cost-per-outcome). The best model is picked ONCE (cheapest LIFETIME cost-per-outcome among dynasties with the objective's observed base outcome > 0 — the SAME pick the headline makes), then its OWN dated trailing-window moving average is plotted: every point is a SINGLE workflow's cost, NEVER pooled/blended across workflows. The most-recent backed point tracks the best-model headline number (bestWorkflowLifetimeCostPerOutcomeUsd). Cost points null where the best model's window is unbacked — never a false $0.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string().describe("Feature slug (required)."),
+      objective: objectiveQueryParam,
+      days: z.string().optional().describe("Number of trailing display days to emit (default 30, max 180)."),
+      windowOutcomes: z.string().optional().describe("Target outcomes per moving-average window (default 100)."),
+    }),
+  },
+  responses: {
+    200: { description: "Dated best-model cost-per-outcome series", content: { "application/json": { schema: bestModelCostPerOutcomeTrendResponseSchema } } },
     400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
   },

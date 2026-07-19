@@ -71,7 +71,7 @@ vi.mock("../lib/send-forecast-aggregate.js", () => ({
 }));
 
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __mapWithConcurrencyForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetGoalBucketDatasetCache, __expireGoalBucketFreshCacheForTest, __awaitGoalBucketRefresh } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __resetBestModelCostPerOutcomeTrendCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __mapWithConcurrencyForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetGoalBucketDatasetCache, __expireGoalBucketFreshCacheForTest, __awaitGoalBucketRefresh } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
@@ -1090,6 +1090,172 @@ describe("GET /public/stats/cost-per-outcome-trend", () => {
     mockFindFirst.mockResolvedValueOnce(null);
     const res = await request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=nope&objective=signup");
     expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    __resetBestModelCostPerOutcomeTrendCache();
+  });
+
+  it("400 when featureSlug is missing", async () => {
+    const res = await request(app).get("/public/stats/best-model-cost-per-outcome-trend?objective=positiveReply");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/featureSlug/i);
+  });
+
+  it("400 when objective is missing or unknown", async () => {
+    const missing = await request(app).get("/public/stats/best-model-cost-per-outcome-trend?featureSlug=sales-cold-email-outreach");
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toMatch(/objective/i);
+    const bad = await request(app).get("/public/stats/best-model-cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=nope");
+    expect(bad.status).toBe(400);
+  });
+
+  it("404 when feature not found", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    const res = await request(app).get("/public/stats/best-model-cost-per-outcome-trend?featureSlug=nope&objective=positiveReply");
+    expect(res.status).toBe(404);
+  });
+
+  it("plots the BEST model's own dated trend — coherent with the best-model headline, never the pooled average", async () => {
+    // Two dynasties: wf-cheap (positive-reply CPPR $5, the BEST) and wf-dear (CPPR $50). The pooled average
+    // across both would be far higher; the best-model trend must plot wf-cheap's OWN dated series and its
+    // most-recent point must track wf-cheap's lifetime CPPR ($5), NOT the blended number.
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    const today = new Date().toISOString().slice(0, 10);
+    const mkJson = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+
+    vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
+        return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-cheap" }] });
+      }
+      if (url.startsWith("http://workflow:3000/public/workflows")) {
+        return mkJson({ workflows: [
+          { id: "w1", workflowSlug: "wf-cheap", workflowName: "WF Cheap", workflowDynastyName: "WF Cheap", workflowDynastySlug: "wf-cheap", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
+          { id: "w2", workflowSlug: "wf-dear", workflowName: "WF Dear", workflowDynastyName: "WF Dear", workflowDynastySlug: "wf-dear", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
+        ] });
+      }
+      // Per-dynasty RECENT dated spend (only the BEST dynasty is fetched): wf-cheap spent $500 today.
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) {
+        const dynasty = new URL(url).searchParams.get("workflowDynastySlug");
+        if (dynasty === "wf-cheap") return mkJson({ buckets: [{ period: today, totalCostInUsdCents: "50000", actualCostInUsdCents: "50000", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0", runCount: 1 }] });
+        return mkJson({ buckets: [] });
+      }
+      // Lifetime spend by workflowSlug: wf-cheap $500 (100 replies → $5), wf-dear $500 (10 replies → $50).
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
+        return mkJson({ groups: [
+          { dimensions: { workflowSlug: "wf-cheap" }, totalCostInUsdCents: "50000", runCount: 5, minStartedAt: null, maxStartedAt: null },
+          { dimensions: { workflowSlug: "wf-dear" }, totalCostInUsdCents: "50000", runCount: 5, minStartedAt: null, maxStartedAt: null },
+        ] });
+      }
+      if (url.startsWith("http://email:3000/public/stats")) {
+        const groupBy = new URL(url).searchParams.get("groupBy");
+        if (groupBy === "day") {
+          // RECENT dated outcomes for the best dynasty: 100 positive replies today → recent CPPR = $500/100 = $5.
+          return mkJson({ groups: [{ key: today, broadcast: { recipientStats: { clicked: 0, repliesPositive: 100 } } }] });
+        }
+        // Lifetime by workflowSlug: wf-cheap 100 replies (CPPR $5), wf-dear 10 replies (CPPR $50).
+        return mkJson({ groups: [
+          { key: "wf-cheap", broadcast: { recipientStats: { contacted: 200, sent: 200, delivered: 200, opened: 100, clicked: 0, bounced: 0, repliesPositive: 100, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } },
+          { key: "wf-dear", broadcast: { recipientStats: { contacted: 200, sent: 200, delivered: 200, opened: 100, clicked: 0, bounced: 0, repliesPositive: 10, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } },
+        ] });
+      }
+      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
+        return mkJson({ economics: ECON_FULL, source: "user" });
+      }
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    });
+
+    const res = await request(app).get("/public/stats/best-model-cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=positiveReply&windowOutcomes=50&days=3");
+    expect(res.status).toBe(200);
+    expect(res.body.objective).toBe("positiveReply");
+    // The best model is wf-cheap ($5 CPPR), NOT wf-dear ($50) and NOT the pooled blend.
+    expect(res.body.bestWorkflowDynastySlug).toBe("wf-cheap");
+    expect(res.body.bestWorkflowLifetimeCostPerOutcomeUsd).toBeCloseTo(5, 6);
+    expect(res.body.points).toHaveLength(3);
+    // Most-recent point (today) tracks the best model's own recent CPPR = $500/100 = $5 — coherent with
+    // the headline, never a pooled higher number.
+    const last = res.body.points[res.body.points.length - 1];
+    expect(last.date).toBe(today);
+    expect(last.costPerOutcomeUsd).toBeCloseTo(5, 6);
+  });
+
+  it("works for objective=websiteVisit (best model by CPC)", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    const today = new Date().toISOString().slice(0, 10);
+    const mkJson = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+
+    vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
+        return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }] });
+      }
+      if (url.startsWith("http://workflow:3000/public/workflows")) {
+        return mkJson({ workflows: [{ id: "w1", workflowSlug: "wf-1", workflowName: "WF One", workflowDynastyName: "WF One", workflowDynastySlug: "wf-1", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null }] });
+      }
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) {
+        return mkJson({ buckets: [{ period: today, totalCostInUsdCents: "20000", actualCostInUsdCents: "20000", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0", runCount: 1 }] });
+      }
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
+        return mkJson({ groups: [{ dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null }] });
+      }
+      if (url.startsWith("http://email:3000/public/stats")) {
+        const groupBy = new URL(url).searchParams.get("groupBy");
+        if (groupBy === "day") return mkJson({ groups: [{ key: today, broadcast: { recipientStats: { clicked: 100, repliesPositive: 0 } } }] });
+        return mkJson({ groups: [{ key: "wf-1", broadcast: { recipientStats: { contacted: 200, sent: 200, delivered: 200, opened: 100, clicked: 100, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }] });
+      }
+      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
+        return mkJson({ economics: ECON_FULL, source: "user" });
+      }
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    });
+
+    const res = await request(app).get("/public/stats/best-model-cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=websiteVisit&windowOutcomes=50&days=2");
+    expect(res.status).toBe(200);
+    expect(res.body.bestWorkflowDynastySlug).toBe("wf-1");
+    // CPC = $200 / 100 clicks = $2.
+    expect(res.body.bestWorkflowLifetimeCostPerOutcomeUsd).toBeCloseTo(2, 6);
+    const last = res.body.points[res.body.points.length - 1];
+    expect(last.costPerOutcomeUsd).toBeCloseTo(2, 6);
+  });
+
+  it("no best model (no observed outcome) → null provenance + empty points, never a false $0", async () => {
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    const mkJson = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+
+    vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
+        return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }] });
+      }
+      if (url.startsWith("http://workflow:3000/public/workflows")) {
+        return mkJson({ workflows: [{ id: "w1", workflowSlug: "wf-1", workflowName: "WF One", workflowDynastyName: "WF One", workflowDynastySlug: "wf-1", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null }] });
+      }
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
+        return mkJson({ groups: [{ dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null }] });
+      }
+      if (url.startsWith("http://email:3000/public/stats")) {
+        // Zero positive replies fleet-wide → no observed positiveReply outcome → no best model.
+        return mkJson({ groups: [{ key: "wf-1", broadcast: { recipientStats: { contacted: 200, sent: 200, delivered: 200, opened: 100, clicked: 100, bounced: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }] });
+      }
+      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
+        return mkJson({ economics: ECON_FULL, source: "user" });
+      }
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    });
+
+    const res = await request(app).get("/public/stats/best-model-cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=positiveReply");
+    expect(res.status).toBe(200);
+    expect(res.body.bestWorkflowDynastySlug).toBeNull();
+    expect(res.body.bestWorkflowLifetimeCostPerOutcomeUsd).toBeNull();
+    expect(res.body.points).toEqual([]);
   });
 });
 
