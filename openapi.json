@@ -8186,11 +8186,6 @@
                           "type": "number",
                           "nullable": true,
                           "description": "Fleet-average cost per WhatsApp conversation (CPC — the click on the brand's WhatsApp link IS the started conversation; no paid-client economics)."
-                        },
-                        "purchase": {
-                          "type": "number",
-                          "nullable": true,
-                          "description": "TRANSITIONAL byte-equal alias of `websitePurchase` — kept so the admin dashboard's existing `.purchase` key keeps rendering during the fleet rename. Migrate to `websitePurchase`; this alias will be dropped."
                         }
                       },
                       "required": [
@@ -8639,11 +8634,6 @@
                           "type": "number",
                           "nullable": true,
                           "description": "Fleet-average cost per WhatsApp conversation (CPC — the click on the brand's WhatsApp link IS the started conversation; no paid-client economics)."
-                        },
-                        "purchase": {
-                          "type": "number",
-                          "nullable": true,
-                          "description": "TRANSITIONAL byte-equal alias of `websitePurchase` — kept so the admin dashboard's existing `.purchase` key keeps rendering during the fleet rename. Migrate to `websitePurchase`; this alias will be dropped."
                         }
                       },
                       "required": [
