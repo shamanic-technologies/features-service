@@ -16,6 +16,7 @@ import type { WorkflowProjectionResponse } from "../routes/workflow-projection.j
 import type { SalesEconomics } from "./funnel-registry.js";
 import type { Goal } from "./goals.js";
 import type { ConversionCounts } from "./conversion-counts-client.js";
+import type { BudgetChangeEntry, PauseTransition } from "./history-clients.js";
 import type { DashboardReturnSignal } from "./posthog-client.js";
 import { BrandOwnershipError } from "./sales-economics-client.js";
 
@@ -140,6 +141,10 @@ function makeDeps(fixtures: {
     audiences?: AudienceStatsRow[];
     workflow?: WorkflowProjectionResponse["rows"];
     throwOwnership?: boolean;
+    budgetHistory?: BudgetChangeEntry[];
+    pauseHistory?: PauseTransition[];
+    budgetHistoryThrow?: boolean;
+    pauseHistoryThrow?: boolean;
   }>;
   /** Per-org dashboard-return signal keyed on the Clerk org id (orgExternalId). Absent → empty map. */
   dashboardReturns?: Map<string, DashboardReturnSignal>;
@@ -184,6 +189,14 @@ function makeDeps(fixtures: {
     dashboardReturns: async () => {
       if (fixtures.dashboardReturnsThrow) throw new Error("posthog unreachable");
       return fixtures.dashboardReturns ?? new Map<string, DashboardReturnSignal>();
+    },
+    budgetHistory: async (brandId) => {
+      if (fixtures.perBrand[brandId]?.budgetHistoryThrow) throw new Error("billing unreachable");
+      return fixtures.perBrand[brandId]?.budgetHistory ?? [];
+    },
+    pauseHistory: async (brandId) => {
+      if (fixtures.perBrand[brandId]?.pauseHistoryThrow) throw new Error("campaign unreachable");
+      return fixtures.perBrand[brandId]?.pauseHistory ?? [];
     },
   };
 }
@@ -242,7 +255,8 @@ describe("buildCustomerHealthBoard", () => {
     expect(row.health.inputs.audienceNearExhaustedThresholdPct).toBe(AUDIENCE_NEAR_EXHAUSTED_PCT);
 
     // known gaps explicit null
-    expect(row.notTrackedYet).toEqual({ dashboardReturnFrequency: null, budgetChangeHistory: null, pauseHistory: null });
+    // dashboard-return null (no PostHog fixture); budget/pause history default to empty arrays (tracked, none).
+    expect(row.notTrackedYet).toEqual({ dashboardReturnFrequency: null, budgetChangeHistory: [], pauseHistory: [] });
     expect(board.stats.greenCount).toBe(1);
   });
 
@@ -337,6 +351,33 @@ describe("buildCustomerHealthBoard", () => {
     expect(row.bestWorkflow).toBeNull();
   });
 
+  it("populates budget/pause history from billing + campaign, and fail-softs each column to null independently", async () => {
+    const budget: BudgetChangeEntry[] = [{ dailyBudgetUsd: 50, changedAt: "2026-07-01T00:00:00.000Z" }];
+    const pause: PauseTransition[] = [{ paused: true, transitionedAt: "2026-07-05T00:00:00.000Z" }];
+    const deps = makeDeps({
+      accounts: [
+        account({ orgId: "p", brandId: "bp", status: "active" }),
+        account({ orgId: "q", brandId: "bq", status: "active" }),
+      ],
+      recencies: [recency("p", "2026-07-10"), recency("q", "2026-07-11")],
+      perBrand: {
+        // full history both columns
+        bp: { economics: econ(100), goal: "signup", revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, budgetHistory: budget, pauseHistory: pause },
+        // billing degrades → budgetChangeHistory null; campaign ok → pauseHistory empty array
+        bq: { economics: econ(100), goal: "signup", revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, budgetHistoryThrow: true },
+      },
+    });
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, deps);
+    const byId = Object.fromEntries(board.customers.map((c) => [c.brandId, c]));
+    expect(byId.bp.notTrackedYet.budgetChangeHistory).toEqual(budget);
+    expect(byId.bp.notTrackedYet.pauseHistory).toEqual(pause);
+    // fail-soft: only the failing column is null, the other still resolves ([])
+    expect(byId.bq.notTrackedYet.budgetChangeHistory).toBeNull();
+    expect(byId.bq.notTrackedYet.pauseHistory).toEqual([]);
+    // a billing blip must not degrade the row's economics
+    expect(byId.bq.currentEconomics.roiMultiple).toBe(10);
+  });
+
   it("tracker firing=false when a NEEDED tracker observes zero conversions", async () => {
     const deps = makeDeps({
       accounts: [account({ orgId: "h", brandId: "bh", status: "active" })],
@@ -383,9 +424,9 @@ describe("buildCustomerHealthBoard", () => {
     const byId = Object.fromEntries(board.customers.map((c) => [c.brandId, c]));
     expect(byId.bi.notTrackedYet.dashboardReturnFrequency).toEqual(signal);
     expect(byId.bj.notTrackedYet.dashboardReturnFrequency).toBeNull();
-    // the other two gaps stay explicit null
-    expect(byId.bi.notTrackedYet.budgetChangeHistory).toBeNull();
-    expect(byId.bi.notTrackedYet.pauseHistory).toBeNull();
+    // the other two are now tracked upstream; no fixture → default empty arrays (tracked, nothing yet)
+    expect(byId.bi.notTrackedYet.budgetChangeHistory).toEqual([]);
+    expect(byId.bi.notTrackedYet.pauseHistory).toEqual([]);
   });
 
   it("dashboardReturns fails → fail-soft: dashboardReturnFrequency null on every row, board still built", async () => {

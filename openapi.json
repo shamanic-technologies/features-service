@@ -3377,12 +3377,48 @@
                       "description": "Per-org dashboard-return frequency from PostHog (sessions 7d/30d + last-seen), keyed on the Clerk org id. null when PostHog has no data / is unreachable / is unconfigured — never fabricated."
                     },
                     "budgetChangeHistory": {
+                      "type": "array",
                       "nullable": true,
-                      "description": "Daily-budget change-history timeline — not persisted yet."
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "dailyBudgetUsd": {
+                            "type": "number",
+                            "description": "Daily budget in USD after this change (0 = explicit pause)."
+                          },
+                          "changedAt": {
+                            "type": "string",
+                            "description": "ISO timestamp the budget was set to this value."
+                          }
+                        },
+                        "required": [
+                          "dailyBudgetUsd",
+                          "changedAt"
+                        ]
+                      },
+                      "description": "Daily-budget change timeline (billing-service, forward-only, oldest-first). Empty array = tracked, no changes yet; null = read failed / unconfigured — never fabricated."
                     },
                     "pauseHistory": {
+                      "type": "array",
                       "nullable": true,
-                      "description": "Pause on/off history timeline — not persisted yet."
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "paused": {
+                            "type": "boolean",
+                            "description": "New pause state after this flip (true = paused, false = resumed)."
+                          },
+                          "transitionedAt": {
+                            "type": "string",
+                            "description": "ISO timestamp of the flip."
+                          }
+                        },
+                        "required": [
+                          "paused",
+                          "transitionedAt"
+                        ]
+                      },
+                      "description": "Pause on/off transition timeline (campaign-service, forward-only, oldest-first). Empty array = tracked, no flips yet; null = read failed / unconfigured — never fabricated."
                     }
                   },
                   "required": [
@@ -3390,7 +3426,7 @@
                     "budgetChangeHistory",
                     "pauseHistory"
                   ],
-                  "description": "dashboardReturnFrequency is a real PostHog signal (null when no data / degraded); budgetChangeHistory + pauseHistory are KNOWN GAPS — explicit null so the front never fabricates them."
+                  "description": "All three are now TRACKED upstream (dashboardReturnFrequency = PostHog; budgetChangeHistory = billing; pauseHistory = campaign). Each is null only when its producer is unreachable/unconfigured (fail-soft); an empty history array means tracked-but-nothing-yet. Never fabricated."
                 }
               },
               "required": [
@@ -7722,7 +7758,7 @@
     "/internal/stats/customer-health": {
       "get": {
         "summary": "Fleet-wide customer-success health board (internal, api-key; staff-gated at api-service)",
-        "description": "Cross-org, fleet-wide 'Customer Success' health board — one ready-composed row per cold-email customer (org × brand), currently-active first, with a green/yellow/red health badge. Every metric is computed + owned here; the admin dashboard renders only (no browser math, no per-row fan-out). Each row carries: identity (org + brand, owner email, Clerk org id); recency + retention (first/last active day, retention weeks, active-day timeline from billed spend); the brand's optimization goal; conversion-tracker context (whether a tracker is NEEDED for the goal + an INFERRED firing flag from observed conversion counts — a clean installed/verified boolean is a known gap); breakeven CAC (= brand LTR); full conversion economics + LTR; realized CAC / ROI / %CAC (roiMultiple = pipeline/spend = LTR/CAC; cacPct = spend/pipeline = CAC/LTR — coherent by construction, own-economics only); an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). Health: red = not active; green = active AND ROI ≥ 1 AND audience not near-exhausted; yellow = active but ROI < 1 (or unknown) OR audience near-exhausted. Under notTrackedYet: dashboardReturnFrequency is a REAL per-org PostHog return signal (sessions 7d/30d + last-seen; null when PostHog has no data / is degraded); budget-change history + pause history remain explicit-null gaps — never fabricated.",
+        "description": "Cross-org, fleet-wide 'Customer Success' health board — one ready-composed row per cold-email customer (org × brand), currently-active first, with a green/yellow/red health badge. Every metric is computed + owned here; the admin dashboard renders only (no browser math, no per-row fan-out). Each row carries: identity (org + brand, owner email, Clerk org id); recency + retention (first/last active day, retention weeks, active-day timeline from billed spend); the brand's optimization goal; conversion-tracker context (whether a tracker is NEEDED for the goal + an INFERRED firing flag from observed conversion counts — a clean installed/verified boolean is a known gap); breakeven CAC (= brand LTR); full conversion economics + LTR; realized CAC / ROI / %CAC (roiMultiple = pipeline/spend = LTR/CAC; cacPct = spend/pipeline = CAC/LTR — coherent by construction, own-economics only); an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). Health: red = not active; green = active AND ROI ≥ 1 AND audience not near-exhausted; yellow = active but ROI < 1 (or unknown) OR audience near-exhausted. Under notTrackedYet (all three now TRACKED upstream, null only on a fail-soft producer degrade): dashboardReturnFrequency = per-org PostHog return signal (sessions 7d/30d + last-seen); budgetChangeHistory = billing-service forward-only daily-budget change timeline; pauseHistory = campaign-service forward-only pause on/off timeline. Empty array = tracked-but-nothing-yet; never fabricated.",
         "tags": [
           "Internal"
         ],
