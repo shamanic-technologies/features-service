@@ -696,7 +696,7 @@ registry.registerPath({
   description:
     "Returns ranked human-service audience rows for dashboard ranking. Each row is based on producer-side attribution of runs/outcomes to audienceId/brandProfileId/goal/workflow, never hash assignment or equal splitting of brand totals. " +
     "Rows carry raw spend and outcome evidence so the dashboard can compute CPC (spend / websiteClicks) and CPPR (spend / positiveReplies). " +
-    "Rows with missing audienceId attribution are omitted. If brandProfileId is omitted, features-service reads the brand's current profile from brand-service and filters producer evidence to that profile when available.",
+    "Rows with missing audienceId attribution are omitted. brandProfileId is echoed from the explicit query param when provided, else null (brand-service retired versioned brand-profile storage — features-service no longer reads a current profile).",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
@@ -705,7 +705,7 @@ registry.registerPath({
       brandId: z.string().describe("Brand UUID (required)."),
       goal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).describe("Active optimization goal (required). signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every per-audience MONEY metric (metrics.cpcCents / cpprCents / cpfsCents + the brand-parent cascade). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (evidence counts, conversion.rate) are identical either way. NOTE: campaign-service reads metrics.cpcCents byte-equal — it does NOT send pricing, so it always gets gross."),
-      brandProfileId: z.string().optional().describe("Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted."),
+      brandProfileId: z.string().optional().describe("Optional brand-profile version to scope evidence, echoed back on the response. Null when omitted (brand-service retired versioned brand-profile storage — no current-profile lookup)."),
       campaignId: z.string().optional().describe("Optional single-campaign scope for the STATS. Audiences themselves stay brand-wide (they are brand-scoped entities); only the per-audience cost + outcome numerators narrow to this campaign. Absent → brand-wide numbers, byte-identical to today. Present → cost sourced from runs-service filtered by campaignId (still grouped by audienceId) and outcomes read from the email-gateway campaign scope (only this campaign's contacted/opened/clicked/replied). Powers the dashboard's per-campaign audience view."),
       limit: z.string().optional().describe("Optional positive integer row limit after sorting."),
       statuses: z
@@ -1403,6 +1403,22 @@ const workflowCostPerOutcomeResponseSchema = z.object({
   })).describe("One row per workflow dynasty, sorted by spend desc. Each row carries BOTH the lifetime cost-per-outcome and the recent trailing-window moving-average cost-per-outcome for the objective."),
 });
 
+const bestModelCostPerOutcomeTrendResponseSchema = z.object({
+  featureSlug: z.string(),
+  objective: z.string().describe("Canonical camelCase objective the series is for."),
+  windowOutcomes: z.number().int().describe("Target number of base outcomes each trailing moving-average window spans."),
+  bestWorkflowDynastySlug: z.string().nullable().describe("The single best workflow dynasty this series plots — the currently-cheapest by LIFETIME cost-per-outcome among dynasties with the objective's observed base outcome > 0 (the SAME pick /public/stats/workflow-cost-per-outcome's min makes). Null when no workflow has an observed outcome (cold start)."),
+  bestWorkflowDynastyName: z.string().nullable().describe("Display name of the best workflow dynasty. Null when no best model exists."),
+  bestWorkflowLifetimeCostPerOutcomeUsd: z.number().nullable().describe("The best model's LIFETIME cost-per-outcome (USD) — the headline number this trend's most-recent backed point tracks. Null when no best model exists."),
+  points: z.array(z.object({
+    date: z.string().describe("UTC day (YYYY-MM-DD) this moving-average point is anchored to."),
+    costPerOutcomeUsd: z.number().nullable().describe("The BEST model's moving-average cost-per-outcome over the trailing window ending at date — a SINGLE workflow's cost, never pooled across workflows. Null when the window is unbacked — never a false $0."),
+    windowOutcomeCount: z.number().describe("Count of the objective's base outcomes (clicks / replies / clicks+replies) inside the best model's window."),
+    windowSpentUsd: z.number().describe("The best model's spend (USD) over the window's days."),
+    windowStartDate: z.string().describe("First UTC day included in the trailing window."),
+  })).describe("Dense dated series of the best model's cost-per-outcome (one point per trailing display day). Empty when no best model exists (cold start)."),
+});
+
 const costPerOutcomeLifetimeResponseSchema = z.object({
   featureSlug: z.string(),
   avgCostPerOutcomeByObjective: objectiveAveragesSchema.describe(
@@ -1497,6 +1513,30 @@ registry.registerPath({
   },
   responses: {
     200: { description: "Per-workflow cross-org cost-per-outcome", content: { "application/json": { schema: workflowCostPerOutcomeResponseSchema } } },
+    400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/best-model-cost-per-outcome-trend ──────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/best-model-cost-per-outcome-trend",
+  summary: "Dated cost-per-outcome trend of the single BEST cross-org workflow model (public, no auth)",
+  description:
+    "Cross-org (fleet-wide) dated moving-average cost-per-outcome series of the SINGLE BEST workflow model for ONE objective — the drop-in replacement for the pooled /public/stats/cost-per-outcome-trend, made coherent with the 'best model' headline (min cost-per-outcome across workflows from /public/stats/workflow-cost-per-outcome). The best model is picked ONCE (cheapest LIFETIME cost-per-outcome among dynasties with the objective's observed base outcome > 0 — the SAME pick the headline makes), then its OWN dated trailing-window moving average is plotted: every point is a SINGLE workflow's cost, NEVER pooled/blended across workflows. The most-recent backed point tracks the best-model headline number (bestWorkflowLifetimeCostPerOutcomeUsd). Cost points null where the best model's window is unbacked — never a false $0.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string().describe("Feature slug (required)."),
+      objective: objectiveQueryParam,
+      days: z.string().optional().describe("Number of trailing display days to emit (default 30, max 180)."),
+      windowOutcomes: z.string().optional().describe("Target outcomes per moving-average window (default 100)."),
+    }),
+  },
+  responses: {
+    200: { description: "Dated best-model cost-per-outcome series", content: { "application/json": { schema: bestModelCostPerOutcomeTrendResponseSchema } } },
     400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
   },

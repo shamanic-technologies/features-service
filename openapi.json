@@ -6372,7 +6372,7 @@
     "/features/{featureSlug}/audience-stats": {
       "get": {
         "summary": "Audience-level cost and outcome evidence for a brand + feature + goal",
-        "description": "Returns ranked human-service audience rows for dashboard ranking. Each row is based on producer-side attribution of runs/outcomes to audienceId/brandProfileId/goal/workflow, never hash assignment or equal splitting of brand totals. Rows carry raw spend and outcome evidence so the dashboard can compute CPC (spend / websiteClicks) and CPPR (spend / positiveReplies). Rows with missing audienceId attribution are omitted. If brandProfileId is omitted, features-service reads the brand's current profile from brand-service and filters producer evidence to that profile when available.",
+        "description": "Returns ranked human-service audience rows for dashboard ranking. Each row is based on producer-side attribution of runs/outcomes to audienceId/brandProfileId/goal/workflow, never hash assignment or equal splitting of brand totals. Rows carry raw spend and outcome evidence so the dashboard can compute CPC (spend / websiteClicks) and CPPR (spend / positiveReplies). Rows with missing audienceId attribution are omitted. brandProfileId is echoed from the explicit query param when provided, else null (brand-service retired versioned brand-profile storage — features-service no longer reads a current profile).",
         "tags": [
           "Stats"
         ],
@@ -6432,10 +6432,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted."
+              "description": "Optional brand-profile version to scope evidence, echoed back on the response. Null when omitted (brand-service retired versioned brand-profile storage — no current-profile lookup)."
             },
             "required": false,
-            "description": "Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted.",
+            "description": "Optional brand-profile version to scope evidence, echoed back on the response. Null when omitted (brand-service retired versioned brand-profile storage — no current-profile lookup).",
             "name": "brandProfileId",
             "in": "query"
           },
@@ -8518,6 +8518,179 @@
                     "objective",
                     "windowOutcomes",
                     "workflows"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/stats/best-model-cost-per-outcome-trend": {
+      "get": {
+        "summary": "Dated cost-per-outcome trend of the single BEST cross-org workflow model (public, no auth)",
+        "description": "Cross-org (fleet-wide) dated moving-average cost-per-outcome series of the SINGLE BEST workflow model for ONE objective — the drop-in replacement for the pooled /public/stats/cost-per-outcome-trend, made coherent with the 'best model' headline (min cost-per-outcome across workflows from /public/stats/workflow-cost-per-outcome). The best model is picked ONCE (cheapest LIFETIME cost-per-outcome among dynasties with the objective's observed base outcome > 0 — the SAME pick the headline makes), then its OWN dated trailing-window moving average is plotted: every point is a SINGLE workflow's cost, NEVER pooled/blended across workflows. The most-recent backed point tracks the best-model headline number (bestWorkflowLifetimeCostPerOutcomeUsd). Cost points null where the best model's window is unbacked — never a false $0.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature slug (required)."
+            },
+            "required": true,
+            "description": "Feature slug (required).",
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Optimization objective — one of websiteVisit / positiveReply / signup / formSubmission / meetingBooked / purchase (snake / camel / kebab spellings accepted; self-serve aliases signup)."
+            },
+            "required": true,
+            "description": "Optimization objective — one of websiteVisit / positiveReply / signup / formSubmission / meetingBooked / purchase (snake / camel / kebab spellings accepted; self-serve aliases signup).",
+            "name": "objective",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Number of trailing display days to emit (default 30, max 180)."
+            },
+            "required": false,
+            "description": "Number of trailing display days to emit (default 30, max 180).",
+            "name": "days",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Target outcomes per moving-average window (default 100)."
+            },
+            "required": false,
+            "description": "Target outcomes per moving-average window (default 100).",
+            "name": "windowOutcomes",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dated best-model cost-per-outcome series",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "objective": {
+                      "type": "string",
+                      "description": "Canonical camelCase objective the series is for."
+                    },
+                    "windowOutcomes": {
+                      "type": "integer",
+                      "description": "Target number of base outcomes each trailing moving-average window spans."
+                    },
+                    "bestWorkflowDynastySlug": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The single best workflow dynasty this series plots — the currently-cheapest by LIFETIME cost-per-outcome among dynasties with the objective's observed base outcome > 0 (the SAME pick /public/stats/workflow-cost-per-outcome's min makes). Null when no workflow has an observed outcome (cold start)."
+                    },
+                    "bestWorkflowDynastyName": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Display name of the best workflow dynasty. Null when no best model exists."
+                    },
+                    "bestWorkflowLifetimeCostPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The best model's LIFETIME cost-per-outcome (USD) — the headline number this trend's most-recent backed point tracks. Null when no best model exists."
+                    },
+                    "points": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "date": {
+                            "type": "string",
+                            "description": "UTC day (YYYY-MM-DD) this moving-average point is anchored to."
+                          },
+                          "costPerOutcomeUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The BEST model's moving-average cost-per-outcome over the trailing window ending at date — a SINGLE workflow's cost, never pooled across workflows. Null when the window is unbacked — never a false $0."
+                          },
+                          "windowOutcomeCount": {
+                            "type": "number",
+                            "description": "Count of the objective's base outcomes (clicks / replies / clicks+replies) inside the best model's window."
+                          },
+                          "windowSpentUsd": {
+                            "type": "number",
+                            "description": "The best model's spend (USD) over the window's days."
+                          },
+                          "windowStartDate": {
+                            "type": "string",
+                            "description": "First UTC day included in the trailing window."
+                          }
+                        },
+                        "required": [
+                          "date",
+                          "costPerOutcomeUsd",
+                          "windowOutcomeCount",
+                          "windowSpentUsd",
+                          "windowStartDate"
+                        ]
+                      },
+                      "description": "Dense dated series of the best model's cost-per-outcome (one point per trailing display day). Empty when no best model exists (cold start)."
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "objective",
+                    "windowOutcomes",
+                    "bestWorkflowDynastySlug",
+                    "bestWorkflowDynastyName",
+                    "bestWorkflowLifetimeCostPerOutcomeUsd",
+                    "points"
                   ]
                 }
               }
