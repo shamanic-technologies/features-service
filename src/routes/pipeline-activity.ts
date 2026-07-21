@@ -5,7 +5,6 @@ import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
-import { fetchCurrentBrandProfile } from "../lib/brand-client.js";
 import { fetchActiveAudiences, fetchAudienceMemberEmails, type Audience } from "../lib/human-client.js";
 import { fetchEmailOutcomes } from "../lib/email-status-client.js";
 import {
@@ -538,13 +537,12 @@ async function fetchBestAudienceForecast(
   workflowDynastySlug: string,
   headers: { orgId: string; userId: string; runId: string },
 ): Promise<{ audienceId: string; brandProfileId: string | null; rates: ForecastRates } | null> {
-  const [audiences, currentProfile] = await Promise.all([
-    fetchActiveAudiences(brandId, { ...headers, featureSlug }),
-    fetchCurrentBrandProfile(brandId, { ...headers, featureSlug }),
-  ]);
+  const audiences = await fetchActiveAudiences(brandId, { ...headers, featureSlug });
   if (audiences.length === 0) return null;
 
-  const brandProfileId = currentProfile?.id ?? null;
+  // brand-service retired its versioned brand-profile storage; brandProfileId is now always null here
+  // (no brand-profile round-trip). Kept on the shape for response-path stability with the dashboard.
+  const brandProfileId = null;
   const [costs, outcomes] = await Promise.all([
     fetchAudienceCosts(brandId, featureSlug, workflowDynastySlug, headers),
     fetchAudienceOutcomes(brandId, audiences, { ...headers, featureSlug }),

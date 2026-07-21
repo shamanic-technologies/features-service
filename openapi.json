@@ -6372,7 +6372,7 @@
     "/features/{featureSlug}/audience-stats": {
       "get": {
         "summary": "Audience-level cost and outcome evidence for a brand + feature + goal",
-        "description": "Returns ranked human-service audience rows for dashboard ranking. Each row is based on producer-side attribution of runs/outcomes to audienceId/brandProfileId/goal/workflow, never hash assignment or equal splitting of brand totals. Rows carry raw spend and outcome evidence so the dashboard can compute CPC (spend / websiteClicks) and CPPR (spend / positiveReplies). Rows with missing audienceId attribution are omitted. If brandProfileId is omitted, features-service reads the brand's current profile from brand-service and filters producer evidence to that profile when available.",
+        "description": "Returns ranked human-service audience rows for dashboard ranking. Each row is based on producer-side attribution of runs/outcomes to audienceId/brandProfileId/goal/workflow, never hash assignment or equal splitting of brand totals. Rows carry raw spend and outcome evidence so the dashboard can compute CPC (spend / websiteClicks) and CPPR (spend / positiveReplies). Rows with missing audienceId attribution are omitted. brandProfileId is echoed from the explicit query param when provided, else null (brand-service retired versioned brand-profile storage — features-service no longer reads a current profile).",
         "tags": [
           "Stats"
         ],
@@ -6432,10 +6432,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted."
+              "description": "Optional brand-profile version to scope evidence, echoed back on the response. Null when omitted (brand-service retired versioned brand-profile storage — no current-profile lookup)."
             },
             "required": false,
-            "description": "Optional brand-profile version to scope evidence. Defaults to brand-service current profile when omitted.",
+            "description": "Optional brand-profile version to scope evidence, echoed back on the response. Null when omitted (brand-service retired versioned brand-profile storage — no current-profile lookup).",
             "name": "brandProfileId",
             "in": "query"
           },

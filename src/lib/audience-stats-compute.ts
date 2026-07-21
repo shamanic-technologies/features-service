@@ -4,7 +4,6 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "./fetch-retry.js";
-import { fetchCurrentBrandProfile } from "./brand-client.js";
 import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, type AudienceFilters, type AudienceStatus } from "./human-client.js";
 import { fetchEmailOutcomes } from "./email-status-client.js";
 import { observedCostPerOutcome, projectedCostPerOutcome } from "./cost-engine.js";
@@ -457,11 +456,10 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
   }
 
   const identity = { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug };
-  const [audiences, currentProfile] = await Promise.all([
-    fetchAudiencesByStatuses(brandId, parsedStatuses.statuses, identity),
-    explicitBrandProfileId ? Promise.resolve(null) : fetchCurrentBrandProfile(brandId, identity),
-  ]);
-  const brandProfileId = explicitBrandProfileId ?? currentProfile?.id ?? null;
+  const audiences = await fetchAudiencesByStatuses(brandId, parsedStatuses.statuses, identity);
+  // brand-service retired its versioned brand-profile storage, so brandProfileId is sourced solely
+  // from the explicit query param (null when absent) — no brand-profile network round-trip.
+  const brandProfileId = explicitBrandProfileId ?? null;
 
   // Per-audience form-submission attribution is fetched ONLY for the form_submissions goal (the only
   // surface that renders it), so the hot ranking path for every other goal keeps its exact fan-out and
