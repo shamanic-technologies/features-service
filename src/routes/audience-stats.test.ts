@@ -221,7 +221,8 @@ describe("GET /features/:featureSlug/audience-stats", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.sortMetric).toBe("cpc");
-    expect(res.body.brandProfileId).toBe("brand-profile-1");
+    // brand-service retired versioned brand-profile storage → brandProfileId is null without an explicit param.
+    expect(res.body.brandProfileId).toBeNull();
     // audience-named response shape — no legacy persona keys.
     expect(res.body.personas).toBeUndefined();
     expect(Array.isArray(res.body.audiences)).toBe(true);
