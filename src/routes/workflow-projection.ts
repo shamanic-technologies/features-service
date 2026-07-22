@@ -4,7 +4,7 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
-import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, orP, type ProjectionEconomics } from "../lib/funnel-registry.js";
+import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, type ProjectionEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
@@ -57,18 +57,6 @@ interface GrainUnitCosts {
 interface GrainBlock {
   evidence: { spentUsd: number; observedContacted: number; observedClicks: number; observedPositiveReplies: number };
   unitCosts: GrainUnitCosts;
-  /**
-   * The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's
-   * cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the
-   * queried goal's funnel. Coherent by construction with the grain's cost-per-outcome: spentUsd / this ==
-   * the grain's cost-per-outcome whenever this > 0 (both read the same observed evidence). Uses ONLY
-   * observed evidence (no cascade floor), so a grain that observed 0 of the driving outcome yields 0 —
-   * never a floored/fabricated count. Null ONLY when economics is null (cold start). Lets the consumer
-   * (campaign-service's cost-aware Thompson bandit) sample a Beta on (contacted = trials, this =
-   * successes, spentUsd/contacted = cost) WITHOUT re-deciding the funnel metric — an absent audience grain
-   * (a never-run couple) carries no block, i.e. a cold arm.
-   */
-  resolvedOutcomeCount: number | null;
   projected: {
     costPerSignupUsd: number | null;
     costPerPaidClientUsd: number | null;
@@ -247,51 +235,6 @@ function outcomeCostForGoal(
 }
 
 /**
- * The GOAL-RESOLVED (expected) outcome COUNT for a grain — the numerator its cost-per-outcome is derived
- * from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel. Routes
- * by goal EXACTLY like `outcomeCostForGoal` (same channels, same rates), so cost + count are one basis:
- * spentUsd / count == that grain's cost-per-outcome whenever count > 0.
- *
- *   websiteVisit / whatsapp → clicks                                   (the click IS the outcome)
- *   positiveReply           → replies                                  (the reply IS the outcome)
- *   signup / self-serve     → clicks · v2s                             (expected signups, click route)
- *   form_submissions        → clicks · v2fs                            (expected form submissions)
- *   meeting-booked          → clicks · v2m + replies · r2m             (expected meetings, both channels)
- *   website_purchase        → clicks · orP(v2c, v2m·m2c) + replies · (r2m·m2c)   (expected closes)
- *   sales (combined)        → max(clicks · v2pc, replies · r2pc)       (best-channel sales — mirrors the MIN cost)
- *
- * Uses ONLY OBSERVED evidence (no cascade floor): a grain that observed 0 of the driving outcome yields 0,
- * never a floored count. A rate a goal needs but doesn't populate on `econ` (only `sales` sets v2pc/r2pc;
- * only form_submissions sets v2fs) is treated as 0 for that channel — the SAME zero-contribution the cost
- * side already applies, never a fabricated positive.
- */
-function resolvedOutcomeCountForGoal(
-  ev: { observedClicks: number; observedPositiveReplies: number },
-  econ: ProjectionEconomics,
-  objective: Objective,
-  singleStepGoal: SingleStepGoal | null,
-  formSubmissionGoal: boolean,
-): number {
-  const clicks = ev.observedClicks;
-  const replies = ev.observedPositiveReplies;
-  // whatsapp_conversations: the WhatsApp-link click IS the outcome (same as websiteVisit).
-  if (objective === "whatsapp_conversations") return clicks;
-  if (singleStepGoal === "websiteVisit") return clicks;
-  if (singleStepGoal === "positiveReply") return replies;
-  // COMBINED-SALES: a sale via the BEST channel → max(visit sales, reply sales) — mirrors costPerSaleUsd's
-  // best-channel MIN (spentUsd / this == costPerSaleUsd by construction).
-  if (objective === "sales") return Math.max(clicks * (econ.v2pc ?? 0), replies * (econ.r2pc ?? 0));
-  if (objective === "website_purchase") {
-    const pCloseClick = orP(econ.v2c, econ.v2m * econ.m2c);
-    const pCloseReply = econ.r2m * econ.m2c;
-    return clicks * pCloseClick + replies * pCloseReply;
-  }
-  if (objective === "meeting-booked") return clicks * econ.v2m + replies * econ.r2m;
-  if (formSubmissionGoal) return clicks * (econ.v2fs ?? 0);
-  return clicks * econ.v2s; // signup / self-serve — click route only
-}
-
-/**
  * Build ONE grain block from a grain's raw evidence + the brand economics. Unit costs run through the
  * PROJECTED cost-engine (`projectedCostPerOutcome`): a real ratio when observedX ≥ 1, else the cascade
  * floor `max(spentUsd, parentCost)` — the parent being the SAME unit cost on the next COARSER grain
@@ -342,16 +285,9 @@ function buildGrainBlock(
     };
   }
 
-  // Goal-resolved outcome count from THIS grain's OWN observed evidence (no floor). Null at cold start
-  // (no economics) — mirrors the projected costs' null gate.
-  const resolvedOutcomeCount = econ
-    ? resolvedOutcomeCountForGoal({ observedClicks, observedPositiveReplies }, econ, objective, singleStepGoal, formSubmissionGoal)
-    : null;
-
   return {
     evidence: { spentUsd, observedContacted, observedClicks, observedPositiveReplies },
     unitCosts: { costPerClickUsd, costPerPositiveReplyUsd, costPerContactedUsd },
-    resolvedOutcomeCount,
     projected,
   };
 }
