@@ -1781,6 +1781,11 @@
                             "costPerContactedUsd"
                           ]
                         },
+                        "resolvedOutcomeCount": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                        },
                         "projected": {
                           "type": "object",
                           "properties": {
@@ -1821,6 +1826,7 @@
                       "required": [
                         "evidence",
                         "unitCosts",
+                        "resolvedOutcomeCount",
                         "projected"
                       ],
                       "description": "Fleet-wide unit costs (same source as /public/stats/best). Present for any dynasty with real fleet spend."
@@ -1874,6 +1880,11 @@
                             "costPerContactedUsd"
                           ]
                         },
+                        "resolvedOutcomeCount": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                        },
                         "projected": {
                           "type": "object",
                           "properties": {
@@ -1914,6 +1925,7 @@
                       "required": [
                         "evidence",
                         "unitCosts",
+                        "resolvedOutcomeCount",
                         "projected"
                       ],
                       "description": "The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow."
@@ -1967,6 +1979,11 @@
                             "costPerContactedUsd"
                           ]
                         },
+                        "resolvedOutcomeCount": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                        },
                         "projected": {
                           "type": "object",
                           "properties": {
@@ -2007,6 +2024,7 @@
                       "required": [
                         "evidence",
                         "unitCosts",
+                        "resolvedOutcomeCount",
                         "projected"
                       ],
                       "description": "Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."
@@ -5634,6 +5652,11 @@
                                       "costPerContactedUsd"
                                     ]
                                   },
+                                  "resolvedOutcomeCount": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                                  },
                                   "projected": {
                                     "type": "object",
                                     "properties": {
@@ -5674,6 +5697,7 @@
                                 "required": [
                                   "evidence",
                                   "unitCosts",
+                                  "resolvedOutcomeCount",
                                   "projected"
                                 ],
                                 "description": "Fleet-wide unit costs (same source as /public/stats/best). Present for any dynasty with real fleet spend."
@@ -5727,6 +5751,11 @@
                                       "costPerContactedUsd"
                                     ]
                                   },
+                                  "resolvedOutcomeCount": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                                  },
                                   "projected": {
                                     "type": "object",
                                     "properties": {
@@ -5767,6 +5796,7 @@
                                 "required": [
                                   "evidence",
                                   "unitCosts",
+                                  "resolvedOutcomeCount",
                                   "projected"
                                 ],
                                 "description": "The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow."
@@ -5820,6 +5850,11 @@
                                       "costPerContactedUsd"
                                     ]
                                   },
+                                  "resolvedOutcomeCount": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                                  },
                                   "projected": {
                                     "type": "object",
                                     "properties": {
@@ -5860,6 +5895,7 @@
                                 "required": [
                                   "evidence",
                                   "unitCosts",
+                                  "resolvedOutcomeCount",
                                   "projected"
                                 ],
                                 "description": "Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."
