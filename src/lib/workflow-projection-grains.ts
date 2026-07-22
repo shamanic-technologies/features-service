@@ -6,9 +6,9 @@
  *                the EXISTING /public/stats/best data path (fetchPublicCosts / fetchPublicEmailStats).
  *   - brand    : the SAME path scoped to one brandId (runs groupBy=workflowSlug + brandId, email-gateway
  *                broadcast groupBy=workflowSlug + brandId) — this module (`fetchBrandWorkflowEvidence`).
- *   - audience : audience-WIDE attributed evidence (runs groupBy=audienceId — byte-identical to
- *                /audience-stats — + read-time membership outcomes), plus the (audienceId ×
- *                workflowDynastySlug) couples that ran (`fetchAudienceGrainEvidence`).
+ *   - audience : per-(audience × dynasty) SEND-TAG evidence — cost (runs groupBy=audienceId,workflowSlug)
+ *                + outcomes (email-gateway /orgs/stats?audienceId&groupBy=workflowSlug), both mapped
+ *                slug→dynasty. Every active audience is enumerated (`fetchAudienceGrainEvidence`).
  *
  * Both brand + audience reads are ORG-SCOPED (x-org-id) and fail loud (throw → handler 502). No silent
  * fallback, no synthesized data. The dynasty rollup reuses buildUpgradeChains / aggregateAcrossChains so
@@ -18,8 +18,8 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import { buildUpgradeChains, aggregateAcrossChains } from "../routes/public.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
-import { fetchActiveAudiences, fetchAudienceMemberEmails } from "./human-client.js";
-import { fetchEmailOutcomes } from "./email-status-client.js";
+import { fetchActiveAudiences } from "./human-client.js";
+import { mapWithConcurrency } from "./concurrency.js";
 import { selectCostCents, selectCostCentsString, type Pricing } from "./pricing.js";
 
 export interface Identity {
@@ -174,25 +174,27 @@ export async function fetchBrandWorkflowEvidence(
   return result;
 }
 
-// ── AUDIENCE grain ──────────────────────────────────────────────────────────
+// ── AUDIENCE grain (send-tag, per (audience × dynasty)) ──────────────────────
 //
-// Audience-WIDE attributed evidence (runs groupBy=audienceId — byte-identical to /audience-stats — +
-// read-time membership outcomes) plus the (audienceId × workflowDynastySlug) couples that ran. The
-// audience grain is audience-WIDE, NOT per-workflow (the fleet does not tag outcomes per
-// (audience×workflow); documented gap #366/#367), so an audience's grain block is the SAME across that
-// audience's workflow rows. Couple enumeration only tells us WHICH dynasties ran for the audience.
+// Per-(audience × workflow-dynasty) attributed evidence, all SEND-TAG:
+//   cost    = runs groupBy=audienceId,workflowSlug (the audienceId + workflowSlug tags frozen on each
+//             cost row) — post workflow-service#333 the loop-body send/gen cost carries audienceId.
+//   outcome = email-gateway /orgs/stats?audienceId=<id>&groupBy=workflowSlug (the audienceId tag on each
+//             broadcast send, split per workflow) — the ONLY basis that can split outcomes per workflow
+//             (membership cannot; email-gateway#168/#170). Same send-tag basis as the brand grain
+//             (/orgs/stats groupBy=workflowSlug) and as /audience-stats, so cost + outcome are one basis
+//             end to end → cost-per-outcome coherent, and the per-dynasty rows SUM to the audience total.
+// Both map the versioned workflowSlug → dynasty slug locally (slugToDynasty) and sum per dynasty, so the
+// audience grain aligns with the dynasty-keyed crossOrg/brand rows. EVERY active audience is enumerated
+// (an audience with no attributed couple still surfaces — the handler floors it to brand→crossOrg).
 
 export interface AudienceGrainEvidence {
   audienceId: string;
-  /** Workflow dynasties (by dynasty slug) with runs-attributed couples for this audience. */
-  workflowDynastySlugs: string[];
-  /** Audience-grain aggregate (groupBy=audienceId) — same numerator as /audience-stats. */
-  totalCostInUsdCents: number;
-  completedRuns: number;
-  /** Audience-grain outcomes from explicit membership (read-time, no send-tagging). */
-  contacted: number;
-  clicks: number;
-  replies: number;
+  /**
+   * Per active dynasty slug: the (audience × dynasty) send-tag cost + outcomes. A dynasty absent from the
+   * map has no attributed data for this audience (the handler then floors that couple to brand→crossOrg).
+   */
+  byDynasty: Map<string, WorkflowGrainEvidence>;
 }
 
 function audienceIdFromDimensions(dimensions: Record<string, string | null> | undefined): string | null {
@@ -200,102 +202,121 @@ function audienceIdFromDimensions(dimensions: Record<string, string | null> | un
   return id && id !== "__total__" ? id : null;
 }
 
-/** Audience-grain total cost (groupBy=audienceId), restricted to the active-audience set. */
-async function fetchAudienceCostTotals(
+interface DynastyCost {
+  totalCostInUsdCents: number;
+  completedRuns: number;
+}
+
+/**
+ * Per-(audience × dynasty) cost from runs `groupBy=audienceId,workflowSlug`, mapped slug → dynasty and
+ * summed per dynasty, restricted to the active-audience set.
+ *
+ * Deliberately groups by the RAW `workflowSlug` column (not the derived `workflowDynastySlug`): runs-service
+ * resolves `workflowDynastySlug` by grouping on `workflow_slug` then merging rows with a merge key of
+ * DYNASTY ALONE (`regroupByDynasty`), which DROPS the co-grouped `audienceId` dimension — every audience
+ * that shares a dynasty collapses into the single highest-spend audience for that dynasty. Grouping on the
+ * real `workflowSlug` column skips that lossy regroup entirely (correct per-(audience×workflow) split); we
+ * map each slug → dynasty locally via the SAME workflow metadata the crossOrg/brand grains roll up through.
+ * runs-service#174 tracks the producer-side regroupByDynasty secondary-dimension collapse.
+ */
+async function fetchAudienceDynastyCosts(
   brandId: string,
   featureSlug: string,
   activeIds: Set<string>,
   identity: Identity,
   pricing: Pricing,
-): Promise<Map<string, { totalCostInUsdCents: number; completedRuns: number }>> {
-  const groups = await fetchBrandCostGroups(brandId, featureSlug, "audienceId", identity);
-  const result = new Map<string, { totalCostInUsdCents: number; completedRuns: number }>();
-  for (const g of groups) {
-    const audienceId = audienceIdFromDimensions(g.dimensions);
-    if (!audienceId || !activeIds.has(audienceId)) continue;
-    result.set(audienceId, {
-      totalCostInUsdCents: Math.round(selectCostCents(g, "totalCostInUsdCents", pricing)),
-      completedRuns: Number(g.runCount),
-    });
-  }
-  return result;
-}
-
-/**
- * (audienceId × workflowSlug) couples that ran, restricted to the active-audience set.
- *
- * Deliberately groups by the RAW `workflowSlug` column (not the derived `workflowDynastySlug`): runs-service
- * resolves `workflowDynastySlug` by grouping on `workflow_slug` then merging rows with a merge key of
- * DYNASTY ALONE (`regroupByDynasty`), which DROPS the co-grouped `audienceId` dimension — every audience
- * that shares a dynasty collapses into the single highest-spend audience for that dynasty, so only ~1
- * audience per dynasty survived (the "audience-stats shows 15, workflow-projection shows ~2" gap). Grouping
- * on the real `workflowSlug` column skips that lossy regroup entirely (correct per-(audience×workflow)
- * split); the caller maps each slug → dynasty locally via the SAME workflow metadata the crossOrg/brand
- * grains already roll up through, so nothing depends on the producer's dynasty regroup. runs-service#<TBD>
- * tracks the producer-side regroupByDynasty secondary-dimension collapse.
- */
-async function fetchAudienceWorkflowSlugCouples(
-  brandId: string,
-  featureSlug: string,
-  activeIds: Set<string>,
-  identity: Identity,
-): Promise<Map<string, Set<string>>> {
+  slugToDynasty: Map<string, string>,
+): Promise<Map<string, Map<string, DynastyCost>>> {
   const groups = await fetchBrandCostGroups(brandId, featureSlug, "audienceId,workflowSlug", identity);
-  const result = new Map<string, Set<string>>();
+  const result = new Map<string, Map<string, DynastyCost>>();
   for (const g of groups) {
     const audienceId = audienceIdFromDimensions(g.dimensions);
     const workflowSlug = g.dimensions?.workflowSlug;
     if (!audienceId || !activeIds.has(audienceId)) continue;
     if (!workflowSlug || workflowSlug === "__total__") continue;
-    if (!result.has(audienceId)) result.set(audienceId, new Set());
-    result.get(audienceId)!.add(workflowSlug);
+    const dynasty = slugToDynasty.get(workflowSlug) ?? workflowSlug;
+    if (!result.has(audienceId)) result.set(audienceId, new Map());
+    const byDynasty = result.get(audienceId)!;
+    const prev = byDynasty.get(dynasty) ?? { totalCostInUsdCents: 0, completedRuns: 0 };
+    byDynasty.set(dynasty, {
+      totalCostInUsdCents: prev.totalCostInUsdCents + Math.round(selectCostCents(g, "totalCostInUsdCents", pricing)),
+      completedRuns: prev.completedRuns + Number(g.runCount),
+    });
   }
   return result;
 }
 
-/** Audience-grain outcomes via explicit membership → email-gateway broadcast flags. */
-async function fetchAudienceOutcomes(
+interface DynastyOutcome {
+  contacted: number;
+  clicks: number;
+  replies: number;
+}
+
+/**
+ * Per-(audience × dynasty) SEND-TAG outcomes from email-gateway `/orgs/stats?audienceId=<id>&groupBy=
+ * workflowSlug` (one call per audience, concurrency-capped), mapped slug → dynasty and summed per dynasty.
+ * This is the send-tag basis (the audienceId + workflowSlug stamped on each broadcast send) — the only
+ * attribution that can split an audience's engagement per workflow. Fails loud on any downstream error.
+ */
+async function fetchAudienceDynastyOutcomes(
   brandId: string,
+  featureSlug: string,
   audienceIds: string[],
   identity: Identity,
-): Promise<Map<string, { contacted: number; clicks: number; replies: number }>> {
-  const result = new Map<string, { contacted: number; clicks: number; replies: number }>();
+  slugToDynasty: Map<string, string>,
+): Promise<Map<string, Map<string, DynastyOutcome>>> {
+  const baseUrl = process.env.EMAIL_GATEWAY_SERVICE_URL;
+  if (!baseUrl) throw new Error("EMAIL_GATEWAY_SERVICE_URL not configured");
+  const result = new Map<string, Map<string, DynastyOutcome>>();
   if (audienceIds.length === 0) return result;
 
-  const perAudience = await Promise.all(
-    audienceIds.map(async (audienceId) => ({ audienceId, emails: await fetchAudienceMemberEmails(audienceId, identity) })),
-  );
-  const allEmails = [...new Set(perAudience.flatMap((p) => p.emails))];
-  const outcomesByEmail = await fetchEmailOutcomes(brandId, allEmails, identity);
-
-  for (const { audienceId, emails } of perAudience) {
-    let contacted = 0;
-    let clicks = 0;
-    let replies = 0;
-    for (const email of emails) {
-      const o = outcomesByEmail.get(email);
-      if (!o) continue;
-      if (o.contacted) contacted += 1;
-      if (o.clicked) clicks += 1;
-      if (o.positiveReply) replies += 1;
+  const perAudience = await mapWithConcurrency(audienceIds, 6, async (audienceId) => {
+    const params = new URLSearchParams({
+      type: "broadcast",
+      groupBy: "workflowSlug",
+      audienceId,
+      brandId,
+      featureSlugs: featureSlug,
+    });
+    const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, { headers: emailHeaders(brandId, identity) });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`email-gateway /orgs/stats (audienceId, groupBy=workflowSlug) failed (${response.status}): ${text}`);
     }
-    result.set(audienceId, { contacted, clicks, replies });
-  }
+    const data = (await response.json()) as { groups?: Array<Record<string, unknown>> };
+    const byDynasty = new Map<string, DynastyOutcome>();
+    if (Array.isArray(data.groups)) {
+      for (const group of data.groups) {
+        const workflowSlug = String(group.key ?? "__total__");
+        if (workflowSlug === "__total__") continue;
+        const dynasty = slugToDynasty.get(workflowSlug) ?? workflowSlug;
+        const stats = extractBroadcastRecipientStats(group);
+        const prev = byDynasty.get(dynasty) ?? { contacted: 0, clicks: 0, replies: 0 };
+        byDynasty.set(dynasty, {
+          contacted: prev.contacted + (stats.recipientsContacted ?? 0),
+          clicks: prev.clicks + (stats.recipientsClicked ?? 0),
+          replies: prev.replies + (stats.recipientsRepliesPositive ?? 0),
+        });
+      }
+    }
+    return { audienceId, byDynasty };
+  });
+
+  for (const { audienceId, byDynasty } of perAudience) result.set(audienceId, byDynasty);
   return result;
 }
 
 /**
- * Build the audience-grain evidence for a (brand, feature). One entry per active human-service audience
- * that has runs-attributed cost couples — the SAME set /audience-stats reports (both enumerate the
- * `groupBy=audienceId` cost universe restricted to active audiences), so an audience with a real
- * per-audience cost-per-visit can never be present on one surface and missing on the other. Empty when
- * the brand has no active audiences or none has attributed history (the handler then emits only
- * brand-level rows). Fails loud on any downstream error.
+ * Build the audience-grain evidence for a (brand, feature). One entry per ACTIVE human-service audience
+ * (all of them — an audience with no attributed couple still surfaces with an empty `byDynasty`, and the
+ * handler floors it to brand→crossOrg so every active audience appears under every active workflow). Both
+ * cost and outcome are send-tag and keyed per dynasty, so the per-dynasty rows sum to the audience total
+ * on the SAME basis as /audience-stats. Empty when the brand has no active audiences. Fails loud on any
+ * downstream error.
  *
  * `slugToDynasty` maps each versioned `workflowSlug` → its dynasty slug — the SAME workflow metadata the
  * crossOrg/brand grains roll up through — so the audience's dynasty set aligns with the dynasty-keyed
- * crossOrg/brand rows. A slug absent from the map falls back to itself (the audience still surfaces,
- * resolving at the audience grain).
+ * crossOrg/brand rows. A slug absent from the map falls back to itself.
  */
 export async function fetchAudienceGrainEvidence(
   brandId: string,
@@ -308,32 +329,31 @@ export async function fetchAudienceGrainEvidence(
   const audiences = await fetchActiveAudiences(brandId, identity);
   if (audiences.length === 0) return [];
   const activeIds = new Set(audiences.map((a) => a.id));
+  const audienceIds = audiences.map((a) => a.id);
 
-  const [costTotals, slugCouples] = await Promise.all([
-    fetchAudienceCostTotals(brandId, featureSlug, activeIds, identity, pricing),
-    fetchAudienceWorkflowSlugCouples(brandId, featureSlug, activeIds, identity),
+  const [costByAudience, outcomeByAudience] = await Promise.all([
+    fetchAudienceDynastyCosts(brandId, featureSlug, activeIds, identity, pricing, slugToDynasty),
+    fetchAudienceDynastyOutcomes(brandId, featureSlug, audienceIds, identity, slugToDynasty),
   ]);
 
-  const audiencesWithCouples = [...slugCouples.keys()];
-  const outcomes = await fetchAudienceOutcomes(brandId, audiencesWithCouples, identity);
-
   const result: AudienceGrainEvidence[] = [];
-  for (const audienceId of audiencesWithCouples) {
-    const cost = costTotals.get(audienceId) ?? { totalCostInUsdCents: 0, completedRuns: 0 };
-    const out = outcomes.get(audienceId) ?? { contacted: 0, clicks: 0, replies: 0 };
-    // Map the audience's raw workflow slugs → dynasty slugs (dedup); the audience-grain block is
-    // audience-WIDE, so these only tell the handler WHICH dynasty rows to attach it to.
-    const dynastySlugs = new Set<string>();
-    for (const slug of slugCouples.get(audienceId)!) dynastySlugs.add(slugToDynasty.get(slug) ?? slug);
-    result.push({
-      audienceId,
-      workflowDynastySlugs: [...dynastySlugs],
-      totalCostInUsdCents: cost.totalCostInUsdCents,
-      completedRuns: cost.completedRuns,
-      contacted: out.contacted,
-      clicks: out.clicks,
-      replies: out.replies,
-    });
+  for (const audienceId of audienceIds) {
+    const costByDynasty = costByAudience.get(audienceId) ?? new Map<string, DynastyCost>();
+    const outcomeByDynasty = outcomeByAudience.get(audienceId) ?? new Map<string, DynastyOutcome>();
+    const dynasties = new Set<string>([...costByDynasty.keys(), ...outcomeByDynasty.keys()]);
+    const byDynasty = new Map<string, WorkflowGrainEvidence>();
+    for (const dynasty of dynasties) {
+      const c = costByDynasty.get(dynasty) ?? { totalCostInUsdCents: 0, completedRuns: 0 };
+      const o = outcomeByDynasty.get(dynasty) ?? { contacted: 0, clicks: 0, replies: 0 };
+      byDynasty.set(dynasty, {
+        totalCostInUsdCents: c.totalCostInUsdCents,
+        completedRuns: c.completedRuns,
+        contacted: o.contacted,
+        clicks: o.clicks,
+        replies: o.replies,
+      });
+    }
+    result.push({ audienceId, byDynasty });
   }
   return result;
 }

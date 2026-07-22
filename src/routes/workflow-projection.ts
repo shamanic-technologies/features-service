@@ -243,7 +243,7 @@ function outcomeCostForGoal(
  * zero-denominator. Caller only invokes this when spentUsd > 0 (spent-0 grains are omitted, rule 3).
  */
 function buildGrainBlock(
-  evidence: WorkflowGrainEvidence | AudienceGrainEvidence,
+  evidence: WorkflowGrainEvidence,
   econ: ProjectionEconomics | null,
   ltrUsd: number | null,
   objective: Objective,
@@ -530,7 +530,7 @@ export async function computeWorkflowProjection(input: {
     // ladder is on one basis end to end (a mixed gross/net cascade would be incoherent). No post-hoc
     // multiply here — buildGrainBlock consumes the evidence as-is.
     const buildBlock = (
-      ev: WorkflowGrainEvidence | AudienceGrainEvidence,
+      ev: WorkflowGrainEvidence,
       parentUnitCosts: GrainUnitCosts | null = null,
     ): GrainBlock =>
       buildGrainBlock(ev, econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal, parentUnitCosts);
@@ -577,13 +577,14 @@ export async function computeWorkflowProjection(input: {
       });
     }
 
-    // ── Audience rows — one per (audienceId × workflowDynasty) couple that ran ──────────────────
-    // crossOrg + brand grains resolve by the dynasty (keyed on the dynasty's active slug); the audience
-    // grain's raw evidence is audience-WIDE (same numbers across the audience's couple rows), but the
-    // block is built PER COUPLE because its cascade-floor PARENT (brand → crossOrg) is per-dynasty — an
-    // audience with 0 observed outcomes floors against THIS couple's brand/crossOrg cost. When the
-    // audience has observed outcomes the ratio is identical across couples (parent unused).
-    // Precedence audience > brand > crossOrg → these rows resolve at the audience grain when it has spend.
+    // ── Audience rows — EVERY active audience × EVERY active dynasty ────────────────────────────
+    // Send-tag per (audience × dynasty): the audience grain's cost + outcome are keyed per dynasty
+    // (ev.byDynasty), on the SAME send-tag basis as the brand grain. We emit a row for every active
+    // audience under every active dynasty so a consumer filtering rows to the chosen workflow gets the
+    // FULL active-audience set (the enumeration fix). A (audience, dynasty) couple with no attributed
+    // audience data has no audience grain → it resolves via the cascade to brand→crossOrg (a projected
+    // estimate, never absent, never a false $0). Precedence audience > brand > crossOrg → a couple with
+    // real audience spend resolves at the audience grain against THIS dynasty's brand/crossOrg parent.
     // Map dynastySlug → active workflow slug (for crossOrg/brand grain lookup keyed on active slug).
     const activeSlugByDynasty = new Map<string, string>();
     for (const [activeSlug, wf] of workflowBySlug) {
@@ -591,30 +592,27 @@ export async function computeWorkflowProjection(input: {
     }
 
     for (const ev of audienceEvidence) {
-      for (const dynastySlug of ev.workflowDynastySlugs) {
-        const activeSlug = activeSlugByDynasty.get(dynastySlug);
-
+      for (const [dynastySlug, activeSlug] of activeSlugByDynasty) {
         // Cascade: crossOrg (no parent) → brand (parent crossOrg) → audience (parent brand ?? crossOrg).
         const estimatesByGrain: Partial<Record<GrainName, GrainBlock>> = {};
-        if (activeSlug) {
-          const cost = costMap.get(activeSlug);
-          if (cost && cost.totalCostInUsdCents > 0) {
-            const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
-            estimatesByGrain.crossOrg = buildBlock({
-              totalCostInUsdCents: cost.totalCostInUsdCents,
-              completedRuns: cost.completedRuns,
-              contacted: outcomes.recipientsContacted ?? 0,
-              clicks: outcomes.recipientsClicked ?? 0,
-              replies: outcomes.recipientsRepliesPositive ?? 0,
-            });
-          }
-          const brandEv = brandGrain.get(activeSlug);
-          if (brandEv && brandEv.totalCostInUsdCents > 0) {
-            estimatesByGrain.brand = buildBlock(brandEv, estimatesByGrain.crossOrg?.unitCosts ?? null);
-          }
+        const cost = costMap.get(activeSlug);
+        if (cost && cost.totalCostInUsdCents > 0) {
+          const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
+          estimatesByGrain.crossOrg = buildBlock({
+            totalCostInUsdCents: cost.totalCostInUsdCents,
+            completedRuns: cost.completedRuns,
+            contacted: outcomes.recipientsContacted ?? 0,
+            clicks: outcomes.recipientsClicked ?? 0,
+            replies: outcomes.recipientsRepliesPositive ?? 0,
+          });
+        }
+        const brandEv = brandGrain.get(activeSlug);
+        if (brandEv && brandEv.totalCostInUsdCents > 0) {
+          estimatesByGrain.brand = buildBlock(brandEv, estimatesByGrain.crossOrg?.unitCosts ?? null);
         }
         const audienceParent = estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null;
-        if (ev.totalCostInUsdCents > 0) estimatesByGrain.audience = buildBlock(ev, audienceParent);
+        const audEv = ev.byDynasty.get(dynastySlug);
+        if (audEv && audEv.totalCostInUsdCents > 0) estimatesByGrain.audience = buildBlock(audEv, audienceParent);
 
         // A couple with no grain at all (no crossOrg/brand/audience spend) has nothing to project.
         if (!estimatesByGrain.crossOrg && !estimatesByGrain.brand && !estimatesByGrain.audience) continue;

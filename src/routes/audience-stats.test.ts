@@ -71,6 +71,16 @@ const EMAILS_B = mkEmails("b", 20);
 const EMAILS_C = mkEmails("c", 15);
 const POSITIVE = new Set([...EMAILS_A.slice(0, 2), ...EMAILS_B.slice(0, 5)]);
 
+// Per-audience SEND-TAG engagement group (email-gateway /orgs/stats?groupBy=audienceId → groups keyed
+// by audienceId with broadcast.recipientStats). Models the old membership numbers (all members engaged,
+// POSITIVE → positive reply); `include` narrows the set for the campaign-scoped mock.
+function sendTagGroup(audienceId: string, emails: string[], include: (e: string) => boolean = () => true): Record<string, unknown> {
+  const hit = emails.filter(include);
+  const n = hit.length;
+  const repliesPositive = hit.filter((e) => POSITIVE.has(e)).length;
+  return { key: audienceId, broadcast: { recipientStats: { contacted: n, sent: n, delivered: n, opened: n, clicked: n, bounced: 0, repliesPositive } } };
+}
+
 function membersResponse(emails: string[]): Response {
   return new Response(
     JSON.stringify({ members: emails.map((e) => ({ emailNorm: e })), total: emails.length, limit: 500, offset: 0 }),
@@ -116,6 +126,10 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
           costGroup(null, 9000, 9, 4500),
         ],
       }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    // send-tag engagement: email-gateway GET /orgs/stats?groupBy=audienceId → per-audience recipientStats.
+    if (url.includes("email:3000/orgs/stats")) {
+      return new Response(JSON.stringify({ groups: [sendTagGroup("audience-a", EMAILS_A), sendTagGroup("audience-b", EMAILS_B)] }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("email:3000/orgs/status")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as { items: Array<{ email: string }> };
@@ -168,6 +182,9 @@ function mockFetchByStatus(): ReturnType<typeof vi.spyOn> {
       return new Response(JSON.stringify({
         groups: [costGroup("audience-a", 3000, 3), costGroup("audience-b", 1000, 2), costGroup("audience-c", 5000, 8)],
       }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("email:3000/orgs/stats")) {
+      return new Response(JSON.stringify({ groups: [sendTagGroup("audience-a", EMAILS_A), sendTagGroup("audience-b", EMAILS_B), sendTagGroup("audience-c", EMAILS_C)] }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("email:3000/orgs/status")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as { items: Array<{ email: string }> };
@@ -726,6 +743,10 @@ describe("GET /features/:featureSlug/audience-stats", () => {
         // audience-a has NO cost row (no attributed spend); audience-b has real spend.
         return new Response(JSON.stringify({ groups: [costGroup("audience-b", 1000, 2)] }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
+      // send-tag: everyone clicked → audience-a has clicks but zero attributed cost.
+      if (url.includes("email:3000/orgs/stats")) {
+        return new Response(JSON.stringify({ groups: [sendTagGroup("audience-a", EMAILS_A), sendTagGroup("audience-b", EMAILS_B)] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
       if (url.includes("email:3000/orgs/status")) {
         const body = JSON.parse(String(init?.body ?? "{}")) as { items: Array<{ email: string }> };
         // Everyone clicked — so audience-a has clicks but zero attributed cost.
@@ -785,6 +806,12 @@ describe("GET /features/:featureSlug/audience-stats", () => {
           : [costGroup("audience-a", 3000, 3), costGroup("audience-b", 1000, 2)];
         return new Response(JSON.stringify({ groups }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
+      // send-tag engagement: campaign scope narrows to CAMP_CONTACTED via the campaignId query param.
+      if (url.includes("email:3000/orgs/stats")) {
+        const campaignId = new URL(url).searchParams.get("campaignId");
+        const include = campaignId ? (e: string) => CAMP_CONTACTED.has(e) : () => true;
+        return new Response(JSON.stringify({ groups: [sendTagGroup("audience-a", EMAILS_A, include), sendTagGroup("audience-b", EMAILS_B, include)] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
       if (url.includes("email:3000/orgs/status")) {
         const body = JSON.parse(String(init?.body ?? "{}")) as { brandId?: string; campaignId?: string; items: Array<{ email: string }> };
         const campaignScoped = Boolean(body.campaignId);
@@ -823,11 +850,10 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     const costUrl = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).find((u: string) => u.includes("runs:3000")) ?? "";
     expect(costUrl).toContain("groupBy=audienceId");
     expect(costUrl).toContain("campaignId=camp-1");
-    // email-gateway status was driven by a campaignId body field (NOT brandId).
-    const statusCall = fetchSpy.mock.calls.find((c: any[]) => urlOf(c[0]).includes("email:3000/orgs/status"));
-    const statusBody = JSON.parse(String((statusCall?.[1] as any)?.body ?? "{}"));
-    expect(statusBody.campaignId).toBe("camp-1");
-    expect(statusBody.brandId).toBeUndefined();
+    // email-gateway engagement (send-tag) carried the campaignId query param (NOT brandId-only scope).
+    const statsUrl = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).find((u: string) => u.includes("email:3000/orgs/stats")) ?? "";
+    expect(statsUrl).toContain("groupBy=audienceId");
+    expect(statsUrl).toContain("campaignId=camp-1");
   });
 
   it("omitting campaignId is brand-wide + byte-identical (no runs campaignId filter, brand-scope email body)", async () => {
@@ -847,12 +873,11 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(byId["audience-b"].evidence.websiteClicks).toBe(20);
     expect(byId["audience-b"].metrics.cpcCents).toBe(50);
 
-    // No campaignId filter reaches runs; email body drives on brandId (brand scope).
+    // No campaignId filter reaches runs; email engagement (send-tag) is brand-scoped (no campaignId).
     const costUrl = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).find((u: string) => u.includes("runs:3000")) ?? "";
     expect(costUrl).not.toContain("campaignId=");
-    const statusCall = fetchSpy.mock.calls.find((c: any[]) => urlOf(c[0]).includes("email:3000/orgs/status"));
-    const statusBody = JSON.parse(String((statusCall?.[1] as any)?.body ?? "{}"));
-    expect(statusBody.brandId).toBe("brand-1");
-    expect(statusBody.campaignId).toBeUndefined();
+    const statsUrl = fetchSpy.mock.calls.map((c: any[]) => urlOf(c[0])).find((u: string) => u.includes("email:3000/orgs/stats")) ?? "";
+    expect(statsUrl).toContain("brandId=brand-1");
+    expect(statsUrl).not.toContain("campaignId=");
   });
 });
