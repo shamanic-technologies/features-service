@@ -5,7 +5,6 @@ import { features } from "../db/schema.js";
 import { AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, type AudienceFilters, type AudienceStatus } from "./human-client.js";
-import { fetchEmailOutcomes } from "./email-status-client.js";
 import { observedCostPerOutcome, projectedCostPerOutcome } from "./cost-engine.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
@@ -298,17 +297,84 @@ async function fetchAudienceCosts(
   return result;
 }
 
+interface SendTagEngagement {
+  contacted: number;
+  opened: number;
+  websiteClicks: number;
+  positiveReplies: number;
+}
+
+function emptyEngagement(): SendTagEngagement {
+  return { contacted: 0, opened: 0, websiteClicks: 0, positiveReplies: 0 };
+}
+
 /**
- * Per-audience outcome evidence, resolved READ-TIME from explicit membership (no send-tagging).
- *
- * For each active audience: human-service gives its canonical member emails (people served under
- * it — provenance, human-service#42); email-gateway gives each email's brand-scoped broadcast
- * outcome flags. We aggregate per audience: contacted / opened / clicked / positiveReply member counts.
- * An email in multiple audiences contributes to each (audiences overlap; the per-audience numbers
- * rank candidates, they do NOT partition the brand total). Outcomes are recipient engagement, so
- * they are NOT scoped by goal / brand-profile (only the COST is — via runs attribution).
+ * Per-audience SEND-TAG engagement from email-gateway `/orgs/stats?type=broadcast&groupBy=audienceId`
+ * (the audienceId stamped on each broadcast send — email-gateway#168/#170). This is the SAME send-tag
+ * basis as the per-audience COST (runs `groupBy=audienceId`), so cost-per-outcome is one basis end to end
+ * — it SUPERSEDES the membership join, whose click basis (member ∩ any brand click) mismatched the
+ * send-tag cost. Returns per-audience counts + the brand-grain total (Σ over audiences — a send is tagged
+ * to ONE audience, so the sum does not double-count, unlike overlapping memberships). A campaign scope
+ * narrows via the `campaignId` filter. Fails loud on any downstream error.
  */
-async function fetchAudienceOutcomes(
+async function fetchAudienceSendTagEngagement(
+  brandId: string,
+  featureSlug: string,
+  identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
+  scopeCampaignId?: string,
+): Promise<{ perAudience: Map<string, SendTagEngagement>; brandGrain: SendTagEngagement }> {
+  const baseUrl = process.env.EMAIL_GATEWAY_SERVICE_URL;
+  const apiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
+  if (!baseUrl || !apiKey) {
+    throw new Error("EMAIL_GATEWAY_SERVICE_URL or EMAIL_GATEWAY_SERVICE_API_KEY not configured");
+  }
+  const params = new URLSearchParams({ type: "broadcast", groupBy: "audienceId", brandId, featureSlugs: featureSlug });
+  if (scopeCampaignId) params.set("campaignId", scopeCampaignId);
+  const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, {
+    headers: buildHeaders(apiKey, identity.orgId, { ...identity, brandId }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`email-gateway audience engagement failed (${response.status}): ${text}`);
+  }
+  const data = (await response.json()) as { groups?: Array<Record<string, unknown>> };
+  const perAudience = new Map<string, SendTagEngagement>();
+  const brandGrain = emptyEngagement();
+  if (Array.isArray(data.groups)) {
+    for (const group of data.groups) {
+      const audienceId = String(group.key ?? "__total__");
+      if (audienceId === "__total__") continue;
+      const broadcast = group.broadcast as Record<string, unknown> | undefined;
+      const rs = (broadcast?.recipientStats as Record<string, number> | undefined) ?? {};
+      const engagement: SendTagEngagement = {
+        contacted: rs.contacted ?? 0,
+        opened: rs.opened ?? 0,
+        websiteClicks: rs.clicked ?? 0,
+        positiveReplies: rs.repliesPositive ?? 0,
+      };
+      perAudience.set(audienceId, engagement);
+      brandGrain.contacted += engagement.contacted;
+      brandGrain.opened += engagement.opened;
+      brandGrain.websiteClicks += engagement.websiteClicks;
+      brandGrain.positiveReplies += engagement.positiveReplies;
+    }
+  }
+  return { perAudience, brandGrain };
+}
+
+/**
+ * Per-audience MEMBERSHIP evidence: the audience's addressable pool size (distinct member emails —
+ * human-service provenance, human-service#42) + REAL per-audience conversions (form-submission / signup /
+ * sale), attributed by intersecting the audience's member emails with the brand's matched-lead conversion
+ * emails (lead-service conversion tracker).
+ *
+ * Engagement (contacted / opened / clicked / positiveReply) is NO LONGER computed here — it comes from the
+ * SEND-TAG path (`fetchAudienceSendTagEngagement`), the SAME basis as the cost, so cost-per-outcome is one
+ * basis end to end. This fetch stays membership-based only for the two things membership genuinely owns:
+ * memberCount (the audience size) and conversion attribution (a conversion belongs to whichever audience
+ * produced the matched lead). Brand-wide, no campaign scope. Fails loud on any downstream error.
+ */
+async function fetchAudienceMembership(
   brandId: string,
   audiences: Audience[],
   identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
@@ -324,26 +390,17 @@ async function fetchAudienceOutcomes(
   // intersection as signups/form submissions. null when NOT a sale-terminating goal (website-purchase /
   // combined-sales), or when lead-service didn't serve them → each audience's sales stays ABSENT.
   saleEmails: Set<string> | null = null,
-  // Optional CAMPAIGN scope: when present, the email-gateway outcome flags are read from the campaign
-  // scope (only this campaign's contacted/opened/clicked/replied), not the brand aggregate. Audience
-  // MEMBERSHIP stays brand-wide (audiences are brand-scoped); only the OUTCOME numerator narrows.
-  // Omitted → brand-wide (byte-identical).
-  scopeCampaignId?: string,
-): Promise<{ perAudience: Map<string, AudienceOutcomeEvidence>; brandGrain: AudienceOutcomeEvidence }> {
+): Promise<Map<string, AudienceOutcomeEvidence>> {
   const perAudience = await Promise.all(
     audiences.map(async (a) => ({ audienceId: a.id, emails: await fetchAudienceMemberEmails(a.id, identity) })),
   );
-
-  const allEmails = [...new Set(perAudience.flatMap((p) => p.emails))];
-  const outcomesByEmail = await fetchEmailOutcomes(brandId, allEmails, identity, scopeCampaignId);
 
   const result = new Map<string, AudienceOutcomeEvidence>();
   for (const { audienceId, emails } of perAudience) {
     const agg = emptyOutcomes();
     // Addressable pool size = distinct member emails served under the audience (contacted ⊆ this).
     agg.memberCount = new Set(emails).size;
-    // DISTINCT-member conversion tally: count each member email at most once (mirrors the
-    // clicked/replied member-grain counts). Only when we have the conversion-email set.
+    // DISTINCT-member conversion tally: count each member email at most once. Only when we have the set.
     let formSubmissions = formSubmissionEmails ? 0 : undefined;
     let signups = signupEmails ? 0 : undefined;
     let sales = saleEmails ? 0 : undefined;
@@ -351,31 +408,18 @@ async function fetchAudienceOutcomes(
     const seenSignups = new Set<string>();
     const seenSales = new Set<string>();
     for (const email of emails) {
-      const o = outcomesByEmail.get(email);
-      if (o) {
-        if (o.contacted) agg.contacted += 1;
-        if (o.opened) agg.opened += 1;
-        if (o.clicked) agg.websiteClicks += 1;
-        if (o.positiveReply) agg.positiveReplies += 1;
-      }
       const key = email.trim().toLowerCase();
-      if (formSubmissionEmails) {
-        if (formSubmissionEmails.has(key) && !seenSubmitters.has(key)) {
-          seenSubmitters.add(key);
-          formSubmissions = (formSubmissions ?? 0) + 1;
-        }
+      if (formSubmissionEmails && formSubmissionEmails.has(key) && !seenSubmitters.has(key)) {
+        seenSubmitters.add(key);
+        formSubmissions = (formSubmissions ?? 0) + 1;
       }
-      if (signupEmails) {
-        if (signupEmails.has(key) && !seenSignups.has(key)) {
-          seenSignups.add(key);
-          signups = (signups ?? 0) + 1;
-        }
+      if (signupEmails && signupEmails.has(key) && !seenSignups.has(key)) {
+        seenSignups.add(key);
+        signups = (signups ?? 0) + 1;
       }
-      if (saleEmails) {
-        if (saleEmails.has(key) && !seenSales.has(key)) {
-          seenSales.add(key);
-          sales = (sales ?? 0) + 1;
-        }
+      if (saleEmails && saleEmails.has(key) && !seenSales.has(key)) {
+        seenSales.add(key);
+        sales = (sales ?? 0) + 1;
       }
     }
     if (formSubmissions !== undefined) agg.formSubmissions = formSubmissions;
@@ -383,21 +427,7 @@ async function fetchAudienceOutcomes(
     if (sales !== undefined) agg.sales = sales;
     result.set(audienceId, agg);
   }
-
-  // Brand-grain aggregate = DISTINCT union members (allEmails is already deduped), SAME membership-based
-  // definition as the per-audience counts (no grain mix). Serves as the PARENT for the projected cascade:
-  // an audience with 0 observed outcomes floors to the brand's cost-per-outcome (audience → brand).
-  const brandGrain = emptyOutcomes();
-  for (const email of allEmails) {
-    const o = outcomesByEmail.get(email);
-    if (!o) continue;
-    if (o.contacted) brandGrain.contacted += 1;
-    if (o.opened) brandGrain.opened += 1;
-    if (o.clicked) brandGrain.websiteClicks += 1;
-    if (o.positiveReply) brandGrain.positiveReplies += 1;
-  }
-
-  return { perAudience: result, brandGrain };
+  return result;
 }
 
 /**
@@ -476,22 +506,25 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
   const saleEmails =
     normalizedGoal === "websitePurchase" || normalizedGoal === "sales" ? await fetchSaleEmailsSoft(brandId) : null;
 
-  const [costs, outcomesResult] = await Promise.all([
+  const [costs, membership, engagementResult] = await Promise.all([
     fetchAudienceCosts(brandId, featureSlug, identity, pricing, scopeCampaignId),
-    fetchAudienceOutcomes(brandId, audiences, identity, formSubmissionEmails, signupEmails, saleEmails, scopeCampaignId),
+    fetchAudienceMembership(brandId, audiences, identity, formSubmissionEmails, signupEmails, saleEmails),
+    fetchAudienceSendTagEngagement(brandId, featureSlug, identity, scopeCampaignId),
   ]);
-  const outcomes = outcomesResult.perAudience;
+  const engagement = engagementResult.perAudience;
 
   // Brand-grain PARENT cost-per-outcome for the projected cascade (audience → brand). Numerator = the
   // brand's total audience-tagged cost (runs are tagged to ONE audience, so summing does not double-count);
-  // denominator = the brand-grain DISTINCT-union outcome counts. observed (real ratio, null when the brand
-  // has no clicks/replies → then the audience metric falls back to observed null, never a false $0).
+  // denominator = the SEND-TAG brand-grain engagement (Σ over audiences — a send is tagged to ONE audience,
+  // so summing does not double-count either). SAME send-tag basis as the cost, so the parent ratio is
+  // coherent. observed (real ratio, null when the brand has no clicks/replies → the audience metric then
+  // falls back to observed null, never a false $0).
   const brandTotalCostCents = [...costs.values()].reduce((sum, c) => sum + c.totalCostInUsdCents, 0);
-  const brandParentCpc = observedCostPerOutcome(brandTotalCostCents, outcomesResult.brandGrain.websiteClicks);
-  const brandParentCppr = observedCostPerOutcome(brandTotalCostCents, outcomesResult.brandGrain.positiveReplies);
+  const brandParentCpc = observedCostPerOutcome(brandTotalCostCents, engagementResult.brandGrain.websiteClicks);
+  const brandParentCppr = observedCostPerOutcome(brandTotalCostCents, engagementResult.brandGrain.positiveReplies);
 
   const audienceMap = new Map(audiences.map((audience) => [audience.id, audience]));
-  const ids = new Set([...costs.keys(), ...outcomes.keys()]);
+  const ids = new Set([...costs.keys(), ...membership.keys(), ...engagement.keys()]);
   const rows: AudienceStatsRow[] = [];
 
   for (const audienceId of ids) {
@@ -499,7 +532,17 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
     if (!audience) continue;
 
     const cost = costs.get(audienceId) ?? emptyCost();
-    const outcome = outcomes.get(audienceId) ?? emptyOutcomes();
+    // Merge: memberCount + conversions (membership) with contacted/opened/clicks/replies (send-tag), so the
+    // engagement counts share the cost's send-tag basis while memberCount/conversions keep membership.
+    const member = membership.get(audienceId) ?? emptyOutcomes();
+    const eng = engagement.get(audienceId) ?? emptyEngagement();
+    const outcome: AudienceOutcomeEvidence = {
+      ...member,
+      contacted: eng.contacted,
+      opened: eng.opened,
+      websiteClicks: eng.websiteClicks,
+      positiveReplies: eng.positiveReplies,
+    };
     rows.push({
       audienceId,
       brandProfileId,

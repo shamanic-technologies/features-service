@@ -88,12 +88,13 @@ interface MockOpts {
   brandEmail?: unknown[];
   economics?: unknown;
   source?: unknown;
-  // audiences: array of { id }, audienceCost groups, couple groups, membersByAudience, outcomesByEmail
+  // audiences: array of { id }, audienceCost groups, couple groups, audienceEngagement (send-tag)
   audiences?: Array<{ id: string }>;
   audienceCost?: unknown[];
   audienceCouples?: unknown[];
-  membersByAudience?: Record<string, string[]>;
-  outcomesByEmail?: Record<string, { contacted?: boolean; clicked?: boolean; replied?: boolean; replyClassification?: string }>;
+  // Per-audience SEND-TAG engagement: email-gateway /orgs/stats?audienceId=<id>&groupBy=workflowSlug →
+  // groups keyed by workflowSlug (use emailGroup(slug, clicked, repliesPositive, contacted)).
+  audienceEngagement?: Record<string, unknown[]>;
 }
 
 function mockFetch(opts: MockOpts = {}): void {
@@ -116,8 +117,11 @@ function mockFetch(opts: MockOpts = {}): void {
       // groupBy=workflowSlug + brandId → brand grain
       return json({ groups: opts.brandCost ?? BRAND_COST });
     }
-    // email stats — org-scoped brand grain vs public crossOrg
+    // email stats — org-scoped. audienceId param → per-audience send-tag engagement (groupBy=workflowSlug);
+    // else brand grain (groupBy=workflowSlug, no audienceId).
     if (url.includes("/orgs/stats")) {
+      const audienceId = u.searchParams.get("audienceId");
+      if (audienceId) return json({ groups: opts.audienceEngagement?.[audienceId] ?? [] });
       return json({ groups: opts.brandEmail ?? BRAND_EMAIL });
     }
     if (url.includes("/public/stats")) {
@@ -128,25 +132,9 @@ function mockFetch(opts: MockOpts = {}): void {
       const source = "source" in opts ? opts.source : economics == null ? null : "user";
       return json({ economics, source });
     }
-    // human-service audiences list
-    if (url.includes("/orgs/audiences") && url.includes("/members")) {
-      const idMatch = url.match(/\/orgs\/audiences\/([^/]+)\/members/);
-      const audienceId = idMatch ? idMatch[1] : "";
-      const emails = opts.membersByAudience?.[audienceId] ?? [];
-      return json({ members: emails.map((e) => ({ emailNorm: e })), total: emails.length });
-    }
+    // human-service active audiences list (grains enumerate every active audience).
     if (url.includes("/orgs/audiences")) {
       return json({ audiences: opts.audiences ?? [] });
-    }
-    // email-gateway POST /orgs/status → per-email outcome flags
-    if (url.includes("/orgs/status")) {
-      const body = init?.body ? JSON.parse(init.body as string) : {};
-      const items: Array<{ email: string }> = body.items ?? [];
-      const results = items.map(({ email }) => {
-        const o = opts.outcomesByEmail?.[email] ?? {};
-        return { email, broadcast: { brand: { contacted: o.contacted, clicked: o.clicked, replied: o.replied, replyClassification: o.replyClassification ?? null } } };
-      });
-      return json({ results });
     }
     return json({});
   });
@@ -313,13 +301,8 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
       // aud-1 cost: $400 / (from couples we learn it ran dyn-a). groupBy=audienceId total.
       audienceCost: [{ dimensions: { audienceId: "aud-1" }, totalCostInUsdCents: "40000", runCount: 8 }],
       audienceCouples: [{ dimensions: { audienceId: "aud-1", workflowSlug: "wf-a" }, totalCostInUsdCents: "40000", runCount: 8 }],
-      membersByAudience: { "aud-1": ["m1@x.com", "m2@x.com", "m3@x.com", "m4@x.com"] },
-      outcomesByEmail: {
-        "m1@x.com": { contacted: true, clicked: true },
-        "m2@x.com": { contacted: true, clicked: true },
-        "m3@x.com": { contacted: true, replied: true, replyClassification: "positive" },
-        "m4@x.com": { contacted: true },
-      },
+      // send-tag: aud-1 ran wf-a → 4 contacted, 2 clicks, 1 positive reply.
+      audienceEngagement: { "aud-1": [emailGroup("wf-a", 2, 1, 4)] },
     });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
     expect(res.status).toBe(200);
@@ -356,11 +339,9 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
         { dimensions: { audienceId: "aud-1", workflowSlug: "wf-a" }, totalCostInUsdCents: "40000", runCount: 8 },
         { dimensions: { audienceId: "aud-2", workflowSlug: "wf-a" }, totalCostInUsdCents: "60000", runCount: 12 },
       ],
-      membersByAudience: { "aud-1": ["m1@x.com", "m2@x.com"], "aud-2": ["n1@x.com"] },
-      outcomesByEmail: {
-        "m1@x.com": { contacted: true, clicked: true },
-        "m2@x.com": { contacted: true, clicked: true }, // aud-1: 2 clicks → $400/2 = $200
-        "n1@x.com": { contacted: true, clicked: true }, // aud-2: 1 click  → $600/1 = $600
+      audienceEngagement: {
+        "aud-1": [emailGroup("wf-a", 2, 0, 2)], // 2 clicks → $400/2 = $200
+        "aud-2": [emailGroup("wf-a", 1, 0, 1)], // 1 click  → $600/1 = $600
       },
     });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
@@ -421,8 +402,7 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
       audiences: [{ id: "aud-1" }],
       audienceCost: [{ dimensions: { audienceId: "aud-1" }, totalCostInUsdCents: "1000", runCount: 8 }],
       audienceCouples: [{ dimensions: { audienceId: "aud-1", workflowSlug: "wf-a" }, totalCostInUsdCents: "1000", runCount: 8 }],
-      membersByAudience: { "aud-1": ["m1@x.com"] },
-      outcomesByEmail: { "m1@x.com": { contacted: true } }, // 0 clicks
+      audienceEngagement: { "aud-1": [emailGroup("wf-a", 0, 0, 1)] }, // 0 clicks
     });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
     const audRow = rowFor(res.body, "dyn-a", "aud-1");
@@ -511,8 +491,7 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
       audiences: [{ id: "aud-1" }],
       audienceCost: [{ dimensions: { audienceId: "aud-1" }, totalCostInUsdCents: "3200", runCount: 4 }],
       audienceCouples: [{ dimensions: { audienceId: "aud-1", workflowSlug: "wf-a" }, totalCostInUsdCents: "3200", runCount: 4 }],
-      membersByAudience: { "aud-1": ["m1@x.com", "m2@x.com"] },
-      outcomesByEmail: { "m1@x.com": { contacted: true }, "m2@x.com": { contacted: true } }, // 0 replies
+      audienceEngagement: { "aud-1": [emailGroup("wf-a", 0, 0, 2)] }, // 2 contacted, 0 clicks, 0 replies
     });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&objective=positive_replies`).set(AUTH);
     expect(res.status).toBe(200);

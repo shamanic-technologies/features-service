@@ -1,5 +1,40 @@
 # Features Service — CLAUDE.md
 
+## Per-audience attribution is SEND-TAG on BOTH `audience-stats` + `workflow-projection` — cost AND outcome one basis; `workflow-projection` audience grain is now PER-(audience × dynasty), enumerating EVERY active audience (supersedes the membership + audience-WIDE notes below)
+
+Per-audience COST was always send-tag (runs `groupBy=audienceId`); per-audience OUTCOME used to be
+read-time MEMBERSHIP (human-service member emails ∩ email-gateway per-email flags). That was a
+basis-mismatch (send-tag cost ÷ membership clicks) AND membership cannot split by workflow. Now that the
+loop-body send/gen cost carries `audienceId` (workflow-service#333) and email-gateway exposes per-(audience,
+workflow) engagement (email-gateway#168/#170), BOTH surfaces read the **send-tag** outcome, one basis end
+to end → cost-per-outcome coherent, and the per-dynasty rows SUM to the audience total.
+
+- **`audience-stats` engagement** (`contacted/opened/websiteClicks/positiveReplies` + the brand-grain
+  cascade parent) now reads email-gateway **`/orgs/stats?type=broadcast&groupBy=audienceId`** (send-tag),
+  the SAME basis as the cost. `fetchAudienceSendTagEngagement`. Campaign scope narrows via the `campaignId`
+  query param. **`memberCount` + conversions (formSubmissions/signups/sales) STAY membership** — memberCount
+  IS the audience size, and a conversion is attributed to whichever audience produced the matched lead
+  (`fetchAudienceMembership`, the old `fetchAudienceOutcomes` minus engagement). A send is tagged to ONE
+  audience, so the brand-grain = Σ per-audience (no double-count, unlike overlapping memberships).
+- **`workflow-projection` audience grain** is now PER-(audience × dynasty), all send-tag: cost from runs
+  `groupBy=audienceId,workflowSlug`, outcome from email-gateway `/orgs/stats?audienceId=<id>&groupBy=
+  workflowSlug` (one call per audience, concurrency-capped 6), both mapped slug→dynasty
+  (`fetchAudienceDynastyCosts` / `fetchAudienceDynastyOutcomes`, `AudienceGrainEvidence.byDynasty`). The
+  handler emits a row for **EVERY active audience × EVERY active dynasty** — so a consumer filtering rows to
+  the chosen workflow (campaign-service, `r.workflow.workflowDynastySlug === chosen`) gets the FULL
+  active-audience set (the enumeration fix: audiences with no attributed couple used to be DROPPED). A
+  (audience, dynasty) couple with no attributed audience data floors via the cascade to brand→crossOrg
+  (never absent, never a false $0). This lets campaign-service consume workflow-projection alone (best
+  workflow + all active audiences) and drop its audience-stats call.
+
+**Forward-only coverage:** the send-tag `audienceId` on the dominant loop-body cost/sends only exists post
+workflow-service#333 (~2026-07-06), so per-(audience×dynasty) data is sparse on historical runs → the
+cascade floor covers the gaps. This is the SAME forward-only acceptance as the audienceId cost-tag gap.
+Response shapes unchanged (row/evidence fields identical) → no OpenAPI regen. campaign-service reads
+`metrics.cpcCents` (audience-stats) + `resolved` (workflow-projection) — both flip to the send-tag basis.
+(Set 2026-07-22; supersedes the audience-WIDE / membership notes in the audience-stats + workflow-projection
+sections below.)
+
 ## Staff admin metrics — DAILY BUDGET (+ its MRR/ARR projection) is the RAW configured value, NEVER discounted; realized-revenue stays NET (supersedes PR #592's discounted-budget)
 
 The per-org usage discount is a modifier on CHARGES only (frozen gross+net per cost row in the runs/billing
