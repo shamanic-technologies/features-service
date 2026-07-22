@@ -55,3 +55,39 @@ export function projectedCostPerOutcome(
   if (spentUsd > 0 && observedCount > 0) return spentUsd / observedCount;
   return Math.max(spentUsd, parentCost ?? 0);
 }
+
+/**
+ * FLOORED — the DISPLAY variant for a per-grain cost-per-outcome that a coarser grain can back-stop
+ * (audience → brand). It is `projectedCostPerOutcome` with an honest `null` for a genuinely-empty cell:
+ *
+ *   - spend > 0 AND outcomes > 0 → the real OBSERVED ratio (spend / outcomes), UNCHANGED from observed.
+ *   - otherwise                  → the cascade floor `max(spentUsd, parentCost)` — a 0-outcome grain
+ *                                  with spend never looks artificially free, and never dips below the
+ *                                  coarser grain's cost — BUT `null` when that floor is 0 (no spend AND
+ *                                  no positive parent), so a zero-evidence cell renders "-", never a
+ *                                  false $0 nor a fabricated parent value.
+ *
+ * The three engines, one per consumption:
+ *   • observedCostPerOutcome  — null whenever an outcome is 0 (ACCOUNTING / real money).
+ *   • projectedCostPerOutcome — NEVER null (RANKING — always a comparable number, even at 0 spend).
+ *   • flooredCostPerOutcome   — floored when there is spend, null only for a truly-empty cell (DISPLAY —
+ *                               a dashboard cost column that must show the brand-floored estimate at 0
+ *                               outcomes yet nothing at all for an untouched audience).
+ *
+ * `parentCost` = the next COARSER grain's ALREADY-RESOLVED cost of the SAME type (audience → brand);
+ * omit (or null) when the surface has no coarser grain → the floor degrades to own spend.
+ */
+export function flooredCostPerOutcome(
+  spentUsd: number,
+  observedCount: number,
+  parentCost: number | null = null,
+): number | null {
+  // Truly-empty cell: no spend AND no outcome → nothing to report (renders "-"), even with a parent.
+  if (spentUsd <= 0 && observedCount <= 0) return null;
+  // Real observed ratio when BOTH are present.
+  if (spentUsd > 0 && observedCount > 0) return spentUsd / observedCount;
+  // Cascade floor: 0-outcome-with-spend OR un-attributed-cost-with-outcomes → max(spend, parent). Guard a
+  // 0 floor (0 spend + outcomes but no parent) → null rather than a false $0.
+  const floor = Math.max(spentUsd, parentCost ?? 0);
+  return floor > 0 ? floor : null;
+}

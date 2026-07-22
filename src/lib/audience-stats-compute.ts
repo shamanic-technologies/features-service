@@ -5,7 +5,7 @@ import { features } from "../db/schema.js";
 import { AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, type AudienceFilters, type AudienceStatus } from "./human-client.js";
-import { observedCostPerOutcome, projectedCostPerOutcome } from "./cost-engine.js";
+import { observedCostPerOutcome, flooredCostPerOutcome } from "./cost-engine.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
@@ -64,21 +64,22 @@ export interface AudienceStatsRow {
     filters: AudienceFilters | null;
   };
   evidence: AudienceCostEvidence & AudienceOutcomeEvidence;
+  // Every per-audience cost-per-outcome is FLOORED (`flooredCostPerOutcome`, audience → brand): a real
+  // observed ratio (spend / outcomes) when the audience has that outcome; else max(audience spend, the
+  // brand-level cost-per-outcome) so a 0-outcome audience with spend shows the brand-floored estimate,
+  // never a raw tiny-spend value below the brand projection, never null. null ONLY when the cell is truly
+  // empty (0 spend AND 0 outcomes). Coherent across all five columns → the dashboard renders the server
+  // value directly (no client-side spend fallback). NET pricing floors on the frozen net basis.
   metrics: {
     cpcCents: number | null;
     cpprCents: number | null;
-    // REAL cost per form submission = audience-scoped spend / formSubmissions. OBSERVED (accounting —
-    // real spend ÷ real tracked conversions): null when 0 form submissions OR 0 attributed spend (never
-    // a false $0.00), and null (not present) for any goal other than form_submissions or when the
-    // conversion emails weren't served. Not part of the ranking (form_submissions ranks on cpc).
+    // Cost per form submission — FLOORED (audience → brand). null (not present) for any goal other than
+    // form_submissions or when the conversion emails weren't served. Not part of the ranking (ranks on cpc).
     cpfsCents: number | null;
-    // REAL cost per signup = audience-scoped spend / signups. OBSERVED (accounting — real spend ÷ real
-    // tracked conversions): null when 0 signups OR 0 attributed spend (never a false $0.00), and null for
-    // any goal other than signup or when the signup conversion emails weren't served. Not part of the
-    // ranking (signup ranks on cpc, visit-driven).
+    // Cost per signup — FLOORED (audience → brand). null for any goal other than signup or when the signup
+    // conversion emails weren't served. Not part of the ranking (signup ranks on cpc, visit-driven).
     cpsCents: number | null;
-    // REAL cost per sale = audience-scoped spend / sales. OBSERVED (accounting): null when 0 sales OR 0
-    // attributed spend (never a false $0.00), and null for any goal other than websitePurchase / sales or
+    // Cost per sale — FLOORED (audience → brand). null for any goal other than websitePurchase / sales or
     // when the sale conversion emails weren't served. Not part of the ranking (both goals rank on cppr).
     cpsaleCents: number | null;
   };
@@ -125,6 +126,18 @@ function emptyCost(): AudienceCostEvidence {
 
 function emptyOutcomes(): AudienceOutcomeEvidence {
   return { memberCount: 0, contacted: 0, opened: 0, websiteClicks: 0, positiveReplies: 0 };
+}
+
+/**
+ * Brand-grain distinct conversion counts (union of converting members across the brand's audiences) — the
+ * coarser-grain OUTCOME denominator the per-audience conversion cost floors against (audience → brand).
+ * A field is `undefined` when its conversion-email set was not fetched (not that goal / lead-service
+ * didn't serve it) → the corresponding brand parent is absent and the floor degrades to own spend.
+ */
+interface BrandConversionTotals {
+  formSubmissions?: number;
+  signups?: number;
+  sales?: number;
 }
 
 /**
@@ -390,12 +403,18 @@ async function fetchAudienceMembership(
   // intersection as signups/form submissions. null when NOT a sale-terminating goal (website-purchase /
   // combined-sales), or when lead-service didn't serve them → each audience's sales stays ABSENT.
   saleEmails: Set<string> | null = null,
-): Promise<Map<string, AudienceOutcomeEvidence>> {
+): Promise<{ perAudience: Map<string, AudienceOutcomeEvidence>; brand: BrandConversionTotals }> {
   const perAudience = await Promise.all(
     audiences.map(async (a) => ({ audienceId: a.id, emails: await fetchAudienceMemberEmails(a.id, identity) })),
   );
 
   const result = new Map<string, AudienceOutcomeEvidence>();
+  // Brand-grain PARENT denominators: distinct converting MEMBER emails across the brand (union — a member
+  // in two audiences counts once), the coarser-grain outcome count the per-audience conversion cost floors
+  // against (audience → brand). Only tallied when the corresponding conversion-email set is present.
+  const brandSubmitters = new Set<string>();
+  const brandSignups = new Set<string>();
+  const brandSales = new Set<string>();
   for (const { audienceId, emails } of perAudience) {
     const agg = emptyOutcomes();
     // Addressable pool size = distinct member emails served under the audience (contacted ⊆ this).
@@ -412,14 +431,17 @@ async function fetchAudienceMembership(
       if (formSubmissionEmails && formSubmissionEmails.has(key) && !seenSubmitters.has(key)) {
         seenSubmitters.add(key);
         formSubmissions = (formSubmissions ?? 0) + 1;
+        brandSubmitters.add(key);
       }
       if (signupEmails && signupEmails.has(key) && !seenSignups.has(key)) {
         seenSignups.add(key);
         signups = (signups ?? 0) + 1;
+        brandSignups.add(key);
       }
       if (saleEmails && saleEmails.has(key) && !seenSales.has(key)) {
         seenSales.add(key);
         sales = (sales ?? 0) + 1;
+        brandSales.add(key);
       }
     }
     if (formSubmissions !== undefined) agg.formSubmissions = formSubmissions;
@@ -427,7 +449,12 @@ async function fetchAudienceMembership(
     if (sales !== undefined) agg.sales = sales;
     result.set(audienceId, agg);
   }
-  return result;
+  const brand: BrandConversionTotals = {
+    formSubmissions: formSubmissionEmails ? brandSubmitters.size : undefined,
+    signups: signupEmails ? brandSignups.size : undefined,
+    sales: saleEmails ? brandSales.size : undefined,
+  };
+  return { perAudience: result, brand };
 }
 
 /**
@@ -506,22 +533,34 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
   const saleEmails =
     normalizedGoal === "websitePurchase" || normalizedGoal === "sales" ? await fetchSaleEmailsSoft(brandId) : null;
 
-  const [costs, membership, engagementResult] = await Promise.all([
+  const [costs, membershipResult, engagementResult] = await Promise.all([
     fetchAudienceCosts(brandId, featureSlug, identity, pricing, scopeCampaignId),
     fetchAudienceMembership(brandId, audiences, identity, formSubmissionEmails, signupEmails, saleEmails),
     fetchAudienceSendTagEngagement(brandId, featureSlug, identity, scopeCampaignId),
   ]);
+  const membership = membershipResult.perAudience;
   const engagement = engagementResult.perAudience;
 
-  // Brand-grain PARENT cost-per-outcome for the projected cascade (audience → brand). Numerator = the
-  // brand's total audience-tagged cost (runs are tagged to ONE audience, so summing does not double-count);
-  // denominator = the SEND-TAG brand-grain engagement (Σ over audiences — a send is tagged to ONE audience,
-  // so summing does not double-count either). SAME send-tag basis as the cost, so the parent ratio is
-  // coherent. observed (real ratio, null when the brand has no clicks/replies → the audience metric then
-  // falls back to observed null, never a false $0).
+  // Brand-grain PARENT cost-per-outcome for the FLOOR cascade (audience → brand). Numerator = the brand's
+  // total audience-tagged cost (runs are tagged to ONE audience, so summing does not double-count).
+  // Denominators:
+  //   • cpc / cppr — the SEND-TAG brand-grain engagement (Σ over audiences — a send is tagged to ONE
+  //     audience, so summing does not double-count either). SAME send-tag basis as the cost.
+  //   • cpfs / cps / cpsale — the brand's distinct converting MEMBERS (union across audiences), the
+  //     coarser-grain denominator for the membership-attributed conversions.
+  // observed (real ratio, null when the brand has no such outcome → the audience metric then floors to its
+  // OWN spend rather than a fabricated parent, never a false $0). An audience WITH the outcome ignores the
+  // parent (real observed ratio); a 0-outcome audience with spend floors to max(spend, parent).
   const brandTotalCostCents = [...costs.values()].reduce((sum, c) => sum + c.totalCostInUsdCents, 0);
   const brandParentCpc = observedCostPerOutcome(brandTotalCostCents, engagementResult.brandGrain.websiteClicks);
   const brandParentCppr = observedCostPerOutcome(brandTotalCostCents, engagementResult.brandGrain.positiveReplies);
+  const brandConv = membershipResult.brand;
+  const brandParentCpfs =
+    brandConv.formSubmissions !== undefined ? observedCostPerOutcome(brandTotalCostCents, brandConv.formSubmissions) : null;
+  const brandParentCps =
+    brandConv.signups !== undefined ? observedCostPerOutcome(brandTotalCostCents, brandConv.signups) : null;
+  const brandParentCpsale =
+    brandConv.sales !== undefined ? observedCostPerOutcome(brandTotalCostCents, brandConv.sales) : null;
 
   const audienceMap = new Map(audiences.map((audience) => [audience.id, audience]));
   const ids = new Set([...costs.keys(), ...membership.keys(), ...engagement.keys()]);
@@ -556,38 +595,32 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
         ...cost,
         ...outcome,
       },
-      // PROJECTED engine (default): a real ratio when the audience has outcomes; else the cascade floor
-      // max(audience cost, brand parent). When the brand has no parent (0 brand clicks/replies) → observed
-      // (null, sorts last) rather than a false $0. An audience with outcomes is unchanged (parent ignored).
+      // FLOORED engine (dashboard DISPLAY default, one rule for EVERY per-audience cost-per-outcome so
+      // the goal's cost columns are coherent): a real observed ratio when the audience has that outcome;
+      // else the cascade floor max(audience cost, brand parent) — never below the brand-level cost, never
+      // a raw tiny-spend value; NULL only when the cell is truly empty (0 spend AND 0 outcomes). An
+      // audience WITH the outcome is unchanged (parent ignored). Same net/gross basis as the whole payload
+      // (cost cents were already selected per `pricing`), so net floors on net by construction.
       metrics: {
-        cpcCents:
-          brandParentCpc != null
-            ? projectedCostPerOutcome(cost.totalCostInUsdCents, outcome.websiteClicks, brandParentCpc)
-            : observedCostPerOutcome(cost.totalCostInUsdCents, outcome.websiteClicks),
-        cpprCents:
-          brandParentCppr != null
-            ? projectedCostPerOutcome(cost.totalCostInUsdCents, outcome.positiveReplies, brandParentCppr)
-            : observedCostPerOutcome(cost.totalCostInUsdCents, outcome.positiveReplies),
-        // OBSERVED (accounting): audience spend ÷ its real form submissions. null when the count is
-        // absent (not the form_submissions goal / emails not served) OR 0 (no denominator / no attributed
-        // spend) — never a false $0.00. Not used in ranking (form_submissions sorts on cpc).
+        cpcCents: flooredCostPerOutcome(cost.totalCostInUsdCents, outcome.websiteClicks, brandParentCpc),
+        cpprCents: flooredCostPerOutcome(cost.totalCostInUsdCents, outcome.positiveReplies, brandParentCppr),
+        // Present ONLY for the form_submissions goal (absent → null); floors audience→brand exactly like
+        // cpc/cppr. null when the cell is truly empty (0 spend AND 0 form submissions) — never a false $0.
         cpfsCents:
           outcome.formSubmissions !== undefined
-            ? observedCostPerOutcome(cost.totalCostInUsdCents, outcome.formSubmissions)
+            ? flooredCostPerOutcome(cost.totalCostInUsdCents, outcome.formSubmissions, brandParentCpfs)
             : null,
-        // OBSERVED (accounting): audience spend ÷ its real signups. null when the count is absent (not the
-        // signup goal / emails not served) OR 0 (no denominator / no attributed spend) — never a false
-        // $0.00. Not used in ranking (signup sorts on cpc).
+        // Present ONLY for the signup goal; floors audience→brand. null when truly empty (0 spend AND 0
+        // signups) — never a false $0.
         cpsCents:
           outcome.signups !== undefined
-            ? observedCostPerOutcome(cost.totalCostInUsdCents, outcome.signups)
+            ? flooredCostPerOutcome(cost.totalCostInUsdCents, outcome.signups, brandParentCps)
             : null,
-        // OBSERVED (accounting): audience spend ÷ its real sales (paying clients). null when the count is
-        // absent (not a sale-terminating goal / emails not served) OR 0 (no denominator / no attributed
-        // spend) — never a false $0.00. Serves both website-purchase and combined-sales goals.
+        // Present ONLY for the website-purchase / combined-sales goals; floors audience→brand. null when
+        // truly empty (0 spend AND 0 sales) — never a false $0.
         cpsaleCents:
           outcome.sales !== undefined
-            ? observedCostPerOutcome(cost.totalCostInUsdCents, outcome.sales)
+            ? flooredCostPerOutcome(cost.totalCostInUsdCents, outcome.sales, brandParentCpsale)
             : null,
       },
     });
