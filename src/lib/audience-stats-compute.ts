@@ -5,7 +5,8 @@ import { features } from "../db/schema.js";
 import { AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, type AudienceFilters, type AudienceStatus } from "./human-client.js";
-import { observedCostPerOutcome, flooredCostPerOutcome } from "./cost-engine.js";
+import { flooredCostPerOutcome } from "./cost-engine.js";
+import { fetchBrandProjectedParents } from "./audience-stats-brand-projection.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
@@ -66,10 +67,13 @@ export interface AudienceStatsRow {
   evidence: AudienceCostEvidence & AudienceOutcomeEvidence;
   // Every per-audience cost-per-outcome is FLOORED (`flooredCostPerOutcome`, audience → brand): a real
   // observed ratio (spend / outcomes) when the audience has that outcome; else max(audience spend, the
-  // brand-level cost-per-outcome) so a 0-outcome audience with spend shows the brand-floored estimate,
-  // never a raw tiny-spend value below the brand projection, never null. null ONLY when the cell is truly
-  // empty (0 spend AND 0 outcomes). Coherent across all five columns → the dashboard renders the server
-  // value directly (no client-side spend fallback). NET pricing floors on the frozen net basis.
+  // FLEET-BACKED projected cost-per-outcome for this brand+goal) — the SAME cross-org → brand cascade that
+  // `workflow-projection.resolved` produces (fleet benchmark cascaded with the brand's effective
+  // economics), NOT a brand-own raw-spend aggregate. So a 0-outcome audience with spend shows the identical
+  // number the Strategy page shows, never a raw tiny-spend value below the fleet projection, never null.
+  // null ONLY when the cell is truly empty (0 spend AND 0 outcomes). Coherent across all five columns → the
+  // dashboard renders the server value directly (no client-side spend fallback). NET floors on the frozen
+  // net basis (the fleet cost is read net too).
   metrics: {
     cpcCents: number | null;
     cpprCents: number | null;
@@ -533,34 +537,32 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
   const saleEmails =
     normalizedGoal === "websitePurchase" || normalizedGoal === "sales" ? await fetchSaleEmailsSoft(brandId) : null;
 
-  const [costs, membershipResult, engagementResult] = await Promise.all([
+  const [costs, membershipResult, engagementResult, brandProjected] = await Promise.all([
     fetchAudienceCosts(brandId, featureSlug, identity, pricing, scopeCampaignId),
     fetchAudienceMembership(brandId, audiences, identity, formSubmissionEmails, signupEmails, saleEmails),
     fetchAudienceSendTagEngagement(brandId, featureSlug, identity, scopeCampaignId),
+    // FLEET-BACKED brand parent for the FLOOR cascade (audience → brand): the SAME cross-org → brand
+    // projected cost-per-outcome that workflow-projection.resolved produces (fleet benchmark cascaded with
+    // the brand's effective economics), NOT a brand-own raw-spend aggregate. So a 0-outcome audience's
+    // floor bottoms out at the identical number the Strategy page shows. Brand-wide (NOT campaign-scoped —
+    // the fleet benchmark is campaign-agnostic); same gross/net basis as the rest of the payload.
+    fetchBrandProjectedParents(brandId, featureSlug, normalizedGoal, identity, pricing),
   ]);
   const membership = membershipResult.perAudience;
   const engagement = engagementResult.perAudience;
 
-  // Brand-grain PARENT cost-per-outcome for the FLOOR cascade (audience → brand). Numerator = the brand's
-  // total audience-tagged cost (runs are tagged to ONE audience, so summing does not double-count).
-  // Denominators:
-  //   • cpc / cppr — the SEND-TAG brand-grain engagement (Σ over audiences — a send is tagged to ONE
-  //     audience, so summing does not double-count either). SAME send-tag basis as the cost.
-  //   • cpfs / cps / cpsale — the brand's distinct converting MEMBERS (union across audiences), the
-  //     coarser-grain denominator for the membership-attributed conversions.
-  // observed (real ratio, null when the brand has no such outcome → the audience metric then floors to its
-  // OWN spend rather than a fabricated parent, never a false $0). An audience WITH the outcome ignores the
-  // parent (real observed ratio); a 0-outcome audience with spend floors to max(spend, parent).
-  const brandTotalCostCents = [...costs.values()].reduce((sum, c) => sum + c.totalCostInUsdCents, 0);
-  const brandParentCpc = observedCostPerOutcome(brandTotalCostCents, engagementResult.brandGrain.websiteClicks);
-  const brandParentCppr = observedCostPerOutcome(brandTotalCostCents, engagementResult.brandGrain.positiveReplies);
-  const brandConv = membershipResult.brand;
-  const brandParentCpfs =
-    brandConv.formSubmissions !== undefined ? observedCostPerOutcome(brandTotalCostCents, brandConv.formSubmissions) : null;
-  const brandParentCps =
-    brandConv.signups !== undefined ? observedCostPerOutcome(brandTotalCostCents, brandConv.signups) : null;
-  const brandParentCpsale =
-    brandConv.sales !== undefined ? observedCostPerOutcome(brandTotalCostCents, brandConv.sales) : null;
+  // Brand PARENT cost-per-outcome for the FLOOR cascade (audience → brand), per column — the fleet-backed
+  // projected cost (USD) from the shared projection engine, converted to CENTS to match the cost basis.
+  // A 0-outcome audience with spend floors to max(audience spend, this parent), so it never reads below
+  // the fleet benchmark and is coherent with workflow-projection.resolved by construction. An audience
+  // WITH the outcome ignores the parent (real observed ratio). null parent (cold start) → the floor
+  // degrades to own spend, never a fabricated value.
+  const usdToCents = (usd: number | null): number | null => (usd != null ? usd * 100 : null);
+  const brandParentCpc = usdToCents(brandProjected.cpcUsd);
+  const brandParentCppr = usdToCents(brandProjected.cpprUsd);
+  const brandParentCpfs = usdToCents(brandProjected.cpfsUsd);
+  const brandParentCps = usdToCents(brandProjected.cpsUsd);
+  const brandParentCpsale = usdToCents(brandProjected.cpsaleUsd);
 
   const audienceMap = new Map(audiences.map((audience) => [audience.id, audience]));
   const ids = new Set([...costs.keys(), ...membership.keys(), ...engagement.keys()]);
