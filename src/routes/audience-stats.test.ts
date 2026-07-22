@@ -92,9 +92,56 @@ function urlOf(input: unknown): string {
   return typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as { url: string }).url;
 }
 
+function json(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+}
+
+// Brand effective economics (fetchEffectiveEconomics) driving the fleet-backed projected floor parents.
+const FLEET_ECON = {
+  lifetimeRevenueUsd: 1000,
+  replyToMeetingPct: 30,
+  visitToMeetingPct: 20,
+  meetingToClosePct: 50,
+  visitToSignupPct: 20,
+  signupToPaidClientPct: 40,
+  visitToClosePct: 10,
+  visitToPaidClientPct: 20,
+  replyToPaidClientPct: 50,
+  visitToFormSubmissionPct: 40,
+  formSubmissionToPaidClientPct: 50,
+};
+
+// The 3 cross-org fleet + economics reads behind fetchBrandProjectedParents (the fleet-backed floor
+// parent, mirroring workflow-projection.resolved). Fleet spend $1000 over 500 clicks / 200 replies →
+// crossOrg CPC $2.00 (200¢), CPPR $5.00 (500¢). With FLEET_ECON: cps parent = 2.00/0.20 = $10 (1000¢),
+// cpfs parent = 2.00/0.40 = $5 (500¢), cpsale(sales) = min(2/0.2, 5/0.5) = $10 (1000¢),
+// cpsale(websitePurchase) = costPerPurchase = $8 (800¢). netTotalCostInUsdCents == gross (fleet is
+// cross-org, not per-org-discounted) so pricing=net reads the same fleet benchmark.
+function fleetEconResponse(url: string): Response | null {
+  if (url.includes("runs:3000/v1/stats/public/costs")) {
+    return json({
+      groups: [
+        { dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "100000", netTotalCostInUsdCents: "100000", runCount: 100, minStartedAt: null, maxStartedAt: null },
+      ],
+    });
+  }
+  if (url.includes("email:3000/public/stats")) {
+    return json({
+      groups: [
+        { key: "wf-1", broadcast: { recipientStats: { contacted: 1000, sent: 1000, delivered: 1000, opened: 800, clicked: 500, bounced: 0, repliesPositive: 200 } } },
+      ],
+    });
+  }
+  if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) {
+    return json({ economics: FLEET_ECON, source: "user" });
+  }
+  return null;
+}
+
 function mockFetch(): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = urlOf(input);
+    { const fe = fleetEconResponse(url); if (fe) return fe; }
 
     if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
     if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
@@ -161,6 +208,7 @@ function mockFetchByStatus(): ReturnType<typeof vi.spyOn> {
   };
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = urlOf(input);
+    { const fe = fleetEconResponse(url); if (fe) return fe; }
 
     if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
     if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
@@ -308,6 +356,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     // runs WITHOUT #179 → cost groups carry only the gross field, no netTotalCostInUsdCents.
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = urlOf(input);
+    { const fe = fleetEconResponse(url); if (fe) return fe; }
       if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
       if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
       if (url.includes("human:3000/orgs/audiences")) {
@@ -403,6 +452,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     const CONVERSION_EMAILS = ["a1", "a3", "b2"];
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = urlOf(input);
+    { const fe = fleetEconResponse(url); if (fe) return fe; }
       if (url.includes("lead:3000/internal/brands/brand-1/converted-lead-emails")) {
         expect(new URL(url).searchParams.get("event")).toBe("form_submission");
         return new Response(JSON.stringify({ emails: CONVERSION_EMAILS }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -463,6 +513,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     const CONVERSION_EMAILS = ["a1", "a3", "b2"];
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = urlOf(input);
+    { const fe = fleetEconResponse(url); if (fe) return fe; }
       if (url.includes("lead:3000/internal/brands/brand-1/converted-lead-emails")) {
         expect(new URL(url).searchParams.get("event")).toBe("signup");
         return new Response(JSON.stringify({ emails: CONVERSION_EMAILS }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -523,6 +574,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
       const CONVERSION_EMAILS = ["a1", "a3", "b2"];
       fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
         const url = urlOf(input);
+    { const fe = fleetEconResponse(url); if (fe) return fe; }
         if (url.includes("lead:3000/internal/brands/brand-1/converted-lead-emails")) {
           expect(new URL(url).searchParams.get("event")).toBe("sale"); // RENAMED from "purchase"
           return new Response(JSON.stringify({ emails: CONVERSION_EMAILS }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -571,6 +623,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
   it("legacy `purchase` goal spelling normalises to websitePurchase + reads sale attribution", async () => {
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = urlOf(input);
+    { const fe = fleetEconResponse(url); if (fe) return fe; }
       if (url.includes("converted-lead-emails")) {
         expect(new URL(url).searchParams.get("event")).toBe("sale");
         return new Response(JSON.stringify({ emails: ["a1"] }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -725,6 +778,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
   it("returns null CPC (not a false $0.00) when an audience has clicks but no attributed spend", async () => {
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = urlOf(input);
+    { const fe = fleetEconResponse(url); if (fe) return fe; }
       if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
       if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
       if (url.includes("human:3000/orgs/audiences")) {
@@ -765,25 +819,25 @@ describe("GET /features/:featureSlug/audience-stats", () => {
 
     expect(res.status).toBe(200);
     const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
-    // audience-a: clicks > 0 but no attributed spend (cost un-attributed) → PROJECTED floors to the brand
-    // parent cpc (audience→brand), NOT a false $0 and NOT null. brand parent = brand total tagged cost 1000
-    // / distinct union clicks 30 (10 in a + 20 in b, all clicked) = 33.33¢.
+    // audience-a: clicks > 0 but no attributed spend (cost un-attributed) → PROJECTED floors to the
+    // FLEET-BACKED parent cpc (crossOrg $2.00 = 200¢), NOT a false $0, NOT null, NOT a brand-own aggregate.
     expect(byId["audience-a"].evidence.websiteClicks).toBeGreaterThan(0);
     expect(byId["audience-a"].evidence.totalCostInUsdCents).toBe(0);
-    expect(byId["audience-a"].metrics.cpcCents).toBeCloseTo(1000 / 30, 6);
+    expect(byId["audience-a"].metrics.cpcCents).toBe(200);
     // audience-b: real spend → real CPC (parent ignored), unchanged.
     expect(byId["audience-b"].metrics.cpcCents).toBe(50);
-    // audience-a (33.33¢, brand-floored) now sorts ahead of audience-b (50¢, real).
-    expect(res.body.audiences[0].audienceId).toBe("audience-a");
+    // audience-b (50¢, real) sorts ahead of audience-a (200¢, fleet-floored).
+    expect(res.body.audiences[0].audienceId).toBe("audience-b");
   });
 
-  it("0-outcome audience with spend FLOORS to the brand cost-per-outcome (never a raw tiny-spend value, never null); truly-empty audience is null", async () => {
+  it("0-outcome audience with spend FLOORS to the fleet cost-per-outcome (never a raw tiny-spend value, never null); truly-empty audience is null", async () => {
     // audience-a: real spend 500 but ZERO positive replies. audience-b: spend 1000 + 5 positive replies
     // (real ratio 200). audience-c: ZERO spend AND zero replies (truly empty).
-    // brand parent cppr = brand total tagged cost (500 + 1000 = 1500) / brand positive replies (5) = 300.
-    // → audience-a floors to max(500, 300) = 500 (its own spend exceeds the brand cost), NOT null, NOT 500/0.
+    // FLEET-BACKED parent cppr = crossOrg $5.00 = 500¢. → audience-a floors to max(500, 500) = 500 (its own
+    // spend equals the fleet cost), NOT null, NOT 500/0.
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = urlOf(input);
+    { const fe = fleetEconResponse(url); if (fe) return fe; }
       if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
       if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
       if (url.includes("human:3000/orgs/audiences/audience-c/members")) return membersResponse(EMAILS_C);
@@ -820,7 +874,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
 
     expect(res.status).toBe(200);
     const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
-    // audience-a: spend 500, 0 replies → FLOOR max(500, brand 300) = 500 (own spend > brand cost), never null.
+    // audience-a: spend 500, 0 replies → FLOOR max(500, fleet 500) = 500, never null.
     expect(byId["audience-a"].evidence.positiveReplies).toBe(0);
     expect(byId["audience-a"].metrics.cpprCents).toBe(500);
     // audience-b: real observed ratio 1000/5 = 200 (parent ignored), unchanged.
@@ -830,12 +884,13 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(res.body.audiences[res.body.audiences.length - 1].audienceId).toBe("audience-c");
   });
 
-  it("0-outcome audience with spend BELOW the brand cost lifts to the brand floor (not the raw spend)", async () => {
-    // audience-a: real spend 100 but ZERO positive replies (below brand cost). audience-b: spend 3000 + 5
-    // positive replies. brand parent cppr = (100 + 3000) / 5 = 620 → audience-a floors to max(100, 620) =
-    // 620 (the brand-level cost), NOT the artificially-cheap raw 100.
+  it("0-outcome audience with spend BELOW the fleet cost lifts to the fleet floor (not the raw spend)", async () => {
+    // audience-a: real spend 100 but ZERO positive replies (below fleet cost). audience-b: spend 3000 + 5
+    // positive replies (real ratio 600). FLEET-BACKED parent cppr = crossOrg $5.00 = 500¢ → audience-a
+    // floors to max(100, 500) = 500 (the fleet-backed cost), NOT the artificially-cheap raw 100.
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = urlOf(input);
+    { const fe = fleetEconResponse(url); if (fe) return fe; }
       if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
       if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
       if (url.includes("human:3000/orgs/audiences")) {
@@ -868,17 +923,18 @@ describe("GET /features/:featureSlug/audience-stats", () => {
 
     expect(res.status).toBe(200);
     const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
-    // brand cost = 3100 / 5 = 620 → audience-a lifts to 620, NOT the raw 100.
-    expect(byId["audience-a"].metrics.cpprCents).toBe(620);
+    // fleet cost = $5.00 = 500¢ → audience-a lifts to 500, NOT the raw 100.
+    expect(byId["audience-a"].metrics.cpprCents).toBe(500);
     expect(byId["audience-b"].metrics.cpprCents).toBe(600);
   });
 
-  it("0-signup audience with spend FLOORS to the brand cost-per-signup (coherent with the cpc/cppr floor)", async () => {
+  it("0-signup audience with spend FLOORS to the fleet cost-per-signup (coherent with the cpc/cppr floor)", async () => {
     // Same floor rule on the conversion columns. audience-a: spend 3000, 0 signups; audience-b: spend 1000,
-    // 1 signup (b2). brand distinct signups (union of converting members) = 1 → brand parent cps = brand
-    // total cost (4000) / 1 = 4000. audience-a floors to max(3000, 4000) = 4000, never null, never 3000/0.
+    // 1 signup (b2). FLEET-BACKED parent cps = projected cost per signup = crossOrg CPC $2.00 / v2s 0.20 =
+    // $10 = 1000¢. audience-a floors to max(3000, 1000) = 3000, never null, never 3000/0.
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = urlOf(input);
+    { const fe = fleetEconResponse(url); if (fe) return fe; }
       if (url.includes("lead:3000/internal/brands/brand-1/converted-lead-emails")) {
         return new Response(JSON.stringify({ emails: ["b2"] }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
@@ -912,11 +968,106 @@ describe("GET /features/:featureSlug/audience-stats", () => {
 
     expect(res.status).toBe(200);
     const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
-    // audience-a: 0 signups, spend 3000 → FLOOR max(3000, brand 4000) = 4000, never null.
+    // audience-a: 0 signups, spend 3000 → FLOOR max(3000, fleet cps 1000) = 3000 (own spend > fleet), never null.
     expect(byId["audience-a"].evidence.signups).toBe(0);
-    expect(byId["audience-a"].metrics.cpsCents).toBe(4000);
+    expect(byId["audience-a"].metrics.cpsCents).toBe(3000);
     // audience-b: real observed ratio 1000/1 = 1000 (parent ignored).
     expect(byId["audience-b"].metrics.cpsCents).toBe(1000);
+  });
+
+  it("reported bug: 0-website-visit audiences with tiny spend floor to the FLEET-BACKED cost (not their raw ¢), matching the Strategy page", async () => {
+    // Repro of the prod bug: every audience has 0 website visits (0 clicks) and only a tiny attributed
+    // spend (66¢, 92¢, 94¢). The OLD brand-own aggregate parent (brand total tagged ¢ / brand clicks 0 =
+    // null) let each audience floor to its own tiny ¢ → the Audiences table showed $0.66 / $0.92 / $0.94,
+    // FAR below the realistic projected cost. The fleet-backed parent (crossOrg CPC $2.00 = 200¢) lifts
+    // every 0-click audience to 200¢ — the SAME number workflow-projection.resolved shows on the Strategy
+    // page. (Here 200¢ stands in for the reported $2.54; both come from the same crossOrg fleet benchmark.)
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = urlOf(input);
+      { const fe = fleetEconResponse(url); if (fe) return fe; }
+      if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+      if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
+      if (url.includes("human:3000/orgs/audiences/audience-c/members")) return membersResponse(EMAILS_C);
+      if (url.includes("human:3000/orgs/audiences")) {
+        return json({
+          audiences: [
+            { id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: null },
+            { id: "audience-b", brandId: "brand-1", name: "Founders", status: "active", filters: null },
+            { id: "audience-c", brandId: "brand-1", name: "VPs", status: "active", filters: null },
+          ],
+          total: 3, limit: 200, offset: 0,
+        });
+      }
+      if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) return json({ current: null, versions: [] });
+      if (url.includes("runs:3000/v1/stats/costs")) {
+        // Tiny per-audience attributed spend (below the fleet 200¢ per click), 0 clicks each.
+        return json({ groups: [costGroup("audience-a", 66, 1), costGroup("audience-b", 92, 1), costGroup("audience-c", 94, 1)] });
+      }
+      if (url.includes("email:3000/orgs/stats")) {
+        // Every audience contacted but ZERO website visits (0 clicks).
+        return json({ groups: [
+          { key: "audience-a", broadcast: { recipientStats: { contacted: 10, sent: 10, delivered: 10, opened: 4, clicked: 0, bounced: 0, repliesPositive: 0 } } },
+          { key: "audience-b", broadcast: { recipientStats: { contacted: 20, sent: 20, delivered: 20, opened: 8, clicked: 0, bounced: 0, repliesPositive: 0 } } },
+          { key: "audience-c", broadcast: { recipientStats: { contacted: 15, sent: 15, delivered: 15, opened: 6, clicked: 0, bounced: 0, repliesPositive: 0 } } },
+        ] });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=websiteVisit")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
+    // All three lift to the fleet-backed 200¢ (NOT their raw 66/92/94¢), coherent across audiences.
+    expect(byId["audience-a"].evidence.websiteClicks).toBe(0);
+    expect(byId["audience-a"].metrics.cpcCents).toBe(200);
+    expect(byId["audience-b"].metrics.cpcCents).toBe(200);
+    expect(byId["audience-c"].metrics.cpcCents).toBe(200);
+    // None reads its artificially-cheap raw spend.
+    expect(byId["audience-a"].metrics.cpcCents).not.toBe(66);
+  });
+
+  it("0-click audience whose own spend EXCEEDS the fleet cost keeps its higher own-spend floor (own spend wins)", async () => {
+    // audience-a spent 500¢ with 0 clicks — above the fleet CPC 200¢ → floors to its OWN spend (500),
+    // NOT the fleet 200 (already outspent the benchmark with nothing to show). audience-b (tiny 90¢, 0
+    // clicks) floors up to the fleet 200.
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = urlOf(input);
+      { const fe = fleetEconResponse(url); if (fe) return fe; }
+      if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+      if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
+      if (url.includes("human:3000/orgs/audiences")) {
+        return json({
+          audiences: [
+            { id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: null },
+            { id: "audience-b", brandId: "brand-1", name: "Founders", status: "active", filters: null },
+          ],
+          total: 2, limit: 200, offset: 0,
+        });
+      }
+      if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) return json({ current: null, versions: [] });
+      if (url.includes("runs:3000/v1/stats/costs")) {
+        return json({ groups: [costGroup("audience-a", 500, 1), costGroup("audience-b", 90, 1)] });
+      }
+      if (url.includes("email:3000/orgs/stats")) {
+        return json({ groups: [
+          { key: "audience-a", broadcast: { recipientStats: { contacted: 10, sent: 10, delivered: 10, opened: 4, clicked: 0, bounced: 0, repliesPositive: 0 } } },
+          { key: "audience-b", broadcast: { recipientStats: { contacted: 20, sent: 20, delivered: 20, opened: 8, clicked: 0, bounced: 0, repliesPositive: 0 } } },
+        ] });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=websiteVisit")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
+    expect(byId["audience-a"].metrics.cpcCents).toBe(500); // own spend (500) > fleet (200) → own wins
+    expect(byId["audience-b"].metrics.cpcCents).toBe(200); // own spend (90) < fleet (200) → fleet floor
   });
 
   // ── Optional campaign scope (?campaignId=) ──────────────────────────────────
@@ -926,6 +1077,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
   function mockFetchCampaignAware(): ReturnType<typeof vi.spyOn> {
     return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = urlOf(input);
+    { const fe = fleetEconResponse(url); if (fe) return fe; }
       if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
       if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
       if (url.includes("human:3000/orgs/audiences")) {
