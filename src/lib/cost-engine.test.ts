@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { observedCostPerOutcome, projectedCostPerOutcome } from "./cost-engine.js";
+import { observedCostPerOutcome, projectedCostPerOutcome, flooredCostPerOutcome } from "./cost-engine.js";
 
 describe("cost-engine — observedCostPerOutcome (accounting: real, null on 0)", () => {
   it("real ratio when spend and outcomes present", () => {
@@ -43,5 +43,35 @@ describe("cost-engine — projectedCostPerOutcome (rankable: cascade floor, neve
   it("never null — always a comparable number at any spend", () => {
     expect(projectedCostPerOutcome(0, 0, null)).toBe(0);
     expect(projectedCostPerOutcome(0, 0, 30)).toBe(30);
+  });
+});
+
+describe("cost-engine — flooredCostPerOutcome (display: floored on spend, null only when truly empty)", () => {
+  it("real observed ratio when spend and outcomes present — parent ignored", () => {
+    expect(flooredCostPerOutcome(100, 4, 999)).toBe(25);
+    expect(flooredCostPerOutcome(100, 4)).toBe(25);
+  });
+
+  it("0 outcomes with spend BELOW parent → the brand parent floor (never dips below the projection)", () => {
+    expect(flooredCostPerOutcome(5, 0, 30)).toBe(30);
+  });
+
+  it("0 outcomes with spend ABOVE parent → own spend (never looks artificially free)", () => {
+    expect(flooredCostPerOutcome(120, 0, 30)).toBe(120);
+  });
+
+  it("0 outcomes, no parent → own spend (base case of the cascade), never null when there is spend", () => {
+    expect(flooredCostPerOutcome(120, 0)).toBe(120);
+    expect(flooredCostPerOutcome(5, 0, null)).toBe(5);
+  });
+
+  it("0 spend but outcomes present (cost un-attributed) → the brand parent, null when no parent (no false $0)", () => {
+    expect(flooredCostPerOutcome(0, 4, 30)).toBe(30);
+    expect(flooredCostPerOutcome(0, 4, null)).toBeNull();
+  });
+
+  it("0 spend AND 0 outcomes → null (genuinely nothing to report), even with a parent", () => {
+    expect(flooredCostPerOutcome(0, 0, null)).toBeNull();
+    expect(flooredCostPerOutcome(0, 0, 30)).toBeNull();
   });
 });

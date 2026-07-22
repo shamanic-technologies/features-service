@@ -128,19 +128,28 @@ fresh add of the same file on the WRONG base ADD/ADD-conflicts the real one on t
 (the exact conflict the brief wanted to avoid). Basing on where the superseded commit lives makes the
 rework a clean in-place delta on top of it → conflict-free. Here that meant hotfix→main, not feature→staging.
 
-## `cost-engine.ts` — TWO named engines are the SINGLE source of truth for "cost per outcome"; default = projected everywhere except accounting
+## `cost-engine.ts` — THREE named engines are the SINGLE source of truth for "cost per outcome"; default = projected everywhere except accounting
 
-Every stats surface computes "cost per outcome" through ONE of TWO named functions in `src/lib/cost-engine.ts` —
+Every stats surface computes "cost per outcome" through ONE of THREE named functions in `src/lib/cost-engine.ts` —
 never an inline `spent / count`. This keeps the 0-outcome decision homogeneous across endpoints.
 
 - **`observedCostPerOutcome(spentUsd, observedCount) → number | null`** — "what actually happened"
   (ACCOUNTING / real spend). `null` (renders "-") when 0 spend OR 0 outcomes; NEVER fabricates a number
   that wasn't measured. Use ONLY for real-money / bookkeeping surfaces.
 - **`projectedCostPerOutcome(spentUsd, observedCount, parentCost?) → number`** — "rankable estimate"
-  (the DEFAULT). Real ratio when `observedCount > 0`; else the CASCADE FLOOR `max(spentUsd, parentCost)`.
+  (the RANKING default). Real ratio when `observedCount > 0`; else the CASCADE FLOOR `max(spentUsd, parentCost)`.
   NEVER null when there is spend — a rankable surface must always yield a comparable number. `parentCost`
   = the same unit cost on the next COARSER grain (crossOrg → brand → audience), iterative; omit when the
   surface has no coarser grain → floor degrades to own spend (`max(spentUsd, 0)`), the cascade's base case.
+- **`flooredCostPerOutcome(spentUsd, observedCount, parentCost?) → number | null`** — the DISPLAY variant:
+  `projectedCostPerOutcome`'s floor when there IS spend, but an honest `null` for a truly-empty cell (0
+  spend AND 0 outcomes). Real ratio when both present; else `max(spentUsd, parentCost)` **unless** that floor
+  is 0 (0 spend, no positive parent) → `null` (never a false $0, never a fabricated parent value). Use where
+  the value is DISPLAYED and a coarser grain can back-stop it (audience → brand): a 0-outcome audience with
+  spend shows the brand-floored estimate (never a raw tiny-spend value below the brand cost, never null),
+  while an untouched audience shows nothing. This lets the dashboard render the server value directly (no
+  client-side spend fallback). Distinct from `projected` (never null — ranking) and `observed` (null on any
+  0 outcome — accounting).
 
 **DEFAULT RULE (product, Kevin 2026-07-07): projection is the default for the dashboard and EVERYWHERE,
 EXCEPT accounting (real spend / bookkeeping), which takes observed.** If the front wants raw observed cost
@@ -158,7 +167,7 @@ the ranking.
 | Surface | Engine | Notes |
 |---|---|---|
 | `workflow-projection` (unit costs → projected goal costs) | **projected** (cascade crossOrg→brand→audience) | DONE (PR1) |
-| `audience-stats` `cpcCents`/`cpprCents` | **projected** (cascade audience→brand) | DONE (PR2) — ⚠️ campaign-service reads `cpcCents` byte-equal → flooring untracked-cost audiences to the brand parent CHANGES its ranking (intended) |
+| `audience-stats` `cpcCents`/`cpprCents`/`cpfsCents`/`cpsCents`/`cpsaleCents` | **floored** (cascade audience→brand, DISPLAY) | ALL FIVE per-audience cost columns now use `flooredCostPerOutcome` (was: cpc/cppr projected, cpfs/cps/cpsale observed). Coherent one-rule floor so the dashboard renders the server value directly (no client-side spend fallback). A 0-outcome audience with spend → max(spend, brand cost-per-outcome), never a raw tiny-spend value, never null; 0-spend + 0-outcome → null. Conversion-column brand parents = brand total tagged cost / distinct converting MEMBERS (union). campaign-service NO LONGER reads audience-stats (it ranks on `workflow-projection` `resolved.costPerOutcomeUsd`), so the floor does not touch its ranking. |
 | `/stats` `costPerRecipient*` (registry `type:"currency"`) | **observed** | DONE (PR3) — brand is the TOP grain here (no coarser grain fetched → no cascade), so observed (null on 0). Also killed a latent false-$0 (0 cost / >0 outcomes → was $0, now null). |
 | `/public/stats/cost-projection` | **projected** (already EV) | not yet routed through the module |
 | `pipeline-activity` | n/a (no cost ratio) | It computes forecast **RATES** (`openPerOutreach`…) not costs; its local `ratio` returns `null` on 0-denom = correct for a displayed rate. Nothing to route. |

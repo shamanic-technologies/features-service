@@ -777,6 +777,148 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(res.body.audiences[0].audienceId).toBe("audience-a");
   });
 
+  it("0-outcome audience with spend FLOORS to the brand cost-per-outcome (never a raw tiny-spend value, never null); truly-empty audience is null", async () => {
+    // audience-a: real spend 500 but ZERO positive replies. audience-b: spend 1000 + 5 positive replies
+    // (real ratio 200). audience-c: ZERO spend AND zero replies (truly empty).
+    // brand parent cppr = brand total tagged cost (500 + 1000 = 1500) / brand positive replies (5) = 300.
+    // → audience-a floors to max(500, 300) = 500 (its own spend exceeds the brand cost), NOT null, NOT 500/0.
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = urlOf(input);
+      if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+      if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
+      if (url.includes("human:3000/orgs/audiences/audience-c/members")) return membersResponse(EMAILS_C);
+      if (url.includes("human:3000/orgs/audiences")) {
+        return new Response(JSON.stringify({
+          audiences: [
+            { id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: null },
+            { id: "audience-b", brandId: "brand-1", name: "Founders", status: "active", filters: null },
+            { id: "audience-c", brandId: "brand-1", name: "Idle", status: "active", filters: null },
+          ],
+          total: 3, limit: 200, offset: 0,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) {
+        return new Response(JSON.stringify({ current: null, versions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("runs:3000/v1/stats/costs")) {
+        // audience-a spent 500, audience-b spent 1000; audience-c has NO cost row (truly empty).
+        return new Response(JSON.stringify({ groups: [costGroup("audience-a", 500, 1), costGroup("audience-b", 1000, 2)] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("email:3000/orgs/stats")) {
+        // audience-a: contacted but ZERO positive replies. audience-b: 5 positive replies. audience-c: none.
+        return new Response(JSON.stringify({ groups: [
+          { key: "audience-a", broadcast: { recipientStats: { contacted: 10, sent: 10, delivered: 10, opened: 5, clicked: 3, bounced: 0, repliesPositive: 0 } } },
+          { key: "audience-b", broadcast: { recipientStats: { contacted: 20, sent: 20, delivered: 20, opened: 20, clicked: 20, bounced: 0, repliesPositive: 5 } } },
+        ] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=positiveReply")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
+    // audience-a: spend 500, 0 replies → FLOOR max(500, brand 300) = 500 (own spend > brand cost), never null.
+    expect(byId["audience-a"].evidence.positiveReplies).toBe(0);
+    expect(byId["audience-a"].metrics.cpprCents).toBe(500);
+    // audience-b: real observed ratio 1000/5 = 200 (parent ignored), unchanged.
+    expect(byId["audience-b"].metrics.cpprCents).toBe(200);
+    // audience-c: 0 spend AND 0 replies → truly empty → null (sorts last).
+    expect(byId["audience-c"].metrics.cpprCents).toBeNull();
+    expect(res.body.audiences[res.body.audiences.length - 1].audienceId).toBe("audience-c");
+  });
+
+  it("0-outcome audience with spend BELOW the brand cost lifts to the brand floor (not the raw spend)", async () => {
+    // audience-a: real spend 100 but ZERO positive replies (below brand cost). audience-b: spend 3000 + 5
+    // positive replies. brand parent cppr = (100 + 3000) / 5 = 620 → audience-a floors to max(100, 620) =
+    // 620 (the brand-level cost), NOT the artificially-cheap raw 100.
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = urlOf(input);
+      if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+      if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
+      if (url.includes("human:3000/orgs/audiences")) {
+        return new Response(JSON.stringify({
+          audiences: [
+            { id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: null },
+            { id: "audience-b", brandId: "brand-1", name: "Founders", status: "active", filters: null },
+          ],
+          total: 2, limit: 200, offset: 0,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) {
+        return new Response(JSON.stringify({ current: null, versions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("runs:3000/v1/stats/costs")) {
+        return new Response(JSON.stringify({ groups: [costGroup("audience-a", 100, 1), costGroup("audience-b", 3000, 2)] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("email:3000/orgs/stats")) {
+        return new Response(JSON.stringify({ groups: [
+          { key: "audience-a", broadcast: { recipientStats: { contacted: 10, sent: 10, delivered: 10, opened: 5, clicked: 3, bounced: 0, repliesPositive: 0 } } },
+          { key: "audience-b", broadcast: { recipientStats: { contacted: 20, sent: 20, delivered: 20, opened: 20, clicked: 20, bounced: 0, repliesPositive: 5 } } },
+        ] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=positiveReply")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
+    // brand cost = 3100 / 5 = 620 → audience-a lifts to 620, NOT the raw 100.
+    expect(byId["audience-a"].metrics.cpprCents).toBe(620);
+    expect(byId["audience-b"].metrics.cpprCents).toBe(600);
+  });
+
+  it("0-signup audience with spend FLOORS to the brand cost-per-signup (coherent with the cpc/cppr floor)", async () => {
+    // Same floor rule on the conversion columns. audience-a: spend 3000, 0 signups; audience-b: spend 1000,
+    // 1 signup (b2). brand distinct signups (union of converting members) = 1 → brand parent cps = brand
+    // total cost (4000) / 1 = 4000. audience-a floors to max(3000, 4000) = 4000, never null, never 3000/0.
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = urlOf(input);
+      if (url.includes("lead:3000/internal/brands/brand-1/converted-lead-emails")) {
+        return new Response(JSON.stringify({ emails: ["b2"] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+      if (url.includes("human:3000/orgs/audiences/audience-b/members")) return membersResponse(EMAILS_B);
+      if (url.includes("human:3000/orgs/audiences")) {
+        return new Response(JSON.stringify({
+          audiences: [
+            { id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: null },
+            { id: "audience-b", brandId: "brand-1", name: "Founders", status: "active", filters: null },
+          ],
+          total: 2, limit: 200, offset: 0,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) {
+        return new Response(JSON.stringify({ current: null, versions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("runs:3000/v1/stats/costs")) {
+        return new Response(JSON.stringify({ groups: [costGroup("audience-a", 3000, 3), costGroup("audience-b", 1000, 2)] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("email:3000/orgs/status")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { items: Array<{ email: string }> };
+        return new Response(JSON.stringify({ results: body.items.map(({ email }) => ({ email, broadcast: { brand: { contacted: true, opened: true, clicked: true, replied: false, replyClassification: null } } })) }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
+    // audience-a: 0 signups, spend 3000 → FLOOR max(3000, brand 4000) = 4000, never null.
+    expect(byId["audience-a"].evidence.signups).toBe(0);
+    expect(byId["audience-a"].metrics.cpsCents).toBe(4000);
+    // audience-b: real observed ratio 1000/1 = 1000 (parent ignored).
+    expect(byId["audience-b"].metrics.cpsCents).toBe(1000);
+  });
+
   // ── Optional campaign scope (?campaignId=) ──────────────────────────────────
   // Under campaign scope, only a SUBSET of each audience's members were contacted/clicked WITHIN the
   // campaign, and the runs cost numerator is filtered to that campaign's spend. Audiences stay brand-wide.
