@@ -66,6 +66,53 @@ export const SEED_FEATURES: SeedFeature[] = [
   },
 
   {
+    slug: "sales-crm-email-outreach",
+    name: "Sales CRM Email Outreach",
+    description: "Find leads matching your ICP, generate personalized CRM-driven sales emails, and track engagement through the full outreach funnel.",
+    icon: "contact",
+    implemented: true,
+    displayOrder: 11,
+    status: "active",
+    inputs: [
+      { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who the campaign targets — ICP description (role, company size, industry). Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize outreach.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
+      { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "callToAction", description: "The desired action from the recipient (book a call, sign up, reply, etc.). Should be a single, clear call-to-action. Examples: 'Book a 15-min demo call', 'Start a free trial', 'Schedule a discovery call'. The LLM uses this to craft the email CTA.", placeholder: "Book sales demos" },
+      { key: "valueForTarget", type: "text", label: "Value for Target", extractKey: "valueProposition", description: "The core value proposition for the target audience — what they gain by engaging. Should be specific and quantified when possible. Examples: 'Cut infrastructure costs by 40%', 'Ship features 3x faster with our CI/CD platform'. The LLM uses this as the main selling point in the email body.", placeholder: "What do they gain from responding?" },
+      { key: "urgency", type: "text", label: "Urgency", extractKey: "urgency", description: "Time pressure to act — a deadline, event date, or expiring offer that motivates the recipient to respond quickly. Examples: 'Beta access closes Friday', 'Event is in 2 weeks', 'Pricing increases April 1st'. Leave empty if no urgency applies.", placeholder: "Limited-time offer ending March 1st" },
+      { key: "scarcity", type: "text", label: "Scarcity", extractKey: "scarcity", description: "Limited availability that creates FOMO — spots, seats, inventory, or capacity constraints. Examples: 'Only 5 pilot slots left', 'Limited to 20 beta customers', 'First 50 sign-ups get lifetime pricing'. Leave empty if no scarcity applies.", placeholder: "Only 10 spots available" },
+      { key: "riskReversal", type: "text", label: "Risk Reversal", extractKey: "riskReversal", description: "What reduces the perceived risk of responding — guarantees, free trials, or no-commitment offers. Examples: 'Free 14-day trial', '30-day money-back guarantee', 'No credit card required', 'Cancel anytime'. Helps overcome objections in the email.", placeholder: "Free trial, no commitment" },
+      { key: "socialProof", type: "text", label: "Social Proof", extractKey: "socialProof", description: "Trust signals that build credibility — customer count, notable logos, testimonials, awards, or metrics. Examples: 'Trusted by 500+ SaaS companies', 'Featured in TechCrunch', 'NPS score of 72'. The LLM uses this to add credibility to the outreach.", placeholder: "500+ companies already onboarded" },
+    ],
+    // Mirrors sales-cold-email-outreach: ranked leaderboard (groupBy=workflow)
+    // surfaces the populated recipients* family (email-gateway). The
+    // leads*/companies* family is 0/null per-workflow until lead-service emits
+    // byOutreachStatus(Companies) in the ranked aggregation (DIS-10, DIS-48).
+    outputs: [
+      { key: "emailsGenerated", displayOrder: 1 },
+      { key: "recipientsContacted", displayOrder: 2 },
+      { key: "recipientsSent", displayOrder: 3 },
+      { key: "recipientsDelivered", displayOrder: 4 },
+      { key: "recipientsOpened", displayOrder: 5 },
+      { key: "recipientsRepliesPositive", displayOrder: 6 },
+      { key: "recipientsRepliesNegative", displayOrder: 7 },
+      { key: "recipientsRepliesNeutral", displayOrder: 8 },
+      { key: "recipientOpenRate", displayOrder: 9 },
+      { key: "recipientClickRate", displayOrder: 10 },
+      { key: "recipientPositiveReplyRate", displayOrder: 11 },
+      { key: "costPerRecipientOpenCents", displayOrder: 12 },
+      { key: "costPerRecipientPositiveReplyCents", defaultSort: true, displayOrder: 13, sortDirection: "asc" },
+    ],
+    charts: [
+      { key: "funnel", type: "funnel-bar", title: "Campaign Funnel", displayOrder: 1, steps: [{ key: "emailsGenerated" }, { key: "recipientsContacted" }, { key: "recipientsSent" }, { key: "recipientsDelivered" }, { key: "recipientsOpened" }, { key: "recipientsClicked" }, { key: "recipientsRepliesPositive" }] },
+      { key: "replyBreakdown", type: "breakdown-bar", title: "Reply Breakdown", displayOrder: 2, segments: [{ key: "recipientsRepliesPositive", color: "green", sentiment: "positive" }, { key: "recipientsRepliesNeutral", color: "gray", sentiment: "neutral" }, { key: "recipientsRepliesNegative", color: "red", sentiment: "negative" }, { key: "recipientsRepliesAutoReply", color: "orange", sentiment: "neutral" }] },
+    ],
+    entities: [
+      { name: "leads", countKey: "leadsServed" },
+      { name: "companies" },
+      { name: "emails", countKey: "emailsGenerated" },
+    ],
+  },
+
+  {
     slug: "pr-cold-email-outreach",
     name: "PR Cold Email Outreach",
     description: "Find relevant journalists, generate personalized pitch emails, and track engagement through the full PR outreach funnel.",
