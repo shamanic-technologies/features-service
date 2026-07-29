@@ -35,6 +35,44 @@ Response shapes unchanged (row/evidence fields identical) → no OpenAPI regen. 
 (Set 2026-07-22; supersedes the audience-WIDE / membership notes in the audience-stats + workflow-projection
 sections below.)
 
+## The `/audience-stats` floor parent is CROSS-ORG + **BEST WORKFLOW** — NEVER a cross-workflow POOLED average (supersedes #653's fleet-pooled parent)
+
+**Standing product rule (Kevin, 2026-07-29): we never surface a cross-org PLUS cross-workflow pooled
+estimate. A fleet-wide estimate is cross-org plus the BEST workflow, only.** `fetchBrandProjectedParents`
+(`src/lib/audience-stats-brand-projection.ts`) builds the parent every per-audience cost column floors
+against at 0 outcomes. It used to sum the WHOLE fleet's spend over the WHOLE fleet's outcomes — a
+cross-org AND cross-workflow pooled average — while `workflow-projection` floors each audience against
+the workflow it is projected under. Both are labelled "fleet benchmark" in the UI, so the Audiences table
+and the Strategy page showed **two different prices for the same audience, same brand, same goal, same
+moment** (prod: $8.33 vs $2.64 on brand `7604c385…`, a ~3x split, both audiences reading the parent
+verbatim because each had 0 clicks and own spend below it).
+
+Per COLUMN the parent is now the MINIMUM cost of that outcome across workflow DYNASTIES:
+
+- **Eligibility: a dynasty counts for a column only when it OBSERVED that column's driving outcome**
+  (clicks for the click-driven columns, positive replies for the reply-driven one). A dynasty with spend
+  but 0 of the outcome has a meaningless ratio — its channel reads `null` and contributes nothing (the
+  SAME zero-contribution `projectOutcomeCosts` already applies to an absent channel). **No cascade floor
+  is applied here**: this IS the top grain, and flooring a 0-outcome dynasty to its own spend would let a
+  barely-spent husk win the comparison (the same husk trap `workflow-cost-per-outcome`'s consumers filter
+  on `observed>0` for).
+- **Version chains collapse FIRST** via `buildUpgradeChains` + `aggregateAcrossChains` — the SAME rollup
+  workflow-projection's crossOrg/brand grains use — so "a workflow" means one dynasty on both surfaces.
+  Treating versioned slugs as independent workflows would corrupt the best pick.
+- **Per column, not per blend**: `cpcUsd`/`cpprUsd` = the best dynasty's raw unit cost; `cpfs`/`cps`/
+  `cpsale` project EVERY dynasty through `projectOutcomeCosts` and take the best of THAT column, so each
+  column rides the workflow that is cheapest at ITS outcome.
+
+**Tested invariant (`src/routes/audience-cost-coherence.test.ts`)**: driven by ONE downstream fixture,
+a 0-outcome audience whose own spend is below the parent gets the IDENTICAL number from `/audience-stats`
+`metrics.cpcCents` and from `/workflow-projection` `rows[]` `resolved.costPerOutcomeUsd` on the
+recommended workflow. It fails on the pooled parent (8.03 vs 2.00), so the agreement is by construction.
+
+Adds ONE cross-org read (`fetchPublicWorkflows`, the dynasty list — already fetched by
+workflow-projection). No new field, no new endpoint, no persisted state, response shapes unchanged → no
+OpenAPI regen. `cost-per-outcome-trend` / `-lifetime` / `-distribution` stay POOLED on purpose (a
+different methodology on a different axis) — out of scope. (Set 2026-07-29.)
+
 ## Staff admin metrics — DAILY BUDGET (+ its MRR/ARR projection) is the RAW configured value, NEVER discounted; realized-revenue stays NET (supersedes PR #592's discounted-budget)
 
 The per-org usage discount is a modifier on CHARGES only (frozen gross+net per cost row in the runs/billing
@@ -167,7 +205,7 @@ the ranking.
 | Surface | Engine | Notes |
 |---|---|---|
 | `workflow-projection` (unit costs → projected goal costs) | **projected** (cascade crossOrg→brand→audience) | DONE (PR1) |
-| `audience-stats` `cpcCents`/`cpprCents`/`cpfsCents`/`cpsCents`/`cpsaleCents` | **floored** (cascade audience→brand, DISPLAY) | ALL FIVE per-audience cost columns now use `flooredCostPerOutcome` (was: cpc/cppr projected, cpfs/cps/cpsale observed). Coherent one-rule floor so the dashboard renders the server value directly (no client-side spend fallback). A 0-outcome audience with spend → max(spend, brand cost-per-outcome), never a raw tiny-spend value, never null; 0-spend + 0-outcome → null. Conversion-column brand parents = brand total tagged cost / distinct converting MEMBERS (union). campaign-service NO LONGER reads audience-stats (it ranks on `workflow-projection` `resolved.costPerOutcomeUsd`), so the floor does not touch its ranking. |
+| `audience-stats` `cpcCents`/`cpprCents`/`cpfsCents`/`cpsCents`/`cpsaleCents` | **floored** (cascade audience→brand, DISPLAY) | ALL FIVE per-audience cost columns now use `flooredCostPerOutcome` (was: cpc/cppr projected, cpfs/cps/cpsale observed). Coherent one-rule floor so the dashboard renders the server value directly (no client-side spend fallback). A 0-outcome audience with spend → max(spend, brand cost-per-outcome), never a raw tiny-spend value, never null; 0-spend + 0-outcome → null. The brand parent for EVERY column is the FLEET-BACKED cross-org **BEST-WORKFLOW** projected cost (see the best-workflow section at the top), NOT a brand-own aggregate and NOT a cross-workflow pooled average. campaign-service NO LONGER reads audience-stats (it ranks on `workflow-projection` `resolved.costPerOutcomeUsd`), so the floor does not touch its ranking. |
 | `/stats` `costPerRecipient*` (registry `type:"currency"`) | **observed** | DONE (PR3) — brand is the TOP grain here (no coarser grain fetched → no cascade), so observed (null on 0). Also killed a latent false-$0 (0 cost / >0 outcomes → was $0, now null). |
 | `/public/stats/cost-projection` | **projected** (already EV) | not yet routed through the module |
 | `pipeline-activity` | n/a (no cost ratio) | It computes forecast **RATES** (`openPerOutreach`…) not costs; its local `ratio` returns `null` on 0-denom = correct for a displayed rate. Nothing to route. |
@@ -182,9 +220,9 @@ displayed rate needs null. Neither is buggy.
 
 **A surface uses `projected` only where it HAS a coarser grain to floor against inside the endpoint;
 a top-grain surface with no coarser grain fetched uses `observed`.** workflow-projection has the full
-crossOrg→brand→audience ladder; audience-stats floors audience→brand (the brand parent is computed from
-audience-stats' OWN data — total tagged cost / distinct-union membership outcomes, no extra fetch, no
-grain mix); `/stats` is brand-only (no fleet parent fetched) → observed.
+crossOrg→brand→audience ladder; audience-stats floors audience→brand, where the brand parent is the
+FLEET-BACKED cross-org BEST-WORKFLOW projected cost (`fetchBrandProjectedParents`), so it lands on the
+same number the Strategy page shows; `/stats` is brand-only (no fleet parent fetched) → observed.
 
 **Engine guard:** `projectedCostPerOutcome` returns a real ratio ONLY when BOTH spend > 0 AND outcomes > 0;
 a 0-spend / >0-outcomes cell (cost un-attributed but outcomes tracked — the ~3% audienceId cost-tag gap)

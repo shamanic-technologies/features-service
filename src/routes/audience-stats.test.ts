@@ -20,6 +20,8 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false"; // exercise the pure live-comp
 process.env.RUNS_SERVICE_API_KEY = "runs-key";
 process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
+process.env.WORKFLOW_SERVICE_URL = "http://workflow:3000";
+process.env.WORKFLOW_SERVICE_API_KEY = "workflow-key";
 process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.HUMAN_SERVICE_URL = "http://human:3000";
@@ -111,23 +113,46 @@ const FLEET_ECON = {
   formSubmissionToPaidClientPct: 50,
 };
 
-// The 3 cross-org fleet + economics reads behind fetchBrandProjectedParents (the fleet-backed floor
-// parent, mirroring workflow-projection.resolved). Fleet spend $1000 over 500 clicks / 200 replies →
-// crossOrg CPC $2.00 (200¢), CPPR $5.00 (500¢). With FLEET_ECON: cps parent = 2.00/0.20 = $10 (1000¢),
+// The 4 cross-org fleet + economics reads behind fetchBrandProjectedParents (the fleet-backed floor
+// parent, mirroring workflow-projection.resolved). The parent is the BEST workflow's cost, never a
+// cross-workflow pooled average, so the fleet fixture carries the workflow-dynasty list too.
+// Fleet: wf-1 $1000 over 500 clicks / 200 replies → its CPC $2.00 (200¢), CPPR $5.00 (500¢) — the ONLY
+// backed dynasty here, so it IS the best. With FLEET_ECON: cps parent = 2.00/0.20 = $10 (1000¢),
 // cpfs parent = 2.00/0.40 = $5 (500¢), cpsale(sales) = min(2/0.2, 5/0.5) = $10 (1000¢),
 // cpsale(websitePurchase) = costPerPurchase = $8 (800¢). netTotalCostInUsdCents == gross (fleet is
 // cross-org, not per-org-discounted) so pricing=net reads the same fleet benchmark.
+const FLEET_WORKFLOWS: Array<Record<string, unknown>> = [
+  {
+    id: "wf-id-1",
+    workflowSlug: "wf-1",
+    workflowName: "WF 1",
+    workflowDynastySlug: "dyn-1",
+    workflowDynastyName: "Dynasty 1",
+    version: 1,
+    status: "active",
+    featureSlug: "sales-cold-email-outreach",
+    createdForBrandId: null,
+    upgradedTo: null,
+  },
+];
+
+/** Override the fleet fixture for one test (best-workflow parent cases). */
+let fleetOverride: { workflows?: unknown[]; costs?: unknown[]; email?: unknown[] } | null = null;
+
 function fleetEconResponse(url: string): Response | null {
+  if (url.includes("workflow:3000/public/workflows")) {
+    return json({ workflows: fleetOverride?.workflows ?? FLEET_WORKFLOWS });
+  }
   if (url.includes("runs:3000/v1/stats/public/costs")) {
     return json({
-      groups: [
+      groups: fleetOverride?.costs ?? [
         { dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "100000", netTotalCostInUsdCents: "100000", runCount: 100, minStartedAt: null, maxStartedAt: null },
       ],
     });
   }
   if (url.includes("email:3000/public/stats")) {
     return json({
-      groups: [
+      groups: fleetOverride?.email ?? [
         { key: "wf-1", broadcast: { recipientStats: { contacted: 1000, sent: 1000, delivered: 1000, opened: 800, clicked: 500, bounced: 0, repliesPositive: 200 } } },
       ],
     });
@@ -136,6 +161,31 @@ function fleetEconResponse(url: string): Response | null {
     return json({ economics: FLEET_ECON, source: "user" });
   }
   return null;
+}
+
+/** Build a fleet workflow-metadata entry (dynasty defaults to its own slug; `upgradedTo` chains versions). */
+function fleetWorkflow(slug: string, over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: `id-${slug}`,
+    workflowSlug: slug,
+    workflowName: slug,
+    workflowDynastySlug: slug,
+    workflowDynastyName: slug,
+    version: 1,
+    status: "active",
+    featureSlug: "sales-cold-email-outreach",
+    createdForBrandId: null,
+    upgradedTo: null,
+    ...over,
+  };
+}
+
+function fleetCost(slug: string, cents: number, runCount = 10): Record<string, unknown> {
+  return { dimensions: { workflowSlug: slug }, totalCostInUsdCents: String(cents), netTotalCostInUsdCents: String(cents), runCount, minStartedAt: null, maxStartedAt: null };
+}
+
+function fleetEmail(slug: string, clicked: number, repliesPositive: number): Record<string, unknown> {
+  return { key: slug, broadcast: { recipientStats: { contacted: 1000, sent: 1000, delivered: 1000, opened: 800, clicked, bounced: 0, repliesPositive } } };
 }
 
 function mockFetch(): ReturnType<typeof vi.spyOn> {
@@ -259,11 +309,13 @@ describe("GET /features/:featureSlug/audience-stats", () => {
 
   beforeEach(() => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(FEATURE as any);
+    fleetOverride = null;
   });
 
   afterEach(() => {
     fetchSpy?.mockRestore();
     vi.restoreAllMocks();
+    fleetOverride = null;
   });
 
   it("400 when brandId or goal is missing or limit is invalid", async () => {
@@ -1068,6 +1120,125 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
     expect(byId["audience-a"].metrics.cpcCents).toBe(500); // own spend (500) > fleet (200) → own wins
     expect(byId["audience-b"].metrics.cpcCents).toBe(200); // own spend (90) < fleet (200) → fleet floor
+  });
+
+  // ── The fleet-backed parent is cross-org + BEST WORKFLOW, never cross-workflow POOLED ─────────
+  // Standing product rule: we never surface a cross-org PLUS cross-workflow pooled estimate. A pooled
+  // parent (Σ fleet spend ÷ Σ fleet outcomes) read ~3x the Strategy page's number for the same brand +
+  // goal + moment, so the Audiences table and the Strategy page showed two different prices for the same
+  // thing while both labelled it "fleet benchmark".
+
+  /** One 0-click audience with a tiny attributed spend (below any plausible parent) → renders the parent. */
+  function mockOneZeroOutcomeAudience(spendCents = 50): ReturnType<typeof vi.spyOn> {
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = urlOf(input);
+      { const fe = fleetEconResponse(url); if (fe) return fe; }
+      // Conversion tracker (signup / form / sale goals): no converted lead → 0 conversions, not absent.
+      if (url.includes("lead:3000/internal/brands/brand-1/converted-lead-emails")) return json({ emails: [] });
+      if (url.includes("human:3000/orgs/audiences/audience-a/members")) return membersResponse(EMAILS_A);
+      if (url.includes("human:3000/orgs/audiences")) {
+        return json({
+          audiences: [{ id: "audience-a", brandId: "brand-1", name: "CFOs", status: "active", filters: null }],
+          total: 1, limit: 200, offset: 0,
+        });
+      }
+      if (url.includes("brand:3000/orgs/brands/brand-1/brand-profile")) return json({ current: null, versions: [] });
+      if (url.includes("runs:3000/v1/stats/costs")) return json({ groups: [costGroup("audience-a", spendCents, 1)] });
+      if (url.includes("email:3000/orgs/stats")) {
+        return json({ groups: [
+          { key: "audience-a", broadcast: { recipientStats: { contacted: 10, sent: 10, delivered: 10, opened: 4, clicked: 0, bounced: 0, repliesPositive: 0 } } },
+        ] });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+  }
+
+  it("parent = the BEST workflow's cost per outcome, NOT the cross-workflow pooled average", async () => {
+    // Fleet: cheap $200/100 clicks = $2.00 (200¢) · pricey $1000/50 clicks = $20.00 · husk $5/0 clicks.
+    // POOLED (the old parent) = (20000 + 100000 + 500)¢ ÷ 150 clicks = 803¢ — 4x the best workflow.
+    fleetOverride = {
+      workflows: [fleetWorkflow("wf-cheap"), fleetWorkflow("wf-pricey"), fleetWorkflow("wf-husk")],
+      costs: [fleetCost("wf-cheap", 20000), fleetCost("wf-pricey", 100000), fleetCost("wf-husk", 500)],
+      email: [fleetEmail("wf-cheap", 100, 40), fleetEmail("wf-pricey", 50, 10), fleetEmail("wf-husk", 0, 0)],
+    };
+    fetchSpy = mockOneZeroOutcomeAudience();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=websiteVisit")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const row = res.body.audiences[0];
+    expect(row.evidence.websiteClicks).toBe(0);
+    expect(row.metrics.cpcCents).toBe(200); // the BEST workflow (wf-cheap $2.00)
+    expect(row.metrics.cpcCents).not.toBe(803); // never the cross-workflow pooled average
+  });
+
+  it("a workflow that observed 0 of the driving outcome is NOT eligible to be the best pick", async () => {
+    // wf-husk spent 30¢ and produced ZERO clicks. Its cost-per-click is meaningless; if it were eligible
+    // (floored to its own spend) it would win at 30¢ and price every 0-click audience at $0.30. The best
+    // pick may only consider workflows that actually observed the outcome → wf-cheap's 200¢.
+    fleetOverride = {
+      workflows: [fleetWorkflow("wf-cheap"), fleetWorkflow("wf-husk")],
+      costs: [fleetCost("wf-cheap", 20000), fleetCost("wf-husk", 30)],
+      email: [fleetEmail("wf-cheap", 100, 40), fleetEmail("wf-husk", 0, 0)],
+    };
+    fetchSpy = mockOneZeroOutcomeAudience();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=websiteVisit")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    expect(res.body.audiences[0].metrics.cpcCents).toBe(200);
+    expect(res.body.audiences[0].metrics.cpcCents).not.toBe(30);
+  });
+
+  it("collapses a workflow's version chain into ONE dynasty before picking the best", async () => {
+    // dyn-x spans two versions: v1 $600/10 clicks, v2 $400/90 clicks. Rolled up the DYNASTY is
+    // $1000/100 clicks = $10.00 (1000¢). dyn-y is $1200/100 clicks = $12.00. Best dynasty = dyn-x, 1000¢.
+    // Treating the versions as independent workflows would crown v2 alone ($400/90 = $4.44 = 444¢) — the
+    // corruption this collapse prevents.
+    fleetOverride = {
+      workflows: [
+        fleetWorkflow("wf-x-v1", { id: "id-wf-x-v1", status: "deprecated", workflowDynastySlug: "wf-x-v2", upgradedTo: "id-wf-x-v2" }),
+        fleetWorkflow("wf-x-v2", { id: "id-wf-x-v2", version: 2 }),
+        fleetWorkflow("wf-y"),
+      ],
+      costs: [fleetCost("wf-x-v1", 60000), fleetCost("wf-x-v2", 40000), fleetCost("wf-y", 120000)],
+      email: [fleetEmail("wf-x-v1", 10, 5), fleetEmail("wf-x-v2", 90, 45), fleetEmail("wf-y", 100, 50)],
+    };
+    fetchSpy = mockOneZeroOutcomeAudience();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=websiteVisit")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    expect(res.body.audiences[0].metrics.cpcCents).toBe(1000); // dynasty-rolled dyn-x
+    expect(res.body.audiences[0].metrics.cpcCents).not.toBe(444); // never the un-collapsed v2 alone
+  });
+
+  it("goal-projected columns take the best workflow AT THAT OUTCOME (per column, not a blend)", async () => {
+    // wf-click is cheapest per click ($2.00 → cost-per-signup 2.00/0.20 = $10 = 1000¢); wf-reply is
+    // cheapest per positive reply ($4.00 → 400¢). Each column picks its own best workflow.
+    fleetOverride = {
+      workflows: [fleetWorkflow("wf-click"), fleetWorkflow("wf-reply")],
+      costs: [fleetCost("wf-click", 20000), fleetCost("wf-reply", 20000)],
+      // wf-click: 100 clicks / 25 replies ($2.00 / $8.00) · wf-reply: 20 clicks / 50 replies ($10 / $4)
+      email: [fleetEmail("wf-click", 100, 25), fleetEmail("wf-reply", 20, 50)],
+    };
+    fetchSpy = mockOneZeroOutcomeAudience();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const row = res.body.audiences[0];
+    expect(row.metrics.cpcCents).toBe(200); // best per click: wf-click
+    expect(row.metrics.cpprCents).toBe(400); // best per positive reply: wf-reply
+    expect(row.metrics.cpsCents).toBe(1000); // best per signup rides the best-per-click workflow
   });
 
   // ── Optional campaign scope (?campaignId=) ──────────────────────────────────
