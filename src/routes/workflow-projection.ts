@@ -216,8 +216,12 @@ function paidClientCostForGoal(
  * per goal. Mirrors the legacy `recommendedMetric` selection: single-step goals + purchase + form
  * submission close-route rank on the paid-client cost; meeting-booked on costPerMeetingBooked; signup /
  * self-serve on costPerSignup; form_submissions optimization metric on costPerFormSubmission.
+ *
+ * EXPORTED because /audience-stats scores fleet workflows with the IDENTICAL routing to pick the single
+ * best workflow behind its floor parent (`fetchBrandProjectedParents`) — one goal→cost mapping across
+ * both surfaces, so the two can never rank a different workflow best for the same goal.
  */
-function outcomeCostForGoal(
+export function outcomeCostForGoal(
   econ: ProjectionEconomics,
   unitCosts: { clickUsd: number | null; replyUsd: number | null },
   objective: Objective,
