@@ -321,6 +321,37 @@ npm run db:migrate:prod  # Run migrations on prod (tsx scripts/migrate-prod.ts)
 npm run generate:openapi # Regenerate openapi.json from Zod schemas
 ```
 
+## `workflow-projection` caches the EVIDENCE fan-out only — the brand's ECONOMICS is read LIVE on every request, NEVER cached
+
+`GET /features/:slug/workflow-projection` splits into two halves and only the first is Gold-SWR-cached:
+
+- **`fetchWorkflowProjectionEvidence`** (heavy, IO) — fleet workflows + fleet cost/outcome + brand grain
+  + per-audience grain. Depends ONLY on `(featureSlug, brandId, pricing)`; economics- AND goal-independent
+  → cached under view **`workflow-projection-evidence`**, `scopeKey = (featureSlug, orgId, brandId,
+  pricing)`. One snapshot now serves EVERY goal (`objective` left the key — the evidence never depended
+  on it).
+- **`projectFromEvidence`** (pure, no IO) — the goal's 3-grain ladder + `resolved` + recommendation,
+  derived from that evidence **plus `fetchEffectiveEconomics` fetched fresh on the request path**.
+
+**The bug this fixes (do NOT regress by re-wrapping the whole compute in `servedCached`):** onboarding
+writes the brand's sales economics, then the very next screen reads this endpoint. The old code cached
+the ENTIRE response with a freshness key that ignored economics, so a read inside the stale window
+replayed the PRE-write answer — brand `7604c385…` went lifetimeRevenue 2500 → 100 and kept showing the
+2500-derived numbers. `roiMultiple = LTR / costPerPaidClient` (and `cacPct = 100/roi`), so the displayed
+ROI/CAC were wrong by the full 25x ratio. The consumer must NOT have to ask for freshness — no
+cache-bypass query param (any caller could then stampede the fan-out), no consumer-side poll/retry
+(guessing at a producer's cache window). Economics is one cheap brand-service call; the fan-out it used
+to ride along with stays off the request path.
+
+**`WorkflowProjectionEvidence` MUST stay JSON-serializable** — the snapshot round-trips through a jsonb
+column, so the grain fetchers' `Map`s are flattened to entry arrays in the evidence and rebuilt in
+`projectFromEvidence`. A `Map` stored in jsonb deserializes as `{}` = a silent all-zero ladder. The
+freshness suite (`workflow-projection-economics-freshness.test.ts`, cache ENABLED — the sibling suite
+disables it) covers write→read-with-no-wait, repeated writes, no-refetch-without-change, and the jsonb
+round-trip. Response shape unchanged → no OpenAPI regen. `computeWorkflowProjection` (customer-health's
+"best workflow by CAC") keeps its signature and now composes the two halves. Old `workflow-projection`
+snapshot rows are orphaned and harmless (the Gold layer is derived + rebuildable). (Set 2026-07-29.)
+
 ## `GET /features/:slug/workflow-projection` — 3-grain cost-per-outcome LADDER (`/candidates` DELETED, folded in; PR #449)
 
 `GET /features/:slug/workflow-projection?brandId=&audienceId?=&goal=` returns a **3-grain
