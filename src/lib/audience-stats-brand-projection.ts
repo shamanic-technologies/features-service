@@ -25,9 +25,10 @@
  *     `outcomeCostForGoal`. EVERY column derives from THAT dynasty's resolved unit costs, exactly like a
  *     workflow-projection row derives all of its costs from one grain. Picking a different best workflow
  *     per column would blend workflows and re-open the incoherence one layer down.
- *   - A dynasty that OBSERVED none of the goal's driving outcome is INELIGIBLE (shared
- *     `grainHasObservedOutcome`): with the cascade floor its unit costs collapse to its own spend, so a
- *     barely-spent husk would otherwise be crowned the cheapest workflow. Its ratio is meaningless.
+ *   - EVERY dynasty competes, including one that has produced 0 of the goal's outcome — its cascade floor
+ *     `max(spend, parent)` is a real rankable number, and the Strategy page's `pickBestBrandRow` ranks it
+ *     too. (A `grainHasObservedOutcome` gate lived here from v0.106.3 until v0.107.5; it made this module
+ *     crown a different workflow than the dashboard for the same brand+goal, which IS the incoherence.)
  *   - Version chains collapse first (`buildUpgradeChains` + `aggregateAcrossChains`, the SAME rollup
  *     crossOrg/brand use in workflow-projection) so a dynasty's versions are one workflow, not several.
  *
@@ -259,19 +260,24 @@ export async function fetchBrandProjectedParents(
   const economics = effective.economics;
   const econ = economics ? buildEcon(economics, goal) : null;
 
-  // THE single best workflow for the queried goal: among the dynasties that OBSERVED the goal's driving
-  // outcome (shared `grainHasObservedOutcome` — a 0-outcome husk's cascade-floored unit costs collapse
-  // to its own spend and would otherwise be crowned cheapest), the LOWEST cost of the goal's own outcome
-  // scored through the shared `outcomeCostForGoal` — the SAME goal→cost routing workflow-projection
-  // ranks its rows on, so both surfaces crown the same workflow for a goal.
+  // THE single best workflow for the queried goal: the LOWEST cost of the goal's own outcome, scored
+  // through the shared `outcomeCostForGoal` over EVERY dynasty — byte-for-byte the argmin the Strategy
+  // page's `pickBestBrandRow` runs over the brand-level rows, so both surfaces crown the SAME workflow.
+  //
+  // NO observed-outcome filter, deliberately (a `grainHasObservedOutcome` gate lived here from v0.106.3
+  // until v0.107.5). Standing product rule: a workflow that has produced 0 of the outcome still carries a
+  // real, RANKABLE number — its cascade floor `max(spend, parent)` — and it competes on equal footing.
+  // Excluding those workflows HERE while the Strategy page includes them is exactly what made the two
+  // surfaces price the same audience differently: prod 2026-07-29 (brand `b97440f6…`, positiveReply) this
+  // module crowned `arcadia` ($64.11, 1 observed reply) while the dashboard crowned `dawn` ($61.73, zero
+  // replies), both labelled "fleet benchmark". Matching the consumer's argmin is what keeps them coherent.
+  // Honesty lives on the LABEL instead — `resolvePick` still tags a floored row `crossOrg` (benchmark),
+  // never "this brand's own results".
   const { objective, singleStepGoal, formSubmissionGoal } = goalToProjectionInputs(goal);
-  const eligible = perDynasty.filter((d) =>
-    grainHasObservedOutcome({ spentUsd: 0, observedContacted: 0, ...d.observed }, objective, singleStepGoal),
-  );
   let best: DynastyRow | null = null;
   if (econ) {
     let bestGoalCost: number | null = null;
-    for (const d of eligible) {
+    for (const d of perDynasty) {
       const goalCost = outcomeCostForGoal(econ, d.unitCosts, objective, singleStepGoal, formSubmissionGoal);
       if (goalCost == null || !(goalCost > 0)) continue;
       if (bestGoalCost == null || goalCost < bestGoalCost) {
@@ -283,13 +289,13 @@ export async function fetchBrandProjectedParents(
 
   if (!best) {
     // COLD START / unscoreable goal: no economics (workflow-projection reports no cost-per-outcome
-    // either, so there is nothing to be coherent with) or no eligible dynasty scores the goal. Still
-    // serve the two RAW unit-cost parents — each the best ELIGIBLE workflow at that outcome — so the
-    // cpc/cppr columns keep a benchmark floor instead of collapsing to each audience's own tiny spend.
-    // The goal-projected columns stay null (never a fabricated parent).
+    // either, so there is nothing to be coherent with) or no dynasty scores the goal. Still serve the two
+    // RAW unit-cost parents — the cheapest workflow at that outcome, floors included, same ungated rule as
+    // the goal pick above — so the cpc/cppr columns keep a benchmark floor instead of collapsing to each
+    // audience's own tiny spend. The goal-projected columns stay null (never a fabricated parent).
     return {
-      cpcUsd: bestOf(eligible.map((d) => (d.observed.observedClicks > 0 ? d.unitCosts.clickUsd : null))),
-      cpprUsd: bestOf(eligible.map((d) => (d.observed.observedPositiveReplies > 0 ? d.unitCosts.replyUsd : null))),
+      cpcUsd: bestOf(perDynasty.map((d) => d.unitCosts.clickUsd)),
+      cpprUsd: bestOf(perDynasty.map((d) => d.unitCosts.replyUsd)),
       cpfsUsd: null,
       cpsUsd: null,
       cpsaleUsd: null,

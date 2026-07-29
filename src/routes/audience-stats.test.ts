@@ -1177,10 +1177,13 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(row.metrics.cpcCents).not.toBe(803); // never the cross-workflow pooled average
   });
 
-  it("a workflow that observed 0 of the driving outcome is NOT eligible to be the best pick", async () => {
-    // wf-husk spent 30¢ and produced ZERO clicks. Its cost-per-click is meaningless; if it were eligible
-    // (floored to its own spend) it would win at 30¢ and price every 0-click audience at $0.30. The best
-    // pick may only consider workflows that actually observed the outcome → wf-cheap's 200¢.
+  it("a workflow that observed 0 of the driving outcome STILL competes for the best pick (same argmin as the Strategy page)", async () => {
+    // wf-husk spent 30¢ and produced ZERO clicks, so its cost-per-click is the cascade floor 30¢; wf-cheap
+    // is 20000¢/100 clicks = 200¢. The Strategy page's `pickBestBrandRow` ranks BOTH and crowns wf-husk at
+    // 30¢, so this module must too — gating the husk out here (v0.106.3 → v0.107.5) is exactly what made
+    // the Audiences table and the Strategy page price the same audience off different workflows.
+    // The audience's own 50¢ then wins over the 30¢ benchmark (max(own spend, parent)) — the documented
+    // own-spend-wins regime; the point is the PARENT is now 30¢, not wf-cheap's 200¢.
     fleetOverride = {
       workflows: [fleetWorkflow("wf-cheap"), fleetWorkflow("wf-husk")],
       costs: [fleetCost("wf-cheap", 20000), fleetCost("wf-husk", 30)],
@@ -1193,8 +1196,8 @@ describe("GET /features/:featureSlug/audience-stats", () => {
       .set(AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.audiences[0].metrics.cpcCents).toBe(200);
-    expect(res.body.audiences[0].metrics.cpcCents).not.toBe(30);
+    expect(res.body.audiences[0].metrics.cpcCents).toBe(50);
+    expect(res.body.audiences[0].metrics.cpcCents).not.toBe(200);
   });
 
   it("collapses a workflow's version chain into ONE dynasty before picking the best", async () => {

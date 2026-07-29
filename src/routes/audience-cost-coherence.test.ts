@@ -324,6 +324,22 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
     expect(husk.resolved.grain).toBe("crossOrg");
   });
 
+  // ...and BOTH surfaces must then price the audience off that SAME cheapest workflow. `/audience-stats`
+  // used to exclude the husk from its parent pick while the Strategy page ranked it, so the two showed
+  // different prices for one audience (prod: $64.11 vs $61.73, both labelled "fleet benchmark").
+  it("both surfaces price the audience off the cheapest workflow even when that workflow has ZERO of the outcome", async () => {
+    fleet = FLEET_HUSK_UNDERCUTS;
+    audienceSpendSlug = "wf-measured";
+
+    const { statsUsd, projectionUsd } = await bothSurfaces("positiveReply", "cpprCents", "costPerOutcomeUsd");
+
+    expect(statsUsd).toBeCloseTo(projectionUsd, 9);
+    // $60 = wf-husk's floor, the cheapest row and the one the Strategy page renders.
+    expect(statsUsd).toBe(60);
+    // NOT wf-measured's $80 — that was the gated pick this module used to make on its own.
+    expect(statsUsd).not.toBe(80);
+  });
+
   it("a 0-outcome audience whose own spend is below the parent reports the SAME cost on both surfaces", async () => {
     const { recommendedSlug, statsUsd, projectionUsd } = await bothSurfaces("websiteVisit", "cpcCents", "costPerOutcomeUsd");
 
