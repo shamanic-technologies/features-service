@@ -4,7 +4,7 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
-import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, orP, type ProjectionEconomics } from "../lib/funnel-registry.js";
+import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, orP, type ProjectionEconomics, type SalesEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
@@ -13,6 +13,8 @@ import {
   fetchPublicWorkflows,
   fetchPublicCosts,
   fetchPublicEmailStats,
+  type CostGroup,
+  type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
 import { buildUpgradeChains, aggregateAcrossChains } from "./public.js";
 import {
@@ -487,15 +489,30 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // multiply); GROSS is byte-identical. The selector is threaded into the grain fetchers below; a NET
     // request where a frozen net figure is absent throws → 502 (via catch), never cached, no fallback.
 
-    // Gold SWR: the heavy cross-org + brand + audience fan-out runs off the request path ~once per
-    // TTL; keyed on the inputs that shape the body (orgId + brand + goal + pricing).
+    // Gold SWR covers the heavy EVIDENCE fan-out ONLY (cross-org + brand + audience cost/outcome
+    // reads) — it is economics- AND goal-independent, so it runs off the request path ~once per TTL,
+    // keyed on the inputs that shape it (orgId + brand + pricing). The brand's ECONOMICS is read LIVE
+    // on every request and the response is projected from it here: a caller that just wrote its sales
+    // economics reads the NEW lifetimeRevenueUsd (hence the new roiMultiple / cacPct) with no wait, no
+    // opt-in param, and without re-running the fan-out. See "economics is never cached" below.
     const identity: Identity = { orgId, userId, runId, featureSlug: headerFeatureSlug };
-    const response = await servedCached({
-      view: "workflow-projection",
-      scopeKey: buildScopeKey(featureSlug, { orgId, brandId, objective, pricing }),
-      orgId,
-      compute: () =>
-        computeWorkflowProjection({ featureSlug, brandId, objective, goal, singleStepGoal, formSubmissionGoal, identity, pricing }),
+    const [evidence, effective] = await Promise.all([
+      servedCached({
+        view: "workflow-projection-evidence",
+        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, pricing }),
+        orgId,
+        compute: () => fetchWorkflowProjectionEvidence({ featureSlug, brandId, identity, pricing }),
+      }),
+      fetchEffectiveEconomics(brandId, identity),
+    ]);
+    const response = projectFromEvidence({
+      featureSlug,
+      objective,
+      goal,
+      singleStepGoal,
+      formSubmissionGoal,
+      evidence,
+      economics: effective.economics,
     });
     res.json(response);
   } catch (error) {
@@ -503,6 +520,61 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     res.status(502).json({ error: "Failed to compute workflow projection" });
   }
 });
+
+/**
+ * The HEAVY, economics-INDEPENDENT half of the projection: every cross-service read the 3-grain ladder
+ * needs (fleet workflows + fleet cost/outcome + brand grain + per-audience grain). It depends ONLY on
+ * (featureSlug, brandId, pricing) — NOT on the brand's sales economics and NOT on the queried goal — so
+ * it is the part the Gold SWR snapshot caches, and one snapshot serves every goal.
+ *
+ * SHAPE IS JSON-SERIALIZABLE ON PURPOSE: the snapshot round-trips through a jsonb column, so the Maps
+ * the grain fetchers return are flattened to entry arrays here and rebuilt in `projectFromEvidence`.
+ * A Map stored in jsonb deserializes as `{}` — a silent all-zero ladder. Keep this shape plain.
+ *
+ * Throws on any downstream failure (the route maps it to 502; a failed compute is never cached).
+ */
+export interface WorkflowProjectionEvidence {
+  workflows: WorkflowMetadata[];
+  /** Fleet (crossOrg) cost groups, `groupBy=workflowSlug`, already gross-or-net per `pricing`. */
+  crossOrgCostGroups: CostGroup[];
+  /** Fleet (crossOrg) email stats, `groupBy=workflowSlug` — entries of the client's Map. */
+  crossOrgEmailStats: Array<[string, Record<string, number>]>;
+  /** Brand-grain evidence keyed by the dynasty's ACTIVE workflow slug — entries of the client's Map. */
+  brandGrain: Array<[string, WorkflowGrainEvidence]>;
+  /** Per active audience, its per-dynasty send-tag evidence — entries of each `byDynasty` Map. */
+  audienceEvidence: Array<{ audienceId: string; byDynasty: Array<[string, WorkflowGrainEvidence]> }>;
+}
+
+export async function fetchWorkflowProjectionEvidence(input: {
+  featureSlug: string;
+  brandId: string;
+  identity: Identity;
+  pricing: Pricing;
+}): Promise<WorkflowProjectionEvidence> {
+  const { featureSlug, brandId, identity, pricing } = input;
+
+  // The workflow list is needed by the crossOrg AND brand dynasty rollups, so fetch it first; the
+  // brand grain then fans out in parallel with the remaining reads.
+  const workflows = await fetchPublicWorkflows(featureSlug, "all");
+  // Same slug → dynasty map the crossOrg/brand rollups use — passed to the audience grain so its
+  // per-audience dynasty attachment aligns with the dynasty-keyed rows (and skips runs-service's
+  // lossy workflowDynastySlug regroup, which collapses the co-grouped audienceId).
+  const slugToDynasty = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
+  const [costGroups, emailStats, brandGrain, audienceEvidence] = await Promise.all([
+    fetchPublicCosts(featureSlug, "workflowSlug", pricing),
+    fetchPublicEmailStats(featureSlug, "workflowSlug"),
+    fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing),
+    fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing),
+  ]);
+
+  return {
+    workflows,
+    crossOrgCostGroups: costGroups,
+    crossOrgEmailStats: [...emailStats.entries()],
+    brandGrain: [...brandGrain.entries()],
+    audienceEvidence: audienceEvidence.map((ev) => ({ audienceId: ev.audienceId, byDynasty: [...ev.byDynasty.entries()] })),
+  };
+}
 
 /**
  * Build the full workflow-projection response (3-grain ladder + resolved pick + recommendation) for one
@@ -524,22 +596,38 @@ export async function computeWorkflowProjection(input: {
   pricing: Pricing;
 }): Promise<WorkflowProjectionResponse> {
   const { featureSlug, brandId, objective, goal, singleStepGoal, formSubmissionGoal, identity, pricing } = input;
+  const [evidence, effective] = await Promise.all([
+    fetchWorkflowProjectionEvidence({ featureSlug, brandId, identity, pricing }),
+    fetchEffectiveEconomics(brandId, identity),
+  ]);
+  return projectFromEvidence({ featureSlug, objective, goal, singleStepGoal, formSubmissionGoal, evidence, economics: effective.economics });
+}
 
-    // The workflow list is needed by the crossOrg AND brand dynasty rollups, so fetch it first; the
-    // brand grain then fans out in parallel with the remaining reads.
-    const workflows = await fetchPublicWorkflows(featureSlug, "all");
-    // Same slug → dynasty map the crossOrg/brand rollups use — passed to the audience grain so its
-    // per-audience dynasty attachment aligns with the dynasty-keyed rows (and skips runs-service's
-    // lossy workflowDynastySlug regroup, which collapses the co-grouped audienceId).
-    const slugToDynasty = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
-    const [costGroups, emailStats, effective, brandGrain, audienceEvidence] = await Promise.all([
-      fetchPublicCosts(featureSlug, "workflowSlug", pricing),
-      fetchPublicEmailStats(featureSlug, "workflowSlug"),
-      fetchEffectiveEconomics(brandId, identity),
-      fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing),
-      fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing),
-    ]);
-    const economics = effective.economics;
+/**
+ * The PURE, economics-DEPENDENT half: derive the goal's 3-grain projection from already-fetched
+ * evidence + the brand's economics. No IO, so it runs on EVERY request against LIVE economics — that is
+ * what makes a read straight after a sales-economics write reflect the new `lifetimeRevenueUsd` (and
+ * therefore the new `roiMultiple` / `cacPct`) without a cache-bypass param and without re-fanning out.
+ * NEVER cache this output keyed on the evidence inputs alone; economics is not one of them.
+ */
+export function projectFromEvidence(input: {
+  featureSlug: string;
+  objective: Objective;
+  goal: GoalEcho;
+  singleStepGoal: SingleStepGoal | null;
+  formSubmissionGoal: boolean;
+  evidence: WorkflowProjectionEvidence;
+  economics: SalesEconomics | null;
+}): WorkflowProjectionResponse {
+  const { featureSlug, objective, goal, singleStepGoal, formSubmissionGoal, evidence, economics } = input;
+  const workflows = evidence.workflows;
+  const costGroups = evidence.crossOrgCostGroups;
+  const emailStats = new Map(evidence.crossOrgEmailStats);
+  const brandGrain = new Map(evidence.brandGrain);
+  const audienceEvidence: AudienceGrainEvidence[] = evidence.audienceEvidence.map((ev) => ({
+    audienceId: ev.audienceId,
+    byDynasty: new Map(ev.byDynasty),
+  }));
 
     // crossOrg dynasty rollup (identical to /public/stats/best).
     const chains = buildUpgradeChains(workflows);
