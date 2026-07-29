@@ -106,6 +106,25 @@ measured workflow. This is the SAME `observed>0` rule the landing's best-workflo
 - **When every workflow is a husk**, all rows null and both surfaces honestly show "-" rather than agreeing
   on a fabricated winner.
 
+### Verifying the coherence invariant at a SECOND goal — compare the COMPARABLE field, or you manufacture a false mismatch
+
+`/audience-stats`' cost column is goal-dependent (`sortMetricForGoal`): for `positiveReply` it is `cpprCents`
+(cost per reply), for the click-driven goals it is `cpcCents` (cost per CLICK). `workflow-projection`'s
+`resolved.costPerOutcomeUsd` is the cost of the GOAL's outcome. Those coincide ONLY for the single-step
+goals, where the driving outcome IS the outcome. At `meetingBooked` / `websitePurchase` / `signup` the goal
+outcome is a MEETING / PURCHASE / SIGNUP reached THROUGH the funnel, so comparing `cpcCents` against
+`costPerOutcomeUsd` pits a per-click cost against a per-meeting cost — a units error that reads as a large
+"mismatch" and invites a fix for a bug that does not exist. The comparable projection field for a
+`cpcCents` column is `resolved.costPerClickUsd`.
+
+**And subtract the residual regime before calling anything a mismatch:** an audience whose OWN spend exceeds
+the benchmark legitimately shows that spend on the accounting surface (`max(own spend, parent)`), and
+`/audience-stats` sums an audience's spend across ALL workflows while `workflow-projection` splits it per
+dynasty — so the two legitimately differ ABOVE the benchmark. Coherence is required only in the LOW-spend
+regime. Verified 2026-07-29 on prod brand `b97440f6…`: at `positiveReply` all four audiences matched at
+$64.11; at `meetingBooked` all four differed purely because their own spend ($4.61 / $2.63 / $3.01 / $5.11)
+sat above the $2.2151 benchmark — documented behaviour, not a regression.
+
 ### An UNSTARTED audience is priced like its barely-started siblings — `flooredCostPerOutcome`/`derivedCostPerOutcome` no longer special-case the empty cell
 
 Both display engines used to return `null` for a 0-spend AND 0-outcome cell even when a positive parent
