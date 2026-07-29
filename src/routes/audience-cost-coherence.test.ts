@@ -94,6 +94,9 @@ interface Fleet {
   workflows: Array<Record<string, unknown>>;
   costs: Array<Record<string, unknown>>;
   email: Array<Record<string, unknown>>;
+  /** Brand-grain evidence (runs groupBy=workflowSlug + brandId, email groupBy=workflowSlug). */
+  brandCosts?: Array<Record<string, unknown>>;
+  brandEmail?: Array<Record<string, unknown>>;
 }
 
 // Case A — a plain cheapest-click fleet:
@@ -118,6 +121,20 @@ const POOLED_CPC_USD = 120500 / 100 / 150; // the old cross-workflow pooled aver
 // The goal (website purchase) closes through BOTH channels, so wf-closer wins it despite pricier
 // clicks. Every column must then read wf-closer's unit costs — a per-column "best" would price clicks
 // off wf-cheap ($2.00) while the Strategy page shows wf-closer's $4.00.
+// Case C — the BRAND grain flips the winner (the prod shape, EmailToolsHub / Osprey vs Pelican):
+//   wf-a fleet $200 / 100 clicks → $2.00, but this brand burned $5.00 on it with ZERO clicks, so its
+//        brand grain floors the click to max($5.00, $2.00) = $5.00
+//   wf-b fleet $300 / 100 clicks → $3.00, this brand never ran it → stays $3.00
+// The brand-level row wf-b therefore wins at $3.00. A parent built from the crossOrg grain alone would
+// crown wf-a at $2.00 and disagree with the Strategy page by 50%.
+const FLEET_BRAND_GRAIN_FLIPS: Fleet = {
+  workflows: [workflow("wf-a"), workflow("wf-b")],
+  costs: [costGroup({ workflowSlug: "wf-a" }, 20000), costGroup({ workflowSlug: "wf-b" }, 30000)],
+  email: [emailGroup("wf-a", 100, 0), emailGroup("wf-b", 100, 0)],
+  brandCosts: [costGroup({ workflowSlug: "wf-a" }, 500, 1)],
+  brandEmail: [emailGroup("wf-a", 0, 0, 13)],
+};
+
 const FLEET_GOAL_BEATS_CLICKS: Fleet = {
   workflows: [workflow("wf-cheap"), workflow("wf-closer")],
   costs: [costGroup({ workflowSlug: "wf-cheap" }, 20000), costGroup({ workflowSlug: "wf-closer" }, 40000)],
@@ -147,8 +164,8 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
       if (groupBy === "audienceId") return json({ groups: [costGroup({ audienceId: "audience-a" }, 50, 1)] });
       // workflow-projection audience grain: the SAME 50¢, attributed to the workflow it ran under.
       if (groupBy === "audienceId,workflowSlug") return json({ groups: [costGroup({ audienceId: "audience-a", workflowSlug: audienceSpendSlug }, 50, 1)] });
-      // brand grain (groupBy=workflowSlug + brandId): the brand has no own workflow-level spend.
-      return json({ groups: [] });
+      // brand grain (groupBy=workflowSlug + brandId).
+      return json({ groups: fleet.brandCosts ?? [] });
     }
 
     // Email-gateway org-scoped stats, split by the requested dimension.
@@ -159,8 +176,8 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
       const groupBy = params.get("groupBy") ?? "";
       // audience-stats send-tag engagement (per audience): the SAME contacted / ZERO outcomes.
       if (groupBy === "audienceId") return json({ groups: [emailGroup("audience-a", 0, 0, 10)] });
-      // workflow-projection brand grain: nothing of its own.
-      return json({ groups: [] });
+      // workflow-projection brand grain.
+      return json({ groups: fleet.brandEmail ?? [] });
     }
 
     if (url.includes("human:3000/orgs/audiences/audience-a/members")) {
@@ -235,5 +252,17 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
     const click = await bothSurfaces("websitePurchase", "cpcCents", "costPerClickUsd");
     expect(click.statsUsd).toBe(click.projectionUsd);
     expect(click.statsUsd).toBe(4); // wf-closer's click cost, NOT wf-cheap's cheaper $2.00
+  });
+
+  it("the BRAND grain floor is part of the pick — a workflow this brand already outspent cannot win on its fleet rate", async () => {
+    fleet = FLEET_BRAND_GRAIN_FLIPS;
+    audienceSpendSlug = "wf-a";
+
+    const { recommendedSlug, statsUsd, projectionUsd } = await bothSurfaces("websiteVisit", "cpcCents", "costPerOutcomeUsd");
+
+    expect(recommendedSlug).toBe("wf-b");
+    expect(statsUsd).toBe(projectionUsd);
+    expect(statsUsd).toBe(3); // wf-b's $3.00 — NOT wf-a's cheaper $2.00 fleet rate, which this brand
+    // has already overspent against ($5.00 with zero clicks).
   });
 });

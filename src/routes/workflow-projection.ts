@@ -370,7 +370,7 @@ function buildGrainBlock(
  * label (not the number): a non-measured finest grain keeps its floored spend as the resolved NUMBER but
  * is labelled crossOrg (benchmark).
  */
-function grainHasObservedOutcome(
+export function grainHasObservedOutcome(
   ev: GrainBlock["evidence"],
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,

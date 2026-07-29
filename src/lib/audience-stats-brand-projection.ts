@@ -8,27 +8,33 @@
  * `projectOutcomeCosts`) on the cross-org fleet unit costs + the brand's effective economics — one
  * source of truth for "projected cost per outcome" across both surfaces → they agree by construction.
  *
- * The parent is the CROSS-ORG **BEST-WORKFLOW** benchmark, projected through the goal's funnel — NEVER a
- * cross-workflow POOLED average (Σ fleet spend ÷ Σ fleet outcomes). Standing product rule: we never
- * surface a cross-org PLUS cross-workflow pooled estimate; a fleet-wide estimate is cross-org plus the
- * BEST workflow, only. The pooled parent read ~3x the Strategy page's number for the same brand + goal +
- * moment (both labelled "fleet benchmark" in the UI → two prices for one thing). So:
- *   - ONE workflow DYNASTY is picked — the one with the LOWEST cost of the QUERIED GOAL's outcome,
- *     scored with `outcomeCostForGoal`, the SAME goal→cost routing workflow-projection ranks its
- *     `recommended` row on. EVERY column then derives from THAT dynasty's unit costs, exactly like a
- *     workflow-projection row derives all of its costs from one grain's unit costs. Picking a different
- *     best workflow per column would blend workflows and re-open the incoherence.
- *   - A dynasty that OBSERVED none of the goal's driving outcome is ineligible: its channel unit cost is
- *     `null` (never floored to its own spend at this grain), so `outcomeCostForGoal` scores it null and
- *     it can neither win nor pollute the comparison. A barely-spent 0-outcome husk must not be crowned.
+ * The parent is the **BEST-WORKFLOW** benchmark — NEVER a cross-workflow POOLED average (Σ fleet spend ÷
+ * Σ fleet outcomes). Standing product rule: we never surface a cross-org PLUS cross-workflow pooled
+ * estimate; a fleet-wide estimate is cross-org plus the BEST workflow, only. The pooled parent read ~3x
+ * the Strategy page's number for the same brand + goal + moment (both labelled "fleet benchmark" in the
+ * UI → two prices for one thing). This module therefore REBUILDS workflow-projection's BRAND-LEVEL rows
+ * (the `audienceId: null` ones the Strategy page ranks) and takes the winner:
+ *   - Per workflow DYNASTY, the crossOrg → brand grain LADDER, unit costs through the SAME
+ *     `projectedCostPerOutcome` cascade `buildGrainBlock` uses (a 0-outcome grain floors to
+ *     `max(own spend, parent)`), and the row's numbers taken from the finest grain WITH SPEND — byte-for-
+ *     byte `resolvePick`'s NUMBER selection. Skipping the brand grain is NOT an option: a brand that
+ *     outspent the fleet rate on a dynasty with 0 outcomes keeps its own higher floor there, which is
+ *     exactly what flipped the prod winner (Osprey's brand grain floors its click to $4.16 > its fleet
+ *     $2.43, handing the goal to Pelican).
+ *   - ONE dynasty is then picked — the LOWEST cost of the QUERIED GOAL's outcome, scored with the shared
+ *     `outcomeCostForGoal`. EVERY column derives from THAT dynasty's resolved unit costs, exactly like a
+ *     workflow-projection row derives all of its costs from one grain. Picking a different best workflow
+ *     per column would blend workflows and re-open the incoherence one layer down.
+ *   - A dynasty that OBSERVED none of the goal's driving outcome is INELIGIBLE (shared
+ *     `grainHasObservedOutcome`): with the cascade floor its unit costs collapse to its own spend, so a
+ *     barely-spent husk would otherwise be crowned the cheapest workflow. Its ratio is meaningless.
  *   - Version chains collapse first (`buildUpgradeChains` + `aggregateAcrossChains`, the SAME rollup
  *     crossOrg/brand use in workflow-projection) so a dynasty's versions are one workflow, not several.
  *
- * It is NOT floored by the brand's own aggregate spend: the per-audience floor is `max(audience spend, this
- * parent)`, so an audience's own spend still wins when it exceeds the fleet benchmark — mirroring
- * workflow-projection.resolved, which for a 0-outcome brand cascades down to the fleet cost. null per
- * column when the driving input is absent (no fleet clicks / replies on ANY workflow, or no economics for
- * the goal-projected columns) → the audience floor then degrades to own spend (never a fabricated parent).
+ * The per-audience floor is `max(audience spend, this parent)`, so an audience's own spend still wins when
+ * it exceeds the benchmark — the documented cascade rule, mirroring workflow-projection. null per column
+ * when the driving input is absent (no eligible workflow, or no economics for the goal-projected columns)
+ * → the audience floor then degrades to own spend (never a fabricated parent).
  */
 
 import { fetchPublicCosts, fetchPublicEmailStats, fetchPublicWorkflows } from "./public-stats-clients.js";
@@ -42,7 +48,8 @@ import {
   type SalesEconomics,
 } from "./funnel-registry.js";
 import { projectedCostPerOutcome } from "./cost-engine.js";
-import { goalToProjectionInputs, outcomeCostForGoal } from "../routes/workflow-projection.js";
+import { goalToProjectionInputs, outcomeCostForGoal, grainHasObservedOutcome } from "../routes/workflow-projection.js";
+import { fetchBrandWorkflowEvidence, type WorkflowGrainEvidence } from "./workflow-projection-grains.js";
 import type { Pricing } from "./pricing.js";
 import type { Goal } from "./goals.js";
 
@@ -89,16 +96,24 @@ function buildEcon(economics: SalesEconomics, goal: Goal): ProjectionEconomics {
   };
 }
 
-/** One workflow DYNASTY's cross-org unit costs. A channel is null when the dynasty observed 0 of that
- * outcome — it is then INELIGIBLE for every column that outcome drives (never a meaningless ratio). */
+/** One workflow DYNASTY's RESOLVED unit costs — the finest grain WITH SPEND (brand, else crossOrg),
+ * cascade-floored exactly like a workflow-projection brand-level row. */
 interface DynastyUnitCosts {
-  clickUsd: number | null;
-  replyUsd: number | null;
+  clickUsd: number;
+  replyUsd: number;
 }
 
-/** The lowest POSITIVE value — the single best-performing workflow for that outcome. null when no
- * workflow is backed (no dynasty observed the driving outcome) → the audience floor degrades to own
- * spend, never a fabricated parent. */
+/** One workflow DYNASTY as a workflow-projection BRAND-LEVEL row: its resolved unit costs plus the
+ * observed evidence the eligibility gate reads. */
+interface DynastyRow {
+  unitCosts: DynastyUnitCosts;
+  /** Observed outcomes of the COARSEST grain present (crossOrg ⊇ brand) — what "this workflow has
+   * produced the goal's outcome somewhere" means. */
+  observed: { observedClicks: number; observedPositiveReplies: number };
+}
+
+/** The lowest POSITIVE value. null when nothing is backed → the audience floor degrades to own spend,
+ * never a fabricated parent. */
 function bestOf(values: Array<number | null>): number | null {
   let best: number | null = null;
   for (const value of values) {
@@ -108,15 +123,25 @@ function bestOf(values: Array<number | null>): number | null {
   return best;
 }
 
+/** One grain's unit costs through the shared PROJECTED engine — a real ratio at ≥1 observed outcome,
+ * else the cascade floor `max(own spend, parent)`. Byte-identical to `buildGrainBlock`'s unit costs. */
+function grainUnitCosts(ev: WorkflowGrainEvidence, parent: DynastyUnitCosts | null): DynastyUnitCosts {
+  const spentUsd = ev.totalCostInUsdCents / 100;
+  return {
+    clickUsd: projectedCostPerOutcome(spentUsd, ev.clicks, parent?.clickUsd ?? null),
+    replyUsd: projectedCostPerOutcome(spentUsd, ev.replies, parent?.replyUsd ?? null),
+  };
+}
+
 /**
- * Compute the brand's fleet-backed projected cost-per-outcome parents for /audience-stats. Fans out to
- * the SAME cross-org sources as workflow-projection's crossOrg grain (workflow-service
- * `/public/workflows` + runs `/v1/stats/public/costs` + email-gateway `/public/stats`, all
- * feature-scoped, no brand filter → the fleet benchmark) plus the brand's effective economics, rolls the
- * version chains up into dynasties with the SAME `buildUpgradeChains` / `aggregateAcrossChains` rollup,
- * projects EACH dynasty through the shared engine, and takes the BEST (lowest) cost per column. Fails
- * loud on any downstream error (no silent fallback; NET fail-loud via fetchPublicCosts). Cross-org reads
- * are public (api-key only); the economics read is org-scoped.
+ * Compute the brand's best-workflow projected cost-per-outcome parents for /audience-stats. Rebuilds
+ * workflow-projection's BRAND-LEVEL rows from the SAME sources (workflow-service `/public/workflows` +
+ * runs `/v1/stats/public/costs` + email-gateway `/public/stats` for the crossOrg grain, the brand-scoped
+ * twins for the brand grain, plus the brand's effective economics), rolls version chains into dynasties
+ * with the SAME `buildUpgradeChains` / `aggregateAcrossChains` rollup, and takes the winner of the
+ * queried goal. Fails loud on any downstream error (no silent fallback; NET fail-loud via
+ * fetchPublicCosts). Cross-org reads are public (api-key only); the brand + economics reads are
+ * org-scoped.
  */
 export async function fetchBrandProjectedParents(
   brandId: string,
@@ -125,11 +150,12 @@ export async function fetchBrandProjectedParents(
   identity: ProjectionIdentity,
   pricing: Pricing = "gross",
 ): Promise<BrandProjectedParentsUsd> {
-  const [workflows, fleetCostGroups, fleetEmail, effective] = await Promise.all([
-    fetchPublicWorkflows(featureSlug, "all"),
+  const workflows = await fetchPublicWorkflows(featureSlug, "all");
+  const [fleetCostGroups, fleetEmail, effective, brandGrain] = await Promise.all([
     fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     fetchPublicEmailStats(featureSlug, "workflowSlug"),
     fetchEffectiveEconomics(brandId, identity),
+    fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing),
   ]);
 
   // Collapse each workflow's version chain into ONE dynasty before comparing — the EXACT rollup
@@ -142,65 +168,80 @@ export async function fetchBrandProjectedParents(
     "workflowSlug",
   );
 
-  // Per-dynasty cross-org unit costs. A channel is populated ONLY when the dynasty OBSERVED that
-  // outcome (clicks / positive replies > 0) — a 0-outcome dynasty's ratio is meaningless, so it stays
-  // null and contributes nothing to any goal it would drive (the same zero-contribution
-  // projectOutcomeCosts already applies to an absent channel). No cascade floor here: this IS the top
-  // grain, and flooring a 0-outcome dynasty to its own spend would let a barely-spent husk win.
-  const perDynasty: DynastyUnitCosts[] = [];
-  for (const [activeSlug, cost] of costMap) {
-    const spentUsd = cost.totalCostInUsdCents / 100;
-    if (!(spentUsd > 0)) continue;
+  // Per-dynasty BRAND-LEVEL row: the crossOrg → brand grain ladder, unit costs through the shared
+  // cascade (`projectedCostPerOutcome`), numbers taken from the finest grain WITH SPEND — byte-for-byte
+  // what workflow-projection's `audienceId: null` rows resolve to.
+  const perDynasty: DynastyRow[] = [];
+  for (const activeSlug of new Set([...costMap.keys(), ...brandGrain.keys()])) {
+    const cost = costMap.get(activeSlug);
     const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
-    const clicks = outcomes.recipientsClicked ?? 0;
-    const replies = outcomes.recipientsRepliesPositive ?? 0;
-    perDynasty.push({
-      clickUsd: clicks > 0 ? projectedCostPerOutcome(spentUsd, clicks, null) : null,
-      replyUsd: replies > 0 ? projectedCostPerOutcome(spentUsd, replies, null) : null,
-    });
+    const crossOrgEv: WorkflowGrainEvidence | null =
+      cost && cost.totalCostInUsdCents > 0
+        ? {
+            totalCostInUsdCents: cost.totalCostInUsdCents,
+            completedRuns: cost.completedRuns,
+            contacted: outcomes.recipientsContacted ?? 0,
+            clicks: outcomes.recipientsClicked ?? 0,
+            replies: outcomes.recipientsRepliesPositive ?? 0,
+          }
+        : null;
+    const brandEvRaw = brandGrain.get(activeSlug);
+    const brandEv = brandEvRaw && brandEvRaw.totalCostInUsdCents > 0 ? brandEvRaw : null;
+    if (!crossOrgEv && !brandEv) continue;
+
+    const crossOrgUnits = crossOrgEv ? grainUnitCosts(crossOrgEv, null) : null;
+    const unitCosts = brandEv ? grainUnitCosts(brandEv, crossOrgUnits) : crossOrgUnits!;
+    // Eligibility reads the COARSEST grain (crossOrg ⊇ brand): "has this workflow ever produced the
+    // goal's outcome". The brand grain alone is routinely 0-outcome even for the winning workflow.
+    const ev = crossOrgEv ?? brandEv!;
+    perDynasty.push({ unitCosts, observed: { observedClicks: ev.clicks, observedPositiveReplies: ev.replies } });
   }
 
   const economics = effective.economics;
   const econ = economics ? buildEcon(economics, goal) : null;
 
-  // THE single best workflow for the queried goal: the dynasty with the LOWEST cost of the goal's own
-  // outcome, scored through `outcomeCostForGoal` — the SAME goal→cost routing workflow-projection ranks
-  // its `recommended` row on, so both surfaces crown the same workflow for a goal. An unscoreable
-  // dynasty (no observed driving outcome → null) is simply never picked.
+  // THE single best workflow for the queried goal: among the dynasties that OBSERVED the goal's driving
+  // outcome (shared `grainHasObservedOutcome` — a 0-outcome husk's cascade-floored unit costs collapse
+  // to its own spend and would otherwise be crowned cheapest), the LOWEST cost of the goal's own outcome
+  // scored through the shared `outcomeCostForGoal` — the SAME goal→cost routing workflow-projection
+  // ranks its rows on, so both surfaces crown the same workflow for a goal.
   const { objective, singleStepGoal, formSubmissionGoal } = goalToProjectionInputs(goal);
+  const eligible = perDynasty.filter((d) =>
+    grainHasObservedOutcome({ spentUsd: 0, observedContacted: 0, ...d.observed }, objective, singleStepGoal),
+  );
   let best: DynastyUnitCosts | null = null;
   if (econ) {
     let bestGoalCost: number | null = null;
-    for (const d of perDynasty) {
-      const goalCost = outcomeCostForGoal(econ, { clickUsd: d.clickUsd, replyUsd: d.replyUsd }, objective, singleStepGoal, formSubmissionGoal);
+    for (const d of eligible) {
+      const goalCost = outcomeCostForGoal(econ, d.unitCosts, objective, singleStepGoal, formSubmissionGoal);
       if (goalCost == null || !(goalCost > 0)) continue;
       if (bestGoalCost == null || goalCost < bestGoalCost) {
         bestGoalCost = goalCost;
-        best = d;
+        best = d.unitCosts;
       }
     }
   }
 
   if (!best) {
     // COLD START / unscoreable goal: no economics (workflow-projection reports no cost-per-outcome
-    // either, so there is nothing to be coherent with) or no dynasty scores the goal. Still serve the
-    // two RAW unit-cost parents — each the best workflow AT that raw outcome — so the cpc/cppr columns
-    // keep a fleet-backed floor instead of collapsing to each audience's own tiny spend. The
-    // goal-projected columns stay null (never a fabricated parent).
+    // either, so there is nothing to be coherent with) or no eligible dynasty scores the goal. Still
+    // serve the two RAW unit-cost parents — each the best ELIGIBLE workflow at that outcome — so the
+    // cpc/cppr columns keep a benchmark floor instead of collapsing to each audience's own tiny spend.
+    // The goal-projected columns stay null (never a fabricated parent).
     return {
-      cpcUsd: bestOf(perDynasty.map((d) => d.clickUsd)),
-      cpprUsd: bestOf(perDynasty.map((d) => d.replyUsd)),
+      cpcUsd: bestOf(eligible.map((d) => (d.observed.observedClicks > 0 ? d.unitCosts.clickUsd : null))),
+      cpprUsd: bestOf(eligible.map((d) => (d.observed.observedPositiveReplies > 0 ? d.unitCosts.replyUsd : null))),
       cpfsUsd: null,
       cpsUsd: null,
       cpsaleUsd: null,
     };
   }
 
-  // EVERY column reads THAT one workflow's unit costs — the raw ones for cpc/cppr (the visit / reply IS
-  // the outcome) and the shared projection engine for the funnel columns. A channel the best workflow
-  // never observed stays null: it did not price that outcome, so neither do we.
-  const cpcUsd = best.clickUsd != null && best.clickUsd > 0 ? best.clickUsd : null;
-  const cpprUsd = best.replyUsd != null && best.replyUsd > 0 ? best.replyUsd : null;
+  // EVERY column reads THAT one workflow's resolved unit costs — the raw ones for cpc/cppr (the visit /
+  // reply IS the outcome) and the shared projection engine for the funnel columns, exactly as the
+  // workflow-projection row for that workflow does.
+  const cpcUsd = best.clickUsd > 0 ? best.clickUsd : null;
+  const cpprUsd = best.replyUsd > 0 ? best.replyUsd : null;
   const p = projectOutcomeCosts(econ!, { clickUsd: cpcUsd, replyUsd: cpprUsd });
   // sales → best-channel cost-per-sale; websitePurchase → multi-step close funnel — mirrors
   // outcomeCostForGoal (both terminate in a paying client, valued distinctly per goal).
