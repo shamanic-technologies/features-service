@@ -1219,13 +1219,15 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(res.body.audiences[0].metrics.cpcCents).not.toBe(444); // never the un-collapsed v2 alone
   });
 
-  it("goal-projected columns take the best workflow AT THAT OUTCOME (per column, not a blend)", async () => {
-    // wf-click is cheapest per click ($2.00 → cost-per-signup 2.00/0.20 = $10 = 1000¢); wf-reply is
-    // cheapest per positive reply ($4.00 → 400¢). Each column picks its own best workflow.
+  it("EVERY column reads the ONE workflow the GOAL picks — not a per-column blend across workflows", async () => {
+    // wf-click: $200 / 100 clicks / 25 replies → click $2.00, reply $8.00 · cost-per-signup 2/0.20 = $10
+    // wf-reply: $200 /  20 clicks / 50 replies → click $10.00, reply $4.00 · cost-per-signup 10/0.20 = $50
+    // The signup goal picks wf-click, so the reply column must read wf-click's $8.00 — NOT wf-reply's
+    // cheaper $4.00. Blending the two would price two columns off two different workflows, which is how
+    // the Audiences table and the Strategy page drifted apart in the first place.
     fleetOverride = {
       workflows: [fleetWorkflow("wf-click"), fleetWorkflow("wf-reply")],
       costs: [fleetCost("wf-click", 20000), fleetCost("wf-reply", 20000)],
-      // wf-click: 100 clicks / 25 replies ($2.00 / $8.00) · wf-reply: 20 clicks / 50 replies ($10 / $4)
       email: [fleetEmail("wf-click", 100, 25), fleetEmail("wf-reply", 20, 50)],
     };
     fetchSpy = mockOneZeroOutcomeAudience();
@@ -1236,9 +1238,33 @@ describe("GET /features/:featureSlug/audience-stats", () => {
 
     expect(res.status).toBe(200);
     const row = res.body.audiences[0];
-    expect(row.metrics.cpcCents).toBe(200); // best per click: wf-click
-    expect(row.metrics.cpprCents).toBe(400); // best per positive reply: wf-reply
-    expect(row.metrics.cpsCents).toBe(1000); // best per signup rides the best-per-click workflow
+    expect(row.metrics.cpcCents).toBe(200); // wf-click's click cost
+    expect(row.metrics.cpprCents).toBe(800); // wf-click's reply cost, NOT wf-reply's cheaper 400
+    expect(row.metrics.cpsCents).toBe(1000); // wf-click's cost per signup
+  });
+
+  it("the goal's best workflow wins even when another workflow has cheaper clicks", async () => {
+    // wf-cheap  $200 / 100 clicks /   0 replies → click $2.00, no reply channel
+    // wf-closer $400 / 100 clicks / 200 replies → click $4.00, reply $2.00
+    // FLEET_ECON: pCloseClick = orP(0.10, 0.20·0.50) = 0.19, pCloseReply = 0.30·0.50 = 0.15.
+    //   wf-cheap  closes/budget = 0.19/2                = 0.095  → $10.53 per purchase
+    //   wf-closer closes/budget = 0.19/4 + 0.15/2       = 0.1225 → $8.16 per purchase  ← wins the goal
+    // So the website-purchase goal rides wf-closer, and the click column reads ITS $4.00.
+    fleetOverride = {
+      workflows: [fleetWorkflow("wf-cheap"), fleetWorkflow("wf-closer")],
+      costs: [fleetCost("wf-cheap", 20000), fleetCost("wf-closer", 40000)],
+      email: [fleetEmail("wf-cheap", 100, 0), fleetEmail("wf-closer", 100, 200)],
+    };
+    fetchSpy = mockOneZeroOutcomeAudience();
+
+    const res = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=websitePurchase")
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    const row = res.body.audiences[0];
+    expect(row.metrics.cpcCents).toBe(400); // wf-closer's click cost, NOT wf-cheap's cheaper 200
+    expect(row.metrics.cpsaleCents).toBeCloseTo(100 / 0.1225, 6); // $8.16 per purchase, in cents
   });
 
   // ── Optional campaign scope (?campaignId=) ──────────────────────────────────
