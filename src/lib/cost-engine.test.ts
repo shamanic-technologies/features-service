@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { observedCostPerOutcome, projectedCostPerOutcome, flooredCostPerOutcome } from "./cost-engine.js";
+import {
+  observedCostPerOutcome,
+  projectedCostPerOutcome,
+  flooredCostPerOutcome,
+  derivedCostPerOutcome,
+} from "./cost-engine.js";
 
 describe("cost-engine — observedCostPerOutcome (accounting: real, null on 0)", () => {
   it("real ratio when spend and outcomes present", () => {
@@ -73,5 +78,42 @@ describe("cost-engine — flooredCostPerOutcome (display: floored on spend, null
   it("0 spend AND 0 outcomes → null (genuinely nothing to report), even with a parent", () => {
     expect(flooredCostPerOutcome(0, 0, null)).toBeNull();
     expect(flooredCostPerOutcome(0, 0, 30)).toBeNull();
+  });
+});
+
+describe("cost-engine — derivedCostPerOutcome (display, FUNNEL columns: evidence before spend)", () => {
+  // The prod bug (2026-07-29): an audience with $23.16 of spend, 3 observed clicks and 0 form
+  // submissions displayed $23.16 as its cost PER FORM SUBMISSION — a raw dollar total answering a
+  // per-outcome question, with its 3 clicks thrown away. The funnel projection of its own resolved click
+  // cost is the evidence-grounded answer, and the one the Strategy surface resolves for it.
+  it("ZERO outcomes WITH observed clicks → the funnel projection, never the raw dollar total", () => {
+    expect(derivedCostPerOutcome(23.16, 0, 11.24, 15.55)).toBe(11.24);
+    expect(derivedCostPerOutcome(23.16, 0, 11.24, 15.55)).not.toBe(23.16);
+  });
+
+  it("ZERO outcomes with NO projection (cold start: no economics) → the raw cascade floor", () => {
+    // Only legitimate use of a raw dollar total: there is no funnel to project through, so nothing on the
+    // projection surface to be coherent with either.
+    expect(derivedCostPerOutcome(23.16, 0, null, 15.55)).toBe(23.16); // own spend wins above the parent
+    expect(derivedCostPerOutcome(5, 0, null, 15.55)).toBe(15.55); // below the parent → the parent
+    expect(derivedCostPerOutcome(5, 0, null, null)).toBe(5); // no parent → own spend (base case)
+  });
+
+  it("outcome OBSERVED → the real measured ratio; projection and parent are ignored", () => {
+    expect(derivedCostPerOutcome(100, 4, 11.24, 15.55)).toBe(25);
+  });
+
+  it("0 spend AND 0 outcomes → null, even with a projection (never fabricate on absent input)", () => {
+    expect(derivedCostPerOutcome(0, 0, 11.24, 15.55)).toBeNull();
+    expect(derivedCostPerOutcome(0, 0, null, null)).toBeNull();
+  });
+
+  it("0 spend but outcomes present (cost un-attributed) → the projection, else null (no false $0)", () => {
+    expect(derivedCostPerOutcome(0, 4, 11.24, 15.55)).toBe(11.24);
+    expect(derivedCostPerOutcome(0, 4, null, null)).toBeNull();
+  });
+
+  it("a non-positive projection is not a value — falls through to the cascade floor", () => {
+    expect(derivedCostPerOutcome(23.16, 0, 0, 15.55)).toBe(23.16);
   });
 });

@@ -5,7 +5,7 @@ import { features } from "../db/schema.js";
 import { AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, type AudienceFilters, type AudienceStatus } from "./human-client.js";
-import { flooredCostPerOutcome } from "./cost-engine.js";
+import { flooredCostPerOutcome, derivedCostPerOutcome } from "./cost-engine.js";
 import { fetchBrandProjectedParents } from "./audience-stats-brand-projection.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
@@ -65,26 +65,35 @@ export interface AudienceStatsRow {
     filters: AudienceFilters | null;
   };
   evidence: AudienceCostEvidence & AudienceOutcomeEvidence;
-  // Every per-audience cost-per-outcome is FLOORED (`flooredCostPerOutcome`, audience → brand): a real
-  // observed ratio (spend / outcomes) when the audience has that outcome; else max(audience spend, the
-  // FLEET-BACKED projected cost-per-outcome for this brand+goal) — the SAME cross-org → brand cascade that
-  // `workflow-projection.resolved` produces (fleet benchmark cascaded with the brand's effective
-  // economics), NOT a brand-own raw-spend aggregate. So a 0-outcome audience with spend shows the identical
-  // number the Strategy page shows, never a raw tiny-spend value below the fleet projection, never null.
-  // null ONLY when the cell is truly empty (0 spend AND 0 outcomes). Coherent across all five columns → the
-  // dashboard renders the server value directly (no client-side spend fallback). NET floors on the frozen
-  // net basis (the fleet cost is read net too).
+  // Every per-audience cost-per-outcome is a real observed ratio (spend / outcomes) when the audience has
+  // that outcome, and null ONLY when the cell is truly empty (0 spend AND 0 outcomes). At 0 outcomes the
+  // two column families differ by what their outcome IS:
+  //   • RAW (cpc / cppr) — the click or the reply IS the outcome, so a raw dollar total is a sound lower
+  //     bound: FLOORED (`flooredCostPerOutcome`, audience → brand) = max(audience spend, the FLEET-BACKED
+  //     projected cost for this brand+goal — the cross-org → brand cascade `workflow-projection.resolved`
+  //     produces, NOT a brand-own raw-spend aggregate).
+  //   • DERIVED / funnel (cpfs / cps / cpsale) — the outcome is reached THROUGH an observed website visit
+  //     at the brand's conversion rate, so a raw dollar total would be a units error AND would discard the
+  //     clicks the audience did observe: DERIVED (`derivedCostPerOutcome`) = this audience's own send-tag
+  //     unit costs (cascade-floored against the winning workflow's brand-level row) pushed through the
+  //     funnel — byte-for-byte the number `workflow-projection` resolves for the same (audience × winning
+  //     workflow) row.
+  // Either way a 0-outcome audience with spend shows the identical number the Strategy page shows, never a
+  // raw tiny-spend value below the fleet projection, never null. The dashboard renders the server value
+  // directly (no client-side spend fallback). NET floors on the frozen net basis (the fleet cost is read
+  // net too).
   metrics: {
     cpcCents: number | null;
     cpprCents: number | null;
-    // Cost per form submission — FLOORED (audience → brand). null (not present) for any goal other than
-    // form_submissions or when the conversion emails weren't served. Not part of the ranking (ranks on cpc).
+    // Cost per form submission — DERIVED (funnel projection of this audience's own click cost). null (not
+    // present) for any goal other than form_submissions or when the conversion emails weren't served. Not
+    // part of the ranking (ranks on cpc).
     cpfsCents: number | null;
-    // Cost per signup — FLOORED (audience → brand). null for any goal other than signup or when the signup
-    // conversion emails weren't served. Not part of the ranking (signup ranks on cpc, visit-driven).
+    // Cost per signup — DERIVED. null for any goal other than signup or when the signup conversion emails
+    // weren't served. Not part of the ranking (signup ranks on cpc, visit-driven).
     cpsCents: number | null;
-    // Cost per sale — FLOORED (audience → brand). null for any goal other than websitePurchase / sales or
-    // when the sale conversion emails weren't served. Not part of the ranking (both goals rank on cppr).
+    // Cost per sale — DERIVED. null for any goal other than websitePurchase / sales or when the sale
+    // conversion emails weren't served. Not part of the ranking (both goals rank on cppr).
     cpsaleCents: number | null;
   };
 }
@@ -546,7 +555,14 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
     // the brand's effective economics), NOT a brand-own raw-spend aggregate. So a 0-outcome audience's
     // floor bottoms out at the identical number the Strategy page shows. Brand-wide (NOT campaign-scoped —
     // the fleet benchmark is campaign-agnostic); same gross/net basis as the rest of the payload.
-    fetchBrandProjectedParents(brandId, featureSlug, normalizedGoal, identity, pricing),
+    fetchBrandProjectedParents(
+      brandId,
+      featureSlug,
+      normalizedGoal,
+      identity,
+      pricing,
+      audiences.map((audience) => audience.id),
+    ),
   ]);
   const membership = membershipResult.perAudience;
   const engagement = engagementResult.perAudience;
@@ -573,6 +589,9 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
     if (!audience) continue;
 
     const cost = costs.get(audienceId) ?? emptyCost();
+    // This audience's FUNNEL projection under the goal's winning workflow (absent when it has no send-tag
+    // evidence there → the derived columns inherit the brand-level projection).
+    const audienceProjected = brandProjected.byAudience.get(audienceId) ?? null;
     // Merge: memberCount + conversions (membership) with contacted/opened/clicks/replies (send-tag), so the
     // engagement counts share the cost's send-tag basis while memberCount/conversions keep membership.
     const member = membership.get(audienceId) ?? emptyOutcomes();
@@ -597,32 +616,58 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
         ...cost,
         ...outcome,
       },
-      // FLOORED engine (dashboard DISPLAY default, one rule for EVERY per-audience cost-per-outcome so
-      // the goal's cost columns are coherent): a real observed ratio when the audience has that outcome;
-      // else the cascade floor max(audience cost, brand parent) — never below the brand-level cost, never
-      // a raw tiny-spend value; NULL only when the cell is truly empty (0 spend AND 0 outcomes). An
-      // audience WITH the outcome is unchanged (parent ignored). Same net/gross basis as the whole payload
-      // (cost cents were already selected per `pricing`), so net floors on net by construction.
+      // TWO display engines, split by what the column's outcome IS.
+      //
+      // RAW columns (cost per website visit / positive reply) — the driving outcome IS the outcome, so a
+      // raw dollar total is a sound lower bound: FLOORED engine. A real observed ratio when the audience
+      // has that outcome; else the cascade floor max(audience cost, brand parent) — never below the
+      // brand-level cost, never a raw tiny-spend value; NULL only when the cell is truly empty.
+      //
+      // DERIVED funnel columns (form submission / signup / sale) — the outcome is reached THROUGH an
+      // observed website visit at the brand's conversion rate, so flooring them on a raw dollar total is a
+      // units error that also DISCARDS the clicks the audience did observe: DERIVED engine. At 0 outcomes
+      // they take this audience's funnel projection under the goal's winning workflow — its own send-tag
+      // unit costs cascade-floored against that workflow's brand-level row, i.e. exactly what
+      // workflow-projection resolves for the same (audience × winning workflow) row, so the Audiences
+      // table and the Strategy page never disagree. An audience with no evidence on the winner inherits
+      // the brand-level projection (the same fallback `resolvePick` makes).
+      //
+      // Both engines keep the same net/gross basis as the whole payload (cost cents were already selected
+      // per `pricing`), so net floors on net by construction.
       metrics: {
         cpcCents: flooredCostPerOutcome(cost.totalCostInUsdCents, outcome.websiteClicks, brandParentCpc),
         cpprCents: flooredCostPerOutcome(cost.totalCostInUsdCents, outcome.positiveReplies, brandParentCppr),
-        // Present ONLY for the form_submissions goal (absent → null); floors audience→brand exactly like
-        // cpc/cppr. null when the cell is truly empty (0 spend AND 0 form submissions) — never a false $0.
+        // Present ONLY for the form_submissions goal (absent → null). null when the cell is truly empty
+        // (0 spend AND 0 form submissions) — never a false $0.
         cpfsCents:
           outcome.formSubmissions !== undefined
-            ? flooredCostPerOutcome(cost.totalCostInUsdCents, outcome.formSubmissions, brandParentCpfs)
+            ? derivedCostPerOutcome(
+                cost.totalCostInUsdCents,
+                outcome.formSubmissions,
+                usdToCents(audienceProjected?.cpfsUsd ?? brandProjected.cpfsUsd),
+                brandParentCpfs,
+              )
             : null,
-        // Present ONLY for the signup goal; floors audience→brand. null when truly empty (0 spend AND 0
-        // signups) — never a false $0.
+        // Present ONLY for the signup goal. null when truly empty (0 spend AND 0 signups).
         cpsCents:
           outcome.signups !== undefined
-            ? flooredCostPerOutcome(cost.totalCostInUsdCents, outcome.signups, brandParentCps)
+            ? derivedCostPerOutcome(
+                cost.totalCostInUsdCents,
+                outcome.signups,
+                usdToCents(audienceProjected?.cpsUsd ?? brandProjected.cpsUsd),
+                brandParentCps,
+              )
             : null,
-        // Present ONLY for the website-purchase / combined-sales goals; floors audience→brand. null when
-        // truly empty (0 spend AND 0 sales) — never a false $0.
+        // Present ONLY for the website-purchase / combined-sales goals. null when truly empty (0 spend
+        // AND 0 sales).
         cpsaleCents:
           outcome.sales !== undefined
-            ? flooredCostPerOutcome(cost.totalCostInUsdCents, outcome.sales, brandParentCpsale)
+            ? derivedCostPerOutcome(
+                cost.totalCostInUsdCents,
+                outcome.sales,
+                usdToCents(audienceProjected?.cpsaleUsd ?? brandProjected.cpsaleUsd),
+                brandParentCpsale,
+              )
             : null,
       },
     });
