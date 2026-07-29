@@ -31,24 +31,28 @@
  *   - Version chains collapse first (`buildUpgradeChains` + `aggregateAcrossChains`, the SAME rollup
  *     crossOrg/brand use in workflow-projection) so a dynasty's versions are one workflow, not several.
  *
- * Having picked the winner, the module continues the SAME ladder ONE grain finer and returns, per
- * audience, that workflow's FUNNEL costs at the AUDIENCE grain (`byAudience`) — the value every DERIVED
- * column (form submission / signup / sale) takes at 0 outcomes:
- *   - The audience's own per-(audience × winning dynasty) send-tag evidence runs through the SAME
- *     `grainUnitCosts` cascade, floored against the winner's brand-level unit costs, then through
- *     `projectOutcomeCosts` — byte-for-byte what `resolvePick` resolves for that row, so the Audiences
- *     table and the Strategy page report ONE number for one concept.
- *   - An audience with no send-tag evidence on the winner is absent from the map and inherits the
- *     brand-level fields, the same audience → brand fallback `resolvePick` makes.
+ * The module ALSO returns, per audience, that audience's FUNNEL costs at the AUDIENCE grain
+ * (`byAudience`) — the value every DERIVED column (form submission / signup / sale) takes at 0 outcomes.
+ * This half mirrors a DIFFERENT consumer rule and must not be conflated with the brand-level pick above:
+ * the Strategy page's per-audience table (`strategy-model.ts pickAudienceOrBrandRow` →
+ * `pickAudienceGrainRow`) is **WORKFLOW-AGNOSTIC** — among ALL of an audience's rows whose RESOLVED GRAIN
+ * is "audience", it renders the one with the lowest `resolved.costPerClickUsd`. So:
+ *   - Candidates are the dynasties where the audience has send-tag spend AND MEASURED the goal's driving
+ *     outcome (`grainHasObservedOutcome`) — `resolvePick` labels a 0-outcome audience block
+ *     `brand`/`crossOrg`, so those rows are not candidates on the dashboard and must not be here either.
+ *   - The min is taken on the resolved CLICK cost, then that ONE row's unit costs feed the funnel.
+ *   - Do NOT key this to the brand-level winner: an audience that mostly ran a DIFFERENT workflow is
+ *     rendered on that other workflow's row (prod: the CEO audience renders `pelican` at $3.035/click =
+ *     $12.14 per form submission, where the brand-best row says $13.49).
+ *   - An audience with NO measured audience grain anywhere is ABSENT from the map — it has observed none
+ *     of the driving outcome, which is exactly the regime where a raw dollar total IS the legitimate
+ *     answer, so the caller falls through to `flooredCostPerOutcome`'s `max(own spend, parent)`.
  *
- * Why the derived columns can NOT floor on the audience's raw dollar total (the bug this fixes): a raw
- * total is a sound lower bound only for a RAW column, where the driving outcome IS the outcome. Answering
- * "cost per form submission" with a total spend is a units error, and it discards the clicks the audience
- * did observe — prod showed three audiences whose cost-per-form-submission equalled their own net spend to
- * the cent while the Strategy page priced the same audiences 2-4x lower. The RAW columns (cpc / cppr) keep
- * the plain `max(audience spend, this parent)` floor, and the "own spend wins above the benchmark" rule
- * survives on the derived columns too — one grain down, inside `grainUnitCosts`, where a 0-click audience
- * grain floors its click to `max(own spend, parent)` before the funnel converts it into a per-outcome cost.
+ * Why a derived column can NOT floor on the raw dollar total once the audience HAS clicks (the bug this
+ * fixes): a raw total is a sound lower bound only for a RAW column, where the driving outcome IS the
+ * outcome. Answering "cost per form submission" with a total spend is a units error, and it discards the
+ * clicks the audience did observe — prod showed three audiences whose cost-per-form-submission equalled
+ * their own net spend to the cent while the Strategy page priced the same audiences 2-4x lower.
  *
  * null per column when the driving input is absent (no eligible workflow, or no economics for the
  * goal-projected columns) → the derived columns then degrade to the raw cascade floor (never a fabricated
@@ -308,18 +312,43 @@ export async function fetchBrandProjectedParents(
   };
   const brandLevel = funnelCosts(bestUnits);
 
-  // Continue the SAME ladder ONE grain finer, for the winning dynasty only: an audience with send-tag
-  // evidence on that dynasty resolves at its OWN unit costs, cascade-floored against the brand-level
-  // winner (`grainUnitCosts` = `buildGrainBlock`'s unit costs), then pushed through the SAME funnel. That
-  // is byte-for-byte `resolvePick`'s NUMBER selection for the (audience × winning dynasty) row, so the
-  // Audiences table and the Strategy page report the identical number. An audience with no evidence on
-  // the winner is absent here and inherits the brand-level fields — again mirroring `resolvePick`, which
-  // falls back to the brand grain when the audience grain has no spend.
+  // Continue the SAME ladder ONE grain finer — and pick the audience's row the way the Strategy page's
+  // per-audience table does (`strategy-model.ts pickAudienceGrainRow`), which is WORKFLOW-AGNOSTIC:
+  // among ALL of this audience's rows whose RESOLVED GRAIN is "audience", the one with the lowest
+  // `resolved.costPerClickUsd`. Two conditions come straight from that consumer:
+  //   - grain "audience" means the audience block exists (spend > 0) AND it MEASURED the goal's driving
+  //     outcome — `resolvePick` labels a 0-outcome audience block `brand`/`crossOrg`, so those rows are
+  //     not candidates there and must not be here either.
+  //   - the min is taken on the resolved CLICK cost (the dashboard's stable tie-break), then that ONE
+  //     row's unit costs feed the funnel — never a per-column blend.
+  // Do NOT lock this to the brand-level winner: an audience that mostly ran a DIFFERENT workflow is
+  // rendered on that other workflow's row, so keying on the winner reports a number the customer never
+  // sees (prod: the CEO audience renders `pelican` at $3.035/click = $12.14 per form submission, while
+  // the brand-best row would say $13.49 and `recommendedWorkflowDynastySlug` $23.08).
+  // An audience with NO measured audience grain anywhere is absent here and inherits the brand-level
+  // fields — mirroring `pickAudienceOrBrandRow`'s fallback to the best workflow's brand row.
   const byAudience = new Map<string, AudienceProjectedCostsUsd>();
   for (const ev of audienceGrain) {
-    const audEv = ev.byDynasty.get(best.dynastySlug);
-    if (!audEv || audEv.totalCostInUsdCents <= 0) continue;
-    const { cpfsUsd, cpsUsd, cpsaleUsd } = funnelCosts(grainUnitCosts(audEv, bestUnits));
+    let audienceUnits: DynastyUnitCosts | null = null;
+    for (const dynasty of perDynasty) {
+      const audEv = ev.byDynasty.get(dynasty.dynastySlug);
+      if (!audEv || audEv.totalCostInUsdCents <= 0) continue;
+      const measured = grainHasObservedOutcome(
+        {
+          spentUsd: audEv.totalCostInUsdCents / 100,
+          observedContacted: audEv.contacted,
+          observedClicks: audEv.clicks,
+          observedPositiveReplies: audEv.replies,
+        },
+        objective,
+        singleStepGoal,
+      );
+      if (!measured) continue;
+      const units = grainUnitCosts(audEv, dynasty.unitCosts);
+      if (audienceUnits == null || units.clickUsd < audienceUnits.clickUsd) audienceUnits = units;
+    }
+    if (!audienceUnits) continue;
+    const { cpfsUsd, cpsUsd, cpsaleUsd } = funnelCosts(audienceUnits);
     byAudience.set(ev.audienceId, { cpfsUsd, cpsUsd, cpsaleUsd });
   }
 
