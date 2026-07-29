@@ -60,6 +60,8 @@ const ECONOMICS = {
   signupToPaidClientPct: 40,
   visitToPaidClientPct: 20,
   replyToPaidClientPct: 50,
+  visitToFormSubmissionPct: 25,
+  formSubmissionToPaidClientPct: 20,
 };
 
 function json(body: unknown): Response {
@@ -142,8 +144,12 @@ const FLEET_GOAL_BEATS_CLICKS: Fleet = {
 };
 
 let fleet: Fleet = FLEET_CHEAPEST_CLICK;
-/** The workflow the audience's own 50¢ of spend is attributed to (workflow-projection audience grain). */
+/** The workflow the audience's own spend is attributed to (workflow-projection audience grain). */
 let audienceSpendSlug = "wf-cheap";
+/** The audience's own attributed spend, in cents — the SAME figure on both surfaces. */
+let audienceSpendCents = 50;
+/** The audience's own observed website clicks — the driving outcome of the funnel columns. */
+let audienceClicks = 0;
 
 function mockFetch(): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -160,10 +166,11 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     // Org-scoped runs cost, split by groupBy.
     if (url.includes("runs:3000/v1/stats/costs")) {
       const groupBy = params.get("groupBy") ?? "";
-      // audience-stats numerator: this audience carries 50¢ of attributed spend.
-      if (groupBy === "audienceId") return json({ groups: [costGroup({ audienceId: "audience-a" }, 50, 1)] });
-      // workflow-projection audience grain: the SAME 50¢, attributed to the workflow it ran under.
-      if (groupBy === "audienceId,workflowSlug") return json({ groups: [costGroup({ audienceId: "audience-a", workflowSlug: audienceSpendSlug }, 50, 1)] });
+      // audience-stats numerator: this audience's attributed spend.
+      if (groupBy === "audienceId") return json({ groups: [costGroup({ audienceId: "audience-a" }, audienceSpendCents, 1)] });
+      // workflow-projection audience grain: the SAME spend, attributed to the workflow it ran under.
+      if (groupBy === "audienceId,workflowSlug")
+        return json({ groups: [costGroup({ audienceId: "audience-a", workflowSlug: audienceSpendSlug }, audienceSpendCents, 1)] });
       // brand grain (groupBy=workflowSlug + brandId).
       return json({ groups: fleet.brandCosts ?? [] });
     }
@@ -171,11 +178,11 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     // Email-gateway org-scoped stats, split by the requested dimension.
     if (url.includes("email:3000/orgs/stats")) {
       const audienceId = params.get("audienceId");
-      // workflow-projection audience grain (per audience × workflow): contacted, ZERO outcomes.
-      if (audienceId) return json({ groups: [emailGroup(audienceSpendSlug, 0, 0, 10)] });
+      // workflow-projection audience grain (per audience × workflow): contacted + its own clicks.
+      if (audienceId) return json({ groups: [emailGroup(audienceSpendSlug, audienceClicks, 0, 10)] });
       const groupBy = params.get("groupBy") ?? "";
-      // audience-stats send-tag engagement (per audience): the SAME contacted / ZERO outcomes.
-      if (groupBy === "audienceId") return json({ groups: [emailGroup("audience-a", 0, 0, 10)] });
+      // audience-stats send-tag engagement (per audience): the SAME contacted + clicks, one basis.
+      if (groupBy === "audienceId") return json({ groups: [emailGroup("audience-a", audienceClicks, 0, 10)] });
       // workflow-projection brand grain.
       return json({ groups: fleet.brandEmail ?? [] });
     }
@@ -195,14 +202,19 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
 }
 
 /** The two surfaces' numbers for audience-a, driven by the SAME fixture. */
-async function bothSurfaces(goal: string, statsMetric: "cpcCents" | "cpsaleCents", projectionField: "costPerOutcomeUsd" | "costPerClickUsd") {
+async function bothSurfaces(
+  goal: string,
+  statsMetric: "cpcCents" | "cpsaleCents" | "cpfsCents",
+  projectionField: "costPerOutcomeUsd" | "costPerClickUsd",
+) {
   const stats = await request(app).get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=${goal}`).set(AUTH);
   expect(stats.status).toBe(200);
   const projection = await request(app).get(`/features/${FEATURE.slug}/workflow-projection?brandId=brand-1&goal=${goal}`).set(AUTH);
   expect(projection.status).toBe(200);
 
   const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
-  expect(row.evidence.websiteClicks).toBe(0);
+  // Both surfaces read the SAME send-tag click evidence for this audience.
+  expect(row.evidence.websiteClicks).toBe(audienceClicks);
 
   const recommendedSlug = projection.body.recommendedWorkflowDynastySlug;
   const projectionRow = projection.body.rows.find(
@@ -222,6 +234,8 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
     vi.mocked(db.query.features.findFirst).mockResolvedValue(FEATURE as any);
     fleet = FLEET_CHEAPEST_CLICK;
     audienceSpendSlug = "wf-cheap";
+    audienceSpendCents = 50;
+    audienceClicks = 0;
     fetchSpy = mockFetch();
   });
 
@@ -264,5 +278,53 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
     expect(statsUsd).toBe(projectionUsd);
     expect(statsUsd).toBe(3); // wf-b's $3.00 — NOT wf-a's cheaper $2.00 fleet rate, which this brand
     // has already overspent against ($5.00 with zero clicks).
+  });
+
+  // ── DERIVED (funnel) columns at zero outcomes ──────────────────────────────
+  // The prod regime (2026-07-29, brand 6e21bb6c…): three audiences with REAL observed clicks and ZERO
+  // form submissions each displayed their own raw net spend, to the cent, as their cost PER FORM
+  // SUBMISSION — a dollar total answering a per-outcome question, discarding the clicks they did observe.
+  describe("a DERIVED funnel column at 0 outcomes", () => {
+    beforeEach(() => {
+      // $40.00 attributed to wf-cheap, with 2 observed clicks and no form submission yet.
+      audienceSpendCents = 4000;
+      audienceClicks = 2;
+    });
+
+    it("is grounded in the audience's OWN observed clicks, and equals the Strategy projection", async () => {
+      const { recommendedSlug, statsUsd, projectionUsd } = await bothSurfaces("formSubmission", "cpfsCents", "costPerOutcomeUsd");
+
+      expect(recommendedSlug).toBe("wf-cheap");
+      // The invariant: one number for one concept across both surfaces.
+      expect(statsUsd).toBeCloseTo(projectionUsd, 9);
+      // …and it is this audience's own click cost ($40.00 / 2 = $20.00) carried through the brand's
+      // 25% visit→form rate, NOT the fleet benchmark ($2.00 / 25% = $8.00).
+      expect(statsUsd).toBe(80);
+    });
+
+    it("is NEVER the audience's raw dollar total while it has observed clicks", async () => {
+      const stats = await request(app).get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=formSubmission`).set(AUTH);
+      const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
+
+      expect(row.evidence.websiteClicks).toBe(2);
+      expect(row.evidence.formSubmissions).toBe(0);
+      expect(row.metrics.cpfsCents).not.toBe(row.evidence.totalCostInUsdCents); // the bug: $40.00 = $40.00
+      // The RAW column is untouched — there the click IS the outcome, so the measured ratio stands.
+      expect(row.metrics.cpcCents).toBe(2000); // $40.00 / 2 clicks
+      // Row-internal coherence: the funnel column is exactly the click column through the 25% rate.
+      expect(row.metrics.cpfsCents).toBe(row.metrics.cpcCents / 0.25);
+    });
+
+    it("still reports nothing for an audience with no spend and no clicks (never fabricated)", async () => {
+      audienceSpendCents = 0;
+      audienceClicks = 0;
+
+      const stats = await request(app).get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=formSubmission`).set(AUTH);
+      const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
+
+      expect(row.evidence.totalCostInUsdCents).toBe(0);
+      expect(row.evidence.websiteClicks).toBe(0);
+      expect(row.metrics.cpfsCents).toBeNull();
+    });
   });
 });

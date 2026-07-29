@@ -317,6 +317,11 @@ async function fetchAudienceDynastyOutcomes(
  * `slugToDynasty` maps each versioned `workflowSlug` → its dynasty slug — the SAME workflow metadata the
  * crossOrg/brand grains roll up through — so the audience's dynasty set aligns with the dynasty-keyed
  * crossOrg/brand rows. A slug absent from the map falls back to itself.
+ *
+ * `audienceIdsOverride` lets a caller that ALREADY holds the brand's audience list (e.g. /audience-stats,
+ * which fetched them by requested status) supply it, skipping the duplicate human-service round-trip —
+ * and, since that list may include paused/archived audiences, giving every row it will render its own
+ * grain rather than the coarser brand fallback. Omitted → the active audiences are fetched here.
  */
 export async function fetchAudienceGrainEvidence(
   brandId: string,
@@ -325,11 +330,11 @@ export async function fetchAudienceGrainEvidence(
   slugToDynasty: Map<string, string>,
   // NET reads runs#179's frozen net twin per audience group; GROSS reads the gross field → byte-identical.
   pricing: Pricing = "gross",
+  audienceIdsOverride?: string[],
 ): Promise<AudienceGrainEvidence[]> {
-  const audiences = await fetchActiveAudiences(brandId, identity);
-  if (audiences.length === 0) return [];
-  const activeIds = new Set(audiences.map((a) => a.id));
-  const audienceIds = audiences.map((a) => a.id);
+  const audienceIds = audienceIdsOverride ?? (await fetchActiveAudiences(brandId, identity)).map((a) => a.id);
+  if (audienceIds.length === 0) return [];
+  const activeIds = new Set(audienceIds);
 
   const [costByAudience, outcomeByAudience] = await Promise.all([
     fetchAudienceDynastyCosts(brandId, featureSlug, activeIds, identity, pricing, slugToDynasty),
