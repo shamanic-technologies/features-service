@@ -63,12 +63,16 @@ column would price off the cheapest-click workflow while the Strategy page shows
   `workflow-projection.ts` and shared, so it is the byte-same goal→cost routing workflow-projection ranks
   its rows on. The two surfaces can never crown a different workflow for the same goal. The winner is
   often NOT the cheapest-click workflow (purchases close through the reply channel too).
-- **Eligibility: a dynasty that OBSERVED none of the goal's driving outcome cannot win** — the shared
-  `grainHasObservedOutcome` (also exported), read on the COARSEST grain (crossOrg ⊇ brand; the brand grain
-  is routinely 0-outcome even for the winner, so gating on it would exclude everything). Load-bearing
-  because the cascade floor collapses a 0-outcome dynasty's unit costs to its own spend — a barely-spent
-  husk would otherwise be crowned cheapest (the husk trap `workflow-cost-per-outcome`'s consumers filter
-  on `observed>0` for).
+- **NO eligibility filter — EVERY dynasty competes, including one that has produced 0 of the goal's
+  outcome.** Standing product rule (Kevin, 2026-07-29): a workflow with no outcome still returns a real,
+  RANKABLE number — its cascade floor `max(spend, parent)` — and it ranks on equal footing. A
+  `grainHasObservedOutcome` gate lived here from v0.106.3 and was REMOVED in v0.107.5: the Strategy page's
+  `pickBestBrandRow` ranks those workflows, so gating them out HERE made the two surfaces crown different
+  workflows for the same brand+goal — which IS the incoherence (prod: this module crowned `arcadia` at
+  $64.11 with 1 observed reply while the dashboard crowned `dawn` at $61.73 with zero). Do NOT re-add the
+  filter to keep a barely-spent workflow from winning: the floor is the exploration device (it rises as
+  the workflow spends), and honesty lives on the LABEL — `resolvePick` still tags a floored row `crossOrg`
+  (benchmark), never "this brand's own results".
 - **Version chains collapse FIRST** via `buildUpgradeChains` + `aggregateAcrossChains` — the SAME rollup
   workflow-projection's crossOrg/brand grains use — so "a workflow" means one dynasty on both surfaces.
   Treating versioned slugs as independent workflows would corrupt the pick.
@@ -104,11 +108,12 @@ results". The number always exists (rankable, explorable); the label never lies 
 `audience-cost-coherence.test.ts` → "a workflow with ZERO of the goal's outcome still reports a rankable
 number, never null (exploration must not starve)".
 
-**Consequence — the two dashboard surfaces still disagree at that one spot, and the fix is NOT to gate this
-field.** `fetchBrandProjectedParents` keeps its own `grainHasObservedOutcome` filter (a deliberate v0.106.3
-decision with its own test), so it can crown a different workflow than the dashboard's ungated
-`pickBestBrandRow`. Closing that gap means aligning the PICK on one side, not nulling the shared ranking
-metric. Open — see the note in `/audience-stats` below.
+**The coherence fix went the OTHER way (v0.107.5): `fetchBrandProjectedParents` DROPPED its own
+`grainHasObservedOutcome` filter** so its argmin is byte-for-byte the dashboard's ungated
+`pickBestBrandRow`. Both surfaces now price an audience off the same cheapest workflow, floors included.
+The rule is one-directional and worth stating plainly: **align the PICK, never gate the shared ranking
+metric.** Gating the metric starves exploration fleet-wide; aligning the pick costs nothing and is what the
+customer actually sees.
 
 ### Verifying the coherence invariant at a SECOND goal — compare the COMPARABLE field, or you manufacture a false mismatch
 
