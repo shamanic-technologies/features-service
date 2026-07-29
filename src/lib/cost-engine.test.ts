@@ -75,9 +75,12 @@ describe("cost-engine — flooredCostPerOutcome (display: floored on spend, null
     expect(flooredCostPerOutcome(0, 4, null)).toBeNull();
   });
 
-  it("0 spend AND 0 outcomes → null (genuinely nothing to report), even with a parent", () => {
+  it("0 spend AND 0 outcomes → the parent benchmark (same as its barely-started siblings); null only with no parent", () => {
+    // Never-started is not a distinct regime from barely-started: both are un-evidenced and both floor to
+    // the benchmark. Showing one the parent and the other "-" is the "three priced, one blank" split for
+    // four equally unstarted audiences — and the Strategy page shows all four the same benchmark row.
+    expect(flooredCostPerOutcome(0, 0, 30)).toBe(30);
     expect(flooredCostPerOutcome(0, 0, null)).toBeNull();
-    expect(flooredCostPerOutcome(0, 0, 30)).toBeNull();
   });
 });
 
@@ -103,9 +106,13 @@ describe("cost-engine — derivedCostPerOutcome (display, FUNNEL columns: eviden
     expect(derivedCostPerOutcome(100, 4, 11.24, 15.55)).toBe(25);
   });
 
-  it("0 spend AND 0 outcomes → null, even with a projection (never fabricate on absent input)", () => {
-    expect(derivedCostPerOutcome(0, 0, 11.24, 15.55)).toBeNull();
-    expect(derivedCostPerOutcome(0, 0, null, null)).toBeNull();
+  it("0 spend AND 0 outcomes → the SAME projection its barely-started siblings get, null only with nothing to fall back on", () => {
+    // An unstarted audience and one that spent a few cents are equally un-evidenced. Blanking only the
+    // unstarted one splits equally-unstarted audiences into "priced" and "-", while the Strategy page
+    // shows every one of them the same benchmark row.
+    expect(derivedCostPerOutcome(0, 0, 11.24, 15.55)).toBe(11.24);
+    expect(derivedCostPerOutcome(0, 0, null, 15.55)).toBe(15.55); // no projection → the raw parent
+    expect(derivedCostPerOutcome(0, 0, null, null)).toBeNull(); // nothing to fall back on → "-"
   });
 
   it("0 spend but outcomes present (cost un-attributed) → the projection, else null (no false $0)", () => {

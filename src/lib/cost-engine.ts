@@ -64,8 +64,16 @@ export function projectedCostPerOutcome(
  *   - otherwise                  → the cascade floor `max(spentUsd, parentCost)` — a 0-outcome grain
  *                                  with spend never looks artificially free, and never dips below the
  *                                  coarser grain's cost — BUT `null` when that floor is 0 (no spend AND
- *                                  no positive parent), so a zero-evidence cell renders "-", never a
- *                                  false $0 nor a fabricated parent value.
+ *                                  no positive parent), so a cell with NOTHING to fall back on renders
+ *                                  "-", never a false $0.
+ *
+ * A grain with NO spend and NO outcome is NOT a special case: it takes the same `max(spend, parent)` =
+ * `parentCost` its already-started siblings floor to. An UNSTARTED audience and an audience that spent a
+ * few cents are equally un-evidenced, so showing one the benchmark and the other "-" splits four equally
+ * unstarted audiences into "three priced, one blank" — while the Strategy page (whose per-audience row
+ * falls back to the best workflow's brand row for exactly these audiences) shows ALL of them the same
+ * benchmark. The parent is that benchmark, not a fabrication; when there is no parent either, the floor
+ * is 0 and the cell still renders "-".
  *
  * Use it for a RAW column ONLY — one whose driving outcome IS the outcome (cost per website visit, cost
  * per positive reply). There the spend floor is sound: "$23.16 spent, 0 clicks → a click costs at least
@@ -89,12 +97,12 @@ export function flooredCostPerOutcome(
   observedCount: number,
   parentCost: number | null = null,
 ): number | null {
-  // Truly-empty cell: no spend AND no outcome → nothing to report (renders "-"), even with a parent.
-  if (spentUsd <= 0 && observedCount <= 0) return null;
   // Real observed ratio when BOTH are present.
   if (spentUsd > 0 && observedCount > 0) return spentUsd / observedCount;
-  // Cascade floor: 0-outcome-with-spend OR un-attributed-cost-with-outcomes → max(spend, parent). Guard a
-  // 0 floor (0 spend + outcomes but no parent) → null rather than a false $0.
+  // Cascade floor for EVERY un-evidenced cell — 0-outcome-with-spend, un-attributed-cost-with-outcomes,
+  // AND the never-started cell (spend 0, outcomes 0), which floors to the parent benchmark exactly like
+  // its barely-started siblings. Guard a 0 floor (nothing spent AND no positive parent) → null rather
+  // than a false $0.
   const floor = Math.max(spentUsd, parentCost ?? 0);
   return floor > 0 ? floor : null;
 }
@@ -111,14 +119,17 @@ export function flooredCostPerOutcome(
  * derived column takes, in order:
  *
  *   1. spend > 0 AND outcomes > 0   → the real OBSERVED ratio (spend / outcomes), same as every engine.
- *   2. spend <= 0 AND outcomes <= 0 → null (truly-empty cell, renders "-"; never a false $0).
- *   3. `funnelProjectionUsd`        → the funnel projection (`projectOutcomeCosts`) of the grain's
+ *   2. `funnelProjectionUsd`        → the funnel projection (`projectOutcomeCosts`) of the grain's
  *                                     RESOLVED driving unit cost — the grain's own observed evidence
  *                                     carried through the brand's economics. This is the evidence-grounded
  *                                     answer AND the number the projection surface resolves for the same
  *                                     grain, so the two surfaces agree by construction.
- *   4. otherwise (cold start — no economics, so no projection exists to be coherent with) → the cascade
+ *   3. otherwise (cold start — no economics, so no projection exists to be coherent with) → the cascade
  *      floor `max(spentUsd, parentCost)`, null when that floor is 0.
+ *
+ * A never-started grain (spend 0, outcomes 0) is NOT special-cased out: it takes the same brand-level
+ * projection its barely-started siblings take, so equally-unstarted audiences are priced alike on both
+ * surfaces. Only a grain with no projection AND no parent falls through to null.
  *
  * Preferring (3) does NOT lose the "already outspent the benchmark" protection: the driving unit cost fed
  * to `projectOutcomeCosts` is itself the cascade floor `max(own spend, parent)` when the grain observed 0
@@ -131,11 +142,10 @@ export function derivedCostPerOutcome(
   funnelProjectionUsd: number | null,
   parentCost: number | null = null,
 ): number | null {
-  // Truly-empty cell: no spend AND no outcome → nothing to report (renders "-"), even with a projection.
-  if (spentUsd <= 0 && observedCount <= 0) return null;
   // Real observed ratio when BOTH are present.
   if (spentUsd > 0 && observedCount > 0) return spentUsd / observedCount;
-  // Evidence-grounded funnel projection of this grain's resolved driving unit cost.
+  // Evidence-grounded funnel projection of this grain's resolved driving unit cost — including for a
+  // never-started grain, which is priced like its equally-unstarted siblings rather than blanked.
   if (funnelProjectionUsd != null && funnelProjectionUsd > 0) return funnelProjectionUsd;
   // Cold start only: no economics → no funnel to project through. Degrade to the raw cascade floor.
   const floor = Math.max(spentUsd, parentCost ?? 0);
