@@ -90,26 +90,55 @@ function emailGroup(key: string, clicked: number, repliesPositive: number, conta
 // POOLED across all three (the old parent) = 120,500¢ ÷ 150 clicks = $8.03 — ~4x the best workflow.
 // This brand ran nothing of its own (no brand-grain spend) and its single audience has 0 clicks with a
 // 50¢ attributed spend — below the parent — so BOTH surfaces must report the parent verbatim.
-const FLEET_WORKFLOWS = [workflow("wf-cheap"), workflow("wf-pricey"), workflow("wf-husk")];
-const FLEET_COSTS = [
-  costGroup({ workflowSlug: "wf-cheap" }, 20000),
-  costGroup({ workflowSlug: "wf-pricey" }, 100000),
-  costGroup({ workflowSlug: "wf-husk" }, 500),
-];
-const FLEET_EMAIL = [emailGroup("wf-cheap", 100, 40), emailGroup("wf-pricey", 50, 10), emailGroup("wf-husk", 0, 0)];
+interface Fleet {
+  workflows: Array<Record<string, unknown>>;
+  costs: Array<Record<string, unknown>>;
+  email: Array<Record<string, unknown>>;
+}
 
-const BEST_WORKFLOW_CPC_USD = 2; // wf-cheap: $200 / 100 clicks
+// Case A — a plain cheapest-click fleet:
+//   wf-cheap  $200 over 100 clicks →  $2.00 per website visit  ← the BEST workflow
+//   wf-pricey $1000 over 50 clicks → $20.00
+//   wf-husk   $5 over 0 clicks     → no observed outcome (ineligible)
+// POOLED across all three (the old parent) = 120,500¢ ÷ 150 clicks ≈ $8.03 — ~4x the best workflow.
+const FLEET_CHEAPEST_CLICK: Fleet = {
+  workflows: [workflow("wf-cheap"), workflow("wf-pricey"), workflow("wf-husk")],
+  costs: [
+    costGroup({ workflowSlug: "wf-cheap" }, 20000),
+    costGroup({ workflowSlug: "wf-pricey" }, 100000),
+    costGroup({ workflowSlug: "wf-husk" }, 500),
+  ],
+  email: [emailGroup("wf-cheap", 100, 40), emailGroup("wf-pricey", 50, 10), emailGroup("wf-husk", 0, 0)],
+};
 const POOLED_CPC_USD = 120500 / 100 / 150; // the old cross-workflow pooled average ≈ $8.03
+
+// Case B — the best workflow for the GOAL is NOT the cheapest-click one:
+//   wf-cheap  $200 / 100 clicks / 0 replies   → click $2.00, cost-per-purchase $10.53
+//   wf-closer $400 / 100 clicks / 200 replies → click $4.00, reply $2.00, cost-per-purchase $8.16
+// The goal (website purchase) closes through BOTH channels, so wf-closer wins it despite pricier
+// clicks. Every column must then read wf-closer's unit costs — a per-column "best" would price clicks
+// off wf-cheap ($2.00) while the Strategy page shows wf-closer's $4.00.
+const FLEET_GOAL_BEATS_CLICKS: Fleet = {
+  workflows: [workflow("wf-cheap"), workflow("wf-closer")],
+  costs: [costGroup({ workflowSlug: "wf-cheap" }, 20000), costGroup({ workflowSlug: "wf-closer" }, 40000)],
+  email: [emailGroup("wf-cheap", 100, 0), emailGroup("wf-closer", 100, 200)],
+};
+
+let fleet: Fleet = FLEET_CHEAPEST_CLICK;
+/** The workflow the audience's own 50¢ of spend is attributed to (workflow-projection audience grain). */
+let audienceSpendSlug = "wf-cheap";
 
 function mockFetch(): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = urlOf(input);
     const params = new URL(url, "http://x").searchParams;
 
-    if (url.includes("workflow:3000/public/workflows")) return json({ workflows: FLEET_WORKFLOWS });
-    if (url.includes("runs:3000/v1/stats/public/costs")) return json({ groups: FLEET_COSTS });
-    if (url.includes("email:3000/public/stats")) return json({ groups: FLEET_EMAIL });
+    if (url.includes("workflow:3000/public/workflows")) return json({ workflows: fleet.workflows });
+    if (url.includes("runs:3000/v1/stats/public/costs")) return json({ groups: fleet.costs });
+    if (url.includes("email:3000/public/stats")) return json({ groups: fleet.email });
     if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    // Conversion tracker (purchase / sale goals): no converted lead → 0 conversions, not absent.
+    if (url.includes("lead:3000/internal/brands/brand-1/converted-lead-emails")) return json({ emails: [] });
 
     // Org-scoped runs cost, split by groupBy.
     if (url.includes("runs:3000/v1/stats/costs")) {
@@ -117,7 +146,7 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
       // audience-stats numerator: this audience carries 50¢ of attributed spend.
       if (groupBy === "audienceId") return json({ groups: [costGroup({ audienceId: "audience-a" }, 50, 1)] });
       // workflow-projection audience grain: the SAME 50¢, attributed to the workflow it ran under.
-      if (groupBy === "audienceId,workflowSlug") return json({ groups: [costGroup({ audienceId: "audience-a", workflowSlug: "wf-cheap" }, 50, 1)] });
+      if (groupBy === "audienceId,workflowSlug") return json({ groups: [costGroup({ audienceId: "audience-a", workflowSlug: audienceSpendSlug }, 50, 1)] });
       // brand grain (groupBy=workflowSlug + brandId): the brand has no own workflow-level spend.
       return json({ groups: [] });
     }
@@ -125,10 +154,10 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     // Email-gateway org-scoped stats, split by the requested dimension.
     if (url.includes("email:3000/orgs/stats")) {
       const audienceId = params.get("audienceId");
-      // workflow-projection audience grain (per audience × workflow): contacted, ZERO clicks.
-      if (audienceId) return json({ groups: [emailGroup("wf-cheap", 0, 0, 10)] });
+      // workflow-projection audience grain (per audience × workflow): contacted, ZERO outcomes.
+      if (audienceId) return json({ groups: [emailGroup(audienceSpendSlug, 0, 0, 10)] });
       const groupBy = params.get("groupBy") ?? "";
-      // audience-stats send-tag engagement (per audience): the SAME contacted / ZERO clicks.
+      // audience-stats send-tag engagement (per audience): the SAME contacted / ZERO outcomes.
       if (groupBy === "audienceId") return json({ groups: [emailGroup("audience-a", 0, 0, 10)] });
       // workflow-projection brand grain: nothing of its own.
       return json({ groups: [] });
@@ -148,11 +177,34 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
   });
 }
 
+/** The two surfaces' numbers for audience-a, driven by the SAME fixture. */
+async function bothSurfaces(goal: string, statsMetric: "cpcCents" | "cpsaleCents", projectionField: "costPerOutcomeUsd" | "costPerClickUsd") {
+  const stats = await request(app).get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=${goal}`).set(AUTH);
+  expect(stats.status).toBe(200);
+  const projection = await request(app).get(`/features/${FEATURE.slug}/workflow-projection?brandId=brand-1&goal=${goal}`).set(AUTH);
+  expect(projection.status).toBe(200);
+
+  const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
+  expect(row.evidence.websiteClicks).toBe(0);
+
+  const recommendedSlug = projection.body.recommendedWorkflowDynastySlug;
+  const projectionRow = projection.body.rows.find(
+    (r: any) => r.audienceId === "audience-a" && r.workflow.workflowDynastySlug === recommendedSlug,
+  );
+  return {
+    recommendedSlug,
+    statsUsd: row.metrics[statsMetric] / 100,
+    projectionUsd: projectionRow.resolved[projectionField],
+  };
+}
+
 describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(FEATURE as any);
+    fleet = FLEET_CHEAPEST_CLICK;
+    audienceSpendSlug = "wf-cheap";
     fetchSpy = mockFetch();
   });
 
@@ -162,32 +214,26 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
   });
 
   it("a 0-outcome audience whose own spend is below the parent reports the SAME cost on both surfaces", async () => {
-    const stats = await request(app)
-      .get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=websiteVisit`)
-      .set(AUTH);
-    expect(stats.status).toBe(200);
+    const { recommendedSlug, statsUsd, projectionUsd } = await bothSurfaces("websiteVisit", "cpcCents", "costPerOutcomeUsd");
 
-    const projection = await request(app)
-      .get(`/features/${FEATURE.slug}/workflow-projection?brandId=brand-1&goal=websiteVisit`)
-      .set(AUTH);
-    expect(projection.status).toBe(200);
-
-    // The Audiences table cell for this audience.
-    const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
-    expect(row.evidence.websiteClicks).toBe(0);
-    const audienceStatsCostUsd = row.metrics.cpcCents / 100;
-
-    // The Strategy page cell for the SAME audience: its row under the recommended workflow.
-    const recommendedSlug = projection.body.recommendedWorkflowDynastySlug;
-    const projectionRow = projection.body.rows.find(
-      (r: any) => r.audienceId === "audience-a" && r.workflow.workflowDynastySlug === recommendedSlug,
-    );
-    const projectionCostUsd = projectionRow.resolved.costPerOutcomeUsd;
-
-    expect(audienceStatsCostUsd).toBe(projectionCostUsd);
+    expect(statsUsd).toBe(projectionUsd);
     // …and that shared number is the BEST workflow's cost, not the cross-workflow pooled average.
-    expect(audienceStatsCostUsd).toBe(BEST_WORKFLOW_CPC_USD);
-    expect(audienceStatsCostUsd).not.toBeCloseTo(POOLED_CPC_USD, 2);
+    expect(statsUsd).toBe(2); // wf-cheap: $200 / 100 clicks
+    expect(statsUsd).not.toBeCloseTo(POOLED_CPC_USD, 2);
     expect(recommendedSlug).toBe("wf-cheap");
+  });
+
+  it("both surfaces agree on the workflow the GOAL picks, even when it is not the cheapest-click one", async () => {
+    fleet = FLEET_GOAL_BEATS_CLICKS;
+
+    // The goal's own metric (cost per purchase) matches…
+    const outcome = await bothSurfaces("websitePurchase", "cpsaleCents", "costPerOutcomeUsd");
+    expect(outcome.recommendedSlug).toBe("wf-closer");
+    expect(outcome.statsUsd).toBeCloseTo(outcome.projectionUsd, 9);
+
+    // …and so does the click column, because BOTH surfaces read the SAME single workflow's unit costs.
+    const click = await bothSurfaces("websitePurchase", "cpcCents", "costPerClickUsd");
+    expect(click.statsUsd).toBe(click.projectionUsd);
+    expect(click.statsUsd).toBe(4); // wf-closer's click cost, NOT wf-cheap's cheaper $2.00
   });
 });
