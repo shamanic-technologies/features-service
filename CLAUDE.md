@@ -381,6 +381,18 @@ cache-bypass query param (any caller could then stampede the fan-out), no consum
 (guessing at a producer's cache window). Economics is one cheap brand-service call; the fan-out it used
 to ride along with stays off the request path.
 
+**Verify on PROD, not staging — `workflow-service` has NO staging deployment.** Every features-service
+surface that fans out to it (`workflow-projection`, `audience-stats`, the `/public/stats/*` dynasty
+rollups) 502s on staging with `getaddrinfo ENOTFOUND workflow-service.railway.internal` — fail-loud
+working as designed, NOT a defect in your change. Confirm by probing an UNTOUCHED sibling endpoint
+(`audience-stats`) and reading `railway logs --service features-service --environment staging` for the
+ENOTFOUND before diagnosing your own diff. Same prod-only-dependency class as the accounts-audit balance
+path. Note `api.distribute.you` is Cloudflare-proxied: a `python-urllib` probe gets `403 error code 1010`
+(browser integrity check) — send a normal browser `User-Agent`; `api-staging.distribute.you` is not
+proxied. Both gateways accept `x-api-key: $ADMIN_DISTRIBUTE_API_KEY` + clean `x-org-id`/`x-user-id`
+(any UUID) for a foreign-org probe, which is the escape hatch from the api-registry `call_api` org
+mangling.
+
 **`WorkflowProjectionEvidence` MUST stay JSON-serializable** — the snapshot round-trips through a jsonb
 column, so the grain fetchers' `Map`s are flattened to entry arrays in the evidence and rebuilt in
 `projectFromEvidence`. A `Map` stored in jsonb deserializes as `{}` = a silent all-zero ladder. The
