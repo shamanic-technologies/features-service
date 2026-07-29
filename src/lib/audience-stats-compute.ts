@@ -73,15 +73,14 @@ export interface AudienceStatsRow {
   //     projected cost for this brand+goal — the cross-org → brand cascade `workflow-projection.resolved`
   //     produces, NOT a brand-own raw-spend aggregate).
   //   • DERIVED / funnel (cpfs / cps / cpsale) — the outcome is reached THROUGH an observed website visit
-  //     at the brand's conversion rate, so a raw dollar total would be a units error AND would discard the
-  //     clicks the audience did observe: DERIVED (`derivedCostPerOutcome`) = this audience's own send-tag
-  //     unit costs (cascade-floored against the winning workflow's brand-level row) pushed through the
-  //     funnel — byte-for-byte the number `workflow-projection` resolves for the same (audience × winning
-  //     workflow) row.
-  // Either way a 0-outcome audience with spend shows the identical number the Strategy page shows, never a
-  // raw tiny-spend value below the fleet projection, never null. The dashboard renders the server value
-  // directly (no client-side spend fallback). NET floors on the frozen net basis (the fleet cost is read
-  // net too).
+  //     at the brand's conversion rate. Once the audience HAS observed clicks, a raw dollar total would be
+  //     a units error AND would discard those clicks: DERIVED (`derivedCostPerOutcome`) = this audience's
+  //     own send-tag unit costs on the workflow the Strategy page renders it under (its lowest-click-cost
+  //     MEASURED audience grain), pushed through the funnel — the same number that page shows. An audience
+  //     that observed NO click anywhere has no such grain, and there the raw total IS the legitimate
+  //     answer, so it falls back to the plain `max(own spend, parent)` floor.
+  // The dashboard renders the server value directly (no client-side spend fallback). NET floors on the
+  // frozen net basis (the fleet cost is read net too).
   metrics: {
     cpcCents: number | null;
     cpprCents: number | null;
@@ -626,11 +625,11 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
       // DERIVED funnel columns (form submission / signup / sale) — the outcome is reached THROUGH an
       // observed website visit at the brand's conversion rate, so flooring them on a raw dollar total is a
       // units error that also DISCARDS the clicks the audience did observe: DERIVED engine. At 0 outcomes
-      // they take this audience's funnel projection under the goal's winning workflow — its own send-tag
-      // unit costs cascade-floored against that workflow's brand-level row, i.e. exactly what
-      // workflow-projection resolves for the same (audience × winning workflow) row, so the Audiences
-      // table and the Strategy page never disagree. An audience with no evidence on the winner inherits
-      // the brand-level projection (the same fallback `resolvePick` makes).
+      // they take this audience's funnel projection on the workflow the Strategy page renders it under
+      // (its lowest-click-cost MEASURED audience grain, workflow-agnostic — see the projection module), so
+      // the Audiences table and the Strategy page never disagree. An audience that observed NO click
+      // anywhere has no such grain → `null` projection → the engine falls back to the raw
+      // `max(own spend, parent)` floor, which is the legitimate answer in exactly that regime.
       //
       // Both engines keep the same net/gross basis as the whole payload (cost cents were already selected
       // per `pricing`), so net floors on net by construction.
@@ -644,7 +643,7 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
             ? derivedCostPerOutcome(
                 cost.totalCostInUsdCents,
                 outcome.formSubmissions,
-                usdToCents(audienceProjected?.cpfsUsd ?? brandProjected.cpfsUsd),
+                usdToCents(audienceProjected?.cpfsUsd ?? null),
                 brandParentCpfs,
               )
             : null,
@@ -654,7 +653,7 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
             ? derivedCostPerOutcome(
                 cost.totalCostInUsdCents,
                 outcome.signups,
-                usdToCents(audienceProjected?.cpsUsd ?? brandProjected.cpsUsd),
+                usdToCents(audienceProjected?.cpsUsd ?? null),
                 brandParentCps,
               )
             : null,
@@ -665,7 +664,7 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
             ? derivedCostPerOutcome(
                 cost.totalCostInUsdCents,
                 outcome.sales,
-                usdToCents(audienceProjected?.cpsaleUsd ?? brandProjected.cpsaleUsd),
+                usdToCents(audienceProjected?.cpsaleUsd ?? null),
                 brandParentCpsale,
               )
             : null,

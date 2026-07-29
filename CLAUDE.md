@@ -88,34 +88,50 @@ that ALSO discards the clicks the audience did observe. Those three now use **`d
 audience's FUNNEL PROJECTION → raw cascade floor only at cold start (no economics ⇒ no funnel, and
 nothing on either surface to be coherent with).
 
-The projection is `fetchBrandProjectedParents`'s `byAudience` map: having picked the goal's winning
-dynasty, the module continues the SAME ladder ONE grain finer — the audience's per-(audience × winning
-dynasty) send-tag evidence through `grainUnitCosts` (floored against that winner's brand-level unit
-costs), then `projectOutcomeCosts`. That is byte-for-byte `resolvePick`'s NUMBER selection for the
-`(audienceId, winning dynasty)` row, so the two surfaces report ONE number. An audience with no send-tag
-evidence on the winner is absent from the map and inherits the brand-level projection — the same
-audience → brand fallback `resolvePick` makes. `fetchAudienceGrainEvidence` now takes the caller's
-already-resolved audience ids, so this adds **zero** human-service round-trips and covers paused /
-archived rows too.
+The projection is `fetchBrandProjectedParents`'s `byAudience` map, and it mirrors the consumer that
+RENDERS the per-audience row — which is a DIFFERENT rule from the brand-level pick above. The Strategy
+page's per-audience table (`strategy-model.ts` `pickAudienceOrBrandRow` → `pickAudienceGrainRow`) is
+**WORKFLOW-AGNOSTIC**: among ALL of an audience's rows whose RESOLVED GRAIN is `"audience"`, it renders
+the one with the lowest `resolved.costPerClickUsd`. So `byAudience` takes, per audience, the dynasty
+where it has send-tag spend AND MEASURED the goal's driving outcome (`grainHasObservedOutcome` — a
+0-outcome audience block is labelled `brand`/`crossOrg` by `resolvePick`, so it is not a candidate on
+either side), lowest resolved click cost wins, and THAT row's unit costs feed the funnel.
+
+**Do NOT key this to the brand-level winner, and do NOT use `recommendedWorkflowDynastySlug`.** All three
+picks differ in prod, and only the workflow-agnostic one is what the customer sees. `pickBestBrandRow`
+carries the dashboard's own warning: `recommendedWorkflowDynastySlug` is a backend argmin that spans
+per-audience rows (it exists for campaign-service's per-run audience selection), so a single cheap 2-click
+audience row can crown a dynasty whose brand-level cost is bad. For the CEO Defense-Tech audience:
+**$12.14** (`pelican`, $3.035/click — rendered) vs $13.49 (`permafrost`, the brand-best) vs $23.08
+(`dawn`, `recommendedWorkflowDynastySlug`).
+
+**An audience that observed NO driving outcome anywhere is ABSENT from the map on purpose** — that is
+exactly the regime where a raw dollar total IS the legitimate answer, so `derivedCostPerOutcome` falls
+through to `max(own spend, parent)` and the anti-flattering protection is preserved intact (unchanged
+behaviour, covered by the pre-existing `audience-stats.test.ts` 0-click case).
+
+`fetchAudienceGrainEvidence` now takes the caller's already-resolved audience ids, so this adds **zero**
+human-service round-trips and covers paused / archived rows too.
 
 **The prod bug (2026-07-29, brand `6e21bb6c…`, goal formSubmission, net):** three audiences with real
 observed clicks and zero form submissions each displayed their own raw net spend, to the cent, as their
 cost per form submission — $23.16 / $33.19 / $45.23 — while the Strategy page priced the same audiences
-at $11.24 / $10.18 / $23.08 (2-4x apart). Both surfaces now read $11.24 / $10.18 / $23.08.
+at $11.24 / $10.18 / $12.14. Both surfaces now agree.
 
 **Tested invariant (`src/routes/audience-cost-coherence.test.ts`)**: driven by ONE downstream fixture,
-an audience gets the IDENTICAL number from `/audience-stats` `metrics.*Cents` and from
-`/workflow-projection` `rows[]` `resolved.*` on the recommended workflow — for a 0-outcome audience whose
-own spend is below the parent (goal metric AND click column), and for the 0-outcome-WITH-clicks funnel
-regime ($80 = its own $20 click cost through a 25% visit→form rate, not the $8 fleet benchmark and not
-its $40 raw spend). It fails on the pooled parent (8.03 vs 2.00), on a per-column blend ($2.00 vs $4.00
-click) and on the raw-spend floor (40 vs 80), so the agreement is by construction.
+an audience gets the IDENTICAL number from `/audience-stats` `metrics.*Cents` and from the row the
+Strategy page actually renders (the suite replicates `pickBestBrandRow` + `pickAudienceGrainRow` rather
+than reading whichever row is convenient) — for a 0-outcome audience whose own spend is below the parent
+(goal metric AND click column), for the 0-outcome-WITH-clicks funnel regime ($80 = its own $20 click cost
+through a 25% visit→form rate, not the $8 fleet benchmark and not its $40 raw spend), and for the
+multi-dynasty case where the audience's cheapest MEASURED leg is NOT the brand-best workflow ($6.00 on
+`wf-pricey`, not $80 on `wf-cheap`). It fails on the pooled parent (8.03 vs 2.00), on a per-column blend
+($2.00 vs $4.00 click) and on the raw-spend floor (40 vs 80), so the agreement is by construction.
 
-**The residual regime — own spend still wins above the benchmark, one grain down.** The rule did not go
-away, it moved to where the units are right: inside `grainUnitCosts`, a 0-click (audience × dynasty)
-grain floors its click to `max(own spend, parent)` BEFORE the funnel converts it into a per-outcome cost
-(`audience-stats.test.ts`: $30.00 spent, 0 clicks, v2s 20% → **$150.00 per signup**, not the $30.00 total
-and not the $10.00 benchmark). What DOES legitimately differ between the surfaces is the RAW columns:
+**The residual regime — own spend still wins above the benchmark.** An audience that observed NO driving
+outcome keeps the plain `max(own spend, parent)` floor on its derived columns too (it has no measured
+audience grain, so there is no projection to prefer) — unchanged behaviour, still covered by the
+pre-existing `audience-stats.test.ts` 0-click case. What DOES legitimately differ between the surfaces is the RAW columns:
 audience-stats sums an audience's spend across ALL workflows while workflow-projection splits it per
 dynasty, so an audience that outspent the benchmark shows its own (higher) spend on the Audiences table.
 That is the cascade behaving as documented, not a new incoherence.
