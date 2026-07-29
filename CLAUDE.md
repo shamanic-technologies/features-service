@@ -76,6 +76,47 @@ column would price off the cheapest-click workflow while the Strategy page shows
   cost-per-outcome either, so there is nothing to be coherent with — `cpc`/`cppr` fall back to the best
   eligible workflow's raw unit cost per channel and the goal-projected columns stay null.
 
+### The husk gate lives on `resolved.costPerOutcomeUsd` ITSELF — a workflow that never produced the goal's outcome is UNRANKABLE (null), not cheap
+
+`fetchBrandProjectedParents` has always gated its pick on `grainHasObservedOutcome`. `workflow-projection`
+did NOT: it reported the cascade floor `max(spend, parent)` as `resolved.costPerOutcomeUsd` for a workflow
+with ZERO of the goal's driving outcome. That number is a pure LOWER BOUND ("we spent $61.73 and got zero
+replies"), yet **every ranker in the fleet argmins on this one field** — the dashboard's `pickBestBrandRow`,
+this endpoint's own `recommendedWorkflowDynastySlug`, and campaign-service's `pickBestWorkflow`. So the
+cheapest HUSK won all three, permanently (a dormant workflow's bound never climbs), and it won against
+workflows that genuinely produce the outcome.
+
+**Prod (2026-07-29, brand `b97440f6…`, goal positiveReply, net):** `dawn` — 13 fleet clicks, **zero**
+positive replies ever — was crowned best at **$61.73**, so the Strategy page priced all four audiences off a
+workflow that has never produced a positive reply, while the Audiences table used `arcadia`'s MEASURED
+**$64.11**. Two prices, one audience, both labelled "fleet benchmark". `resolvePick` now nulls the goal
+metric when NO grain in the row's ladder observed the driving outcome, so both surfaces settle on the
+measured workflow. This is the SAME `observed>0` rule the landing's best-workflow pick and
+`fetchBrandProjectedParents` already apply — it was simply missing from the field they all rank on.
+
+- **Scope: the GOAL-ROUTED block only.** `costPerOutcomeUsd` plus the goal-chained `costPerPaidClientUsd`
+  and the `roiMultiple` / `cacPct` that are pure functions of it — a row must never pair "cost per outcome
+  unknown" with a confident ROI. `costPerClickUsd` and `costPerMeetingBookedUsd` are NOT goal-routed and
+  stay (dawn keeps its real $4.748 off 13 real clicks). Grains, evidence, and floors are untouched.
+- **Zero consumer change, no OpenAPI change.** All four fields were already `number | null`, and BOTH
+  rankers already document skipping a null metric as "no rankable economics" (campaign-service then falls
+  back to the default workflow). The gate is goal-specific, not a blanket exclusion: `dawn` is ineligible
+  for `positiveReply` (needs replies) but perfectly eligible for `meetingBooked`/`websitePurchase`, which
+  funnel from EITHER channel and so are satisfied by its clicks.
+- **When every workflow is a husk**, all rows null and both surfaces honestly show "-" rather than agreeing
+  on a fabricated winner.
+
+### An UNSTARTED audience is priced like its barely-started siblings — `flooredCostPerOutcome`/`derivedCostPerOutcome` no longer special-case the empty cell
+
+Both display engines used to return `null` for a 0-spend AND 0-outcome cell even when a positive parent
+existed. But the Strategy page ALWAYS has a row for such an audience (its per-audience pick falls back to
+the best workflow's brand row), so four equally-unstarted audiences rendered as "three priced, one blank" —
+the blank one reading as "no estimate available" beside siblings differing only by a few cents of spend.
+Never-started is not a distinct regime from barely-started: both are un-evidenced and both floor to the same
+benchmark. The engines now let the empty cell fall through to the normal `max(spend, parent)` / funnel
+projection (a pure DELETION of the guard); `null` survives only when there is genuinely nothing to fall back
+on — no parent and no projection — which is still the cold-start case that must never fabricate a value.
+
 ### A DERIVED (funnel) column at 0 outcomes takes the audience's own PROJECTION, NEVER its raw dollar total — `derivedCostPerOutcome`, per-(audience × winning workflow)
 
 Split the five cost columns by what their outcome IS. A **RAW** column (`cpcCents`, `cpprCents`) has the
@@ -249,23 +290,26 @@ never an inline `spent / count`. This keeps the 0-outcome decision homogeneous a
   = the same unit cost on the next COARSER grain (crossOrg → brand → audience), iterative; omit when the
   surface has no coarser grain → floor degrades to own spend (`max(spentUsd, 0)`), the cascade's base case.
 - **`flooredCostPerOutcome(spentUsd, observedCount, parentCost?) → number | null`** — the DISPLAY variant:
-  `projectedCostPerOutcome`'s floor when there IS spend, but an honest `null` for a truly-empty cell (0
-  spend AND 0 outcomes). Real ratio when both present; else `max(spentUsd, parentCost)` **unless** that floor
-  is 0 (0 spend, no positive parent) → `null` (never a false $0, never a fabricated parent value). Use where
-  the value is DISPLAYED and a coarser grain can back-stop it (audience → brand): a 0-outcome audience with
-  spend shows the brand-floored estimate (never a raw tiny-spend value below the brand cost, never null),
-  while an untouched audience shows nothing. This lets the dashboard render the server value directly (no
-  client-side spend fallback). Distinct from `projected` (never null — ranking) and `observed` (null on any
+  `projectedCostPerOutcome`'s floor, with an honest `null` ONLY when that floor is 0 (no spend AND no
+  positive parent — nothing to fall back on). Real ratio when both present; else `max(spentUsd, parentCost)`.
+  Use where the value is DISPLAYED and a coarser grain can back-stop it (audience → brand): a 0-outcome
+  audience with spend shows the brand-floored estimate (never a raw tiny-spend value below the brand cost,
+  never null), and an UNSTARTED audience (0 spend, 0 outcomes) shows that SAME parent — it is no less
+  evidenced than a sibling that spent a few cents, and the Strategy page shows it the same benchmark row, so
+  blanking it alone produced the "three priced, one blank" split. This lets the dashboard render the server
+  value directly (no client-side spend fallback). Distinct from `projected` (never null — ranking) and `observed` (null on any
   0 outcome — accounting). **RAW columns only** — one whose driving outcome IS the outcome (cost per
   website visit / positive reply). A FUNNEL column takes `derived` instead.
 - **`derivedCostPerOutcome(spentUsd, observedCount, funnelProjectionUsd, parentCost?) → number | null`** —
   the DISPLAY variant for a FUNNEL column, whose outcome is reached THROUGH an observed driving outcome at
   the brand's conversion rate (cost per form submission / signup / sale). A raw dollar TOTAL is a sound
   lower bound only for a RAW column; answering "cost per form submission" with a total spend is a units
-  error AND discards the clicks the grain observed. Order: real ratio when both present → `null` when
-  truly empty → `funnelProjectionUsd` (the grain's RESOLVED driving unit cost through
+  error AND discards the clicks the grain observed. Order: real ratio when both present →
+  `funnelProjectionUsd` (the grain's RESOLVED driving unit cost through
   `projectOutcomeCosts`, i.e. its own evidence AND the number the projection surface resolves for it) →
-  the raw cascade floor `max(spentUsd, parentCost)` only at cold start (no economics ⇒ no funnel). The
+  the raw cascade floor `max(spentUsd, parentCost)` only at cold start (no economics ⇒ no funnel), `null`
+  only when that floor is 0 too. An unstarted grain is NOT special-cased — same projection as its
+  barely-started siblings. The
   "already outspent the benchmark" protection is not lost: the driving unit cost fed to the funnel is
   itself `max(own spend, parent)` at 0 driving outcomes.
 
