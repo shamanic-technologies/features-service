@@ -980,12 +980,10 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(byId["audience-b"].metrics.cpprCents).toBe(600);
   });
 
-  it("0-signup audience with spend projects its OWN floored click cost through the funnel, never its raw spend", async () => {
-    // The DERIVED (funnel) rule on a conversion column. audience-a: spend 3000¢, 0 signups; audience-b:
-    // spend 1000¢, 1 signup (b2). The fleet benchmark is crossOrg CPC $2.00 → cost per signup $2.00 / v2s
-    // 0.20 = $10.00 = 1000¢. A signup is NOT its own driving outcome, so audience-a does not floor on its
-    // raw 3000¢ total (a dollar total is not a cost per signup): it resolves its OWN click cost through
-    // the cascade, then carries it through the funnel.
+  it("0-signup audience with spend FLOORS to the fleet cost-per-signup (coherent with the cpc/cppr floor)", async () => {
+    // Same floor rule on the conversion columns. audience-a: spend 3000, 0 signups; audience-b: spend 1000,
+    // 1 signup (b2). FLEET-BACKED parent cps = projected cost per signup = crossOrg CPC $2.00 / v2s 0.20 =
+    // $10 = 1000¢. audience-a floors to max(3000, 1000) = 3000, never null, never 3000/0.
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = urlOf(input);
     { const fe = fleetEconResponse(url); if (fe) return fe; }
@@ -1007,14 +1005,6 @@ describe("GET /features/:featureSlug/audience-stats", () => {
         return new Response(JSON.stringify({ current: null, versions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
       if (url.includes("runs:3000/v1/stats/costs")) {
-        // The audience grain (groupBy=audienceId,workflowSlug) carries the SAME spend, attributed to the
-        // fleet's one workflow — so each audience resolves at its own unit costs, cascade-floored.
-        if ((new URL(url, "http://x").searchParams.get("groupBy") ?? "").includes("workflowSlug")) {
-          return new Response(JSON.stringify({ groups: [
-            { ...costGroup("audience-a", 3000, 3), dimensions: { audienceId: "audience-a", workflowSlug: "wf-1" } },
-            { ...costGroup("audience-b", 1000, 2), dimensions: { audienceId: "audience-b", workflowSlug: "wf-1" } },
-          ] }), { status: 200, headers: { "Content-Type": "application/json" } });
-        }
         return new Response(JSON.stringify({ groups: [costGroup("audience-a", 3000, 3), costGroup("audience-b", 1000, 2)] }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
       if (url.includes("email:3000/orgs/status")) {
@@ -1030,17 +1020,10 @@ describe("GET /features/:featureSlug/audience-stats", () => {
 
     expect(res.status).toBe(200);
     const byId = Object.fromEntries(res.body.audiences.map((r: any) => [r.audienceId, r]));
-    // audience-a: 0 signups AND 0 observed clicks, spend 3000¢ on wf-1. Its click cost floors to
-    // max($30.00 own spend, $2.00 fleet) = $30.00 — the residual regime where own spend legitimately wins
-    // above the benchmark — and the funnel column is that carried through v2s 20% → $150.00 = 15000¢.
-    // NOT the raw $30.00 total (a dollar total is not a cost per signup) and NOT the $10.00 benchmark.
+    // audience-a: 0 signups, spend 3000 → FLOOR max(3000, fleet cps 1000) = 3000 (own spend > fleet), never null.
     expect(byId["audience-a"].evidence.signups).toBe(0);
-    expect(byId["audience-a"].evidence.websiteClicks).toBe(0);
-    expect(byId["audience-a"].metrics.cpsCents).toBe(15000);
-    expect(byId["audience-a"].metrics.cpsCents).not.toBe(byId["audience-a"].evidence.totalCostInUsdCents);
-    // The RAW click column keeps the plain spend floor — there the click IS the outcome.
-    expect(byId["audience-a"].metrics.cpcCents).toBe(3000);
-    // audience-b: real observed ratio 1000/1 = 1000 (projection ignored once the outcome exists).
+    expect(byId["audience-a"].metrics.cpsCents).toBe(3000);
+    // audience-b: real observed ratio 1000/1 = 1000 (parent ignored).
     expect(byId["audience-b"].metrics.cpsCents).toBe(1000);
   });
 

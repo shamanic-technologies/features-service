@@ -150,6 +150,18 @@ let audienceSpendSlug = "wf-cheap";
 let audienceSpendCents = 50;
 /** The audience's own observed website clicks — the driving outcome of the funnel columns. */
 let audienceClicks = 0;
+/** Per-(audience × dynasty) legs. Set to spread the audience's evidence over several workflows. */
+interface AudienceLeg {
+  slug: string;
+  cents: number;
+  clicks: number;
+}
+let audienceLegsOverride: AudienceLeg[] | null = null;
+/** The audience's legs — the single-workflow scalars unless a test spread them across dynasties. */
+function audienceLegs(): AudienceLeg[] {
+  return audienceLegsOverride ?? [{ slug: audienceSpendSlug, cents: audienceSpendCents, clicks: audienceClicks }];
+}
+const sumBy = (pick: (l: AudienceLeg) => number): number => audienceLegs().reduce((t, l) => t + pick(l), 0);
 
 function mockFetch(): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -166,11 +178,13 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     // Org-scoped runs cost, split by groupBy.
     if (url.includes("runs:3000/v1/stats/costs")) {
       const groupBy = params.get("groupBy") ?? "";
-      // audience-stats numerator: this audience's attributed spend.
-      if (groupBy === "audienceId") return json({ groups: [costGroup({ audienceId: "audience-a" }, audienceSpendCents, 1)] });
-      // workflow-projection audience grain: the SAME spend, attributed to the workflow it ran under.
+      // audience-stats numerator: this audience's attributed spend, summed over its legs.
+      if (groupBy === "audienceId") return json({ groups: [costGroup({ audienceId: "audience-a" }, sumBy((l) => l.cents), 1)] });
+      // workflow-projection audience grain: the SAME spend, split across the workflows it ran under.
       if (groupBy === "audienceId,workflowSlug")
-        return json({ groups: [costGroup({ audienceId: "audience-a", workflowSlug: audienceSpendSlug }, audienceSpendCents, 1)] });
+        return json({
+          groups: audienceLegs().map((l) => costGroup({ audienceId: "audience-a", workflowSlug: l.slug }, l.cents, 1)),
+        });
       // brand grain (groupBy=workflowSlug + brandId).
       return json({ groups: fleet.brandCosts ?? [] });
     }
@@ -178,11 +192,12 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     // Email-gateway org-scoped stats, split by the requested dimension.
     if (url.includes("email:3000/orgs/stats")) {
       const audienceId = params.get("audienceId");
-      // workflow-projection audience grain (per audience × workflow): contacted + its own clicks.
-      if (audienceId) return json({ groups: [emailGroup(audienceSpendSlug, audienceClicks, 0, 10)] });
+      // workflow-projection audience grain (per audience × workflow): contacted + clicks per leg.
+      if (audienceId) return json({ groups: audienceLegs().map((l) => emailGroup(l.slug, l.clicks, 0, 10)) });
       const groupBy = params.get("groupBy") ?? "";
-      // audience-stats send-tag engagement (per audience): the SAME contacted + clicks, one basis.
-      if (groupBy === "audienceId") return json({ groups: [emailGroup("audience-a", audienceClicks, 0, 10)] });
+      // audience-stats send-tag engagement (per audience): the SAME totals, one basis.
+      if (groupBy === "audienceId")
+        return json({ groups: [emailGroup("audience-a", sumBy((l) => l.clicks), 0, 10 * audienceLegs().length)] });
       // workflow-projection brand grain.
       return json({ groups: fleet.brandEmail ?? [] });
     }
@@ -214,17 +229,41 @@ async function bothSurfaces(
 
   const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
   // Both surfaces read the SAME send-tag click evidence for this audience.
-  expect(row.evidence.websiteClicks).toBe(audienceClicks);
+  expect(row.evidence.websiteClicks).toBe(sumBy((l) => l.clicks));
 
   const recommendedSlug = projection.body.recommendedWorkflowDynastySlug;
-  const projectionRow = projection.body.rows.find(
-    (r: any) => r.audienceId === "audience-a" && r.workflow.workflowDynastySlug === recommendedSlug,
-  );
   return {
     recommendedSlug,
     statsUsd: row.metrics[statsMetric] / 100,
-    projectionUsd: projectionRow.resolved[projectionField],
+    projectionUsd: strategyRowFor("audience-a", projection.body).resolved[projectionField],
   };
+}
+
+/**
+ * The row the Strategy page actually renders for an audience — mirroring the dashboard's
+ * `strategy-model.ts` (distribute.you) so this suite compares against what the customer SEES, not
+ * against whichever row is convenient:
+ *   - `pickBestBrandRow`: the headline workflow is the cheapest BRAND-LEVEL row on
+ *     `resolved.costPerOutcomeUsd` — deliberately NOT `recommendedWorkflowDynastySlug`, whose argmin
+ *     spans per-audience rows (it exists for campaign-service's per-run audience selection).
+ *   - `pickAudienceOrBrandRow` → `pickAudienceGrainRow`: WORKFLOW-AGNOSTIC — among ALL of this
+ *     audience's rows resolved at grain "audience", the lowest `resolved.costPerClickUsd`; falling back
+ *     to the headline workflow's brand-level row when the audience has no measured grain anywhere.
+ */
+function strategyRowFor(audienceId: string, body: any): any {
+  const brandRows = body.rows.filter((r: any) => r.audienceId == null);
+  const bestBrandRow = brandRows
+    .filter((r: any) => r.resolved.costPerOutcomeUsd != null && r.resolved.costPerOutcomeUsd > 0)
+    .sort((a: any, b: any) => a.resolved.costPerOutcomeUsd - b.resolved.costPerOutcomeUsd)[0];
+  const audienceGrainRows = body.rows
+    .filter((r: any) => r.audienceId === audienceId && r.resolved.grain === "audience")
+    .sort((a: any, b: any) => a.resolved.costPerClickUsd - b.resolved.costPerClickUsd);
+  return (
+    audienceGrainRows[0] ??
+    brandRows.find(
+      (r: any) => r.workflow.workflowDynastySlug === bestBrandRow?.workflow.workflowDynastySlug,
+    )
+  );
 }
 
 describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection", () => {
@@ -236,6 +275,7 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
     audienceSpendSlug = "wf-cheap";
     audienceSpendCents = 50;
     audienceClicks = 0;
+    audienceLegsOverride = null;
     fetchSpy = mockFetch();
   });
 
@@ -313,6 +353,23 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
       expect(row.metrics.cpcCents).toBe(2000); // $40.00 / 2 clicks
       // Row-internal coherence: the funnel column is exactly the click column through the 25% rate.
       expect(row.metrics.cpfsCents).toBe(row.metrics.cpcCents / 0.25);
+    });
+
+    it("follows the audience to the workflow it is actually rendered on, not the brand-best one", async () => {
+      // The prod shape (CEO Defense-Tech): the audience ran several workflows, and the Strategy table
+      // renders it on the one with its LOWEST resolved click cost — which is NOT the brand-best workflow.
+      //   wf-cheap  (brand-best, fleet $2.00/click): this audience spent $40.00 for 2 clicks → $20.00
+      //   wf-pricey (fleet $20.00/click):            this audience spent  $6.00 for 4 clicks →  $1.50  ← rendered
+      audienceLegsOverride = [
+        { slug: "wf-cheap", cents: 4000, clicks: 2 },
+        { slug: "wf-pricey", cents: 600, clicks: 4 },
+      ];
+
+      const { statsUsd, projectionUsd } = await bothSurfaces("formSubmission", "cpfsCents", "costPerOutcomeUsd");
+
+      expect(statsUsd).toBeCloseTo(projectionUsd, 9);
+      expect(statsUsd).toBe(6); // $1.50 / 25% — wf-pricey's leg, the row the customer sees
+      expect(statsUsd).not.toBe(80); // wf-cheap's leg ($20.00 / 25%), the brand-best workflow
     });
 
     it("still reports nothing for an audience with no spend and no clicks (never fabricated)", async () => {
