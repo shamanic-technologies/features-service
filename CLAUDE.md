@@ -47,28 +47,34 @@ and the Strategy page showed **two different prices for the same audience, same 
 moment** (prod: $8.33 vs $2.64 on brand `7604c385…`, a ~3x split, both audiences reading the parent
 verbatim because each had 0 clicks and own spend below it).
 
-**ONE workflow dynasty is picked and EVERY column reads ITS unit costs** — do NOT pick a different best
-workflow per column (that blends workflows and re-opens the incoherence: the click column would price off
-the cheapest-click workflow while the Strategy page shows the goal-winning workflow's click cost).
+`fetchBrandProjectedParents` **rebuilds workflow-projection's BRAND-LEVEL rows** (the `audienceId: null`
+ones the Strategy page ranks — `strategy-model.ts pickBestWorkflow` filters to them) and takes the goal's
+winner. **ONE dynasty is picked and EVERY column reads ITS resolved unit costs** — do NOT pick a different
+best workflow per column (that blends workflows and re-opens the incoherence one layer down: the click
+column would price off the cheapest-click workflow while the Strategy page shows the goal-winner's click).
 
+- **The full crossOrg → brand LADDER, not crossOrg alone.** Per dynasty: crossOrg unit costs, then the
+  brand grain floored against them (`projectedCostPerOutcome`, i.e. `max(own spend, parent)`), numbers
+  from the finest grain WITH SPEND — byte-for-byte `resolvePick`'s NUMBER selection. **The brand grain
+  routinely FLIPS the winner**: prod EmailToolsHub burned $4.16 on Osprey with 0 clicks, flooring its
+  click from the fleet $2.43 to $4.16 and handing websitePurchase to Pelican ($3.63/click, $273.65 per
+  purchase). A crossOrg-only parent crowned Osprey and disagreed with the Strategy page by ~30%.
 - **The pick is the goal's argmin, scored with `outcomeCostForGoal`** — now EXPORTED from
   `workflow-projection.ts` and shared, so it is the byte-same goal→cost routing workflow-projection ranks
-  its `recommended` row on. The two surfaces can never crown a different workflow for the same goal. Note
-  the goal's winner is often NOT the cheapest-click workflow: prod `sales-cold-email-outreach` /
-  websitePurchase picks Pelican ($3.63/click, $273.65/purchase) over Osprey ($2.43/click) because
-  purchases close through the reply channel too.
-- **Eligibility: a dynasty that OBSERVED none of the goal's driving outcome cannot win.** Its channel
-  unit cost is `null` (clicks / positive replies = 0) so `outcomeCostForGoal` scores it null. **No cascade
-  floor is applied at this grain**: flooring a 0-outcome dynasty to its own spend would let a barely-spent
-  husk be crowned (the same husk trap `workflow-cost-per-outcome`'s consumers filter on `observed>0` for).
-  A channel the WINNING workflow never observed stays `null` too — it did not price that outcome, so
-  neither do we.
+  its rows on. The two surfaces can never crown a different workflow for the same goal. The winner is
+  often NOT the cheapest-click workflow (purchases close through the reply channel too).
+- **Eligibility: a dynasty that OBSERVED none of the goal's driving outcome cannot win** — the shared
+  `grainHasObservedOutcome` (also exported), read on the COARSEST grain (crossOrg ⊇ brand; the brand grain
+  is routinely 0-outcome even for the winner, so gating on it would exclude everything). Load-bearing
+  because the cascade floor collapses a 0-outcome dynasty's unit costs to its own spend — a barely-spent
+  husk would otherwise be crowned cheapest (the husk trap `workflow-cost-per-outcome`'s consumers filter
+  on `observed>0` for).
 - **Version chains collapse FIRST** via `buildUpgradeChains` + `aggregateAcrossChains` — the SAME rollup
   workflow-projection's crossOrg/brand grains use — so "a workflow" means one dynasty on both surfaces.
   Treating versioned slugs as independent workflows would corrupt the pick.
-- **Cold start** (no economics, or no dynasty scores the goal): workflow-projection reports no
+- **Cold start** (no economics, or no eligible dynasty scores the goal): workflow-projection reports no
   cost-per-outcome either, so there is nothing to be coherent with — `cpc`/`cppr` fall back to the best
-  raw unit cost per channel and the goal-projected columns stay null.
+  eligible workflow's raw unit cost per channel and the goal-projected columns stay null.
 
 **Tested invariant (`src/routes/audience-cost-coherence.test.ts`)**: driven by ONE downstream fixture,
 a 0-outcome audience whose own spend is below the parent gets the IDENTICAL number from `/audience-stats`
@@ -81,9 +87,9 @@ takes over: audience-stats sums an audience's spend across ALL workflows while w
 it per dynasty, so an audience that outspent the benchmark shows its own (higher) spend on the Audiences
 table. That is the cascade behaving as documented, not a new incoherence.
 
-Adds ONE cross-org read (`fetchPublicWorkflows`, the dynasty list — already fetched by
-workflow-projection). No new field, no new endpoint, no persisted state, response shapes unchanged → no
-OpenAPI regen. `cost-per-outcome-trend` / `-lifetime` / `-distribution` stay POOLED on purpose (a
+Adds three reads (`fetchPublicWorkflows` for the dynasty list + `fetchBrandWorkflowEvidence`'s two
+brand-scoped calls) — all already used by workflow-projection, reused verbatim. No new field, no new
+endpoint, no persisted state, response shapes unchanged → no OpenAPI regen. `cost-per-outcome-trend` / `-lifetime` / `-distribution` stay POOLED on purpose (a
 different methodology on a different axis) — out of scope. (Set 2026-07-29.)
 
 ## Staff admin metrics — DAILY BUDGET (+ its MRR/ARR projection) is the RAW configured value, NEVER discounted; realized-revenue stays NET (supersedes PR #592's discounted-budget)
