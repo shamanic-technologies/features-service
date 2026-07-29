@@ -31,10 +31,28 @@
  *   - Version chains collapse first (`buildUpgradeChains` + `aggregateAcrossChains`, the SAME rollup
  *     crossOrg/brand use in workflow-projection) so a dynasty's versions are one workflow, not several.
  *
- * The per-audience floor is `max(audience spend, this parent)`, so an audience's own spend still wins when
- * it exceeds the benchmark — the documented cascade rule, mirroring workflow-projection. null per column
- * when the driving input is absent (no eligible workflow, or no economics for the goal-projected columns)
- * → the audience floor then degrades to own spend (never a fabricated parent).
+ * Having picked the winner, the module continues the SAME ladder ONE grain finer and returns, per
+ * audience, that workflow's FUNNEL costs at the AUDIENCE grain (`byAudience`) — the value every DERIVED
+ * column (form submission / signup / sale) takes at 0 outcomes:
+ *   - The audience's own per-(audience × winning dynasty) send-tag evidence runs through the SAME
+ *     `grainUnitCosts` cascade, floored against the winner's brand-level unit costs, then through
+ *     `projectOutcomeCosts` — byte-for-byte what `resolvePick` resolves for that row, so the Audiences
+ *     table and the Strategy page report ONE number for one concept.
+ *   - An audience with no send-tag evidence on the winner is absent from the map and inherits the
+ *     brand-level fields, the same audience → brand fallback `resolvePick` makes.
+ *
+ * Why the derived columns can NOT floor on the audience's raw dollar total (the bug this fixes): a raw
+ * total is a sound lower bound only for a RAW column, where the driving outcome IS the outcome. Answering
+ * "cost per form submission" with a total spend is a units error, and it discards the clicks the audience
+ * did observe — prod showed three audiences whose cost-per-form-submission equalled their own net spend to
+ * the cent while the Strategy page priced the same audiences 2-4x lower. The RAW columns (cpc / cppr) keep
+ * the plain `max(audience spend, this parent)` floor, and the "own spend wins above the benchmark" rule
+ * survives on the derived columns too — one grain down, inside `grainUnitCosts`, where a 0-click audience
+ * grain floors its click to `max(own spend, parent)` before the funnel converts it into a per-outcome cost.
+ *
+ * null per column when the driving input is absent (no eligible workflow, or no economics for the
+ * goal-projected columns) → the derived columns then degrade to the raw cascade floor (never a fabricated
+ * parent, and there is no projection on either surface to be coherent with at cold start).
  */
 
 import { fetchPublicCosts, fetchPublicEmailStats, fetchPublicWorkflows } from "./public-stats-clients.js";
@@ -49,9 +67,24 @@ import {
 } from "./funnel-registry.js";
 import { projectedCostPerOutcome } from "./cost-engine.js";
 import { goalToProjectionInputs, outcomeCostForGoal, grainHasObservedOutcome } from "../routes/workflow-projection.js";
-import { fetchBrandWorkflowEvidence, type WorkflowGrainEvidence } from "./workflow-projection-grains.js";
+import {
+  fetchBrandWorkflowEvidence,
+  fetchAudienceGrainEvidence,
+  type WorkflowGrainEvidence,
+} from "./workflow-projection-grains.js";
 import type { Pricing } from "./pricing.js";
 import type { Goal } from "./goals.js";
+
+/**
+ * The FUNNEL (derived) cost columns projected for ONE audience under the goal's winning workflow —
+ * `resolvePick`'s NUMBER selection carried down to the audience grain, so each equals the number
+ * `workflow-projection` resolves for that same (audience × winning dynasty) row.
+ */
+export interface AudienceProjectedCostsUsd {
+  cpfsUsd: number | null; // cost per form submission (projected)
+  cpsUsd: number | null; // cost per signup (projected)
+  cpsaleUsd: number | null; // cost per sale (goal=sales → best-channel; goal=websitePurchase → close funnel)
+}
 
 /**
  * Fleet-backed projected cost-per-outcome (USD) per /audience-stats cost column. Each field is the
@@ -63,6 +96,13 @@ export interface BrandProjectedParentsUsd {
   cpfsUsd: number | null; // cost per form submission (projected)
   cpsUsd: number | null; // cost per signup (projected)
   cpsaleUsd: number | null; // cost per sale (goal=sales → best-channel; goal=websitePurchase → close funnel)
+  /**
+   * Per-audience FUNNEL costs under the winning workflow — the value each DERIVED column takes at 0
+   * outcomes, instead of the audience's raw dollar total. Keyed by audienceId; an audience absent from
+   * the map (no send-tag evidence on the winner) inherits the brand-level fields above, exactly as
+   * `resolvePick` falls back from the audience grain to the brand grain. Empty at cold start.
+   */
+  byAudience: Map<string, AudienceProjectedCostsUsd>;
 }
 
 export interface ProjectionIdentity {
@@ -106,6 +146,8 @@ interface DynastyUnitCosts {
 /** One workflow DYNASTY as a workflow-projection BRAND-LEVEL row: its resolved unit costs plus the
  * observed evidence the eligibility gate reads. */
 interface DynastyRow {
+  /** The DYNASTY slug — the key the per-(audience × dynasty) send-tag evidence is stored under. */
+  dynastySlug: string;
   unitCosts: DynastyUnitCosts;
   /** Observed outcomes of the COARSEST grain present (crossOrg ⊇ brand) — what "this workflow has
    * produced the goal's outcome somewhere" means. */
@@ -134,14 +176,16 @@ function grainUnitCosts(ev: WorkflowGrainEvidence, parent: DynastyUnitCosts | nu
 }
 
 /**
- * Compute the brand's best-workflow projected cost-per-outcome parents for /audience-stats. Rebuilds
- * workflow-projection's BRAND-LEVEL rows from the SAME sources (workflow-service `/public/workflows` +
- * runs `/v1/stats/public/costs` + email-gateway `/public/stats` for the crossOrg grain, the brand-scoped
- * twins for the brand grain, plus the brand's effective economics), rolls version chains into dynasties
- * with the SAME `buildUpgradeChains` / `aggregateAcrossChains` rollup, and takes the winner of the
- * queried goal. Fails loud on any downstream error (no silent fallback; NET fail-loud via
- * fetchPublicCosts). Cross-org reads are public (api-key only); the brand + economics reads are
- * org-scoped.
+ * Compute the brand's best-workflow projected cost-per-outcome parents for /audience-stats — plus, per
+ * audience, the FUNNEL columns' value under that winning workflow. Rebuilds workflow-projection's
+ * BRAND-LEVEL rows from the SAME sources (workflow-service `/public/workflows` + runs
+ * `/v1/stats/public/costs` + email-gateway `/public/stats` for the crossOrg grain, the brand-scoped twins
+ * for the brand grain, plus the brand's effective economics), rolls version chains into dynasties with the
+ * SAME `buildUpgradeChains` / `aggregateAcrossChains` rollup, and takes the winner of the queried goal.
+ * It then continues the SAME ladder one grain finer — the winner's per-(audience × dynasty) send-tag
+ * evidence — so every audience's derived columns equal what workflow-projection resolves for it.
+ * Fails loud on any downstream error (no silent fallback; NET fail-loud via fetchPublicCosts). Cross-org
+ * reads are public (api-key only); the brand + audience + economics reads are org-scoped.
  */
 export async function fetchBrandProjectedParents(
   brandId: string,
@@ -149,13 +193,20 @@ export async function fetchBrandProjectedParents(
   goal: Goal,
   identity: ProjectionIdentity,
   pricing: Pricing = "gross",
+  // The caller's already-resolved audience ids (it fetched them by requested status) — reused for the
+  // audience grain so this adds no human-service round-trip and covers every row the caller will render.
+  audienceIds?: string[],
 ): Promise<BrandProjectedParentsUsd> {
   const workflows = await fetchPublicWorkflows(featureSlug, "all");
-  const [fleetCostGroups, fleetEmail, effective, brandGrain] = await Promise.all([
+  // The SAME slug → dynasty map the crossOrg/brand rollups use, so the audience grain's dynasty keys line
+  // up with the dynasty-keyed rows (and skips runs-service's lossy workflowDynastySlug regroup).
+  const slugToDynasty = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
+  const [fleetCostGroups, fleetEmail, effective, brandGrain, audienceGrain] = await Promise.all([
     fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     fetchPublicEmailStats(featureSlug, "workflowSlug"),
     fetchEffectiveEconomics(brandId, identity),
     fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing),
+    fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing, audienceIds),
   ]);
 
   // Collapse each workflow's version chain into ONE dynasty before comparing — the EXACT rollup
@@ -194,7 +245,11 @@ export async function fetchBrandProjectedParents(
     // Eligibility reads the COARSEST grain (crossOrg ⊇ brand): "has this workflow ever produced the
     // goal's outcome". The brand grain alone is routinely 0-outcome even for the winning workflow.
     const ev = crossOrgEv ?? brandEv!;
-    perDynasty.push({ unitCosts, observed: { observedClicks: ev.clicks, observedPositiveReplies: ev.replies } });
+    perDynasty.push({
+      dynastySlug: slugToDynasty.get(activeSlug) ?? activeSlug,
+      unitCosts,
+      observed: { observedClicks: ev.clicks, observedPositiveReplies: ev.replies },
+    });
   }
 
   const economics = effective.economics;
@@ -209,7 +264,7 @@ export async function fetchBrandProjectedParents(
   const eligible = perDynasty.filter((d) =>
     grainHasObservedOutcome({ spentUsd: 0, observedContacted: 0, ...d.observed }, objective, singleStepGoal),
   );
-  let best: DynastyUnitCosts | null = null;
+  let best: DynastyRow | null = null;
   if (econ) {
     let bestGoalCost: number | null = null;
     for (const d of eligible) {
@@ -217,7 +272,7 @@ export async function fetchBrandProjectedParents(
       if (goalCost == null || !(goalCost > 0)) continue;
       if (bestGoalCost == null || goalCost < bestGoalCost) {
         bestGoalCost = goalCost;
-        best = d.unitCosts;
+        best = d;
       }
     }
   }
@@ -234,18 +289,46 @@ export async function fetchBrandProjectedParents(
       cpfsUsd: null,
       cpsUsd: null,
       cpsaleUsd: null,
+      byAudience: new Map(),
     };
   }
 
   // EVERY column reads THAT one workflow's resolved unit costs — the raw ones for cpc/cppr (the visit /
   // reply IS the outcome) and the shared projection engine for the funnel columns, exactly as the
   // workflow-projection row for that workflow does.
-  const cpcUsd = best.clickUsd > 0 ? best.clickUsd : null;
-  const cpprUsd = best.replyUsd > 0 ? best.replyUsd : null;
-  const p = projectOutcomeCosts(econ!, { clickUsd: cpcUsd, replyUsd: cpprUsd });
-  // sales → best-channel cost-per-sale; websitePurchase → multi-step close funnel — mirrors
-  // outcomeCostForGoal (both terminate in a paying client, valued distinctly per goal).
-  const cpsaleUsd = goal === "sales" ? p.costPerSaleUsd : p.costPerPurchaseUsd;
+  const bestUnits = best.unitCosts;
+  const funnelCosts = (units: DynastyUnitCosts): AudienceProjectedCostsUsd & { cpcUsd: number | null; cpprUsd: number | null } => {
+    const cpcUsd = units.clickUsd > 0 ? units.clickUsd : null;
+    const cpprUsd = units.replyUsd > 0 ? units.replyUsd : null;
+    const p = projectOutcomeCosts(econ!, { clickUsd: cpcUsd, replyUsd: cpprUsd });
+    // sales → best-channel cost-per-sale; websitePurchase → multi-step close funnel — mirrors
+    // outcomeCostForGoal (both terminate in a paying client, valued distinctly per goal).
+    const cpsaleUsd = goal === "sales" ? p.costPerSaleUsd : p.costPerPurchaseUsd;
+    return { cpcUsd, cpprUsd, cpfsUsd: p.costPerFormSubmissionUsd, cpsUsd: p.costPerSignupUsd, cpsaleUsd };
+  };
+  const brandLevel = funnelCosts(bestUnits);
 
-  return { cpcUsd, cpprUsd, cpfsUsd: p.costPerFormSubmissionUsd, cpsUsd: p.costPerSignupUsd, cpsaleUsd };
+  // Continue the SAME ladder ONE grain finer, for the winning dynasty only: an audience with send-tag
+  // evidence on that dynasty resolves at its OWN unit costs, cascade-floored against the brand-level
+  // winner (`grainUnitCosts` = `buildGrainBlock`'s unit costs), then pushed through the SAME funnel. That
+  // is byte-for-byte `resolvePick`'s NUMBER selection for the (audience × winning dynasty) row, so the
+  // Audiences table and the Strategy page report the identical number. An audience with no evidence on
+  // the winner is absent here and inherits the brand-level fields — again mirroring `resolvePick`, which
+  // falls back to the brand grain when the audience grain has no spend.
+  const byAudience = new Map<string, AudienceProjectedCostsUsd>();
+  for (const ev of audienceGrain) {
+    const audEv = ev.byDynasty.get(best.dynastySlug);
+    if (!audEv || audEv.totalCostInUsdCents <= 0) continue;
+    const { cpfsUsd, cpsUsd, cpsaleUsd } = funnelCosts(grainUnitCosts(audEv, bestUnits));
+    byAudience.set(ev.audienceId, { cpfsUsd, cpsUsd, cpsaleUsd });
+  }
+
+  return {
+    cpcUsd: brandLevel.cpcUsd,
+    cpprUsd: brandLevel.cpprUsd,
+    cpfsUsd: brandLevel.cpfsUsd,
+    cpsUsd: brandLevel.cpsUsd,
+    cpsaleUsd: brandLevel.cpsaleUsd,
+    byAudience,
+  };
 }

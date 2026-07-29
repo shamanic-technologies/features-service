@@ -67,12 +67,19 @@ export function projectedCostPerOutcome(
  *                                  no positive parent), so a zero-evidence cell renders "-", never a
  *                                  false $0 nor a fabricated parent value.
  *
- * The three engines, one per consumption:
+ * Use it for a RAW column ONLY — one whose driving outcome IS the outcome (cost per website visit, cost
+ * per positive reply). There the spend floor is sound: "$23.16 spent, 0 clicks → a click costs at least
+ * $23.16". A DERIVED funnel column (form submission / signup / sale) takes `derivedCostPerOutcome`
+ * instead, because answering "cost per form submission" with a raw dollar total is a units error.
+ *
+ * The four engines, one per consumption:
  *   • observedCostPerOutcome  — null whenever an outcome is 0 (ACCOUNTING / real money).
  *   • projectedCostPerOutcome — NEVER null (RANKING — always a comparable number, even at 0 spend).
- *   • flooredCostPerOutcome   — floored when there is spend, null only for a truly-empty cell (DISPLAY —
- *                               a dashboard cost column that must show the brand-floored estimate at 0
- *                               outcomes yet nothing at all for an untouched audience).
+ *   • flooredCostPerOutcome   — floored when there is spend, null only for a truly-empty cell (DISPLAY,
+ *                               RAW columns — a dashboard cost column that must show the brand-floored
+ *                               estimate at 0 outcomes yet nothing at all for an untouched audience).
+ *   • derivedCostPerOutcome   — DISPLAY, FUNNEL columns: the grain's own observed driving unit cost
+ *                               carried through the brand's economics, never a raw dollar total.
  *
  * `parentCost` = the next COARSER grain's ALREADY-RESOLVED cost of the SAME type (audience → brand);
  * omit (or null) when the surface has no coarser grain → the floor degrades to own spend.
@@ -88,6 +95,49 @@ export function flooredCostPerOutcome(
   if (spentUsd > 0 && observedCount > 0) return spentUsd / observedCount;
   // Cascade floor: 0-outcome-with-spend OR un-attributed-cost-with-outcomes → max(spend, parent). Guard a
   // 0 floor (0 spend + outcomes but no parent) → null rather than a false $0.
+  const floor = Math.max(spentUsd, parentCost ?? 0);
+  return floor > 0 ? floor : null;
+}
+
+/**
+ * DERIVED — the DISPLAY variant for a FUNNEL column: a cost-per-outcome whose outcome is NOT its own
+ * driving outcome but is reached THROUGH one (a website visit, a positive reply) at the brand's
+ * conversion rate — cost per form submission, per signup, per sale.
+ *
+ * A raw dollar TOTAL is a legitimate lower bound only for a RAW column, where the driving outcome IS the
+ * outcome. Applying the same spend floor to a DERIVED column is a units error: it answers "cost per form
+ * submission" with a total spend, and it DISCARDS the clicks the grain did observe — even though every
+ * other surface builds that column by pushing exactly those observed unit costs through the funnel. So a
+ * derived column takes, in order:
+ *
+ *   1. spend > 0 AND outcomes > 0   → the real OBSERVED ratio (spend / outcomes), same as every engine.
+ *   2. spend <= 0 AND outcomes <= 0 → null (truly-empty cell, renders "-"; never a false $0).
+ *   3. `funnelProjectionUsd`        → the funnel projection (`projectOutcomeCosts`) of the grain's
+ *                                     RESOLVED driving unit cost — the grain's own observed evidence
+ *                                     carried through the brand's economics. This is the evidence-grounded
+ *                                     answer AND the number the projection surface resolves for the same
+ *                                     grain, so the two surfaces agree by construction.
+ *   4. otherwise (cold start — no economics, so no projection exists to be coherent with) → the cascade
+ *      floor `max(spentUsd, parentCost)`, null when that floor is 0.
+ *
+ * Preferring (3) does NOT lose the "already outspent the benchmark" protection: the driving unit cost fed
+ * to `projectOutcomeCosts` is itself the cascade floor `max(own spend, parent)` when the grain observed 0
+ * of the driving outcome, so a grain that burned money with nothing to show still carries its own (higher)
+ * spend — expressed per outcome instead of as a raw total.
+ */
+export function derivedCostPerOutcome(
+  spentUsd: number,
+  observedCount: number,
+  funnelProjectionUsd: number | null,
+  parentCost: number | null = null,
+): number | null {
+  // Truly-empty cell: no spend AND no outcome → nothing to report (renders "-"), even with a projection.
+  if (spentUsd <= 0 && observedCount <= 0) return null;
+  // Real observed ratio when BOTH are present.
+  if (spentUsd > 0 && observedCount > 0) return spentUsd / observedCount;
+  // Evidence-grounded funnel projection of this grain's resolved driving unit cost.
+  if (funnelProjectionUsd != null && funnelProjectionUsd > 0) return funnelProjectionUsd;
+  // Cold start only: no economics → no funnel to project through. Degrade to the raw cascade floor.
   const floor = Math.max(spentUsd, parentCost ?? 0);
   return floor > 0 ? floor : null;
 }
