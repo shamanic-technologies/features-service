@@ -925,6 +925,43 @@ Same prod-only-balance gotcha as the accounts audit (billing balance → stripe-
 whole board 502s on staging; **verify on PROD**). Triage: STAGING → feature. (PR #572; PostHog signal PR #577,
 features-service#576, set 2026-07-15.)
 
+## `pipeline-activity` `expected.outreach` DIVISOR is floored at the brand's OWN cost per outreach — the graph may never promise more sends than the brand's budget can buy
+
+`computeExpectedActivity` divides the brand's daily budget by `bestWorkflow.outreachUsd` — the CROSS-ORG
+cheapest-signup workflow's cost per outreach. Nothing brand-specific entered the forecast except the
+budget, so a brand that structurally pays MORE than the fleet benchmark (more enrichment per lead, more
+sequence steps) was promised sends it cannot afford, and the SAME page showed its real cost per outreach.
+
+The divisor is now `max(bestWorkflow.outreachUsd, brandObservedOutreachUsd)`:
+
+- **`brandObservedOutreachUsd`** = the brand's LIFETIME committed spend on this feature ÷ the recipients
+  it contacted, summed over every dynasty — `fetchBrandObservedOutreachUsd`, reusing
+  `fetchBrandWorkflowEvidence` (the exact brand-grain read `workflow-projection` already makes). SAME
+  BASIS as the fleet figure (`totalCostInUsdCents` committed over `recipientStats.contacted`); only the
+  SCOPE differs, so the `max` compares like with like. NOT `fetchDailyBroadcastActivity` — that only
+  covers the requested `days` window (7 by default), far too thin a denominator to price a send.
+- **Direction:** same cascade doctrine as `audience-stats` / `cost-engine.ts` (`max(own evidence,
+  benchmark)`), inverted ONLY because the output is a COUNT — flooring the DIVISOR lowers the count, so
+  the graph can never over-promise. The floor releases itself once the brand's ratio reaches the
+  benchmark; a brand CHEAPER than the fleet keeps the fleet number (a `max`, never a raise).
+- **No own-ratio** (0 spend OR 0 contacted — a fresh brand) → `null` → the fleet figure alone,
+  byte-identical to before. Never a fabricated ratio.
+- `opens`/`clicks`/`signups`/`formSubmissions` derive from `outreach`, so they fall proportionally.
+
+**`computeFeatureOutreachUsd` (exported, consumed by `send-forecast-aggregate` for the ADMIN FLEET
+send-forecast) keeps its behaviour UNCHANGED — no brand floor there**, that surface is legitimately
+fleet-level and cross-brand. `buildWorkflowActivityUnits` now returns `{units, workflows}` so the brand
+grain reuses the workflow metadata (no extra `fetchPublicWorkflows` call). Adds two brand-scoped reads
+(runs `groupBy=workflowSlug&brandId`, email-gateway `groupBy=workflowSlug&brandId`) — both already made
+by `workflow-projection`, and both covered by the existing `servedCached` scope key (featureSlug + orgId +
+brandId + timezone + days; the new inputs are pure functions of brand + feature). Response shape unchanged
+→ no OpenAPI regen, no dashboard change (`metrics.outreach.expected` renders verbatim).
+
+**Prod (2026-07-29, brand `b97440f6…`, `sales-cold-email-outreach`):** $15/day budget returned
+`expected.outreach` 107.717/day = $0.1393 implied per send, while the brand's real committed spend ÷
+contacted was $14.67/36 = **$0.41**. At the $1/day budget the user reported, that printed **7** sends/day
+against a reality of ~2-3. (Set 2026-07-30.)
+
 ## `pipeline-activity` signup/form-submission `.actual` = REAL observed conversions, NEVER `clicks × rate` (PR #513)
 
 The signup + form-submission daily bars split cleanly: **`.actual` (today + past days) = the REAL,

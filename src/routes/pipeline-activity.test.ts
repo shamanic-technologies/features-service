@@ -125,6 +125,10 @@ function mockFetch(opts: {
   brandProfile?: unknown;
   conversionByDay?: unknown;
   conversionByDayStatus?: number;
+  /** runs /v1/stats/costs?groupBy=workflowSlug&brandId — the BRAND's own committed spend per dynasty. */
+  brandCosts?: unknown[];
+  /** email-gateway /orgs/stats?groupBy=workflowSlug&brandId — the BRAND's own recipients contacted. */
+  brandEmailStats?: unknown[];
 } = {}): void {
   vi.mocked(fetchWithRetry).mockImplementation(async (input, init) => {
     const rawInput = input as unknown;
@@ -208,6 +212,12 @@ function mockFetch(opts: {
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
+    // runs-service BRAND-grain cost (groupBy=workflowSlug + brandId) — numerator of the brand's own
+    // observed cost per outreach. Default: no attributed brand spend → no own-ratio → fleet benchmark.
+    if (url.includes("/v1/stats/costs") && parsed.searchParams.get("groupBy") === "workflowSlug") {
+      return new Response(JSON.stringify({ groups: opts.brandCosts ?? [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
     // email-gateway: per-email brand-scoped outcome flags (POST /orgs/status)
     if (parsed.pathname === "/orgs/status") {
       const body = JSON.parse(String(init?.body ?? "{}")) as { items?: Array<{ email: string }> };
@@ -216,6 +226,12 @@ function mockFetch(opts: {
         broadcast: { brand: outcomes[email] ?? {} },
       }));
       return new Response(JSON.stringify({ results }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    // email-gateway BRAND-grain broadcast stats (GET /orgs/stats?groupBy=workflowSlug) — denominator of
+    // the brand's own observed cost per outreach.
+    if (parsed.pathname === "/orgs/stats" && parsed.searchParams.get("groupBy") === "workflowSlug") {
+      return new Response(JSON.stringify({ groups: opts.brandEmailStats ?? [] }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
     // email-gateway: daily broadcast actuals (GET /orgs/stats?groupBy=day)
@@ -542,5 +558,110 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(res.body.days[0].isToday).toBe(true);
     expect(res.body.days[0].metrics.outreach.actual).toBe(1);
     expect(res.body.days[1].metrics.outreach.actual).toBeNull();
+  });
+
+  // ── EXPECTED outreach is floored at the brand's OWN cost per outreach ──────────────────────────
+  //
+  // Fleet benchmark across every case below: (100000/100)/200 = $5.00 per outreach, budget $50.
+  // The brand's own ratio = its committed spend on this feature / the recipients it contacted.
+  describe("expected outreach is reachable with the brand's own daily budget", () => {
+    function brandEvidence(costCents: string, contacted: number) {
+      return {
+        brandCosts: [{ dimensions: { workflowSlug: "wf-a" }, totalCostInUsdCents: costCents, runCount: 1 }],
+        brandEmailStats: [
+          { key: "wf-a", broadcast: { recipientStats: { contacted, clicked: 0, repliesPositive: 0 } } },
+        ],
+      };
+    }
+
+    it("floors the divisor at the brand's own cost per outreach when it is WORSE than the fleet best", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      // brand: $40 committed over 4 contacted = $10/outreach, 2x the $5 fleet benchmark.
+      mockFetch(brandEvidence("4000", 4));
+
+      const res = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York")
+        .set(AUTH)
+        .expect(200);
+
+      // $50 budget / $10 own cost = 5 sends — NOT the 10 the fleet benchmark would promise.
+      expect(res.body.days[0].metrics.outreach.expected).toBe(5);
+      // AC4: the derived series fall proportionally (best audience aud-a: 0.5 open, 0.5 click).
+      expect(res.body.days[0].metrics.opens.expected).toBe(2.5);
+      expect(res.body.days[0].metrics.clicks.expected).toBe(2.5);
+      expect(res.body.days[0].metrics.signups.expected).toBeCloseTo(0.2, 10);
+      // Every future day carries the same corrected forecast.
+      expect(res.body.days[6].metrics.outreach.expected).toBe(5);
+    });
+
+    it("keeps the fleet best when the brand's own cost per outreach is BETTER (the floor is a max, never a raise)", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      // brand: $4 committed over 4 contacted = $1/outreach, well under the $5 benchmark.
+      mockFetch(brandEvidence("400", 4));
+
+      const res = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York")
+        .set(AUTH)
+        .expect(200);
+
+      // max($5, $1) = $5 → 10 sends. The floor must never push the count ABOVE the benchmark.
+      expect(res.body.days[0].metrics.outreach.expected).toBe(10);
+      expect(res.body.days[0].metrics.opens.expected).toBe(5);
+      expect(res.body.days[0].metrics.clicks.expected).toBe(5);
+    });
+
+    it("uses the fleet best unchanged when the brand has no own ratio (no spend, or nobody contacted)", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      // Spend but ZERO contacted → no denominator → no own ratio.
+      mockFetch(brandEvidence("4000", 0));
+
+      const noContacted = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York")
+        .set(AUTH)
+        .expect(200);
+      expect(noContacted.body.days[0].metrics.outreach.expected).toBe(10);
+
+      // Contacted but ZERO attributed spend (a fresh brand) → no numerator → no own ratio.
+      mockFetch(brandEvidence("0", 40));
+
+      const noSpend = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York")
+        .set(AUTH)
+        .expect(200);
+      expect(noSpend.body.days[0].metrics.outreach.expected).toBe(10);
+    });
+
+    it("reads the brand's own evidence brand-scoped and feature-scoped (never the fleet-wide figures)", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      mockFetch(brandEvidence("4000", 4));
+
+      await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York")
+        .set(AUTH)
+        .expect(200);
+
+      const costCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
+        const callUrl = new URL(String(input));
+        return callUrl.pathname === "/v1/stats/costs" && callUrl.searchParams.get("groupBy") === "workflowSlug";
+      });
+      expect(costCall).toBeTruthy();
+      const costUrl = new URL(String(costCall?.[0]));
+      expect(costUrl.searchParams.get("brandId")).toBe("brand-1");
+      expect(costUrl.searchParams.get("featureSlugs")).toBe("sales-cold-email-outreach");
+
+      const statsCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
+        const callUrl = new URL(String(input));
+        return callUrl.pathname === "/orgs/stats" && callUrl.searchParams.get("groupBy") === "workflowSlug";
+      });
+      expect(statsCall).toBeTruthy();
+      const statsUrl = new URL(String(statsCall?.[0]));
+      expect(statsUrl.searchParams.get("type")).toBe("broadcast");
+      expect(statsUrl.searchParams.get("brandId")).toBe("brand-1");
+      expect(statsUrl.searchParams.get("featureSlugs")).toBe("sales-cold-email-outreach");
+    });
   });
 });
