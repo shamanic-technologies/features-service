@@ -298,24 +298,14 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
     vi.restoreAllMocks();
   });
 
-  // The residual, CORRECT divergence: once an audience's own spend EXCEEDS the benchmark it legitimately
-  // wins on the accounting surface (documented cascade behaviour). Everything below is the LOW-spend
-  // regime, where the two must agree.
-  it("a workflow that never produced the goal's outcome cannot be crowned best — both surfaces price off the MEASURED one", async () => {
-    fleet = FLEET_HUSK_UNDERCUTS;
-    audienceSpendSlug = "wf-measured";
-
-    const { statsUsd, projectionUsd } = await bothSurfaces("positiveReply", "cpprCents", "costPerOutcomeUsd");
-
-    // Agreement is the invariant...
-    expect(statsUsd).toBeCloseTo(projectionUsd, 9);
-    // ...and it must settle on the MEASURED workflow, not on the cheaper husk. $80 = wf-measured's real
-    // $80/1 reply; $60 is wf-husk's "spent $60, produced zero replies" lower bound.
-    expect(statsUsd).toBe(80);
-    expect(statsUsd).not.toBe(60);
-  });
-
-  it("the husk's goal metric is null (not a rankable number), while its measured click cost survives", async () => {
+  // STARVATION GUARD — a workflow with ZERO of the goal's outcome must still report a RANKABLE NUMBER
+  // (its cascade floor), never null. campaign-service's `selectWorkflowGreedy` SKIPS a null-cost row, so
+  // nulling it makes that workflow un-selectable → it never runs → never produces an outcome → stays
+  // nulled forever (an absorbing state), and a NEWLY ADDED workflow could never enter rotation at all.
+  // The floor is the exploration device: barely-tried reads cheap, gets picked, spends, its floor RISES,
+  // and it drops out on its own if it keeps producing nothing. Gating this field was tried in v0.107.2
+  // and reverted in v0.107.3 — do not re-introduce it.
+  it("a workflow with ZERO of the goal's outcome still reports a rankable number, never null (exploration must not starve)", async () => {
     fleet = FLEET_HUSK_UNDERCUTS;
     audienceSpendSlug = "wf-measured";
 
@@ -325,15 +315,13 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
     expect(res.status).toBe(200);
     const husk = res.body.rows.find((r: any) => r.audienceId == null && r.workflow.workflowDynastySlug === "wf-husk");
 
-    // No rankable economics for an outcome it has never produced — every ranker skips null by design.
-    expect(husk.resolved.costPerOutcomeUsd).toBeNull();
-    // The row stays internally coherent: no confident ROI beside an unknown cost per outcome.
-    expect(husk.resolved.roiMultiple).toBeNull();
-    expect(husk.resolved.cacPct).toBeNull();
-    // The RAW, genuinely measured figure is untouched — $60 over 13 real clicks.
-    expect(husk.resolved.costPerClickUsd).toBeCloseTo(60 / 13, 9);
-    // And the backend's own recommendation stops pointing at the husk.
-    expect(res.body.recommendedWorkflowDynastySlug).toBe("wf-measured");
+    // Rankable: its own cascade floor ($60 spent, 0 replies → at least $60 per reply).
+    expect(husk.resolved.costPerOutcomeUsd).toBe(60);
+    // Still competes on the ranking every consumer runs — it is the cheapest, so it gets explored.
+    expect(res.body.recommendedWorkflowDynastySlug).toBe("wf-husk");
+    // The provenance LABEL stays honest even though the number competes: a floored row is never tagged
+    // as this brand's own result. Number rankable, label truthful — the two stay decoupled.
+    expect(husk.resolved.grain).toBe("crossOrg");
   });
 
   it("a 0-outcome audience whose own spend is below the parent reports the SAME cost on both surfaces", async () => {

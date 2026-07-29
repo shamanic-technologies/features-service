@@ -76,35 +76,39 @@ column would price off the cheapest-click workflow while the Strategy page shows
   cost-per-outcome either, so there is nothing to be coherent with — `cpc`/`cppr` fall back to the best
   eligible workflow's raw unit cost per channel and the goal-projected columns stay null.
 
-### The husk gate lives on `resolved.costPerOutcomeUsd` ITSELF — a workflow that never produced the goal's outcome is UNRANKABLE (null), not cheap
+### NEVER null `resolved.costPerOutcomeUsd` for a 0-outcome workflow — the floor IS the exploration device, and nulling it STARVES the fleet (v0.107.2 tried it, v0.107.3 reverted)
 
-`fetchBrandProjectedParents` has always gated its pick on `grainHasObservedOutcome`. `workflow-projection`
-did NOT: it reported the cascade floor `max(spend, parent)` as `resolved.costPerOutcomeUsd` for a workflow
-with ZERO of the goal's driving outcome. That number is a pure LOWER BOUND ("we spent $61.73 and got zero
-replies"), yet **every ranker in the fleet argmins on this one field** — the dashboard's `pickBestBrandRow`,
-this endpoint's own `recommendedWorkflowDynastySlug`, and campaign-service's `pickBestWorkflow`. So the
-cheapest HUSK won all three, permanently (a dormant workflow's bound never climbs), and it won against
-workflows that genuinely produce the outcome.
+**Standing product rule (Kevin, 2026-07-29): a workflow with no outcome must ALWAYS return a number.**
+`resolved.costPerOutcomeUsd` is the cascade floor `max(spend, parent)` when the workflow has produced zero
+of the goal's outcome, and that is CORRECT — it is a rankable estimate, not noise to gate away.
 
-**Prod (2026-07-29, brand `b97440f6…`, goal positiveReply, net):** `dawn` — 13 fleet clicks, **zero**
-positive replies ever — was crowned best at **$61.73**, so the Strategy page priced all four audiences off a
-workflow that has never produced a positive reply, while the Audiences table used `arcadia`'s MEASURED
-**$64.11**. Two prices, one audience, both labelled "fleet benchmark". `resolvePick` now nulls the goal
-metric when NO grain in the row's ladder observed the driving outcome, so both surfaces settle on the
-measured workflow. This is the SAME `observed>0` rule the landing's best-workflow pick and
-`fetchBrandProjectedParents` already apply — it was simply missing from the field they all rank on.
+v0.107.2 gated the field on `grainHasObservedOutcome` (nulling it when no grain observed the outcome) to
+make the Strategy page stop crowning `dawn` — 13 fleet clicks, zero positive replies — at $61.73 while
+`/audience-stats` used `arcadia`'s measured $64.11. **That was wrong and was reverted in v0.107.3.** Two
+reasons, both load-bearing:
 
-- **Scope: the GOAL-ROUTED block only.** `costPerOutcomeUsd` plus the goal-chained `costPerPaidClientUsd`
-  and the `roiMultiple` / `cacPct` that are pure functions of it — a row must never pair "cost per outcome
-  unknown" with a confident ROI. `costPerClickUsd` and `costPerMeetingBookedUsd` are NOT goal-routed and
-  stay (dawn keeps its real $4.748 off 13 real clicks). Grains, evidence, and floors are untouched.
-- **Zero consumer change, no OpenAPI change.** All four fields were already `number | null`, and BOTH
-  rankers already document skipping a null metric as "no rankable economics" (campaign-service then falls
-  back to the default workflow). The gate is goal-specific, not a blanket exclusion: `dawn` is ineligible
-  for `positiveReply` (needs replies) but perfectly eligible for `meetingBooked`/`websitePurchase`, which
-  funnel from EITHER channel and so are satisfied by its clicks.
-- **When every workflow is a husk**, all rows null and both surfaces honestly show "-" rather than agreeing
-  on a fabricated winner.
+- **Starvation.** campaign-service's `selectWorkflowGreedy` SKIPS a row whose `costPerOutcomeUsd` is null
+  ("no rankable economics"). A nulled workflow is therefore never selected → never runs → never produces an
+  outcome → stays nulled. An absorbing state. A **newly added workflow** (zero evidence by definition)
+  could never enter rotation at all — the fix would have frozen the fleet's workflow mix.
+- **The floor self-corrects; it is the explore/exploit mechanism.** Barely-tried reads cheap → gets picked
+  → spends → its floor RISES → it drops out on its own once it outspends the alternatives with nothing to
+  show. "The husk wins permanently" is false: its bound climbs the moment it is used. In prod the husks
+  read $61–$77 against measured workflows at $64–$421 — `dawn` beat `arcadia` by 4%, not by an order of
+  magnitude, precisely because the cascade + fallback (crossOrg best-workflow as the last-resort default)
+  already tightens these numbers. Do not describe a barely-used workflow as "artificially cheap".
+
+**Number and LABEL stay decoupled — that is the correct place for honesty.** `resolved.grain` still runs
+`grainHasObservedOutcome`, so a floored row is labelled `crossOrg` (benchmark) and never "this brand's own
+results". The number always exists (rankable, explorable); the label never lies (displayable). Guard test:
+`audience-cost-coherence.test.ts` → "a workflow with ZERO of the goal's outcome still reports a rankable
+number, never null (exploration must not starve)".
+
+**Consequence — the two dashboard surfaces still disagree at that one spot, and the fix is NOT to gate this
+field.** `fetchBrandProjectedParents` keeps its own `grainHasObservedOutcome` filter (a deliberate v0.106.3
+decision with its own test), so it can crown a different workflow than the dashboard's ungated
+`pickBestBrandRow`. Closing that gap means aligning the PICK on one side, not nulling the shared ranking
+metric. Open — see the note in `/audience-stats` below.
 
 ### Verifying the coherence invariant at a SECOND goal — compare the COMPARABLE field, or you manufacture a false mismatch
 
