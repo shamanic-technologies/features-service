@@ -106,6 +106,25 @@ measured workflow. This is the SAME `observed>0` rule the landing's best-workflo
 - **When every workflow is a husk**, all rows null and both surfaces honestly show "-" rather than agreeing
   on a fabricated winner.
 
+### Verifying the coherence invariant at a SECOND goal — compare the COMPARABLE field, or you manufacture a false mismatch
+
+`/audience-stats`' cost column is goal-dependent (`sortMetricForGoal`): for `positiveReply` it is `cpprCents`
+(cost per reply), for the click-driven goals it is `cpcCents` (cost per CLICK). `workflow-projection`'s
+`resolved.costPerOutcomeUsd` is the cost of the GOAL's outcome. Those coincide ONLY for the single-step
+goals, where the driving outcome IS the outcome. At `meetingBooked` / `websitePurchase` / `signup` the goal
+outcome is a MEETING / PURCHASE / SIGNUP reached THROUGH the funnel, so comparing `cpcCents` against
+`costPerOutcomeUsd` pits a per-click cost against a per-meeting cost — a units error that reads as a large
+"mismatch" and invites a fix for a bug that does not exist. The comparable projection field for a
+`cpcCents` column is `resolved.costPerClickUsd`.
+
+**And subtract the residual regime before calling anything a mismatch:** an audience whose OWN spend exceeds
+the benchmark legitimately shows that spend on the accounting surface (`max(own spend, parent)`), and
+`/audience-stats` sums an audience's spend across ALL workflows while `workflow-projection` splits it per
+dynasty — so the two legitimately differ ABOVE the benchmark. Coherence is required only in the LOW-spend
+regime. Verified 2026-07-29 on prod brand `b97440f6…`: at `positiveReply` all four audiences matched at
+$64.11; at `meetingBooked` all four differed purely because their own spend ($4.61 / $2.63 / $3.01 / $5.11)
+sat above the $2.2151 benchmark — documented behaviour, not a regression.
+
 ### An UNSTARTED audience is priced like its barely-started siblings — `flooredCostPerOutcome`/`derivedCostPerOutcome` no longer special-case the empty cell
 
 Both display engines used to return `null` for a 0-spend AND 0-outcome cell even when a positive parent
@@ -924,6 +943,43 @@ admin-dashboard render (shipped, distribute.you PR #2725).
 Same prod-only-balance gotcha as the accounts audit (billing balance → stripe-service, no staging runtime → the
 whole board 502s on staging; **verify on PROD**). Triage: STAGING → feature. (PR #572; PostHog signal PR #577,
 features-service#576, set 2026-07-15.)
+
+## `pipeline-activity` `expected.outreach` DIVISOR is floored at the brand's OWN cost per outreach — the graph may never promise more sends than the brand's budget can buy
+
+`computeExpectedActivity` divides the brand's daily budget by `bestWorkflow.outreachUsd` — the CROSS-ORG
+cheapest-signup workflow's cost per outreach. Nothing brand-specific entered the forecast except the
+budget, so a brand that structurally pays MORE than the fleet benchmark (more enrichment per lead, more
+sequence steps) was promised sends it cannot afford, and the SAME page showed its real cost per outreach.
+
+The divisor is now `max(bestWorkflow.outreachUsd, brandObservedOutreachUsd)`:
+
+- **`brandObservedOutreachUsd`** = the brand's LIFETIME committed spend on this feature ÷ the recipients
+  it contacted, summed over every dynasty — `fetchBrandObservedOutreachUsd`, reusing
+  `fetchBrandWorkflowEvidence` (the exact brand-grain read `workflow-projection` already makes). SAME
+  BASIS as the fleet figure (`totalCostInUsdCents` committed over `recipientStats.contacted`); only the
+  SCOPE differs, so the `max` compares like with like. NOT `fetchDailyBroadcastActivity` — that only
+  covers the requested `days` window (7 by default), far too thin a denominator to price a send.
+- **Direction:** same cascade doctrine as `audience-stats` / `cost-engine.ts` (`max(own evidence,
+  benchmark)`), inverted ONLY because the output is a COUNT — flooring the DIVISOR lowers the count, so
+  the graph can never over-promise. The floor releases itself once the brand's ratio reaches the
+  benchmark; a brand CHEAPER than the fleet keeps the fleet number (a `max`, never a raise).
+- **No own-ratio** (0 spend OR 0 contacted — a fresh brand) → `null` → the fleet figure alone,
+  byte-identical to before. Never a fabricated ratio.
+- `opens`/`clicks`/`signups`/`formSubmissions` derive from `outreach`, so they fall proportionally.
+
+**`computeFeatureOutreachUsd` (exported, consumed by `send-forecast-aggregate` for the ADMIN FLEET
+send-forecast) keeps its behaviour UNCHANGED — no brand floor there**, that surface is legitimately
+fleet-level and cross-brand. `buildWorkflowActivityUnits` now returns `{units, workflows}` so the brand
+grain reuses the workflow metadata (no extra `fetchPublicWorkflows` call). Adds two brand-scoped reads
+(runs `groupBy=workflowSlug&brandId`, email-gateway `groupBy=workflowSlug&brandId`) — both already made
+by `workflow-projection`, and both covered by the existing `servedCached` scope key (featureSlug + orgId +
+brandId + timezone + days; the new inputs are pure functions of brand + feature). Response shape unchanged
+→ no OpenAPI regen, no dashboard change (`metrics.outreach.expected` renders verbatim).
+
+**Prod (2026-07-29, brand `b97440f6…`, `sales-cold-email-outreach`):** $15/day budget returned
+`expected.outreach` 107.717/day = $0.1393 implied per send, while the brand's real committed spend ÷
+contacted was $14.67/36 = **$0.41**. At the $1/day budget the user reported, that printed **7** sends/day
+against a reality of ~2-3. (Set 2026-07-30.)
 
 ## `pipeline-activity` signup/form-submission `.actual` = REAL observed conversions, NEVER `clicks × rate` (PR #513)
 

@@ -11,7 +11,9 @@ import {
   fetchPublicCosts,
   fetchPublicEmailStats,
   fetchPublicWorkflows,
+  type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
+import { fetchBrandWorkflowEvidence } from "../lib/workflow-projection-grains.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { projectOutcomeCosts, type SalesEconomics } from "../lib/funnel-registry.js";
 import {
@@ -339,10 +341,16 @@ function economicsToProjectionInputs(economics: SalesEconomics): {
   };
 }
 
+interface WorkflowActivityUnits {
+  units: Map<string, WorkflowActivityUnit>;
+  /** The feature's fleet workflow metadata — reused for the BRAND-grain evidence read (dynasty rollup). */
+  workflows: WorkflowMetadata[];
+}
+
 async function buildWorkflowActivityUnits(
   featureSlug: string,
   economics: SalesEconomics,
-): Promise<Map<string, WorkflowActivityUnit>> {
+): Promise<WorkflowActivityUnits> {
   const [workflows, costGroups, emailStats] = await Promise.all([
     fetchPublicWorkflows(featureSlug, "all"),
     fetchPublicCosts(featureSlug, "workflowSlug"),
@@ -379,7 +387,7 @@ async function buildWorkflowActivityUnits(
     unitsByWorkflowSlug.set(activeSlug, unit);
   }
 
-  return unitsByWorkflowSlug;
+  return { units: unitsByWorkflowSlug, workflows };
 }
 
 function chooseBestSignupWorkflow(units: Map<string, WorkflowActivityUnit>): WorkflowActivityUnit | null {
@@ -394,10 +402,15 @@ function chooseBestSignupWorkflow(units: Map<string, WorkflowActivityUnit>): Wor
 }
 
 /**
- * Feature-level cost-per-outreach (USD) of the best-signup workflow — the SAME `outreachUsd` the
- * dashboard's per-brand forecast divides the daily budget by (`computeExpectedActivity`). It is a
- * CROSS-ORG (goal-global) figure: `buildWorkflowActivityUnits` reads the PUBLIC workflow cost/email
- * stats, so it depends only on the FEATURE, not the brand — only the daily BUDGET is per-brand.
+ * Feature-level cost-per-outreach (USD) of the best-signup workflow — the fleet BENCHMARK the
+ * dashboard's per-brand forecast divides the daily budget by (`computeExpectedActivity`, where it is
+ * additionally floored at the brand's OWN observed ratio). It is a CROSS-ORG (goal-global) figure:
+ * `buildWorkflowActivityUnits` reads the PUBLIC workflow cost/email stats, so it depends only on the
+ * FEATURE, not the brand — only the daily BUDGET is per-brand.
+ *
+ * The per-brand floor is deliberately NOT applied here: this is the ADMIN fleet send-forecast's
+ * aggregate input, which is legitimately fleet-level and cross-brand. Keep this function's behaviour
+ * unchanged.
  *
  * The best-signup ranking (`chooseBestSignupWorkflow`, lowest `costPerSignupUsd`) is monotonic in
  * `clickUsd` for any fixed economics, so it's economics-INVARIANT: a neutral economics picks the same
@@ -417,9 +430,41 @@ const NEUTRAL_ECONOMICS: SalesEconomics = {
 };
 
 export async function computeFeatureOutreachUsd(featureSlug: string): Promise<number | null> {
-  const units = await buildWorkflowActivityUnits(featureSlug, NEUTRAL_ECONOMICS);
+  const { units } = await buildWorkflowActivityUnits(featureSlug, NEUTRAL_ECONOMICS);
   const best = chooseBestSignupWorkflow(units);
   return best?.outreachUsd ?? null;
+}
+
+/**
+ * The BRAND's OWN observed cost per outreach (USD) on this feature — its committed spend divided by the
+ * recipients it actually contacted, summed over every workflow dynasty it ran.
+ *
+ * Same BASIS as the fleet `outreachUsd` it floors (`buildWorkflowActivityUnits`): COMMITTED cost
+ * (`totalCostInUsdCents`) over `recipientStats.contacted`. Only the SCOPE differs — one brand instead of
+ * the fleet — so `max(fleet, own)` compares like with like. It is a LIFETIME ratio (the whole brand ×
+ * feature history), not the `days` window: `fetchDailyBroadcastActivity` only covers the requested window
+ * (7 days by default), which is far too thin a denominator to price a send.
+ *
+ * Reuses `fetchBrandWorkflowEvidence` — the exact brand-grain read `workflow-projection` already makes —
+ * so the numerator/denominator are the ones that surface as this brand's cost-per-outcome elsewhere.
+ *
+ * Returns null when EITHER side is 0 (a brand that never spent, or never contacted anyone): there is no
+ * own-ratio to floor with, so the caller keeps the fleet benchmark unchanged. Never a fabricated value.
+ */
+async function fetchBrandObservedOutreachUsd(
+  brandId: string,
+  featureSlug: string,
+  workflows: WorkflowMetadata[],
+  headers: { orgId: string; userId: string; runId: string },
+): Promise<number | null> {
+  const evidence = await fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, { ...headers, featureSlug });
+  let costCents = 0;
+  let contacted = 0;
+  for (const grain of evidence.values()) {
+    costCents += grain.totalCostInUsdCents;
+    contacted += grain.contacted;
+  }
+  return costCents > 0 && contacted > 0 ? costCents / 100 / contacted : null;
 }
 
 interface AudienceOutcome {
@@ -586,19 +631,33 @@ async function computeExpectedActivity(
   const clickToFormSubmissionPct = economics?.visitToFormSubmissionPct ?? null;
   if (dailyBudgetUsd === null || !economics) return emptyExpected(clickToSignupPct, clickToFormSubmissionPct);
 
-  const units = await buildWorkflowActivityUnits(featureSlug, economics);
+  const { units, workflows } = await buildWorkflowActivityUnits(featureSlug, economics);
   const bestWorkflow = chooseBestSignupWorkflow(units);
   if (!bestWorkflow || bestWorkflow.outreachUsd === null) return emptyExpected(clickToSignupPct, clickToFormSubmissionPct);
 
-  const forecast = await fetchBestAudienceForecast(
-    brandId,
-    featureSlug,
-    bestWorkflow.workflowDynastySlug,
-    headers,
-  );
+  const [forecast, brandObservedOutreachUsd] = await Promise.all([
+    fetchBestAudienceForecast(brandId, featureSlug, bestWorkflow.workflowDynastySlug, headers),
+    fetchBrandObservedOutreachUsd(brandId, featureSlug, workflows, headers),
+  ]);
   const rates = forecast?.rates ?? { openPerOutreach: null, clickPerOutreach: null, positiveReplyPerOutreach: null };
 
-  const outreach = dailyBudgetUsd / bestWorkflow.outreachUsd;
+  // The forecast promises what the brand's OWN daily budget can buy, so the divisor is FLOORED at the
+  // brand's own observed cost per outreach. `bestWorkflow.outreachUsd` is the CROSS-ORG cheapest-signup
+  // workflow's send cost; a brand that structurally pays more than the fleet benchmark (more enrichment
+  // per lead, more sequence steps) would otherwise be promised ~3x the sends its budget can pay for — and
+  // the same page shows its real cost per outreach, so the two contradicted each other.
+  //
+  // Same floor doctrine as `audience-stats` / `cost-engine.ts`'s cascade (`max(own evidence, benchmark)`),
+  // inverted in DIRECTION only because the output here is a COUNT: flooring the DIVISOR lowers the count,
+  // so the graph can never over-promise. The floor releases itself the moment the brand's own ratio
+  // reaches the benchmark — a brand cheaper than the fleet keeps the fleet number (a `max`, never a raise).
+  // No own-ratio (fresh brand: 0 spend or 0 contacted) → the fleet figure alone, byte-identical to before.
+  const effectiveOutreachUsd =
+    brandObservedOutreachUsd === null
+      ? bestWorkflow.outreachUsd
+      : Math.max(bestWorkflow.outreachUsd, brandObservedOutreachUsd);
+
+  const outreach = dailyBudgetUsd / effectiveOutreachUsd;
   const openPerOutreach = rates.openPerOutreach ?? bestWorkflow.openPerOutreach;
   const clickPerOutreach = rates.clickPerOutreach ?? bestWorkflow.clickPerOutreach;
   const opens = openPerOutreach !== null ? outreach * openPerOutreach : null;
