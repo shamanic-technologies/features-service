@@ -405,6 +405,30 @@ export function grainHasObservedOutcome(
  *
  * So for a 0-outcome brand that spent $135 (fleet cost $10): resolved cost = $135 (its own floor),
  * grain = crossOrg (benchmark) — the number stays brand-specific, the label stops lying.
+ *
+ *  • The GOAL METRIC (`costPerOutcomeUsd`) additionally requires that SOME grain in this row's ladder
+ *    observed the goal's driving outcome. When NONE did, this workflow has never produced the outcome
+ *    anywhere — not for this audience, not for this brand, not once across the whole fleet — so its
+ *    "cost per outcome" is not an estimate of anything: it is `max(spend, parent)`, a pure LOWER BOUND
+ *    ("we spent $61.73 and got zero replies"). A lower bound is not comparable to a measured ratio, and
+ *    EVERY ranker in the fleet argmins on this field — the dashboard's `pickBestBrandRow`, this
+ *    endpoint's own `recommendedWorkflowDynastySlug`, campaign-service's `pickBestWorkflow`. Left as a
+ *    number, the cheapest husk wins them all PERMANENTLY (a dormant workflow's bound never climbs,
+ *    because nothing it does can raise a floor it never escapes), and it wins them against workflows
+ *    that genuinely produce the outcome. Prod: `dawn` (fleet-wide 13 clicks, ZERO positive replies) was
+ *    crowned best cost-per-positive-reply at $61.73 over `arcadia`'s MEASURED $64.11 — so the Strategy
+ *    page priced every audience off a workflow that has never once produced a positive reply, while
+ *    `/audience-stats` (whose parent pick has always been gated on the same `grainHasObservedOutcome`)
+ *    priced them at $64.11. Gating the field here makes the two agree ON THE MEASURED WORKFLOW, and is
+ *    the SAME husk rule the landing's best-workflow pick and `fetchBrandProjectedParents` already apply.
+ *
+ *    This nulls ONLY the goal-routed block — the metric, the goal-chained paid-client cost, and the ROI
+ *    and %CAC that are pure functions of it — so the row cannot report "no cost per outcome" beside a
+ *    confident ROI. The RAW, still-measured figures are untouched (`costPerClickUsd` stays $4.748 off
+ *    13 real clicks), the grain ladder and its floors are untouched, and every consumer already skips a
+ *    null metric BY DESIGN (both rankers document it as "no rankable economics"), so no consumer needs
+ *    to change. When NO workflow has ever produced the goal's outcome, every row nulls and both surfaces
+ *    honestly show "-" rather than agreeing on a fabricated winner.
  */
 function resolvePick(
   estimatesByGrain: Partial<Record<GrainName, GrainBlock>>,
@@ -424,15 +448,24 @@ function resolvePick(
   const grain: GrainName =
     measured("audience") ? "audience" : measured("brand") ? "brand" : "crossOrg";
   const unitCosts = { clickUsd: block.unitCosts.costPerClickUsd, replyUsd: block.unitCosts.costPerPositiveReplyUsd };
-  const costPerOutcomeUsd = econ ? outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal) : null;
+  // GOAL-METRIC gate: this workflow must have produced the goal's driving outcome at SOME grain. When no
+  // grain did, `outcomeCostForGoal` would return a pure `max(spend, parent)` lower bound, and every
+  // ranker argmins on it → the cheapest never-produced-anything husk wins forever. Null instead, which
+  // both rankers already skip as "no rankable economics".
+  const goalObserved = measured("audience") || measured("brand") || measured("crossOrg");
+  const costPerOutcomeUsd =
+    econ && goalObserved ? outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal) : null;
   return {
     grain,
     costPerClickUsd: block.unitCosts.costPerClickUsd,
     costPerOutcomeUsd,
-    costPerPaidClientUsd: block.projected.costPerPaidClientUsd,
+    // The goal-CHAINED paid-client cost and the ROI / %CAC that are pure functions of it share the
+    // metric's fate — a row must never pair "cost per outcome unknown" with a confident ROI. The raw
+    // per-click / per-meeting figures stay: they are measured off real clicks.
+    costPerPaidClientUsd: goalObserved ? block.projected.costPerPaidClientUsd : null,
     costPerMeetingBookedUsd: block.projected.costPerMeetingBookedUsd,
-    roiMultiple: block.projected.roiMultiple,
-    cacPct: block.projected.cacPct,
+    roiMultiple: goalObserved ? block.projected.roiMultiple : null,
+    cacPct: goalObserved ? block.projected.cacPct : null,
   };
 }
 

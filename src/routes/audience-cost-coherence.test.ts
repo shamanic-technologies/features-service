@@ -137,6 +137,20 @@ const FLEET_BRAND_GRAIN_FLIPS: Fleet = {
   brandEmail: [emailGroup("wf-a", 0, 0, 13)],
 };
 
+// Case D — a HUSK undercuts the measured workflow on the goal's own metric (the prod shape, `dawn` vs
+// `arcadia` at goal=positiveReply). Cost-per-outcome here IS the reply cost:
+//   wf-husk     $60 / 13 clicks / ZERO replies → reply cost = max($60, no parent) = $60, a pure LOWER
+//               BOUND ("spent $60, got no replies"), NOT a measured ratio — yet it is the smallest number
+//   wf-measured $80 /  0 clicks /  1 reply     → reply cost = $80/1 = $80, genuinely MEASURED
+// Every ranker argmins on `resolved.costPerOutcomeUsd`, so while the husk reports $60 it is crowned "best
+// cost per positive reply" — by a workflow that has never produced one — and the Strategy page prices
+// every audience off it, while /audience-stats (whose parent pick has always been husk-gated) uses $80.
+const FLEET_HUSK_UNDERCUTS: Fleet = {
+  workflows: [workflow("wf-husk"), workflow("wf-measured")],
+  costs: [costGroup({ workflowSlug: "wf-husk" }, 6000), costGroup({ workflowSlug: "wf-measured" }, 8000)],
+  email: [emailGroup("wf-husk", 13, 0), emailGroup("wf-measured", 0, 1)],
+};
+
 const FLEET_GOAL_BEATS_CLICKS: Fleet = {
   workflows: [workflow("wf-cheap"), workflow("wf-closer")],
   costs: [costGroup({ workflowSlug: "wf-cheap" }, 20000), costGroup({ workflowSlug: "wf-closer" }, 40000)],
@@ -219,7 +233,7 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
 /** The two surfaces' numbers for audience-a, driven by the SAME fixture. */
 async function bothSurfaces(
   goal: string,
-  statsMetric: "cpcCents" | "cpsaleCents" | "cpfsCents",
+  statsMetric: "cpcCents" | "cpprCents" | "cpsaleCents" | "cpfsCents",
   projectionField: "costPerOutcomeUsd" | "costPerClickUsd",
 ) {
   const stats = await request(app).get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=${goal}`).set(AUTH);
@@ -282,6 +296,44 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
   afterEach(() => {
     fetchSpy?.mockRestore();
     vi.restoreAllMocks();
+  });
+
+  // The residual, CORRECT divergence: once an audience's own spend EXCEEDS the benchmark it legitimately
+  // wins on the accounting surface (documented cascade behaviour). Everything below is the LOW-spend
+  // regime, where the two must agree.
+  it("a workflow that never produced the goal's outcome cannot be crowned best — both surfaces price off the MEASURED one", async () => {
+    fleet = FLEET_HUSK_UNDERCUTS;
+    audienceSpendSlug = "wf-measured";
+
+    const { statsUsd, projectionUsd } = await bothSurfaces("positiveReply", "cpprCents", "costPerOutcomeUsd");
+
+    // Agreement is the invariant...
+    expect(statsUsd).toBeCloseTo(projectionUsd, 9);
+    // ...and it must settle on the MEASURED workflow, not on the cheaper husk. $80 = wf-measured's real
+    // $80/1 reply; $60 is wf-husk's "spent $60, produced zero replies" lower bound.
+    expect(statsUsd).toBe(80);
+    expect(statsUsd).not.toBe(60);
+  });
+
+  it("the husk's goal metric is null (not a rankable number), while its measured click cost survives", async () => {
+    fleet = FLEET_HUSK_UNDERCUTS;
+    audienceSpendSlug = "wf-measured";
+
+    const res = await request(app)
+      .get(`/features/${FEATURE.slug}/workflow-projection?brandId=brand-1&goal=positiveReply`)
+      .set(AUTH);
+    expect(res.status).toBe(200);
+    const husk = res.body.rows.find((r: any) => r.audienceId == null && r.workflow.workflowDynastySlug === "wf-husk");
+
+    // No rankable economics for an outcome it has never produced — every ranker skips null by design.
+    expect(husk.resolved.costPerOutcomeUsd).toBeNull();
+    // The row stays internally coherent: no confident ROI beside an unknown cost per outcome.
+    expect(husk.resolved.roiMultiple).toBeNull();
+    expect(husk.resolved.cacPct).toBeNull();
+    // The RAW, genuinely measured figure is untouched — $60 over 13 real clicks.
+    expect(husk.resolved.costPerClickUsd).toBeCloseTo(60 / 13, 9);
+    // And the backend's own recommendation stops pointing at the husk.
+    expect(res.body.recommendedWorkflowDynastySlug).toBe("wf-measured");
   });
 
   it("a 0-outcome audience whose own spend is below the parent reports the SAME cost on both surfaces", async () => {
@@ -372,16 +424,18 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
       expect(statsUsd).not.toBe(80); // wf-cheap's leg ($20.00 / 25%), the brand-best workflow
     });
 
-    it("still reports nothing for an audience with no spend and no clicks (never fabricated)", async () => {
+    // An UNSTARTED audience is not a different regime from a barely-started one — both are un-evidenced.
+    // The Strategy page always has a row for it (its per-audience pick falls back to the best workflow's
+    // brand row), so blanking it on the Audiences table alone is the "three priced, one blank" split for
+    // audiences that are all equally unstarted.
+    it("an audience with NO spend and NO clicks gets the SAME benchmark both surfaces show, not a blank", async () => {
       audienceSpendCents = 0;
       audienceClicks = 0;
 
-      const stats = await request(app).get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=formSubmission`).set(AUTH);
-      const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
+      const { statsUsd, projectionUsd } = await bothSurfaces("formSubmission", "cpfsCents", "costPerOutcomeUsd");
 
-      expect(row.evidence.totalCostInUsdCents).toBe(0);
-      expect(row.evidence.websiteClicks).toBe(0);
-      expect(row.metrics.cpfsCents).toBeNull();
+      expect(statsUsd).not.toBeNull();
+      expect(statsUsd).toBeCloseTo(projectionUsd, 9);
     });
   });
 });

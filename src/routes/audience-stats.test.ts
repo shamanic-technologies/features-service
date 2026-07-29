@@ -882,7 +882,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(res.body.audiences[0].audienceId).toBe("audience-b");
   });
 
-  it("0-outcome audience with spend FLOORS to the fleet cost-per-outcome (never a raw tiny-spend value, never null); truly-empty audience is null", async () => {
+  it("0-outcome audience with spend FLOORS to the fleet cost-per-outcome (never a raw tiny-spend value, never null); a never-started audience gets the same floor", async () => {
     // audience-a: real spend 500 but ZERO positive replies. audience-b: spend 1000 + 5 positive replies
     // (real ratio 200). audience-c: ZERO spend AND zero replies (truly empty).
     // FLEET-BACKED parent cppr = crossOrg $5.00 = 500¢. → audience-a floors to max(500, 500) = 500 (its own
@@ -931,8 +931,11 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(byId["audience-a"].metrics.cpprCents).toBe(500);
     // audience-b: real observed ratio 1000/5 = 200 (parent ignored), unchanged.
     expect(byId["audience-b"].metrics.cpprCents).toBe(200);
-    // audience-c: 0 spend AND 0 replies → truly empty → null (sorts last).
-    expect(byId["audience-c"].metrics.cpprCents).toBeNull();
+    // audience-c: never started (0 spend, 0 replies) → the SAME fleet floor audience-a gets. It is no
+    // less evidenced than audience-a, and the Strategy page shows it the same benchmark row, so blanking
+    // it here would price three equally-unstarted audiences and leave the fourth "-" (sorts last still,
+    // on the stable tie-break behind the identical floor).
+    expect(byId["audience-c"].metrics.cpprCents).toBe(500);
     expect(res.body.audiences[res.body.audiences.length - 1].audienceId).toBe("audience-c");
   });
 
