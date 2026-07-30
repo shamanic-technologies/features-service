@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
+import { computeAudienceStats, validateAudienceStatsQuery, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
@@ -21,36 +21,38 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // byte-identical. The selector is threaded into computeAudienceStats' cost read below. A NET request
     // where the net figure is absent throws inside computeAudienceStats → 502 (never cached, no fallback).
 
+    // Validate FIRST — the economics read below is a NETWORK call, and it must never run for a request
+    // that is going to 400 anyway. With an unreachable brand-service the retrying client burns seconds
+    // before failing, which is a hang, not just wasted work (it turned two validation tests into 5s
+    // timeouts in CI while they passed locally). Shares ONE definition of "valid" with
+    // computeAudienceStats, which calls the same validator, so the route cannot drift from the lib.
+    const validated = validateAudienceStatsQuery(req);
+    if (!validated.ok) {
+      return res.status(validated.status).json({ error: validated.error });
+    }
+
     // The derived cost columns (cost per form submission / signup / sale) project through the brand's
     // economics via `fetchBrandProjectedParents`, so the body goes stale the moment the economics change.
-    // Fold their fingerprint into the cache key: an economics write lands on a different cell and forces a
-    // fresh compute, instead of replaying a pre-write snapshot until the hard-stale cap. Read here for the
-    // KEY only; the compute does its own read on a miss (one extra brand-service call on the miss path,
-    // which is not worth threading an override through computeAudienceStats → fetchBrandProjectedParents).
+    // Folding the fingerprint into the cache key makes an economics write land on a different cell, which
+    // forces a fresh compute instead of replaying a pre-write snapshot until the hard-stale cap. Read here
+    // for the KEY only; the compute does its own read on a miss (one extra brand-service call on the miss
+    // path, not worth threading an override down through fetchBrandProjectedParents).
     //
-    // FAIL-SOFT, and deliberately so: this read feeds a CACHE KEY, not the response, so it must not change
-    // the endpoint's HTTP semantics. This route's parameter validation lives INSIDE computeAudienceStats
-    // (see CLAUDE.md), i.e. AFTER this point — so a hard failure here would turn an invalid-parameter 400
-    // into a 502. Degrading to "no fingerprint in the key" keeps all three outcomes correct: an invalid
-    // request still 400s from the compute; a genuinely unreachable brand-service still 502s, because the
-    // compute's own economics read fails loud; and the nominal path still gets the fingerprint.
-    // NB the fetch is wrapped in an async IIFE, not a trailing `.catch()`: `fetchEffectiveEconomics`
-    // validates its env (BRAND_SERVICE_URL / API_KEY) and throws SYNCHRONOUSLY before its first await, and
-    // a synchronous throw escapes a `.catch()` chained onto the call — it never becomes a rejected
-    // promise. That is precisely how this slipped through locally (env present, so no sync throw) and
-    // turned two 400-assertion tests into 502s in CI (env absent).
-    const brandId = req.query.brandId as string | undefined;
-    const econ = await (async () => {
-      if (!brandId) return undefined;
-      try {
-        return economicsFingerprint(await fetchEffectiveEconomics(brandId, { orgId, userId, runId, featureSlug }));
-      } catch (err) {
-        console.warn(
-          `[features-service] audience-stats economics fingerprint unavailable (keying without it): ${(err as Error).message}`,
-        );
-        return undefined;
-      }
-    })();
+    // Fail-soft, via a real try/catch rather than a trailing `.catch()`: `fetchEffectiveEconomics`
+    // validates its env and can throw SYNCHRONOUSLY before its first await, which a chained `.catch()`
+    // would not see. This read feeds a cache KEY, not the response, so its failure must not change the
+    // endpoint's HTTP semantics — degrade to "no fingerprint in the key" and let the compute (which reads
+    // economics fail-loud) decide the status.
+    let econ: string | undefined;
+    try {
+      econ = economicsFingerprint(
+        await fetchEffectiveEconomics(validated.brandId, { orgId, userId, runId, featureSlug }),
+      );
+    } catch (err) {
+      console.warn(
+        `[features-service] audience-stats economics fingerprint unavailable (keying without it): ${(err as Error).message}`,
+      );
+    }
 
     // Gold SWR: the cost + membership + email fan-out runs off the request path ~once per TTL, keyed on
     // every input that shapes the body. The ComputeResult is deterministic (validation 400/404 or a
