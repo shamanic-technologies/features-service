@@ -34,17 +34,23 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // into a 502. Degrading to "no fingerprint in the key" keeps all three outcomes correct: an invalid
     // request still 400s from the compute; a genuinely unreachable brand-service still 502s, because the
     // compute's own economics read fails loud; and the nominal path still gets the fingerprint.
+    // NB the fetch is wrapped in an async IIFE, not a trailing `.catch()`: `fetchEffectiveEconomics`
+    // validates its env (BRAND_SERVICE_URL / API_KEY) and throws SYNCHRONOUSLY before its first await, and
+    // a synchronous throw escapes a `.catch()` chained onto the call — it never becomes a rejected
+    // promise. That is precisely how this slipped through locally (env present, so no sync throw) and
+    // turned two 400-assertion tests into 502s in CI (env absent).
     const brandId = req.query.brandId as string | undefined;
-    const econ = brandId
-      ? await fetchEffectiveEconomics(brandId, { orgId, userId, runId, featureSlug })
-          .then(economicsFingerprint)
-          .catch((err) => {
-            console.warn(
-              `[features-service] audience-stats economics fingerprint unavailable (keying without it): ${(err as Error).message}`,
-            );
-            return undefined;
-          })
-      : undefined;
+    const econ = await (async () => {
+      if (!brandId) return undefined;
+      try {
+        return economicsFingerprint(await fetchEffectiveEconomics(brandId, { orgId, userId, runId, featureSlug }));
+      } catch (err) {
+        console.warn(
+          `[features-service] audience-stats economics fingerprint unavailable (keying without it): ${(err as Error).message}`,
+        );
+        return undefined;
+      }
+    })();
 
     // Gold SWR: the cost + membership + email fan-out runs off the request path ~once per TTL, keyed on
     // every input that shapes the body. The ComputeResult is deterministic (validation 400/404 or a
