@@ -8,6 +8,7 @@ import { matchSingleStepGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal }
 import {
   fetchEffectiveEconomics,
   fetchBrandSavedEconomicsWithGoal,
+  economicsFingerprint,
   type EffectiveEconomics,
 } from "../lib/sales-economics-client.js";
 import {
@@ -916,26 +917,34 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     // Resolved once and shared across every campaign — null when no funnel is wired for the feature.
     const funnel = getFunnel(featureSlug);
 
+    // ROI / CAC / the whole EV pipeline are derived from the brand's economics, so the economics are read
+    // LIVE on the request path and folded into the cache key. Without this, an onboarding write ("save my
+    // sales economics") would keep replaying the PRE-write snapshot for up to the hard-stale cap, which is
+    // the exact 25x-wrong-ROI bug #659 fixed for workflow-projection by reading economics live. Here the
+    // key carries the fingerprint instead: different economics ⇒ different cell ⇒ guaranteed fresh compute.
+    // The value is threaded into the compute as `economicsOverride`, so it costs ONE brand-service read.
+    // Skipped entirely when no funnel is wired (computeFeatureRevenue short-circuits before Wave A and
+    // ignores the override) — a feature with no funnel has no economics-derived output to go stale.
+    const effectiveEconomics = funnel ? await fetchEffectiveEconomics(brandId, headers) : undefined;
+    const econ = effectiveEconomics ? economicsFingerprint(effectiveEconomics) : undefined;
+
     // ── Grouped: one lean group per campaign (dashboard campaigns list) ──────────
     // Served through the Gold snapshot cache (O(1) read; the fan-out recomputes off-path ~per TTL).
     if (groupBy === "campaignId") {
       const payload = await servedCached({
         view: "revenue-grouped",
-        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing }),
+        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing, econ }),
         orgId,
         compute: async () => {
           const campaignIds = await fetchCampaignIdsWithRuns(brandId, featureSlug, headers);
 
           traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaigns=${campaignIds.length}` }, req.headers).catch(() => {});
 
-          // Economics are brand-scoped (identical across campaigns) — fetch ONCE and share, so N
-          // campaigns don't each re-hit brand-service. Skipped entirely when no funnel is wired
-          // (computeFeatureRevenue short-circuits before Wave A and ignores the override).
-          const sharedEconomics = funnel ? await fetchEffectiveEconomics(brandId, headers) : undefined;
-
+          // Economics are brand-scoped (identical across campaigns) — resolved ONCE above and shared, so
+          // N campaigns don't each re-hit brand-service.
           const groups = await Promise.all(
             campaignIds.map(async (cid) => {
-              const body = await computeFeatureRevenue(featureSlug, brandId, cid, funnel, headers, undefined, sharedEconomics, false, pricing);
+              const body = await computeFeatureRevenue(featureSlug, brandId, cid, funnel, headers, undefined, effectiveEconomics, false, pricing);
               return { campaignId: cid, headline: body.headline, costEconomics: body.costEconomics };
             }),
           );
@@ -952,13 +961,13 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     // ── Overview / lens: single brand-scoped (optionally one-campaign) response ──
     const payload = await servedCached({
       view: lens ? "revenue-lens" : "revenue",
-      scopeKey: buildScopeKey(featureSlug, { orgId, brandId, campaignId, lens, pricing }),
+      scopeKey: buildScopeKey(featureSlug, { orgId, brandId, campaignId, lens, pricing, econ }),
       orgId,
       compute: async () => {
         traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
 
         // Overview (no lens) emits the canonical spend block; the lens path omits it (brand-total concept).
-        const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, funnel, headers, lens, undefined, !lens, pricing);
+        const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, funnel, headers, lens, effectiveEconomics, !lens, pricing);
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 

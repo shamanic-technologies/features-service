@@ -1163,10 +1163,16 @@ describe("GET /features/:featureSlug/revenue", () => {
     // (Promise.all) drives inFlight to the expected count → barrier releases → all resolve. Sequential
     // awaits would stall the first call on the barrier forever → vitest timeout. So the test PASSING is
     // itself proof of concurrency; a regression to sequential awaits times out.
-    // The Overview path fires FIVE concurrent calls: fetchSpendBreakdown makes TWO /stats/costs calls
-    // (per-source costName + today's spend), plus economics + platform rates + leads.
-    const WAVE_A = ["/stats/costs", "/sales-economics-effective", "/public/stats", "/orgs/leads"];
-    const EXPECTED_CONCURRENT = 5;
+    // The Overview path fires FOUR concurrent calls: fetchSpendBreakdown makes TWO /stats/costs calls
+    // (per-source costName + today's spend), plus platform rates + leads.
+    //
+    // Economics is deliberately NOT in this wave any more: it is resolved ONCE on the request path ahead
+    // of the Gold cache lookup, because its fingerprint is part of the `scope_key` (an economics write
+    // must land on a different cell instead of replaying a pre-write snapshot). That costs one serial
+    // brand-service read on the MISS path only — the trade for never blocking a revisit on the full
+    // fan-out. It is still fetched exactly once per request, and Wave A must still be concurrent.
+    const WAVE_A = ["/stats/costs", "/public/stats", "/orgs/leads"];
+    const EXPECTED_CONCURRENT = 4;
     let inFlight = 0;
     let releaseAll!: () => void;
     const allInFlight = new Promise<void>((r) => { releaseAll = r; });
