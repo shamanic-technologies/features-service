@@ -1,5 +1,8 @@
 /**
- * Brand-level FLEET-BACKED projected cost-per-outcome — the floor parent for /audience-stats.
+ * Brand-level FLEET-BACKED projected cost-per-outcome — the floor parent for /audience-stats AND for
+ * the /revenue `spend` block's AGGREGATE cost-per-outcome columns (brand + campaign grain). Both
+ * surfaces price a 0-outcome cell off the SAME winning workflow, so the Audiences table, the Overview
+ * card and the Strategy page can never print two benchmarks for one brand + goal + moment.
  *
  * A 0-outcome audience's per-audience cost-per-outcome must bottom out at the SAME projected cost the
  * Strategy page's `workflow-projection.resolved` shows (the cross-org fleet benchmark cascaded with the
@@ -101,6 +104,12 @@ export interface BrandProjectedParentsUsd {
   cpfsUsd: number | null; // cost per form submission (projected)
   cpsUsd: number | null; // cost per signup (projected)
   cpsaleUsd: number | null; // cost per sale (goal=sales → best-channel; goal=websitePurchase → close funnel)
+  /**
+   * Cost per BOOKED MEETING (projected, both channels: click→meeting + reply→meeting). /audience-stats
+   * has no per-audience meeting column, so this is consumed only by the /revenue aggregate spend block
+   * (`cpsmCents`), which prices the same five outcomes off the SAME winning workflow.
+   */
+  cpsmUsd: number | null;
   /**
    * Per-audience FUNNEL costs under the winning workflow — the value each DERIVED column takes at 0
    * outcomes, instead of the audience's raw dollar total. Keyed by audienceId; an audience absent from
@@ -299,6 +308,7 @@ export async function fetchBrandProjectedParents(
       cpfsUsd: null,
       cpsUsd: null,
       cpsaleUsd: null,
+      cpsmUsd: null,
       byAudience: new Map(),
     };
   }
@@ -307,14 +317,23 @@ export async function fetchBrandProjectedParents(
   // reply IS the outcome) and the shared projection engine for the funnel columns, exactly as the
   // workflow-projection row for that workflow does.
   const bestUnits = best.unitCosts;
-  const funnelCosts = (units: DynastyUnitCosts): AudienceProjectedCostsUsd & { cpcUsd: number | null; cpprUsd: number | null } => {
+  const funnelCosts = (
+    units: DynastyUnitCosts,
+  ): AudienceProjectedCostsUsd & { cpcUsd: number | null; cpprUsd: number | null; cpsmUsd: number | null } => {
     const cpcUsd = units.clickUsd > 0 ? units.clickUsd : null;
     const cpprUsd = units.replyUsd > 0 ? units.replyUsd : null;
     const p = projectOutcomeCosts(econ!, { clickUsd: cpcUsd, replyUsd: cpprUsd });
     // sales → best-channel cost-per-sale; websitePurchase → multi-step close funnel — mirrors
     // outcomeCostForGoal (both terminate in a paying client, valued distinctly per goal).
     const cpsaleUsd = goal === "sales" ? p.costPerSaleUsd : p.costPerPurchaseUsd;
-    return { cpcUsd, cpprUsd, cpfsUsd: p.costPerFormSubmissionUsd, cpsUsd: p.costPerSignupUsd, cpsaleUsd };
+    return {
+      cpcUsd,
+      cpprUsd,
+      cpfsUsd: p.costPerFormSubmissionUsd,
+      cpsUsd: p.costPerSignupUsd,
+      cpsaleUsd,
+      cpsmUsd: p.costPerMeetingBookedUsd,
+    };
   };
   const brandLevel = funnelCosts(bestUnits);
 
@@ -364,6 +383,7 @@ export async function fetchBrandProjectedParents(
     cpfsUsd: brandLevel.cpfsUsd,
     cpsUsd: brandLevel.cpsUsd,
     cpsaleUsd: brandLevel.cpsaleUsd,
+    cpsmUsd: brandLevel.cpsmUsd,
     byAudience,
   };
 }
