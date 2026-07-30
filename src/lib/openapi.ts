@@ -613,11 +613,12 @@ registry.registerPath({
       brandId: z.string().describe("Brand UUID (required)."),
       days: z.string().optional().describe("Number of days to return. Defaults to 7."),
       timezone: z.string().describe("IANA timezone used for calendar day ordering and today's event bucket."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every COST input behind the expected series (the fleet cost-per-outreach benchmark, the brand's own observed cost per outreach it is floored at, and the per-audience cost that ranks the forecast audience). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount), so a discounted org's forecast promises the volume its budget really buys; fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. The daily BUDGET is a configuration ceiling, not a charge — it is NEVER discounted — and counts/rates are identical either way."),
     }),
   },
   responses: {
     200: { description: "Pipeline activity buckets", content: { "application/json": { schema: pipelineActivityResponseSchema } } },
-    400: { description: "Missing/invalid brandId, days, or timezone", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing/invalid brandId, days, timezone, or pricing", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },

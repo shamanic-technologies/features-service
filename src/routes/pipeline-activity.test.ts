@@ -129,6 +129,13 @@ function mockFetch(opts: {
   brandCosts?: unknown[];
   /** email-gateway /orgs/stats?groupBy=workflowSlug&brandId — the BRAND's own recipients contacted. */
   brandEmailStats?: unknown[];
+  /**
+   * When set, EVERY runs-service cost group additionally carries runs#179's frozen NET twin
+   * (`netTotalCostInUsdCents` = gross reduced by this percentage), as a discounted org's rows do.
+   * Left UNSET, the groups carry only the gross field — the shape a `pricing=net` request must fail
+   * loud on rather than silently serving full price.
+   */
+  netDiscountPct?: number;
 } = {}): void {
   vi.mocked(fetchWithRetry).mockImplementation(async (input, init) => {
     const rawInput = input as unknown;
@@ -137,6 +144,17 @@ function mockFetch(opts: {
     const members = opts.members ?? MEMBERS;
     const outcomes = opts.outcomes ?? DEFAULT_OUTCOMES;
     const audienceCosts = opts.audienceCosts ?? DEFAULT_AUDIENCE_COSTS;
+    // runs#179 freezes each cost row's usage discount at WRITE time and serves the reduced twin
+    // alongside the gross field. Mirror that here so a `pricing=net` request has something to read.
+    const withNet = <T extends Record<string, unknown>>(group: T): T =>
+      opts.netDiscountPct === undefined
+        ? group
+        : {
+            ...group,
+            netTotalCostInUsdCents: String(
+              Math.round(Number(group.totalCostInUsdCents) * (1 - opts.netDiscountPct / 100)),
+            ),
+          };
 
     // lead-service: REAL per-day attributed conversion counts (drives signup/form-submission .actual).
     if (url.includes("/internal/brands/brand-1/conversion-counts-by-day")) {
@@ -190,7 +208,7 @@ function mockFetch(opts: {
 
     if (url.includes("/v1/stats/public/costs")) {
       return new Response(JSON.stringify({
-        groups: [{ dimensions: { workflowSlug: "wf-a" }, totalCostInUsdCents: "100000", runCount: 10, minStartedAt: null, maxStartedAt: null }],
+        groups: [withNet({ dimensions: { workflowSlug: "wf-a" }, totalCostInUsdCents: "100000", runCount: 10, minStartedAt: null, maxStartedAt: null })],
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
@@ -205,17 +223,18 @@ function mockFetch(opts: {
     // runs-service per-audience cost (groupBy=audienceId)
     if (url.includes("/v1/stats/costs") && parsed.searchParams.get("groupBy") === "audienceId") {
       return new Response(JSON.stringify({
-        groups: Object.entries(audienceCosts).map(([audienceId, totalCostInUsdCents]) => ({
-          dimensions: { audienceId },
-          totalCostInUsdCents,
-        })),
+        groups: Object.entries(audienceCosts).map(([audienceId, totalCostInUsdCents]) =>
+          withNet({ dimensions: { audienceId }, totalCostInUsdCents }),
+        ),
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
     // runs-service BRAND-grain cost (groupBy=workflowSlug + brandId) — numerator of the brand's own
     // observed cost per outreach. Default: no attributed brand spend → no own-ratio → fleet benchmark.
     if (url.includes("/v1/stats/costs") && parsed.searchParams.get("groupBy") === "workflowSlug") {
-      return new Response(JSON.stringify({ groups: opts.brandCosts ?? [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({
+        groups: (opts.brandCosts ?? []).map((g) => withNet(g as Record<string, unknown>)),
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
     // email-gateway: per-email brand-scoped outcome flags (POST /orgs/status)
@@ -662,6 +681,117 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
       expect(statsUrl.searchParams.get("type")).toBe("broadcast");
       expect(statsUrl.searchParams.get("brandId")).toBe("brand-1");
       expect(statsUrl.searchParams.get("featureSlugs")).toBe("sales-cold-email-outreach");
+    });
+  });
+
+  // ── ?pricing=gross|net ────────────────────────────────────────────────────────────────────────
+  //
+  // The forecast divides REAL money (the daily budget) by a cost per outreach. For an org carrying a
+  // usage discount, reading that cost at FULL price makes the promise ~half the volume the budget
+  // actually buys — the bar sits at half the height of the real bars beside it. NET reads runs#179's
+  // frozen net twins so the divisor is priced at what the org pays.
+  //
+  // Fleet benchmark: (100000/100)/200 = $5.00/outreach gross. Budget $50.
+  describe("?pricing=gross|net", () => {
+    function brandEvidence(costCents: string, contacted: number) {
+      return {
+        brandCosts: [{ dimensions: { workflowSlug: "wf-a" }, totalCostInUsdCents: costCents, runCount: 1 }],
+        brandEmailStats: [
+          { key: "wf-a", broadcast: { recipientStats: { contacted, clicked: 0, repliesPositive: 0 } } },
+        ],
+      };
+    }
+
+    it("omitting the selector keeps today's full-price answer, even when the net twins are on the wire", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      // brand: $40 gross over 4 contacted = $10/outreach (the floor wins over the $5 fleet benchmark).
+      mockFetch({ ...brandEvidence("4000", 4), netDiscountPct: 50 });
+
+      const res = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York")
+        .set(AUTH)
+        .expect(200);
+
+      expect(res.body.days[0].metrics.outreach.expected).toBe(5);
+    });
+
+    it("net prices the divisor at what the org actually pays, so the promise matches the real volume", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      mockFetch({ ...brandEvidence("4000", 4), netDiscountPct: 50 });
+
+      const res = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York&pricing=net")
+        .set(AUTH)
+        .expect(200);
+
+      // net fleet = $2.50, net own = $2000/100/4 = $5 → max $5 → $50 budget buys 10 sends (2x the
+      // full-price 5 — exactly this org's net/gross ratio, the prod symptom).
+      expect(res.body.days[0].metrics.outreach.expected).toBe(10);
+      // The derived series follow the corrected volume; the rates themselves never move.
+      expect(res.body.days[0].metrics.opens.expected).toBe(5);
+      expect(res.body.days[0].metrics.clicks.expected).toBe(5);
+      // Every future day carries it, and the BUDGET itself is untouched (a ceiling is never discounted).
+      expect(res.body.days[6].metrics.outreach.expected).toBe(10);
+      expect(res.body.summary.dailyBudgetUsd).toBe(50);
+    });
+
+    it("floors BOTH sides on the requested basis — never a net figure against a full-price one", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      // brand: $32 gross over 4 = $8/outreach gross, $4/outreach net. Fleet: $5 gross, $2.50 net.
+      // Correct net answer floors at max($2.50, $4) = $4 → 12.5 sends. Comparing the brand's NET $4
+      // against the fleet's GROSS $5 would pick $5 and answer 10 — a units mismatch, not a floor.
+      mockFetch({ ...brandEvidence("3200", 4), netDiscountPct: 50 });
+
+      const res = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York&pricing=net")
+        .set(AUTH)
+        .expect(200);
+
+      expect(res.body.days[0].metrics.outreach.expected).toBe(12.5);
+    });
+
+    it("gives a non-discounted org identical numbers either way (its frozen net equals its gross)", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      mockFetch({ ...brandEvidence("4000", 4), netDiscountPct: 0 });
+
+      const gross = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York&pricing=gross")
+        .set(AUTH)
+        .expect(200);
+      const net = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York&pricing=net")
+        .set(AUTH)
+        .expect(200);
+
+      expect(net.body.days[0].metrics.outreach.expected).toBe(gross.body.days[0].metrics.outreach.expected);
+      expect(net.body.days[0].metrics.outreach.expected).toBe(5);
+    });
+
+    it("fails loud on net when the frozen net figure is absent — never a silent fallback to full price", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      // No netDiscountPct → the cost groups carry gross only (a runs-service predating #179).
+      mockFetch(brandEvidence("4000", 4));
+
+      await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York&pricing=net")
+        .set(AUTH)
+        .expect(502);
+    });
+
+    it("400s an unknown pricing value (no coercion, no silent default)", async () => {
+      mockFetch();
+
+      const res = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York&pricing=discounted")
+        .set(AUTH)
+        .expect(400);
+
+      expect(res.body.error).toMatch(/pricing/);
     });
   });
 });
