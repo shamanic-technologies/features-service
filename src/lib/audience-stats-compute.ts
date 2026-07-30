@@ -475,18 +475,25 @@ async function fetchAudienceMembership(
  * fans out to runs-service (cost) + human-service/email-gateway (outcomes) to build ranked rows.
  * Downstream failures THROW — the route maps them to 502.
  */
-export async function computeAudienceStats(req: Request, pricing: Pricing = "gross"): Promise<ComputeResult> {
-  const { featureSlug } = req.params;
-  const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
+/**
+ * PURE, synchronous parameter validation for `/audience-stats` — no IO, no network, no DB.
+ *
+ * Extracted so the ROUTE can reject a bad request BEFORE it makes any downstream call. The route now
+ * reads the brand's economics ahead of the Gold cache lookup (its fingerprint is part of the
+ * `scope_key`), and that read must never run for a request that is going to 400 anyway: with an
+ * unreachable BRAND_SERVICE_URL the retrying client burns seconds before failing, which turned two
+ * validation tests into 5s timeouts in CI while passing locally.
+ *
+ * `computeAudienceStats` calls this too, so there is ONE definition of "valid" — the lib stays
+ * independently correct for its other caller (customer-health), and the route cannot drift from it.
+ */
+export function validateAudienceStatsQuery(req: Request):
+  | { ok: true; brandId: string; goal: Goal; statuses: AudienceStatus[]; limit?: number }
+  | { ok: false; status: number; error: string } {
   const brandId = req.query.brandId as string | undefined;
   const goalParam = req.query.goal as string | undefined;
-  const explicitBrandProfileId = req.query.brandProfileId as string | undefined;
   const limitParam = req.query.limit as string | undefined;
   const statusesParam = req.query.statuses as string | undefined;
-  // Optional single-campaign scope for the STATS (audiences themselves stay brand-wide). Absent →
-  // brand-wide numbers, byte-identical to today. Present → cost + outcome numerators narrow to this
-  // campaign (runs campaignId filter + email-gateway campaign scope).
-  const scopeCampaignId = (req.query.campaignId as string | undefined)?.trim() || undefined;
 
   if (!brandId) {
     return { ok: false, status: 400, error: "brandId query parameter is required" };
@@ -518,6 +525,23 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
     }
     parsedLimit = parsed;
   }
+
+  return { ok: true, brandId, goal: normalizedGoal, statuses: parsedStatuses.statuses, limit: parsedLimit };
+}
+
+export async function computeAudienceStats(req: Request, pricing: Pricing = "gross"): Promise<ComputeResult> {
+  const { featureSlug } = req.params;
+  const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
+  const explicitBrandProfileId = req.query.brandProfileId as string | undefined;
+  // Optional single-campaign scope for the STATS (audiences themselves stay brand-wide). Absent →
+  // brand-wide numbers, byte-identical to today. Present → cost + outcome numerators narrow to this
+  // campaign (runs campaignId filter + email-gateway campaign scope).
+  const scopeCampaignId = (req.query.campaignId as string | undefined)?.trim() || undefined;
+
+  const validated = validateAudienceStatsQuery(req);
+  if (!validated.ok) return validated;
+  const { brandId, goal: normalizedGoal, limit: parsedLimit } = validated;
+  const parsedStatuses = { ok: true as const, statuses: validated.statuses };
 
   const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
   if (!feature) {

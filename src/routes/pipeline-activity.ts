@@ -14,7 +14,7 @@ import {
   type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
 import { fetchBrandWorkflowEvidence } from "../lib/workflow-projection-grains.js";
-import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
+import { fetchEffectiveEconomics, economicsFingerprint, type EffectiveEconomics } from "../lib/sales-economics-client.js";
 import { projectOutcomeCosts, type SalesEconomics } from "../lib/funnel-registry.js";
 import {
   fetchConversionCountsByDay,
@@ -618,10 +618,13 @@ async function computeExpectedActivity(
   featureSlug: string,
   brandId: string,
   headers: { orgId: string; userId: string; runId: string },
+  // Already resolved by the caller so it can fold the economics fingerprint into the cache key — reused
+  // here so the request path does not fetch the same brand-service read twice.
+  economicsOverride?: EffectiveEconomics,
 ): Promise<ExpectedActivity> {
   const [dailyBudgetUsd, effective] = await Promise.all([
     fetchBrandDailyBudgetUsd(brandId, featureSlug, headers),
-    fetchEffectiveEconomics(brandId, { ...headers, featureSlug }),
+    economicsOverride ?? fetchEffectiveEconomics(brandId, { ...headers, featureSlug }),
   ]);
 
   const economics = effective.economics;
@@ -743,18 +746,35 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) return res.status(404).json({ error: "Feature not found" });
 
+    // The projected series (signups, form submissions) are driven by the brand's economics rates, so the
+    // economics are read LIVE and folded into the cache key: an economics write lands on a different
+    // `scope_key` and forces a fresh compute instead of replaying a pre-write snapshot for up to the
+    // hard-stale cap. The value is threaded into the compute so it is fetched once, not twice.
+    const effectiveEconomics = await fetchEffectiveEconomics(brandId, {
+      orgId: auth.orgId,
+      userId: auth.userId,
+      runId: auth.runId,
+      featureSlug,
+    });
+
     // Gold SWR: the ~7-read fan-out (budget, cost, audiences, membership, forecast) runs off the
     // request path ~once per TTL, keyed on the inputs that shape the body (orgId + brand + timezone +
-    // days). `generatedAt` is frozen to the snapshot's compute time — the documented as-of semantic.
+    // days + economics). `generatedAt` is frozen to the snapshot's compute time — the as-of semantic.
     const response = await servedCached({
       view: "pipeline-activity",
-      scopeKey: buildScopeKey(featureSlug, { orgId: auth.orgId, brandId, timezone, days }),
+      scopeKey: buildScopeKey(featureSlug, {
+        orgId: auth.orgId,
+        brandId,
+        timezone,
+        days,
+        econ: economicsFingerprint(effectiveEconomics),
+      }),
       orgId: auth.orgId,
       compute: async (): Promise<PipelineActivityResponse> => {
     const today = dateInTimeZone(new Date(), timezone);
     const dates = Array.from({ length: days }, (_, index) => addDays(today, index));
     const [expected, actualByDate, observed] = await Promise.all([
-      computeExpectedActivity(featureSlug, brandId, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }),
+      computeExpectedActivity(featureSlug, brandId, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }, effectiveEconomics),
       fetchDailyBroadcastActivity(brandId, featureSlug, timezone, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }),
       fetchConversionCountsByDaySoft(brandId),
     ]);

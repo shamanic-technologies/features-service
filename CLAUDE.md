@@ -1671,18 +1671,69 @@ Databricks medallion Gold, Kleppmann derived-data).
   Any NEW public cache whose miss triggers a per-brand / per-dynasty / per-N fan-out gets BOTH guards.
 
 **It is DERIVED + rebuildable** — dropping every row is safe (next read recomputes); siblings stay SoT.
-**Eventual-consistency is the accepted CQRS tradeoff**: a served body is "as-of `computed_at`", at most
-the hard max stale window (default 60s). The revenue engine's day-scale decay is therefore as-of
-`computed_at` — negligible drift at the 5s default TTL / 60s hard max. The cache is an OPTIMISATION,
-never SoT: a snapshot-table read error logs loud and falls through to a live compute (correct answer,
-just slow) — that fall-through is legitimate degradation, NOT a silent swallow.
+**Eventual-consistency is the accepted CQRS tradeoff**: a served body is "as-of `computed_at`". The cache
+is an OPTIMISATION, never SoT: a snapshot-table read error logs loud and falls through to a live compute
+(correct answer, just slow) — that fall-through is legitimate degradation, NOT a silent swallow.
 
-**Env (optional, sane defaults):** `FEATURE_VIEW_SNAPSHOT_TTL_MS` (default `5000` = the 5s freshness
-target) and `FEATURE_VIEW_CACHE_ENABLED` (default on; set `"false"` to bypass — tests that assert the
-pure live-compute path set it false). The hard stale cap is fixed at 60s: a viewed cell older than
-1min recomputes synchronously rather than serving too-old decay-sensitive data. Future: event-driven
-invalidation (siblings publish domain events → incremental refresh) is the next medallion step beyond
-SWR if staleness ever bites. (PR #293, refined by features-service#304.)
+**Env (optional, sane defaults):** `FEATURE_VIEW_SNAPSHOT_TTL_MS` (default `30000`) and
+`FEATURE_VIEW_CACHE_ENABLED` (default on; set `"false"` to bypass — tests that assert the pure
+live-compute path set it false).
+
+### The two windows do DIFFERENT jobs — `TTL` sets the refresh RATE, `maxStale` decides WHO WAITS
+
+Read them as one pair; tuning either alone regresses the other.
+
+- **`TTL` = 30s** — the FRESH window. Past it a read still serves instantly but ALSO kicks one background
+  revalidation, so **TTL is what governs how often the expensive fan-out actually re-runs** — once per
+  ~TTL per VIEWED cell. Idle cells never refresh.
+- **`maxStale` = 30min** — the HARD cap. Beyond it a read stops serving the snapshot and recomputes
+  SYNCHRONOUSLY, making the caller wait.
+
+**`maxStale` was 60s, and that was the dashboard's entire cold-load problem.** The dashboard polls while a
+tab is open but PAUSES on an idle/hidden tab, so ANY revisit more than a minute later fell into the
+blocking branch and each of the ~5 brand-page views recomputed its full cross-service fan-out on the
+request path. Measured in prod 2026-07-30: **5.76s / 5.65s / 5.90s** for workflow-projection /
+audience-stats / revenue, versus **0.37s / 0.20s / 0.36s** warm — and the page barriers on the SLOWEST
+(`useCoordinatedReveal`), so the user waits for the max.
+
+Raising `maxStale` does NOT make steady-state data staler — it moves the refresh OFF the request path.
+The dashboard's 15s poll still delivers a fresh number within one cycle, and the front end already paints
+last-known content from IndexedDB first (`persist-cache.ts`, `maxAge: Infinity`, "local-first SWR"), so a
+backend that blocked to look fresh was fighting its only consumer. Only the very first paint after a long
+absence can show an older value, for the seconds until the background refresh lands.
+
+**Do NOT drop the TTL back toward 5s while the dashboard polls at 15s** — every poll would then be a stale
+hit and trigger the fan-out, doubling load on the Neon-backed siblings. TTL ≥ poll interval is the rule.
+
+### Economics-dependent views key on `economicsFingerprint`, NOT on a cross-service invalidation hook
+
+`scope_key` is built from query params, and **economics are not a query param** — so a snapshot computed
+before an economics write would keep being served after it. At the old 60s cap the window was small; with
+a minutes-scale cap it is long enough to show a customer their pre-write ROI. That is the exact bug #659
+fixed for `workflow-projection` (which reads economics LIVE and caches only the evidence fan-out).
+
+The other economics-driven views instead fold `economicsFingerprint(effective)`
+(`sales-economics-client.ts`) into their `scope_key`: **different economics ⇒ different cell ⇒ guaranteed
+fresh compute**. Correct by construction, no new endpoint, no brand-service caller, no new failure mode.
+Superseded snapshot rows simply orphan — the Gold layer is derived and rebuildable. Wired on `revenue` /
+`revenue-grouped` / `revenue-lens` (threaded down as `economicsOverride`, so it stays ONE brand-service
+read), `pipeline-activity` (threaded into `computeExpectedActivity`), and `audience-stats`.
+
+The fingerprint hashes the WHOLE object with sorted keys, so a field added to `SalesEconomics` is covered
+automatically; `source` is in the hash on purpose (`"user"` vs `"cross-brand-average"` is a different
+answer for surfaces that gate on provenance).
+
+**`audience-stats`' fingerprint read is deliberately FAIL-SOFT** — it feeds a cache KEY, not the response,
+and that route's parameter validation lives INSIDE `computeAudienceStats` (i.e. AFTER the fingerprint
+read), so a hard failure there would turn an invalid-parameter **400 into a 502**. Degrading to "no
+fingerprint in the key" keeps all three outcomes right: invalid request still 400s from the compute, a
+genuinely unreachable brand-service still 502s (the compute's own economics read fails loud), nominal
+still gets the fingerprint. `revenue` / `pipeline-activity` read it AFTER their own validation, so they
+stay fail-loud. If you add a pre-cache read to a route, check which side of validation it lands on.
+
+Future: event-driven invalidation (siblings publish domain events → incremental refresh) is the next
+medallion step beyond SWR if staleness ever bites. (PR #293, refined by features-service#304; windows +
+economics fingerprint 2026-07-30.)
 
 ## `GET /features/:slug/stats` scopes its fan-out to the feature's DECLARED sources
 
