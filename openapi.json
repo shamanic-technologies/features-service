@@ -6090,6 +6090,20 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis for every COST input behind the expected series (the fleet cost-per-outreach benchmark, the brand's own observed cost per outreach it is floored at, and the per-audience cost that ranks the forecast audience). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount), so a discounted org's forecast promises the volume its budget really buys; fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. The daily BUDGET is a configuration ceiling, not a charge — it is NEVER discounted — and counts/rates are identical either way."
+            },
+            "required": false,
+            "description": "Pricing basis for every COST input behind the expected series (the fleet cost-per-outreach benchmark, the brand's own observed cost per outreach it is floored at, and the per-audience cost that ranks the forecast audience). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount), so a discounted org's forecast promises the volume its budget really buys; fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. The daily BUDGET is a configuration ceiling, not a charge — it is NEVER discounted — and counts/rates are identical either way.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "format": "uuid",
               "description": "Internal org UUID from client-service"
             },
@@ -6349,7 +6363,7 @@
             }
           },
           "400": {
-            "description": "Missing/invalid brandId, days, or timezone",
+            "description": "Missing/invalid brandId, days, timezone, or pricing",
             "content": {
               "application/json": {
                 "schema": {

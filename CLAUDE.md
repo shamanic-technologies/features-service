@@ -334,10 +334,10 @@ show undiscounted prices under the "X% off" banner). A non-discounted org has fr
 (runs freezes a 0% discount), so NET == GROSS for it BY CONSTRUCTION — no special-casing here. `pricing`
 is in every Gold `scope_key` so gross/net never collide in the snapshot cache.
 
-**`pipeline-activity` is intentionally NOT wired** — it surfaces no discountable $ metric (only projected
-counts, forecast rates, and the customer's own `dailyBudgetUsd` budget CAP, which is an input not a
-cost-metric). Its `fetchPublicCosts` call passes no `pricing` → always gross. Do NOT "add pricing for
-consistency" — there is nothing to discount.
+**`pipeline-activity` IS wired too** — this SUPERSEDES the earlier "intentionally NOT wired, there is
+nothing to discount" note. It surfaces no cost COLUMN, but its expected series are **money-DERIVED**:
+`expected.outreach = dailyBudgetUsd / effectiveOutreachUsd`, and that divisor is a cost per outreach. See
+the dedicated section below.
 
 **Deploy ordering (dormant until runs#179 reaches the same env).** NET reads runs' `net*` fields; on any
 env where runs-service predates #179, NET fails loud (502) — the SAME dormant state as before (NET was
@@ -1039,6 +1039,48 @@ brandId + timezone + days; the new inputs are pure functions of brand + feature)
 `expected.outreach` 107.717/day = $0.1393 implied per send, while the brand's real committed spend ÷
 contacted was $14.67/36 = **$0.41**. At the $1/day budget the user reported, that printed **7** sends/day
 against a reality of ~2-3. (Set 2026-07-30.)
+
+## `pipeline-activity` accepts `?pricing=gross|net` — a COUNT can be money-derived, and this one is
+
+`GET /features/:slug/pipeline-activity` takes the SAME `?pricing=gross|net` selector its sibling
+cost-metric endpoints take (`/revenue`, `/stats`, `/audience-stats`, `/workflow-projection`), with the
+same semantics: **GROSS is the DEFAULT** (omitted ⇒ byte-identical to before), NET reads runs#179's
+FROZEN net twins (no billing call, no read-time multiply), an unknown value 400s, and a NET request whose
+net twin is absent **fails loud (502) — never a silent fallback to full price**.
+
+**Why it needed the selector at all (supersedes the "nothing to discount here" note in the `?pricing=`
+section above).** This endpoint publishes no cost COLUMN, so it was skipped — but its expected series are
+**money-DERIVED**: `expected.outreach = dailyBudgetUsd / effectiveOutreachUsd`, and the divisor is a cost
+per outreach. Priced at FULL rate against a budget that is already-discounted REAL money, a 50%-off org
+was promised roughly HALF the volume its budget buys. Prod 2026-07-30 (org `315bb5a3…` / brand
+`6e21bb6c…`, `sales-cold-email-outreach`, $5/day): `expected.outreach` **15.88** for every future day
+beside an actual of **30** — $197.45 gross ÷ 627 contacts = $0.3149/outreach, where the net $106.35 ÷ 627
+= $0.1696 → 29.48, matching the real bars. The ratio 15.88/29.48 = 0.539 was exactly that org's net/gross.
+**General rule: a metric does not have to be denominated in dollars to be wrong under a discount — if a $
+figure appears anywhere in its derivation, it needs the selector.**
+
+- **EVERY cost input reads the chosen basis — all three.** The fleet benchmark
+  (`buildWorkflowActivityUnits` → `fetchPublicCosts`), the brand's OWN observed cost per outreach
+  (`fetchBrandObservedOutreachUsd` → `fetchBrandWorkflowEvidence`), and the per-audience cost that ranks
+  the forecast audience (`fetchAudienceCosts`). The first two are the two sides of the
+  `max(fleet, own)` floor: mixing a gross figure with a net one compares two different currencies and
+  can pick the WRONG side (guarded by a test where net-vs-net answers 12.5 and the mixed comparison
+  answers 10). The audience read only ranks, but a per-row frozen discount can differ across rows, so
+  the argmin is not guaranteed invariant — it is threaded rather than assumed to cancel.
+- **The daily BUDGET is NEVER discounted.** It is a configuration ceiling, not a charge (same rule as the
+  staff accounts-audit budget). Only the divisor moves; `summary.dailyBudgetUsd` is the raw configured
+  value on both bases.
+- **No count or rate field moves.** Open/click/reply rates, the conversion percentages and every `.actual`
+  are cost-free and identical either way; only the money-derived `expected.*` scale.
+- **`pricing` is in the Gold `scope_key`**, so a gross and a net request never share a cached body. An
+  omitted selector defaults to gross and lands on the SAME cell as an explicit `pricing=gross` (no cache
+  fragmentation when the dashboard starts sending it). Pre-existing snapshot rows keyed without `pricing`
+  simply orphan — the Gold layer is derived and rebuildable.
+- **`computeFeatureOutreachUsd` stays GROSS, unchanged** — it feeds the ADMIN fleet send-forecast, a
+  cross-org staff surface with no per-org pricing selector.
+
+Response shape unchanged (same fields, same types) → OpenAPI gains only the `pricing` query param
+description. (Set 2026-07-30.)
 
 ## `pipeline-activity` signup/form-submission `.actual` = REAL observed conversions, NEVER `clicks × rate` (PR #513)
 

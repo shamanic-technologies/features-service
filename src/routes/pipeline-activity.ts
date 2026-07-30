@@ -14,6 +14,7 @@ import {
   type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
 import { fetchBrandWorkflowEvidence } from "../lib/workflow-projection-grains.js";
+import { parsePricing, selectCostCentsString, type Pricing } from "../lib/pricing.js";
 import { fetchEffectiveEconomics, economicsFingerprint, type EffectiveEconomics } from "../lib/sales-economics-client.js";
 import { projectOutcomeCosts, type SalesEconomics } from "../lib/funnel-registry.js";
 import {
@@ -350,10 +351,14 @@ interface WorkflowActivityUnits {
 async function buildWorkflowActivityUnits(
   featureSlug: string,
   economics: SalesEconomics,
+  // GROSS (the default) reads the gross cost field → byte-identical to today. NET reads runs#179's
+  // frozen net twin, so the fleet cost-per-outreach benchmark comes out on the SAME basis as the
+  // brand's own observed ratio it is compared against in `computeExpectedActivity`.
+  pricing: Pricing = "gross",
 ): Promise<WorkflowActivityUnits> {
   const [workflows, costGroups, emailStats] = await Promise.all([
     fetchPublicWorkflows(featureSlug, "all"),
-    fetchPublicCosts(featureSlug, "workflowSlug"),
+    fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     fetchPublicEmailStats(featureSlug, "workflowSlug"),
   ]);
 
@@ -430,7 +435,9 @@ const NEUTRAL_ECONOMICS: SalesEconomics = {
 };
 
 export async function computeFeatureOutreachUsd(featureSlug: string): Promise<number | null> {
-  const { units } = await buildWorkflowActivityUnits(featureSlug, NEUTRAL_ECONOMICS);
+  // GROSS on purpose: the admin fleet send-forecast is a cross-org staff surface (no per-org pricing
+  // selector), so it keeps the real undiscounted cost per outreach — byte-unchanged.
+  const { units } = await buildWorkflowActivityUnits(featureSlug, NEUTRAL_ECONOMICS, "gross");
   const best = chooseBestSignupWorkflow(units);
   return best?.outreachUsd ?? null;
 }
@@ -456,8 +463,12 @@ async function fetchBrandObservedOutreachUsd(
   featureSlug: string,
   workflows: WorkflowMetadata[],
   headers: { orgId: string; userId: string; runId: string },
+  // MUST be the SAME selector the fleet benchmark is read with: `max(fleet, own)` compares two cost
+  // ratios, so mixing a gross figure with a net one makes the comparison meaningless (and can pick the
+  // wrong side). Threaded from the request's `?pricing=`; gross by default → byte-identical.
+  pricing: Pricing = "gross",
 ): Promise<number | null> {
-  const evidence = await fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, { ...headers, featureSlug });
+  const evidence = await fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, { ...headers, featureSlug }, pricing);
   let costCents = 0;
   let contacted = 0;
   for (const grain of evidence.values()) {
@@ -491,6 +502,10 @@ async function fetchAudienceCosts(
   featureSlug: string,
   workflowDynastySlug: string,
   headers: { orgId: string; userId: string; runId: string },
+  // Same basis as every other cost input on this endpoint. This read only RANKS audiences (lowest CPC
+  // wins), and a per-row frozen discount can differ across rows, so the argmin is not guaranteed to be
+  // invariant under gross↔net — read it on the requested basis rather than assuming it cancels out.
+  pricing: Pricing = "gross",
 ): Promise<Map<string, number>> {
   const runsUrl = process.env.RUNS_SERVICE_URL;
   const runsApiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -520,7 +535,11 @@ async function fetchAudienceCosts(
   for (const group of data.groups) {
     const id = group.dimensions?.audienceId;
     if (!id || id === "__total__") continue;
-    const cents = parsePositiveNumber(group.totalCostInUsdCents);
+    // NET goes through `selectCostCentsString`, which THROWS when runs did not serve the frozen net
+    // twin — a NET request must never silently fall back to the full price. GROSS keeps the existing
+    // tolerant read verbatim (a group with no usable cost is skipped), so the default is byte-identical.
+    const raw = pricing === "net" ? selectCostCentsString(group, "totalCostInUsdCents", pricing) : group.totalCostInUsdCents;
+    const cents = parsePositiveNumber(raw);
     if (cents !== null) costs.set(id, cents);
   }
   return costs;
@@ -581,6 +600,7 @@ async function fetchBestAudienceForecast(
   featureSlug: string,
   workflowDynastySlug: string,
   headers: { orgId: string; userId: string; runId: string },
+  pricing: Pricing = "gross",
 ): Promise<{ audienceId: string; brandProfileId: string | null; rates: ForecastRates } | null> {
   const audiences = await fetchActiveAudiences(brandId, { ...headers, featureSlug });
   if (audiences.length === 0) return null;
@@ -589,7 +609,7 @@ async function fetchBestAudienceForecast(
   // (no brand-profile round-trip). Kept on the shape for response-path stability with the dashboard.
   const brandProfileId = null;
   const [costs, outcomes] = await Promise.all([
-    fetchAudienceCosts(brandId, featureSlug, workflowDynastySlug, headers),
+    fetchAudienceCosts(brandId, featureSlug, workflowDynastySlug, headers, pricing),
     fetchAudienceOutcomes(brandId, audiences, { ...headers, featureSlug }),
   ]);
 
@@ -621,6 +641,10 @@ async function computeExpectedActivity(
   // Already resolved by the caller so it can fold the economics fingerprint into the cache key — reused
   // here so the request path does not fetch the same brand-service read twice.
   economicsOverride?: EffectiveEconomics,
+  // GROSS (default) → byte-identical to today. NET makes EVERY cost input below read runs#179's frozen
+  // net twin, so the divisor is priced at what the org actually pays. The daily BUDGET is deliberately
+  // NOT touched: a configured budget is a ceiling, never a charge, so it is never discounted.
+  pricing: Pricing = "gross",
 ): Promise<ExpectedActivity> {
   const [dailyBudgetUsd, effective] = await Promise.all([
     fetchBrandDailyBudgetUsd(brandId, featureSlug, headers),
@@ -634,13 +658,13 @@ async function computeExpectedActivity(
   const clickToFormSubmissionPct = economics?.visitToFormSubmissionPct ?? null;
   if (dailyBudgetUsd === null || !economics) return emptyExpected(clickToSignupPct, clickToFormSubmissionPct);
 
-  const { units, workflows } = await buildWorkflowActivityUnits(featureSlug, economics);
+  const { units, workflows } = await buildWorkflowActivityUnits(featureSlug, economics, pricing);
   const bestWorkflow = chooseBestSignupWorkflow(units);
   if (!bestWorkflow || bestWorkflow.outreachUsd === null) return emptyExpected(clickToSignupPct, clickToFormSubmissionPct);
 
   const [forecast, brandObservedOutreachUsd] = await Promise.all([
-    fetchBestAudienceForecast(brandId, featureSlug, bestWorkflow.workflowDynastySlug, headers),
-    fetchBrandObservedOutreachUsd(brandId, featureSlug, workflows, headers),
+    fetchBestAudienceForecast(brandId, featureSlug, bestWorkflow.workflowDynastySlug, headers, pricing),
+    fetchBrandObservedOutreachUsd(brandId, featureSlug, workflows, headers, pricing),
   ]);
   const rates = forecast?.rates ?? { openPerOutreach: null, clickPerOutreach: null, positiveReplyPerOutreach: null };
 
@@ -655,6 +679,10 @@ async function computeExpectedActivity(
   // so the graph can never over-promise. The floor releases itself the moment the brand's own ratio
   // reaches the benchmark — a brand cheaper than the fleet keeps the fleet number (a `max`, never a raise).
   // No own-ratio (fresh brand: 0 spend or 0 contacted) → the fleet figure alone, byte-identical to before.
+  //
+  // BOTH sides of this `max` are read on the SAME `pricing` basis (fleet via `buildWorkflowActivityUnits`,
+  // own via `fetchBrandObservedOutreachUsd`). Mixing a gross ratio with a net one would compare two
+  // different currencies and could pick the wrong side, so the selector is threaded, never applied after.
   const effectiveOutreachUsd =
     brandObservedOutreachUsd === null
       ? bestWorkflow.outreachUsd
@@ -742,6 +770,14 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
   if (!isValidTimeZone(timezone)) return res.status(400).json({ error: "timezone must be a valid IANA time zone" });
   if (days === null) return res.status(400).json({ error: "days must be a positive integer" });
 
+  // GROSS (default) vs NET pricing — the same selector the sibling cost-metric endpoints accept.
+  // Omitted → gross → byte-identical to today. NET prices the forecast's cost divisor at what the org
+  // actually pays, so a discounted org is no longer promised ~half the sends its budget really buys.
+  const pricing = parsePricing(req.query.pricing);
+  if (pricing === null) {
+    return res.status(400).json({ error: "pricing must be one of: gross, net" });
+  }
+
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) return res.status(404).json({ error: "Feature not found" });
@@ -767,6 +803,9 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
         brandId,
         timezone,
         days,
+        // In the key so a gross and a net request never share a cached body (the money-derived
+        // expected series differ) — same rule as every other pricing-aware view.
+        pricing,
         econ: economicsFingerprint(effectiveEconomics),
       }),
       orgId: auth.orgId,
@@ -774,7 +813,7 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
     const today = dateInTimeZone(new Date(), timezone);
     const dates = Array.from({ length: days }, (_, index) => addDays(today, index));
     const [expected, actualByDate, observed] = await Promise.all([
-      computeExpectedActivity(featureSlug, brandId, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }, effectiveEconomics),
+      computeExpectedActivity(featureSlug, brandId, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }, effectiveEconomics, pricing),
       fetchDailyBroadcastActivity(brandId, featureSlug, timezone, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }),
       fetchConversionCountsByDaySoft(brandId),
     ]);
