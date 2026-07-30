@@ -211,6 +211,55 @@ human-service call) — all already used by workflow-projection, reused verbatim
 endpoint, no persisted state, response shapes unchanged → no OpenAPI regen. `cost-per-outcome-trend` / `-lifetime` / `-distribution` stay POOLED on purpose (a
 different methodology on a different axis) — out of scope. (Set 2026-07-29; derived-column split same day.)
 
+## `/revenue` `spend` cost-per-outcome is FLOORED at the SAME best-workflow benchmark the per-audience rows use — the brand/campaign AGGREGATE twin of the section above
+
+Every cost-per-outcome on the `/revenue` `spend` block (`totalCpcCents`/`actualCpcCents`/
+`provisionedCpcCents`, `cpprCents`, `cpsCents`, `cpsmCents`, `cpfsCents`, `cpSaleCents`) runs the SAME
+zero-outcome engine `/audience-stats` runs per audience, floored against the SAME parent
+(`fetchBrandProjectedParents` — the goal's winning workflow, crossOrg → brand ladder). The Overview card,
+the Audiences table and the Strategy page therefore cannot print two prices for one brand + goal + moment.
+
+**The bug (prod 2026-07-30, brand `b97440f6…`, goal positive_replies, `pricing=net`):** these columns were
+`observedCostPerOutcome`, i.e. **null at 0 outcomes** — and the dashboard's null-fallback then rendered the
+brand's own total committed spend, so **"Cost per positive reply $28.74" sat directly above "Total spent
+$28.74"** while the Strategy page priced the same brand at **$62.98** (`dawn`, grain `crossOrg`). Now
+`cpprCents` = 6298: `max(own committed spend $28.74, benchmark $62.98)`.
+
+- **Goal source = the brand's OWN declared `optimizationGoal`** (`fetchBrandSavedEconomicsWithGoal`,
+  brand-service INTERNAL saved economics — never the cross-brand average, a goal must be the brand's own).
+  It selects the winning workflow, exactly as the `goal` query param does on `/audience-stats`.
+  **NO declared goal → the whole block stays OBSERVED (null at 0 outcomes), and the projection is not even
+  fetched:** "the goal they optimise for" does not exist, so there is no expected cost to be coherent with.
+- **RAW columns** (cost per click / positive reply — the driving outcome IS the outcome) →
+  `flooredCostPerOutcome` = `max(own spend, parent)`. **SPEND-WINS ABOVE THE BENCHMARK IS INTENDED**, not a
+  bug: a brand that already outspent the expected cost with nothing to show reports its own (higher) spend
+  — the identical conservative floor the audience grain applies. All THREE CPC variants floor against the
+  same parent on their OWN spend basis; the block has never claimed `total == actual + provisioned` for a
+  RATIO, so at 0 clicks they legitimately coincide (three lower bounds, one benchmark).
+- **FUNNEL columns** (signup / sales meeting / form submission / sale — reached THROUGH a click or reply at
+  the brand's conversion rate) → `derivedCostPerOutcome` on the winning workflow's projection. A raw dollar
+  total under a funnel label is a UNITS ERROR, so when the goal's projection does not resolve that column's
+  rate (e.g. cost per form submission is only projected for the form-submission goal) the column stays
+  **null**, never the spend total. The own-spend protection is not lost: the driving unit cost fed to the
+  projection is itself `max(own spend, fleet)` at 0 driving outcomes.
+- **Grain:** brand, and campaign when `?campaignId=` is set (own spend narrows, the parent stays
+  brand-level — the same cascade one grain finer). `?groupBy=campaignId` groups carry no `spend` block and
+  are untouched; `?lens=` is untouched.
+- **`pricing` threads through** — the parent is fetched with the caller's selector, so a NET request floors
+  net-on-net.
+- **ZERO audience fan-out**: the aggregate passes `audienceIds: []`, so `fetchAudienceGrainEvidence`
+  short-circuits — no human-service round-trip, no per-audience cost/outcome reads (guarded by a test).
+- **Fail-SOFT with a loud log** (`fetchSpendCostParentsSoft`), the same display-enrichment pattern as the
+  conversion-count tiles + the `sequences` series on this same Overview path: a projection blip degrades
+  the columns to today's OBSERVED behaviour (null = "we could not estimate this"), it does **NOT** 502 the
+  customer's Overview, and it NEVER degrades to the raw-spend floor (that is the bug being removed).
+
+`BrandProjectedParentsUsd` gained `cpsmUsd` (cost per booked meeting) for `cpsmCents`; `/audience-stats`
+has no meeting column and ignores it. Response shapes unchanged (same fields, same `number | null` types)
+→ no OpenAPI regen. Guard suite: `src/routes/revenue-aggregate-cost-floor.test.ts` drives `/revenue` and
+`/workflow-projection` from ONE downstream fixture, so the equality is a property of the two computes.
+(Set 2026-07-30.)
+
 ## Staff admin metrics — DAILY BUDGET (+ its MRR/ARR projection) is the RAW configured value, NEVER discounted; realized-revenue stays NET (supersedes PR #592's discounted-budget)
 
 The per-org usage discount is a modifier on CHARGES only (frozen gross+net per cost row in the runs/billing
@@ -362,7 +411,8 @@ the ranking.
 | `/stats` `costPerRecipient*` (registry `type:"currency"`) | **observed** | DONE (PR3) — brand is the TOP grain here (no coarser grain fetched → no cascade), so observed (null on 0). Also killed a latent false-$0 (0 cost / >0 outcomes → was $0, now null). |
 | `/public/stats/cost-projection` | **projected** (already EV) | not yet routed through the module |
 | `pipeline-activity` | n/a (no cost ratio) | It computes forecast **RATES** (`openPerOutreach`…) not costs; its local `ratio` returns `null` on 0-denom = correct for a displayed rate. Nothing to route. |
-| `/revenue` `spend` block (`total/actual/provisioned Cpc` + `cps`/`cpsm`) | **observed** (ACCOUNTING — real money) | DONE — routed through `observedCostPerOutcome` (removed the local `ratioCents` dupe; also fixed a latent false-$0 on `cps`/`cpsm` which guarded only `count>0`, not spend>0) |
+| `/revenue` `spend` — RAW (`total/actual/provisioned Cpc`, `cppr`) | **floored** (cascade brand/campaign → best-workflow benchmark, DISPLAY) | Was observed-only, which rendered as the brand's own total spend under a cost-per-outcome label. Now the AGGREGATE twin of the per-audience rows: `max(own committed spend, the goal-winning workflow's projected unit cost)`. Falls back to **observed** when the brand declares no goal, or when the projection read degrades (fail-soft). |
+| `/revenue` `spend` — DERIVED/funnel (`cps`/`cpsm`/`cpfs`/`cpSale`) | **derived** (best-workflow projection, DISPLAY) | Same units rule as the per-audience funnel columns — a raw dollar total is never an answer to "cost per signup". `null` when the goal's projection does not resolve that column's rate (never the spend total), and **observed** on the no-goal / degraded paths. |
 
 **Rate helpers are NOT part of the cost engine and legitimately differ by consumption — do NOT "homogenize" them.**
 `platform-rates-client.ratio` returns **0** on 0-denom because its rates are MULTIPLIED in the EV funnel

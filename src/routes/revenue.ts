@@ -5,7 +5,15 @@ import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { getFunnel, orP, singleStepRateDecimal, combinedSaleProbability, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
 import { matchSingleStepGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal } from "../lib/goals.js";
-import { fetchEffectiveEconomics, type EffectiveEconomics } from "../lib/sales-economics-client.js";
+import {
+  fetchEffectiveEconomics,
+  fetchBrandSavedEconomicsWithGoal,
+  type EffectiveEconomics,
+} from "../lib/sales-economics-client.js";
+import {
+  fetchBrandProjectedParents,
+  type BrandProjectedParentsUsd,
+} from "../lib/audience-stats-brand-projection.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
 import { fetchSpendBreakdown, type SpendBreakdown, type SpendSource } from "../lib/spend-client.js";
@@ -15,7 +23,7 @@ import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { fetchSequencesByDay } from "../lib/sequences-client.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
 import { fetchPlatformEmailRates } from "../lib/platform-rates-client.js";
-import { observedCostPerOutcome } from "../lib/cost-engine.js";
+import { observedCostPerOutcome, flooredCostPerOutcome, derivedCostPerOutcome } from "../lib/cost-engine.js";
 import {
   computeRevenue,
   dedupPersonsByLead,
@@ -88,8 +96,13 @@ export function buildCostEconomics(actualCostInUsdCents: number, totalPipelineUs
  *   - {total,actual,provisioned}CpcCents = the matching spend / clicks — each CPC reconciles with its
  *     own displayed spend (the bug #396 fixed: CPC off systemStats.totalCostInUsdCents while "Total
  *     spent" was a different accounting — now every CPC is derived from the SAME total it labels).
- * Null-safe (mirrors the per-audience metrics.cpcCents convention): a ratio is null (renders "-"), never
- * a false $0.00, when its denominator OR the attributed spend is 0.
+ * ZERO-OUTCOME SEMANTICS — the AGGREGATE twin of the per-audience `metrics.*Cents` engines (see
+ * `buildSpend`). At 0 outcomes a cost-per-outcome is not measurable, so instead of null (which made the
+ * dashboard fall back to printing the brand's own total spend, i.e. "Cost per positive reply $28.74"
+ * directly above "Total spent $28.74") every column reports the fleet-backed expected cost of the
+ * workflow the brand's GOAL crowns — byte-equal to what the Strategy page shows for that brand. A real
+ * observed ratio still wins whenever the count is > 0; own spend still wins above the benchmark; null
+ * survives only when there is neither an expected cost nor any spend to fall back on.
  */
 export interface Spend {
   totalSpentCents: number;
@@ -112,8 +125,10 @@ export interface Spend {
   // visit-driven micro-conversion, sibling of signups. The Form Submissions tile for a form_submissions
   // brand. 0 when none; ABSENT when lead-service didn't serve the counts (never a fabricated 0).
   formSubmissionsCount?: number;
-  // REAL cost-per-conversion = COMMITTED spend (actual + provisioned, the same denominator the CPC
-  // card uses) ÷ the real count. null when the count is 0 (no denominator — never a false $0.00).
+  // Cost-per-conversion = COMMITTED spend (actual + provisioned, the same denominator the CPC card
+  // uses) ÷ the real count; at a 0 count, the winning workflow's PROJECTED cost of that outcome (a
+  // funnel column never reports a raw dollar total — that is a units error). null only when neither
+  // exists. ABSENT when lead-service didn't serve the counts.
   cpsCents?: number | null;
   cpsmCents?: number | null;
   // REAL cost per form submission = committed spend ÷ formSubmissionsCount (same COMMITTED denominator
@@ -137,13 +152,74 @@ export interface Spend {
   // Overview positive-replies actual series uses). ALWAYS present (leads are a fail-loud core input),
   // unlike the conversion-counts tiles which are ABSENT when that soft read fails. (features-service#482)
   positiveRepliesCount: number;
-  // REAL cost per positive reply = COMMITTED spend ÷ positiveRepliesCount (same COMMITTED denominator
-  // as totalCpcCents/cpsCents → cpprCents × positiveRepliesCount ≈ committed spend). null when the
-  // count is 0 (no denominator — never a false $0.00).
+  // Cost per positive reply = COMMITTED spend ÷ positiveRepliesCount (same COMMITTED denominator as
+  // totalCpcCents/cpsCents → cpprCents × positiveRepliesCount ≈ committed spend). At a 0 count it is
+  // the RAW floor max(committed spend, the winning workflow's projected cost per positive reply) — the
+  // same conservative bound the per-audience row applies. null only when there is neither.
   cpprCents: number | null;
 }
 
-function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: ConversionCounts | null = null): Spend {
+/**
+ * The AGGREGATE (brand / campaign grain) twin of /audience-stats' per-audience floor parents — the
+ * fleet-backed projected cost-per-outcome of the workflow the brand's GOAL crowns, one value per cost
+ * column, in USD. `null` for the whole block when the brand declares no optimization goal (there is no
+ * goal-specific benchmark to be coherent with) or when the projection read degrades (below).
+ */
+type SpendCostParents = BrandProjectedParentsUsd | null;
+
+/**
+ * Resolve the aggregate floor parents for the OVERVIEW spend block.
+ *
+ * The brand's declared `optimizationGoal` (brand-service internal saved economics — the brand's OWN
+ * goal, never a cross-brand average) selects the winning workflow, then `fetchBrandProjectedParents`
+ * rebuilds workflow-projection's BRAND-LEVEL rows and returns that winner's resolved unit + funnel
+ * costs. Same module, same argmin, same cascade as /audience-stats → the Overview, the Audiences table
+ * and the Strategy page price a 0-outcome cell identically by construction.
+ *
+ * `audienceIds: []` deliberately skips the per-audience grain entirely (the aggregate has no audience
+ * column), so this adds ZERO human-service round-trips and none of the per-audience fan-out.
+ *
+ * NO declared goal → null (skip the fetch): "the goal they optimise for" does not exist, so there is no
+ * expected cost to floor against, and the columns stay OBSERVED (null at 0 outcomes) exactly as today.
+ *
+ * Fail-SOFT with a loud log, mirroring the sequences / conversion-counts enrichment reads on this same
+ * Overview path: a projection blip degrades the cost columns to today's OBSERVED behaviour ("-", i.e.
+ * "we could not estimate this") rather than 502-ing the customer's Overview. It NEVER degrades to the
+ * raw-spend floor — that is the exact "cost per reply == total spent" output this feature removes.
+ */
+function fetchSpendCostParentsSoft(
+  brandId: string,
+  featureSlug: string,
+  headers: DownstreamHeaders,
+  campaignId: string | undefined,
+  pricing: Pricing,
+): Promise<SpendCostParents> {
+  return fetchBrandSavedEconomicsWithGoal(brandId)
+    .then(({ goal }) => {
+      if (!goal) return null;
+      return fetchBrandProjectedParents(
+        brandId,
+        featureSlug,
+        goal,
+        { orgId: headers.orgId, userId: headers.userId, runId: headers.runId, campaignId, featureSlug: headers.featureSlug },
+        pricing,
+        [],
+      );
+    })
+    .catch((err) => {
+      console.warn(
+        `[features-service] spend cost-parent projection failed (degrading the aggregate cost columns to observed): ${(err as Error).message}`,
+      );
+      return null;
+    });
+}
+
+function buildSpend(
+  breakdown: SpendBreakdown,
+  leads: LeadRow[],
+  counts: ConversionCounts | null = null,
+  parents: SpendCostParents = null,
+): Spend {
   // clicks use the SAME per-lead predicate as the clicked SignalSeries, so the CPC denominator equals
   // the card's displayed "clicks" (clicked.total) — coherent by construction.
   const clicks = leads.reduce((n, l) => n + (l.clicked ? 1 : 0), 0);
@@ -160,16 +236,47 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: Convers
   // cpsCents × signupsCount ≈ committed spend by construction. Via the shared OBSERVED cost engine:
   // null (never a false $0) when the count is 0 OR there is no committed spend. Absent entirely when
   // lead-service didn't serve the counts. (This block is ACCOUNTING → observed, not projected.)
+  //
+  // ZERO-OUTCOME FLOOR (the AGGREGATE twin of /audience-stats' per-audience engines). At 0 outcomes an
+  // observed ratio does not exist, and returning null made the dashboard fall back to printing the
+  // brand's own total spend — so "Cost per positive reply $28.74" sat directly above "Total spent
+  // $28.74" while the Strategy page priced the same brand at $62.98. Every column below now runs the
+  // SAME engine the per-audience row runs, floored against the SAME winning workflow's projected costs
+  // (`parents`), so the two surfaces cannot print two prices for one benchmark.
+  //   - RAW columns   (cost per click / positive reply — the driving outcome IS the outcome) →
+  //     `flooredCostPerOutcome` = real ratio, else max(own spend, parent). SPEND-WINS ABOVE THE
+  //     BENCHMARK IS INTENDED: a brand that already outspent the expected cost with nothing to show
+  //     reports its own (higher) spend — the same conservative floor the audience grain applies.
+  //   - FUNNEL columns (signup / sales meeting / form submission / sale — reached THROUGH a click or a
+  //     reply at the brand's conversion rate) → `derivedCostPerOutcome`, which prefers the projection:
+  //     answering "cost per signup" with a raw dollar total is a units error. The own-spend protection
+  //     is NOT lost — the driving unit cost fed to that projection is itself max(own spend, fleet) at
+  //     0 driving outcomes.
+  // `parents === null` (brand declares no goal, or the projection read degraded) → every column falls
+  // back to OBSERVED, byte-identical to the pre-floor behaviour: null means "we could not estimate
+  // this", never a fabricated value and never the raw spend total.
+  const usdToCents = (usd: number | null | undefined): number | null => (usd != null ? usd * 100 : null);
+  const raw = (spentCents: number, observed: number, parentUsd: number | null | undefined): number | null =>
+    parents ? flooredCostPerOutcome(spentCents, observed, usdToCents(parentUsd)) : observedCostPerOutcome(spentCents, observed);
+  // A funnel column needs its OWN projection to exist (the goal's winning workflow only resolves the
+  // rates the brand actually declares — e.g. no visit→form-submission rate ⇒ no cost per form
+  // submission). Without it there is no expected cost, and the raw-total fallback would be the units
+  // error, so the column stays OBSERVED → null. "We could not estimate this", never a dollar total.
+  const funnel = (observed: number, parentUsd: number | null | undefined): number | null =>
+    parents && parentUsd != null
+      ? derivedCostPerOutcome(committed, observed, usdToCents(parentUsd))
+      : observedCostPerOutcome(committed, observed);
+
   const conversion: Partial<Spend> = counts
     ? {
         signupsCount: counts.signup,
         salesMeetingsCount: counts.meeting_booked,
         formSubmissionsCount: counts.form_submission,
         salesCount: counts.sale,
-        cpsCents: observedCostPerOutcome(committed, counts.signup),
-        cpsmCents: observedCostPerOutcome(committed, counts.meeting_booked),
-        cpfsCents: observedCostPerOutcome(committed, counts.form_submission),
-        cpSaleCents: observedCostPerOutcome(committed, counts.sale),
+        cpsCents: funnel(counts.signup, parents?.cpsUsd),
+        cpsmCents: funnel(counts.meeting_booked, parents?.cpsmUsd),
+        cpfsCents: funnel(counts.form_submission, parents?.cpfsUsd),
+        cpSaleCents: funnel(counts.sale, parents?.cpsaleUsd),
       }
     : {};
 
@@ -181,13 +288,17 @@ function buildSpend(breakdown: SpendBreakdown, leads: LeadRow[], counts: Convers
     actualSpentTodayCents: breakdown.actualSpentTodayCents,
     provisionedSpentTodayCents: breakdown.provisionedSpentTodayCents,
     sources: breakdown.sources,
-    totalCpcCents: observedCostPerOutcome(committed, clicks),
-    actualCpcCents: observedCostPerOutcome(actual, clicks),
-    provisionedCpcCents: observedCostPerOutcome(provisioned, clicks),
-    // REAL positive-reply outcome economics (ACCOUNTING → observed): committed spend ÷ the real count
-    // from the leads snapshot. Always present (leads always fetched); null cost when 0 (never a false $0).
+    // Each CPC keeps its OWN spend basis (the block never claims total == actual + provisioned for a
+    // RATIO) and floors against the SAME fleet-backed cost per website visit — at 0 clicks none of the
+    // three is measurable, so all three legitimately report the same lower bound.
+    totalCpcCents: raw(committed, clicks, parents?.cpcUsd),
+    actualCpcCents: raw(actual, clicks, parents?.cpcUsd),
+    provisionedCpcCents: raw(provisioned, clicks, parents?.cpcUsd),
+    // Positive-reply outcome economics: committed spend ÷ the real count from the leads snapshot, floored
+    // at the winning workflow's projected cost per positive reply when the count is 0. Always present
+    // (leads always fetched); null only when there is no benchmark AND no spend to fall back on.
     positiveRepliesCount: positiveReplies,
-    cpprCents: observedCostPerOutcome(committed, positiveReplies),
+    cpprCents: raw(committed, positiveReplies, parents?.cpprUsd),
     ...conversion,
   };
 }
@@ -589,13 +700,14 @@ export async function computeFeatureRevenue(
     if (includeSpend) {
       // Overview: fetch spend (fail-loud) + sequences (fail-soft) in parallel. Outreach activity
       // is independent of the funnel — a no-funnel feature still launches campaigns worth graphing.
-      const [breakdown, sequences, counts] = await Promise.all([
+      const [breakdown, sequences, counts, parents] = await Promise.all([
         fetchSpendBreakdown(brandId, campaignId, featureSlug, headers, new Date(), pricing),
         fetchSequencesSoft(brandId, campaignId, featureSlug, headers),
         fetchConversionCountsSoft(brandId),
+        fetchSpendCostParentsSoft(brandId, featureSlug, headers, campaignId, pricing),
       ]);
       // ROI/CAC ride ACTUAL spend; the `spend` block carries the committed total separately.
-      return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, [], counts), sequences);
+      return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, [], counts, parents), sequences);
     }
     const actualCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers, pricing);
     return emptyBody(null, actualCostInUsdCents, null);
@@ -612,7 +724,7 @@ export async function computeFeatureRevenue(
   // All four are fail-loud (Promise.all rejects → the endpoint 502s): each is a core input to the
   // pipeline total / cost / ROI; a swallowed error would fake a number. The economics===null
   // cold-start path below over-fetches rates+leads — accepted for the common-path win.
-  const [costResult, { economics, source }, platformRates, persons, sequences, counts, conversionEmails] = await Promise.all([
+  const [costResult, { economics, source }, platformRates, persons, sequences, counts, conversionEmails, parents] = await Promise.all([
     includeSpend
       ? fetchSpendBreakdown(brandId, campaignId, featureSlug, headers, new Date(), pricing)
       : fetchRunsCostCents(brandId, campaignId, featureSlug, headers, pricing),
@@ -630,6 +742,13 @@ export async function computeFeatureRevenue(
     // Overview-only per-lead SIGNUP / FORM-SUBMISSION attribution email sets (lead-service conversion
     // tracker). Fail-soft per event → never rejects fail-loud Wave A; brand-scoped. Off-overview null.
     includeSpend ? fetchConversionOutcomeEmailsSoft(brandId) : Promise.resolve<ConversionOutcomeEmails>(EMPTY_CONVERSION_OUTCOME_EMAILS),
+    // Overview-only AGGREGATE floor parents for the spend block's cost-per-outcome columns — the
+    // fleet-backed projected cost of the workflow the brand's goal crowns, the SAME parent
+    // /audience-stats floors each audience against. Pre-caught → null on failure (never rejects
+    // fail-loud Wave A; the columns then degrade to observed). Off-overview null (no spend block).
+    includeSpend
+      ? fetchSpendCostParentsSoft(brandId, featureSlug, headers, campaignId, pricing)
+      : Promise.resolve<SpendCostParents>(null),
   ]);
   const breakdown: SpendBreakdown | null = typeof costResult === "number" ? null : costResult;
   // ROI/CAC + costEconomics ride ACTUAL (billed) spend; the `spend` block (buildSpend) carries the
@@ -637,7 +756,7 @@ export async function computeFeatureRevenue(
   const actualCostInUsdCents = typeof costResult === "number" ? costResult : costResult.actualSpentCents;
 
   if (economics === null) {
-    return emptyBody(null, actualCostInUsdCents, breakdown ? buildSpend(breakdown, [], counts) : null, sequences);
+    return emptyBody(null, actualCostInUsdCents, breakdown ? buildSpend(breakdown, [], counts, parents) : null, sequences);
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
 
@@ -734,7 +853,7 @@ export async function computeFeatureRevenue(
     recipientsContacted: buildContactedSeries(result.leads),
     ...buildOutcomeSeries(result.leads),
     sequences,
-    spend: breakdown ? buildSpend(breakdown, result.leads, counts) : null,
+    spend: breakdown ? buildSpend(breakdown, result.leads, counts, parents) : null,
   };
 }
 
