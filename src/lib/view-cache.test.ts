@@ -122,11 +122,27 @@ describe("servedCached", () => {
   });
 
   it("STALE beyond hard max age → recomputes synchronously instead of serving old data", async () => {
+    // The age is pinned against an EXPLICIT maxStaleMs rather than the global default, so this test
+    // asserts the blocking branch itself and cannot silently flip to the stale-serve branch the next time
+    // the default cap moves (it did: 60s → 30min, which is exactly what made a 120s-old fixture stop
+    // exercising this path).
     storedRow = { view: "revenue", scopeKey: "k", orgId: "o", body: { pipeline: 7 }, computedAt: new Date(Date.now() - 120_000), refreshingAt: null };
     const compute = vi.fn().mockResolvedValue({ pipeline: 42 });
-    const body = await servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute });
+    const body = await servedCached({ view: "revenue", scopeKey: "k", orgId: "o", maxStaleMs: 60_000, compute });
     expect(body).toEqual({ pipeline: 42 });
     expect(compute).toHaveBeenCalledTimes(1);
+    expect(storedRow?.body).toEqual({ pipeline: 42 });
+  });
+
+  it("the DEFAULT hard cap is minutes-scale, so a revisit after a few minutes is served, never blocked", async () => {
+    // Guards the fix for the dashboard's cold-load: the dashboard pauses polling on an idle tab, so any
+    // revisit used to land past the old 60s cap and block on a full cross-service recompute (~5.8s).
+    storedRow = { view: "revenue", scopeKey: "k", orgId: "o", body: { pipeline: 7 }, computedAt: new Date(Date.now() - 5 * 60_000), refreshingAt: null };
+    const compute = vi.fn().mockResolvedValue({ pipeline: 42 });
+    const body = await servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute });
+    expect(body).toEqual({ pipeline: 7 }); // served from the snapshot, caller never waits
+    await flush();
+    expect(compute).toHaveBeenCalledTimes(1); // and refreshed in the BACKGROUND
     expect(storedRow?.body).toEqual({ pipeline: 42 });
   });
 

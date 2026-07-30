@@ -20,15 +20,45 @@ import { featureViewSnapshots } from "../db/schema.js";
  *
  * The snapshot is DERIVED + rebuildable — siblings stay source-of-truth; dropping every row is safe.
  * Eventual-consistency is the documented CQRS tradeoff: a served body is "as-of computedAt", at most
- * at most hard-max-age stale. The revenue engine's decay is therefore as-of computedAt; with a 5s TTL
- * and 60s hard max the drift is bounded and negligible against day-scale decay windows.
+ * hard-max-age stale.
  *
  * The cache is an OPTIMISATION, never the source of truth: if the snapshot table is unreachable, we
  * log loudly and fall through to a live compute (correct answer, just slow) — NOT a silent swallow.
  */
 
-const DEFAULT_TTL_MS = 5_000;
-const DEFAULT_MAX_STALE_MS = 60_000;
+/**
+ * FRESH window — how long a snapshot is served with NO background refresh. This, not `maxStale`, is
+ * what governs how often the expensive fan-out actually re-runs: past the TTL every read still serves
+ * instantly but ALSO kicks one background revalidation (single-flighted across replicas).
+ *
+ * 30s pairs with the dashboard's 15s poll: the poll at t=15s is a fresh hit (no work), the poll at
+ * t≥30s triggers one refresh — so the fan-out runs at most ~once per 30s per VIEWED cell, the same
+ * effective rate as the old 5s-TTL/30s-poll pairing. Dropping the TTL to 5s while polling at 15s would
+ * make EVERY poll trigger the fan-out and double the load on the Neon-backed siblings.
+ */
+const DEFAULT_TTL_MS = 30_000;
+
+/**
+ * HARD stale cap — beyond this age a read stops serving the snapshot and recomputes SYNCHRONOUSLY,
+ * making the caller wait.
+ *
+ * Was 60s, which was the dashboard's whole cold-load problem: the dashboard polls while a tab is open
+ * but PAUSES when it is idle/hidden, so ANY revisit more than a minute later landed in the blocking
+ * branch and every one of the ~5 brand-page views recomputed its full cross-service fan-out on the
+ * request path (measured 5.6-5.9s each, and the page barriers on the slowest via `useCoordinatedReveal`).
+ *
+ * 30min means a revisit is served from the snapshot in ~0.2s and refreshed in the BACKGROUND instead;
+ * the fresh number lands on the next 15s poll. This does NOT make the data staler in steady state — it
+ * moves the refresh off the request path. The only visible effect is the very first paint after a long
+ * absence, which may show a value up to this old for a few seconds before self-correcting. That is also
+ * exactly what the dashboard already does client-side (`persist-cache.ts` paints last-known content from
+ * IndexedDB first, `maxAge: Infinity`), so the backend blocking to look "fresh" was fighting the front end.
+ *
+ * Staleness of ECONOMICS-dependent bodies is handled by the cache KEY, not this cap: the economics-driven
+ * views fold `economicsFingerprint()` into their `scopeKey`, so an economics write changes the cell and
+ * forces a fresh compute regardless of age (see `sales-economics-client.economicsFingerprint`).
+ */
+const DEFAULT_MAX_STALE_MS = 30 * 60_000;
 
 /**
  * Platform / fleet scope for a GLOBAL (org-less) view — a cross-org internal audit (e.g. the

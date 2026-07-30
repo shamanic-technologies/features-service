@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { SalesEconomics } from "./funnel-registry.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { matchOptimizationGoal, type Goal } from "./goals.js";
@@ -163,4 +164,44 @@ export async function fetchEffectiveEconomics(
   }
 
   return (await response.json()) as EffectiveEconomics;
+}
+
+/**
+ * Stable cache fingerprint of a brand's effective economics.
+ *
+ * WHY THIS EXISTS — the Gold SWR cache (`view-cache.ts`) serves a snapshot whose freshness key is the
+ * request's query params. Economics are NOT a query param, so a snapshot computed before an economics
+ * write would keep being served after it (onboarding writes the brand's economics, the very next screen
+ * reads a stats endpoint). At the old 60s hard-stale cap that window was small; once `maxStale` is raised
+ * so no read ever blocks, the window becomes minutes — long enough to show a customer the pre-write ROI.
+ *
+ * Rather than a cross-service invalidation hook (a new endpoint + a brand-service caller + a new failure
+ * mode), the economics are folded INTO the cache key: different economics ⇒ different `scope_key` ⇒
+ * guaranteed miss ⇒ fresh compute. Correct by construction, no new state, no cross-repo coordination.
+ * Snapshot rows keyed on a superseded fingerprint simply orphan — the Gold layer is derived and
+ * rebuildable, so orphans are harmless (documented in CLAUDE.md).
+ *
+ * Hashes the WHOLE object with sorted keys, so a field added to `SalesEconomics` later is covered
+ * automatically — there is no per-field list here to forget to update.
+ *
+ * `source` is part of the hash on purpose: the same numbers arriving as the brand's own saved set
+ * ("user") vs the org-wide average ("cross-brand-average") are a different answer for the surfaces that
+ * gate on provenance, so they must not share a cache cell.
+ */
+export function economicsFingerprint(effective: EffectiveEconomics): string {
+  // Deterministic serialisation: JSON.stringify's key order follows insertion order, which is NOT
+  // guaranteed stable across producers, so sort every level.
+  const stable = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(stable);
+    if (value && typeof value === "object") {
+      return Object.keys(value as Record<string, unknown>)
+        .sort()
+        .reduce<Record<string, unknown>>((acc, key) => {
+          acc[key] = stable((value as Record<string, unknown>)[key]);
+          return acc;
+        }, {});
+    }
+    return value;
+  };
+  return createHash("sha1").update(JSON.stringify(stable(effective))).digest("hex").slice(0, 12);
 }
