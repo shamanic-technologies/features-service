@@ -20,6 +20,10 @@
  * (clicks·visitToMeeting + replies·replyToMeeting). So funnels are MERGED per goal rather than
  * deduped-by-first: their rate sets are complementary legs of the same projection, and dropping one
  * would arbitrate the goal on half its economics.
+ *
+ * A SHARED FIELD NAME IS NOT A SHARED MEANING. The two services' rate keys line up 1:1 except on the
+ * meeting chain, where brand-service prices one more step than we model — see `meetingChainCloseRate`.
+ * Copying that one across by name overstates the meeting goal's return by the show-up rate.
  */
 
 import type { SalesEconomics } from "./funnel-registry.js";
@@ -50,15 +54,16 @@ export interface AuthorizedGoalEntry {
 }
 
 /**
- * The rates a declared funnel can carry that features-service's projection actually consumes. Named
- * identically on both sides. `meetingBookedToAttendedPct` (the meeting show-up rate) is deliberately
- * ABSENT: it exists only on brand-service's funnel rows and features-service's funnel does not model a
- * separate show-up step, so importing it would silently rename a rate the projection never reads.
+ * The rates a declared funnel can carry that features-service's projection consumes UNCHANGED, i.e.
+ * where the two services' identically-named fields also mean the same thing.
+ *
+ * `meetingToClosePct` and `meetingBookedToAttendedPct` are deliberately ABSENT — they are handled by
+ * `meetingChainCloseRate` below, because on a declared FUNNEL the name means something else than it
+ * does on the brand-wide economics row.
  */
 const CONSUMED_RATE_KEYS = [
   "replyToMeetingPct",
   "visitToMeetingPct",
-  "meetingToClosePct",
   "visitToSignupPct",
   "signupToPaidClientPct",
   "visitToFormSubmissionPct",
@@ -85,6 +90,34 @@ function goalOfFunnel(funnel: DeclaredSalesFunnel): Goal {
   throw new UnknownAuthorizedGoalError(funnel.goal ?? funnel.currentGoal ?? JSON.stringify(funnel));
 }
 
+const finite = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+/**
+ * `SalesEconomics.meetingToClosePct` for a declared meeting funnel — the SAME NAME on the two services
+ * does NOT mean the same thing, and copying it across is a silent overstatement.
+ *
+ * Our projection multiplies `meetingToClosePct` by `visitToMeetingPct` / `replyToMeetingPct`, and both
+ * of those produce a meeting BOOKED — so ours is BOOKED → paid. brand-service's meeting chains are
+ * `… → Meeting booked → Meeting attended → Paid client` with `legs[i]` sitting between `steps[i]` and
+ * `steps[i+1]`, so the funnel's `meetingToClosePct` is ATTENDED → paid and `meetingBookedToAttendedPct`
+ * is the show-up rate in between. Reading the funnel's value as ours therefore asserts a 100% show-up
+ * rate: a brand declaring 50% show-up and 40% attended→close would be scored at 40% booked→paid instead
+ * of 20%, halving its cost per paid client and doubling the return the meeting goal is ranked on —
+ * enough to hand it an arbitration it should have lost.
+ *
+ * So the two legs COMPOSE: `booked→paid = attended% × close%`. When the brand declared no show-up rate
+ * we use the close rate alone — exactly the brand-wide semantics, whose economics row has no show-up
+ * column at all — rather than discarding a number the brand did give us. This is the ONE place the
+ * show-up rate is read; it never reaches `SalesEconomics` under its own name, which has no field for it.
+ */
+export function meetingChainCloseRate(rates: Record<string, number | null> | null | undefined): number | null {
+  const close = finite(rates?.meetingToClosePct);
+  if (close === null) return null;
+  const showUp = finite(rates?.meetingBookedToAttendedPct);
+  return showUp === null ? close : (close * showUp) / 100;
+}
+
 /** The declared numbers on one funnel, dropping every rate the brand never gave us. */
 function declaredEconomics(funnel: DeclaredSalesFunnel): Partial<SalesEconomics> | null {
   const out: Record<string, number> = {};
@@ -95,6 +128,8 @@ function declaredEconomics(funnel: DeclaredSalesFunnel): Partial<SalesEconomics>
       if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
     }
   }
+  const bookedToPaid = meetingChainCloseRate(rates);
+  if (bookedToPaid !== null) out.meetingToClosePct = bookedToPaid;
   if (typeof funnel.lifetimeRevenueUsd === "number" && Number.isFinite(funnel.lifetimeRevenueUsd)) {
     out.lifetimeRevenueUsd = funnel.lifetimeRevenueUsd;
   }

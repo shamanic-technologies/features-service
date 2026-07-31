@@ -78,9 +78,24 @@ absence signals anything). Reading either as the set is a bug.
   selling a $200 self-serve plan and a $20k contract is arbitrated on each funnel's own revenue instead
   of one blended number. A rate the brand never declared arrives as `null` and is **DROPPED** — never
   coerced to 0, which would zero-collapse the funnel. Nothing declared ⇒ the brand's effective economics
-  apply unchanged (today's semantics, not a fabricated value). `meetingBookedToAttendedPct` exists only
-  on brand-service's funnel rows and is deliberately NOT imported — this service's funnel models no
-  separate show-up step, so consuming it would silently rename a rate the projection never reads.
+  apply unchanged (today's semantics, not a fabricated value).
+- **A SHARED FIELD NAME IS NOT A SHARED MEANING — the meeting chain COMPOSES** (`meetingChainCloseRate`).
+  Every funnel rate key lines up 1:1 with `SalesEconomics` EXCEPT `meetingToClosePct`. Our projection
+  multiplies it by `visitToMeetingPct`/`replyToMeetingPct`, both of which produce a meeting **BOOKED**,
+  so ours is BOOKED→paid. brand-service's chains are `… → Meeting booked → Meeting attended → Paid
+  client` with `legs[i]` between `steps[i]` and `steps[i+1]`, so ITS `meetingToClosePct` is
+  **ATTENDED→paid** and `meetingBookedToAttendedPct` is the show-up rate in between. So the override is
+  `booked→paid = attended% × close%`; the show-up rate never reaches `SalesEconomics` under its own name
+  (there is no field for it), and a show-up rate with NO close rate contributes nothing (half a chain is
+  not a close rate). No show-up rate declared ⇒ the close rate stands alone — exactly the brand-wide
+  semantics, whose economics row has no show-up column at all — never discarded.
+  **Do NOT "simplify" this back to a name-match copy.** #707 did (reasoning that we model no show-up
+  step, so importing it would rename a rate we never read) — but the effect of dropping it is asserting
+  a **100% show-up rate**: a brand declaring 50% show-up and 40% attended→close scored 40% booked→paid
+  instead of 20%, halving its cost per paid client and DOUBLING the return `meetingBooked` is ranked on
+  — enough to hand it an arbitration it should have lost. Guard: the three `meetingChainCloseRate` cases
+  in `authorized-goals.test.ts` + the route-level "not a free 100%" test, which drives the SAME funnel
+  with and without the show-up rate and asserts the return halves.
 - **Consumer-conforms-to-producer, learned the expensive way (2026-07-31):** the first ship guessed the
   producer would put the set on the effective-economics payload under one of several plausible names and
   shipped a tolerant parser for that guess. brand-service had ALREADY shipped it to staging as *sales
