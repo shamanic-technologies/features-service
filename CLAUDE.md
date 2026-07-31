@@ -1747,6 +1747,29 @@ absence can show an older value, for the seconds until the background refresh la
 **Do NOT drop the TTL back toward 5s while the dashboard polls at 15s** — every poll would then be a stale
 hit and trigger the fan-out, doubling load on the Neon-backed siblings. TTL ≥ poll interval is the rule.
 
+### A third window — `RETENTION` (7d) deletes cells nobody reads; the sweep rides write traffic, never a timer
+
+`TTL` and `maxStale` decide how a cell is SERVED. Neither ever removes one, so the table grows forever:
+every input that changes a body is folded into `scope_key` (query params, `pricing`, `timezone`, the
+economics fingerprint), so one brand legitimately mints a NEW cell whenever any of those move and the
+superseded ones are orphaned by construction — never read again, never overwritten. Measured on prod
+2026-07-31: `revenue` held 326 cells / 36 MB with only 68 touched in 24h, plus 91 fully orphaned
+`workflow-projection` cells left by the evidence/projection split.
+
+`computed_at` advances ONLY on a read (miss / too-stale / background revalidate all go through
+`upsertSnapshot`), so its age is exactly "time since anyone last looked at this cell". Past
+`FEATURE_VIEW_SNAPSHOT_RETENTION_MS` (default 7 days) the row is deleted; if it is ever read again the
+existing miss path recomputes it. Retired VIEWS age out under the same rule, so this needs no list of
+live view names — such a list would rot the moment a view is renamed.
+
+**The sweep piggybacks on a successful persist, at most once an hour per process — do NOT convert it to a
+`setInterval`.** A timer keeps the Neon compute awake around the clock for a table that needs touching
+once a day, which is the exact anti-pattern the fleet's scale-to-zero notes call out (reap on-read, never
+on a clock). It is also fire-and-forget: a prune failure is logged and dropped, which is NOT the swallowed
+error the fail-loud rule forbids — pruning produces no value any caller reads, its only failure
+consequence is a larger table, and propagating would turn janitorial work into a 502 on a request whose
+answer was already computed correctly.
+
 ### Economics-dependent views key on `economicsFingerprint`, NOT on a cross-service invalidation hook
 
 `scope_key` is built from query params, and **economics are not a query param** — so a snapshot computed

@@ -9,6 +9,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 let storedRow: Record<string, unknown> | undefined;
 let claimSucceeds: boolean;
 let readThrows: boolean;
+let pruneThrows: boolean;
+const pruneCalls: Date[] = [];
 
 const makeThenable = (value: unknown, extra: Record<string, unknown> = {}) => ({
   then: (resolve: (v: unknown) => void) => resolve(value),
@@ -47,11 +49,41 @@ const dbMock = {
         }),
     }),
   }),
+  delete: () => ({
+    where: (condition: unknown) => ({
+      returning: async () => {
+        if (pruneThrows) throw new Error("prune failed");
+        // The cutoff is the only Date bound into `lt(computedAt, cutoff)`; digging it out of the drizzle
+        // condition is what lets the test assert WHICH rows the sweep targets, not merely that it ran.
+        const cutoff = findDate(condition);
+        if (!cutoff) throw new Error("prune ran without a date cutoff");
+        pruneCalls.push(cutoff);
+        // Model the table: only rows older than the cutoff go.
+        if (storedRow && new Date(storedRow.computedAt as string | Date).getTime() < cutoff.getTime()) {
+          storedRow = undefined;
+          return [{ id: "snap-1" }];
+        }
+        return [];
+      },
+    }),
+  }),
 };
+
+/** Depth-first hunt for the single Date bound into a drizzle condition (the prune cutoff). */
+function findDate(node: unknown, depth = 0): Date | undefined {
+  if (node instanceof Date) return node;
+  if (depth > 6 || node === null || typeof node !== "object") return undefined;
+  for (const value of Object.values(node as Record<string, unknown>)) {
+    const found = findDate(value, depth + 1);
+    if (found) return found;
+  }
+  return undefined;
+}
 
 vi.mock("../db/index.js", () => ({ db: dbMock, sql: {} }));
 
-const { servedCached, buildScopeKey, PLATFORM_SCOPE_ORG_ID } = await import("./view-cache.js");
+const { servedCached, buildScopeKey, PLATFORM_SCOPE_ORG_ID, viewCacheRetentionMs, __resetViewCachePruneState } =
+  await import("./view-cache.js");
 const PLATFORM = PLATFORM_SCOPE_ORG_ID;
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -60,6 +92,10 @@ beforeEach(() => {
   storedRow = undefined;
   claimSucceeds = true;
   readThrows = false;
+  pruneThrows = false;
+  pruneCalls.length = 0;
+  __resetViewCachePruneState();
+  delete process.env.FEATURE_VIEW_SNAPSHOT_RETENTION_MS;
   process.env.FEATURE_VIEW_CACHE_ENABLED = "true";
   process.env.FEATURE_VIEW_SNAPSHOT_TTL_MS = "5000";
 });
@@ -176,6 +212,70 @@ describe("servedCached", () => {
     const body = await servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute });
     expect(body).toEqual({ pipeline: 1 });
     expect(storedRow).toBeUndefined();
+  });
+
+  // ── Retention sweep — the Gold table must not grow forever as scope keys churn ─────────────────────
+  describe("stale-snapshot pruning", () => {
+    it("a persist sweeps snapshots older than the retention window, and targets ONLY those", async () => {
+      const before = Date.now();
+      await servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute: async () => ({ pipeline: 1 }) });
+      await flush();
+
+      expect(pruneCalls).toHaveLength(1);
+      const cutoff = pruneCalls[0].getTime();
+      // Cutoff sits one retention window in the past — so a cell read yesterday survives and a cell
+      // nobody has opened in over a week goes.
+      expect(cutoff).toBeLessThanOrEqual(Date.now() - viewCacheRetentionMs());
+      expect(cutoff).toBeGreaterThanOrEqual(before - viewCacheRetentionMs() - 5_000);
+    });
+
+    it("actually removes a cell nobody has read since the window, and keeps the one just written", async () => {
+      process.env.FEATURE_VIEW_SNAPSHOT_RETENTION_MS = "1000";
+      // An orphan from a scope key that no longer exists (a superseded economics fingerprint, a retired view).
+      storedRow = { view: "workflow-projection", scopeKey: "old", orgId: "o", body: { stale: true }, computedAt: new Date(Date.now() - 60_000), refreshingAt: null };
+
+      // Drive the sweep off a persist that does NOT overwrite that row.
+      await servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute: async () => ({ pipeline: 1 }) });
+      await flush();
+
+      expect(pruneCalls).toHaveLength(1);
+      // The freshly written row (computedAt = now) survives its own sweep.
+      expect(storedRow?.body).toEqual({ pipeline: 1 });
+    });
+
+    it("sweeps at most once per interval — a second persist right after does NOT re-sweep", async () => {
+      await servedCached({ view: "revenue", scopeKey: "a", orgId: "o", compute: async () => ({ pipeline: 1 }) });
+      await flush();
+      storedRow = undefined;
+      await servedCached({ view: "revenue", scopeKey: "b", orgId: "o", compute: async () => ({ pipeline: 2 }) });
+      await flush();
+
+      expect(pruneCalls).toHaveLength(1);
+    });
+
+    it("a prune failure never reaches the caller — the body is served, the housekeeping is logged", async () => {
+      pruneThrows = true;
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const body = await servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute: async () => ({ pipeline: 9 }) });
+      await flush();
+
+      expect(body).toEqual({ pipeline: 9 });
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining("view-cache prune failed"));
+      errors.mockRestore();
+    });
+
+    it("cache disabled → nothing is persisted and nothing is swept", async () => {
+      process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
+      await servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute: async () => ({ pipeline: 1 }) });
+      await flush();
+      expect(pruneCalls).toHaveLength(0);
+    });
+
+    it("the retention window is days-scale, far beyond the hard staleness cap it must never fight", async () => {
+      // A cell inside the max-stale cap is still SERVED; retention only reclaims cells long past any read.
+      expect(viewCacheRetentionMs()).toBeGreaterThan(24 * 60 * 60_000);
+    });
   });
 
   // ── Per-view TTL / max-stale overrides (the customer-health FLEET-board freshness config) ──────────
