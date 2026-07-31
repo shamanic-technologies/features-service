@@ -1,72 +1,121 @@
 import { describe, it, expect } from "vitest";
-import { parseAuthorizedGoals, UnknownAuthorizedGoalError } from "./authorized-goals.js";
+import { authorizedGoalsFromFunnels, UnknownAuthorizedGoalError } from "./authorized-goals.js";
+import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
 
-describe("parseAuthorizedGoals", () => {
-  it("returns null when the payload states NO authorized set (the caller must fail loud, not default)", () => {
-    expect(parseAuthorizedGoals({ economics: { lifetimeRevenueUsd: 1000 }, source: "user" })).toBeNull();
-    expect(parseAuthorizedGoals(null)).toBeNull();
-    expect(parseAuthorizedGoals("nope")).toBeNull();
+// Shaped exactly like brand-service's deployed `GET /internal/brands/:brandId/sales-funnels` items.
+function funnel(over: Partial<DeclaredSalesFunnel>): DeclaredSalesFunnel {
+  return {
+    funnelKey: "visit_signup",
+    name: "Website Purchase",
+    steps: ["Website visit", "Signup", "Paid client"],
+    goal: "signups",
+    currentGoal: "signup",
+    rates: {},
+    lifetimeRevenueUsd: null,
+    destinationUrl: null,
+    bookingUrl: null,
+    updatedAt: "2026-07-31T00:00:00.000Z",
+    ...over,
+  };
+}
+
+describe("authorizedGoalsFromFunnels", () => {
+  it("a brand that declared NO funnel authorizes nothing — [] in, [] out (never a substituted set)", () => {
+    expect(authorizedGoalsFromFunnels([])).toEqual([]);
   });
 
-  it("NEVER reads the brand's single optimizationGoal as the authorized set", () => {
-    expect(parseAuthorizedGoals({ salesEconomics: { optimizationGoal: "positive_replies" } })).toBeNull();
-  });
-
-  it("NEVER reads funnelStages as the authorized set (different concept, different vocabulary)", () => {
-    expect(parseAuthorizedGoals({ salesEconomics: { funnelStages: ["website_purchase", "sales_meeting"] } })).toBeNull();
-  });
-
-  it("an EMPTY stated set parses as [] — a real answer, distinct from 'no set stated'", () => {
-    expect(parseAuthorizedGoals({ authorizedGoals: [] })).toEqual([]);
-  });
-
-  it("maps every stored spelling to the canonical goal", () => {
-    const parsed = parseAuthorizedGoals({
-      authorizedGoals: ["signups", "booked_meetings", "positive_replies", "form_submissions", "website_purchase", "sales", "whatsapp_conversations", "website_visits"],
-    });
-    expect(parsed?.map((e) => e.goal)).toEqual([
-      "signup",
-      "meetingBooked",
-      "positiveReply",
-      "formSubmission",
-      "websitePurchase",
-      "sales",
-      "whatsappConversation",
-      "websiteVisit",
+  it("maps each declared funnel to its canonical goal, in the producer's order", () => {
+    const parsed = authorizedGoalsFromFunnels([
+      funnel({ funnelKey: "visit_form", goal: "form_submissions", currentGoal: "signup" }),
+      funnel({ funnelKey: "visit_signup", goal: "signups", currentGoal: "signup" }),
+      funnel({ funnelKey: "reply_meeting", goal: "booked_meetings", currentGoal: "meetingBooked" }),
     ]);
-    expect(parsed?.every((e) => e.economics === null)).toBe(true);
+    expect(parsed.map((e) => e.goal)).toEqual(["formSubmission", "signup", "meetingBooked"]);
   });
 
-  it("accepts the producer's plural container under any of its plausible names, nested or top-level", () => {
-    const names = ["authorizedGoals", "optimizationGoals", "funnels", "salesFunnels"];
-    for (const name of names) {
-      expect(parseAuthorizedGoals({ [name]: ["signups"] })?.map((e) => e.goal)).toEqual(["signup"]);
-      expect(parseAuthorizedGoals({ salesEconomics: { [name]: ["signups"] } })?.map((e) => e.goal)).toEqual(["signup"]);
-      expect(parseAuthorizedGoals({ economics: { [name]: ["signups"] } })?.map((e) => e.goal)).toEqual(["signup"]);
+  it("reads the WIRE goal, not the lossy runtime token — a Form Magnet is NOT a signup funnel", () => {
+    // brand-service deliberately collapses form_submissions onto the `signup` runtime token so its
+    // consumers "never see a new value". features-service models form submissions as their OWN goal
+    // with their own funnel, so reading currentGoal here would price a Form Magnet on signup economics.
+    const parsed = authorizedGoalsFromFunnels([
+      funnel({ funnelKey: "visit_form", goal: "form_submissions", currentGoal: "signup" }),
+    ]);
+    expect(parsed.map((e) => e.goal)).toEqual(["formSubmission"]);
+  });
+
+  it("falls back to the runtime token only when the wire goal maps to nothing", () => {
+    const parsed = authorizedGoalsFromFunnels([funnel({ goal: "", currentGoal: "positiveReply" })]);
+    expect(parsed.map((e) => e.goal)).toEqual(["positiveReply"]);
+  });
+
+  it("accepts every goal spelling brand-service can echo, including the dashboard's sales_meetings", () => {
+    const spellings = [
+      ["signups", "signup"],
+      ["booked_meetings", "meetingBooked"],
+      ["sales_meetings", "meetingBooked"],
+      ["form_submissions", "formSubmission"],
+      ["website_purchase", "websitePurchase"],
+      ["combined_sales", "sales"],
+      ["website_visits", "websiteVisit"],
+      ["positive_replies", "positiveReply"],
+      ["whatsapp_conversations", "whatsappConversation"],
+    ] as const;
+    for (const [wire, expected] of spellings) {
+      expect(authorizedGoalsFromFunnels([funnel({ goal: wire })])[0].goal).toBe(expected);
     }
   });
 
-  it("reads PER-FUNNEL economics off an object entry, nested or flat", () => {
-    const nested = parseAuthorizedGoals({
-      funnels: [{ goal: "signups", economics: { lifetimeRevenueUsd: 200, signupToPaidClientPct: 10 } }],
-    });
-    expect(nested).toEqual([{ goal: "signup", economics: { lifetimeRevenueUsd: 200, signupToPaidClientPct: 10 } }]);
-
-    const flat = parseAuthorizedGoals({ funnels: [{ optimizationGoal: "sales", lifetimeRevenueUsd: 20_000 }] });
-    expect(flat).toEqual([{ goal: "sales", economics: { lifetimeRevenueUsd: 20_000 } }]);
-
-    // Non-numeric / unknown fields never leak into the override.
-    const noisy = parseAuthorizedGoals({ funnels: [{ goal: "signups", economics: { lifetimeRevenueUsd: "200", label: "x" } }] });
-    expect(noisy).toEqual([{ goal: "signup", economics: null }]);
+  it("carries the funnel's OWN declared economics, dropping every rate the brand never gave us", () => {
+    const parsed = authorizedGoalsFromFunnels([
+      funnel({
+        funnelKey: "visit_signup",
+        goal: "signups",
+        // A null rate is "never declared" upstream — it must NOT become 0, which would zero-collapse
+        // the funnel. meetingBookedToAttendedPct has no counterpart in our projection and is dropped.
+        rates: { visitToSignupPct: 8, signupToPaidClientPct: null, meetingBookedToAttendedPct: 60 },
+        lifetimeRevenueUsd: 20_000,
+      }),
+    ]);
+    expect(parsed).toEqual([{ goal: "signup", economics: { visitToSignupPct: 8, lifetimeRevenueUsd: 20_000 } }]);
   });
 
-  it("dedupes while preserving the producer's order", () => {
-    const parsed = parseAuthorizedGoals({ authorizedGoals: ["positive_replies", "signups", "positiveReply"] });
-    expect(parsed?.map((e) => e.goal)).toEqual(["positiveReply", "signup"]);
+  it("a funnel with nothing declared carries no override — the brand's effective economics apply", () => {
+    expect(authorizedGoalsFromFunnels([funnel({ rates: {}, lifetimeRevenueUsd: null })])).toEqual([
+      { goal: "signup", economics: null },
+    ]);
+  });
+
+  it("MERGES two funnels that share a goal — their rates are complementary legs, not duplicates", () => {
+    // reply_meeting and visit_meeting are two routes to a booked meeting, and our meeting projection
+    // spans BOTH channels (clicks·visitToMeeting + replies·replyToMeeting). Keeping only the first
+    // would arbitrate the goal on half its economics.
+    const parsed = authorizedGoalsFromFunnels([
+      funnel({
+        funnelKey: "reply_meeting",
+        goal: "booked_meetings",
+        rates: { replyToMeetingPct: 30, meetingToClosePct: 25 },
+        lifetimeRevenueUsd: 9_000,
+      }),
+      funnel({
+        funnelKey: "visit_meeting",
+        goal: "booked_meetings",
+        rates: { visitToMeetingPct: 4, meetingToClosePct: 40 },
+        lifetimeRevenueUsd: 7_000,
+      }),
+    ]);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].goal).toBe("meetingBooked");
+    expect(parsed[0].economics).toEqual({
+      replyToMeetingPct: 30,
+      meetingToClosePct: 25, // first declaration wins a collision, in the producer's order
+      visitToMeetingPct: 4,
+      lifetimeRevenueUsd: 7_000, // lowest of the two — can only understate the goal's return
+    });
   });
 
   it("throws on a goal it cannot map — an authorized goal must never be silently dropped", () => {
-    expect(() => parseAuthorizedGoals({ authorizedGoals: ["signups", "telepathy"] })).toThrow(UnknownAuthorizedGoalError);
-    expect(() => parseAuthorizedGoals({ authorizedGoals: [{ label: "no goal here" }] })).toThrow(UnknownAuthorizedGoalError);
+    expect(() => authorizedGoalsFromFunnels([funnel({ goal: "telepathy", currentGoal: "telepathy" })])).toThrow(
+      UnknownAuthorizedGoalError,
+    );
   });
 });

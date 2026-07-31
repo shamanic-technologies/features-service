@@ -1,30 +1,32 @@
 /**
  * The set of optimization goals a brand AUTHORIZES — the candidate set the goal arbitration ranks.
  *
- * OWNERSHIP: the authorized set is BRAND-SERVICE's. A brand states every funnel it sells through;
- * features-service reads that statement and ranks it. It is NEVER supplied by the caller
- * (campaign-service must not be in a position to influence which goals compete) and it is NEVER
- * inferred here (a brand's single `optimizationGoal` is one goal, not an authorization set — reading it
- * as the set would silently answer a different question).
+ * OWNERSHIP: the authorized set is BRAND-SERVICE's. A brand DECLARES the sales funnels it sells
+ * through (`GET /internal/brands/:brandId/sales-funnels`), each funnel carrying the goal it optimizes
+ * for and the economics that funnel is priced on. features-service reads that declaration and ranks
+ * it. It is NEVER supplied by the caller (campaign-service must not be in a position to influence
+ * which goals compete) and it is NEVER inferred here — in particular a brand's single
+ * `optimizationGoal` is ONE goal, not an authorization set, and brand-service is explicit that the
+ * brand-wide economics row cannot stand in for a declaration (every rate on it is NOT NULL with a
+ * server default, so a brand that configured nothing still reads back plausible-looking numbers and
+ * no absence signals anything).
  *
- * `funnelStages` is explicitly NOT the authorized set. It is a different concept with a different
- * vocabulary (`website_purchase` | `sales_meeting` = stages a brand's funnel contains), and reading it
- * as a goal list would produce a plausible-looking but wrong set.
+ * "No funnel declared" is `[]`, a real answer — the arbitration reports the brand unrankable. There is
+ * no separate "unset" wire state in the producer's model; a read that cannot be answered throws
+ * (`SalesFunnelsUnavailableError`) and the route reports THAT distinctly.
  *
- * TRANSITIONAL SHAPE TOLERANCE — brand-service is adding the field in parallel with this endpoint, so
- * the parser accepts the handful of container names / item shapes the producer could reasonably ship
- * (`authorizedGoals` | `optimizationGoals` | `funnels` | `salesFunnels`, at the top level of the
- * sales-economics payload or nested under `salesEconomics` / `economics`; items either a plain goal
- * string or an object carrying the goal plus optional per-funnel economics). This is INPUT TOLERANCE
- * over an unshipped producer, not a fallback: when NO recognised container is present the parser
- * returns `null` and the arbitration endpoint FAILS LOUD (502) naming what is missing — it never
- * substitutes a default set. Narrow this to the single deployed name once brand-service ships.
+ * TWO FUNNELS CAN SHARE ONE GOAL. `reply_meeting` and `visit_meeting` both optimize for a booked
+ * meeting via different first signals, and features-service's meeting funnel spans BOTH channels
+ * (clicks·visitToMeeting + replies·replyToMeeting). So funnels are MERGED per goal rather than
+ * deduped-by-first: their rate sets are complementary legs of the same projection, and dropping one
+ * would arbitrate the goal on half its economics.
  */
 
 import type { SalesEconomics } from "./funnel-registry.js";
 import { matchOptimizationGoal, type Goal } from "./goals.js";
+import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
 
-/** Raised when the producer serves a goal value features-service cannot map. Fails loud — a goal the
+/** Raised when a declared funnel names a goal features-service cannot map. Fails loud — a goal the
  * brand authorized must never be silently dropped from the competition. */
 export class UnknownAuthorizedGoalError extends Error {
   constructor(readonly raw: string) {
@@ -33,112 +35,113 @@ export class UnknownAuthorizedGoalError extends Error {
   }
 }
 
-/** One authorized funnel: the goal, plus the per-funnel economics the brand states for it (when any). */
+/** One authorized goal: the goal, plus the economics the brand declared for the funnel(s) behind it. */
 export interface AuthorizedGoalEntry {
   goal: Goal;
   /**
-   * PER-FUNNEL economics overrides, as stated by the brand for THIS funnel. Merged OVER the brand's
-   * effective economics when projecting this goal, so a brand that sells a $200 self-serve plan and a
-   * $20k enterprise contract is arbitrated on each funnel's own revenue instead of one blended number.
-   * `null` when the producer states none — the brand's effective economics then apply unchanged, which
-   * is today's semantics, not a fabricated value.
+   * PER-FUNNEL economics as DECLARED, merged over the brand's effective economics when projecting this
+   * goal — so a brand selling a $200 self-serve plan and a $20k contract is arbitrated on each funnel's
+   * own revenue instead of one blended number. `null` when the brand declared no usable number for the
+   * funnel; the brand's effective economics then apply unchanged (today's semantics, not a fabricated
+   * value). A rate the brand never declared reads `null` upstream and is DROPPED here — never coerced
+   * to 0, which would silently zero-collapse a funnel.
    */
   economics: Partial<SalesEconomics> | null;
 }
 
-const CONTAINER_KEYS = ["authorizedGoals", "optimizationGoals", "funnels", "salesFunnels"] as const;
-const NESTED_KEYS = ["salesEconomics", "economics"] as const;
-const GOAL_KEYS = ["goal", "optimizationGoal", "currentGoal", "slug", "name"] as const;
-const ECONOMICS_KEYS = ["economics", "salesEconomics"] as const;
-
-/** The numeric SalesEconomics fields a per-funnel override may restate. Anything else is ignored. */
-const ECONOMICS_FIELDS = [
-  "lifetimeRevenueUsd",
+/**
+ * The rates a declared funnel can carry that features-service's projection actually consumes. Named
+ * identically on both sides. `meetingBookedToAttendedPct` (the meeting show-up rate) is deliberately
+ * ABSENT: it exists only on brand-service's funnel rows and features-service's funnel does not model a
+ * separate show-up step, so importing it would silently rename a rate the projection never reads.
+ */
+const CONSUMED_RATE_KEYS = [
   "replyToMeetingPct",
   "visitToMeetingPct",
   "meetingToClosePct",
   "visitToSignupPct",
   "signupToPaidClientPct",
+  "visitToFormSubmissionPct",
+  "formSubmissionToPaidClientPct",
   "visitToClosePct",
   "visitToPaidClientPct",
   "replyToPaidClientPct",
-  "visitToFormSubmissionPct",
-  "formSubmissionToPaidClientPct",
 ] as const;
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+/**
+ * Map ONE declared funnel to its canonical goal.
+ *
+ * Reads brand-service's WIRE `goal` first and only then `currentGoal`, because `currentGoal` is LOSSY
+ * for this purpose: brand-service deliberately collapses `form_submissions` onto the `signup` runtime
+ * token ("consumers never see a new value"), while features-service models form submissions as their
+ * OWN goal with their own funnel (visit→form→paid). Reading the runtime token would arbitrate a Form
+ * Magnet funnel on signup economics — a wrong answer that looks right.
+ */
+function goalOfFunnel(funnel: DeclaredSalesFunnel): Goal {
+  const wire = typeof funnel.goal === "string" ? matchOptimizationGoal(funnel.goal) : null;
+  if (wire) return wire;
+  const runtime = typeof funnel.currentGoal === "string" ? matchOptimizationGoal(funnel.currentGoal) : null;
+  if (runtime) return runtime;
+  throw new UnknownAuthorizedGoalError(funnel.goal ?? funnel.currentGoal ?? JSON.stringify(funnel));
+}
 
-function readEconomicsOverride(raw: unknown): Partial<SalesEconomics> | null {
-  if (!isRecord(raw)) return null;
+/** The declared numbers on one funnel, dropping every rate the brand never gave us. */
+function declaredEconomics(funnel: DeclaredSalesFunnel): Partial<SalesEconomics> | null {
   const out: Record<string, number> = {};
-  for (const field of ECONOMICS_FIELDS) {
-    const value = raw[field];
-    if (typeof value === "number" && Number.isFinite(value)) out[field] = value;
+  const rates = funnel.rates;
+  if (rates && typeof rates === "object") {
+    for (const key of CONSUMED_RATE_KEYS) {
+      const value = rates[key];
+      if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
+    }
+  }
+  if (typeof funnel.lifetimeRevenueUsd === "number" && Number.isFinite(funnel.lifetimeRevenueUsd)) {
+    out.lifetimeRevenueUsd = funnel.lifetimeRevenueUsd;
   }
   return Object.keys(out).length > 0 ? (out as Partial<SalesEconomics>) : null;
 }
 
-function readEntry(item: unknown): AuthorizedGoalEntry {
-  if (typeof item === "string") {
-    const goal = matchOptimizationGoal(item);
-    if (!goal) throw new UnknownAuthorizedGoalError(item);
-    return { goal, economics: null };
-  }
-  if (isRecord(item)) {
-    for (const key of GOAL_KEYS) {
-      const raw = item[key];
-      if (typeof raw !== "string" || raw === "") continue;
-      const goal = matchOptimizationGoal(raw);
-      if (!goal) throw new UnknownAuthorizedGoalError(raw);
-      let economics: Partial<SalesEconomics> | null = null;
-      for (const econKey of ECONOMICS_KEYS) {
-        economics = readEconomicsOverride(item[econKey]);
-        if (economics) break;
-      }
-      // A funnel object may also carry its rates FLAT (no nested economics object).
-      if (!economics) economics = readEconomicsOverride(item);
-      return { goal, economics };
-    }
-  }
-  throw new UnknownAuthorizedGoalError(JSON.stringify(item));
-}
-
 /**
- * Extract the authorized goal set from a brand-service sales-economics payload.
+ * Turn the funnels a brand declared into the authorized goal set the arbitration ranks.
  *
- * Returns `null` when the payload carries NO recognised authorized-set container — i.e. the producer
- * does not (yet) state one. The caller must fail loud on `null`; it must NOT default to the brand's
- * single `optimizationGoal` or to the full `GOALS` vocabulary.
+ * `[]` in ⇒ `[]` out: the brand declared nothing, which the arbitration reports as unrankable. Order
+ * follows the producer's, so the answer is stable. Throws `UnknownAuthorizedGoalError` on a goal value
+ * that maps to nothing — dropping it would silently arbitrate a smaller set than the brand authorized.
  *
- * Returns `[]` when the producer states an EMPTY set — a real, distinguishable answer ("this brand
- * authorizes nothing"), which the arbitration reports as unrankable rather than as an error.
- *
- * Throws `UnknownAuthorizedGoalError` on a goal value that maps to no known goal.
+ * Funnels sharing a goal are MERGED (see the module doc): their declared rates union, first declaration
+ * winning a collision in the producer's order. A lifetime revenue stated by several funnels of one goal
+ * resolves to the LOWEST — deterministic, and it can only ever understate the goal's return, never
+ * inflate it into winning the arbitration.
  */
-export function parseAuthorizedGoals(payload: unknown): AuthorizedGoalEntry[] | null {
-  if (!isRecord(payload)) return null;
-  const containers: unknown[] = [];
-  for (const key of CONTAINER_KEYS) {
-    if (key in payload) containers.push(payload[key]);
-  }
-  for (const nested of NESTED_KEYS) {
-    const inner = payload[nested];
-    if (!isRecord(inner)) continue;
-    for (const key of CONTAINER_KEYS) {
-      if (key in inner) containers.push(inner[key]);
-    }
-  }
-  const list = containers.find((c) => Array.isArray(c));
-  if (list === undefined) return null;
+export function authorizedGoalsFromFunnels(funnels: DeclaredSalesFunnel[]): AuthorizedGoalEntry[] {
+  const byGoal = new Map<Goal, Partial<SalesEconomics> | null>();
+  const order: Goal[] = [];
 
-  const seen = new Set<Goal>();
-  const entries: AuthorizedGoalEntry[] = [];
-  for (const item of list as unknown[]) {
-    const entry = readEntry(item);
-    if (seen.has(entry.goal)) continue;
-    seen.add(entry.goal);
-    entries.push(entry);
+  for (const funnel of funnels) {
+    const goal = goalOfFunnel(funnel);
+    const declared = declaredEconomics(funnel);
+    if (!byGoal.has(goal)) {
+      byGoal.set(goal, declared);
+      order.push(goal);
+      continue;
+    }
+    const existing = byGoal.get(goal) ?? null;
+    if (!declared) continue;
+    if (!existing) {
+      byGoal.set(goal, declared);
+      continue;
+    }
+    const merged: Record<string, number> = { ...(existing as Record<string, number>) };
+    for (const [key, value] of Object.entries(declared as Record<string, number>)) {
+      if (key === "lifetimeRevenueUsd") {
+        merged.lifetimeRevenueUsd =
+          merged.lifetimeRevenueUsd == null ? value : Math.min(merged.lifetimeRevenueUsd, value);
+        continue;
+      }
+      if (!(key in merged)) merged[key] = value;
+    }
+    byGoal.set(goal, merged as Partial<SalesEconomics>);
   }
-  return entries;
+
+  return order.map((goal) => ({ goal, economics: byGoal.get(goal) ?? null }));
 }

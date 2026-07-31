@@ -86,10 +86,27 @@ const emailGroup = (slug: string, clicked: number, repliesPositive: number, cont
 const CROSSORG_COST = [costGroup("wf-a", 100_000), costGroup("wf-b", 100_000)];
 const CROSSORG_EMAIL = [emailGroup("wf-a", 100, 50), emailGroup("wf-b", 10, 100)];
 
+/** A declared sales funnel, shaped exactly like brand-service's deployed item. */
+function declaredFunnel(goal: string, over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    funnelKey: "visit_signup",
+    name: "Website Purchase",
+    steps: ["Website visit", "Signup", "Paid client"],
+    goal,
+    currentGoal: "signup",
+    rates: {},
+    lifetimeRevenueUsd: null,
+    destinationUrl: null,
+    bookingUrl: null,
+    updatedAt: "2026-07-31T00:00:00.000Z",
+    ...over,
+  };
+}
+
 interface MockOpts {
   economics?: unknown;
-  /** Value served on the brand-service payload. `undefined` = the producer states NO set at all. */
-  authorizedGoals?: unknown;
+  /** The funnels brand-service serves. Omitted → the endpoint 404s (a brand-service without the model). */
+  funnels?: unknown[];
   audiences?: Array<{ id: string }>;
 }
 
@@ -103,11 +120,15 @@ function mockFetch(opts: MockOpts = {}): void {
     if (url.includes("/v1/stats/costs")) return json({ groups: [] }); // brand + audience grains: no spend
     if (url.includes("/orgs/stats")) return json({ groups: [] });
     if (url.includes("/public/stats")) return json({ groups: CROSSORG_EMAIL });
+    if (url.includes("/sales-funnels")) {
+      if (!("funnels" in opts)) {
+        return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+      }
+      return json({ funnels: opts.funnels });
+    }
     if (url.includes("/sales-economics-effective")) {
       const economics = "economics" in opts ? opts.economics : ECONOMICS;
-      const body: Record<string, unknown> = { economics, source: economics == null ? null : "user" };
-      if ("authorizedGoals" in opts) body.authorizedGoals = opts.authorizedGoals;
-      return json(body);
+      return json({ economics, source: economics == null ? null : "user" });
     }
     if (url.includes("/orgs/audiences")) return json({ audiences: opts.audiences ?? [] });
     void u;
@@ -128,7 +149,7 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("400 when brandId missing, 400 on an invalid pricing value, 404 when the feature is unknown", async () => {
-    mockFetch({ authorizedGoals: ["signups"] });
+    mockFetch({ funnels: [declaredFunnel("signups")] });
     expect((await request(app).get(URL_BASE).set(AUTH)).status).toBe(400);
     expect((await request(app).get(`${URL_BASE}?brandId=b1&pricing=bogus`).set(AUTH)).status).toBe(400);
 
@@ -137,7 +158,10 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
   });
 
   it("elects the best goal, its best workflow, and the pairing's rows — in ONE request", async () => {
-    mockFetch({ authorizedGoals: ["signups", "positive_replies", "whatsapp_conversations"], audiences: [{ id: "aud-1" }] });
+    mockFetch({
+      funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies"), declaredFunnel("whatsapp_conversations")],
+      audiences: [{ id: "aud-1" }],
+    });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(200);
@@ -157,7 +181,7 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
   });
 
   it("the elected workflow matches what the SINGLE-GOAL read says for that goal — same fixture, same argmin", async () => {
-    mockFetch({ authorizedGoals: ["signups", "positive_replies"] });
+    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies")] });
     const arbitrated = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
     const winner = arbitrated.body.arbitration.goal;
 
@@ -183,26 +207,26 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
   });
 
   it("the single-goal read is untouched by the presence of an authorized set", async () => {
-    mockFetch({ authorizedGoals: ["signups", "positive_replies"] });
+    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies")] });
     const withSet = (await request(app).get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&goal=signup`).set(AUTH)).body;
     vi.restoreAllMocks();
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
-    mockFetch(); // producer states no set at all
+    mockFetch(); // a brand that declared no funnel at all
     const without = (await request(app).get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&goal=signup`).set(AUTH)).body;
     expect(withSet).toEqual(without);
   });
 
-  it("502 with an explicit reason when brand-service states NO authorized set — never a substituted default", async () => {
-    mockFetch(); // no authorizedGoals key on the payload
+  it("502 with an explicit reason when the declared-funnel read cannot be answered — never a substituted default", async () => {
+    mockFetch(); // brand-service without the funnel model → the read 404s
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(502);
     expect(res.body.reason).toBe("authorized_goals_unavailable");
-    expect(res.body.error).toContain("brand-service");
+    expect(res.body.error).toContain("sales funnels");
   });
 
   it("502 with an explicit reason on an authorized goal we cannot map — never silently dropped", async () => {
-    mockFetch({ authorizedGoals: ["signups", "telepathy"] });
+    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("telepathy", { currentGoal: "telepathy" })] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(502);
@@ -210,8 +234,8 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     expect(res.body.error).toContain("telepathy");
   });
 
-  it("200 unrankable (not an error) when the brand authorizes an EMPTY set", async () => {
-    mockFetch({ authorizedGoals: [] });
+  it("200 unrankable (not an error) when the brand declared NO funnel", async () => {
+    mockFetch({ funnels: [] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(200);
@@ -222,7 +246,7 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
   });
 
   it("200 unrankable with a per-goal reason when nothing can be ranked", async () => {
-    mockFetch({ authorizedGoals: ["whatsapp_conversations"] });
+    mockFetch({ funnels: [declaredFunnel("whatsapp_conversations")] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(200);
@@ -232,13 +256,14 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
   });
 
   it("does not accept an authorized set from the caller", async () => {
-    mockFetch(); // producer states none
+    // The brand declared ONE funnel; the caller asks for two more. The answer must ignore the caller.
+    mockFetch({ funnels: [declaredFunnel("signups")] });
     const res = await request(app)
-      .get(`${URL_BASE}?brandId=b1&authorizedGoals=signups,positive_replies&goals=signups`)
+      .get(`${URL_BASE}?brandId=b1&authorizedGoals=positive_replies,sales&goals=positive_replies`)
       .set(AUTH);
 
-    // The caller-supplied params are ignored entirely — the answer is still "brand-service states none".
-    expect(res.status).toBe(502);
-    expect(res.body.reason).toBe("authorized_goals_unavailable");
+    expect(res.status).toBe(200);
+    expect(res.body.authorizedGoals).toEqual(["signup"]);
+    expect(res.body.arbitration.goal).toBe("signup");
   });
 });

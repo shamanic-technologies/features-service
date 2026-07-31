@@ -46,30 +46,48 @@ evidence + the same economics always produce the same answer.
   trials, `evidence.spentUsd` cost; an audience with no attributed evidence carries no audience grain = a
   cold arm, and still resolves via the cascade — never absent, never a false $0).
 
-**The AUTHORIZED SET is brand-service's to own** (`src/lib/authorized-goals.ts`). It is read from
-brand-service, **never accepted from the caller** (campaign-service must not be able to influence which
-goals compete) and **never inferred** — in particular a brand's single `optimizationGoal` is ONE goal, not
-an authorization set, and `funnelStages` (`website_purchase | sales_meeting`) is a DIFFERENT concept whose
-values would produce a plausible-looking but wrong set. Reading either as the set is a bug.
+**The AUTHORIZED SET is brand-service's to own** = the SALES FUNNELS a brand DECLARED it sells through,
+read from **`GET /internal/brands/:brandId/sales-funnels`** (api-key, brandId in path, no org context)
+via `src/lib/sales-funnels-client.ts` → mapped by `src/lib/authorized-goals.ts`. **Never accepted from
+the caller** (campaign-service must not be able to influence which goals compete) and **never inferred** —
+a brand's single `optimizationGoal` is ONE goal, not an authorization set, and brand-service is explicit
+that its brand-wide economics row cannot stand in for a declaration (every rate on it is NOT NULL with a
+server default, so a brand that configured nothing still reads back plausible-looking numbers and no
+absence signals anything). Reading either as the set is a bug.
 
-- It rides the SAME `/orgs/brands/:id/sales-economics-effective` payload this endpoint already reads
-  (`fetchEffectiveEconomicsWithAuthorization` — ONE brand-service call for both halves;
-  `fetchEffectiveEconomics` is unchanged for every other caller).
-- **No stated set ⇒ FAIL LOUD (502, `reason: "authorized_goals_unavailable"`)**, naming what is missing —
-  never a substituted default set answered as if it were real. An UNMAPPABLE goal value likewise 502s
-  (`reason: "authorized_goal_unrecognised"`) rather than being dropped, which would silently arbitrate a
-  smaller set. `parseAuthorizedGoals` returning `null` (no set stated) and `[]` (an empty set stated) are
-  therefore DIFFERENT answers — do not collapse them.
-- **TRANSITIONAL shape tolerance** — brand-service is adding the field in parallel, so the parser accepts
-  the plausible container names (`authorizedGoals` | `optimizationGoals` | `funnels` | `salesFunnels`, top
-  level or under `salesEconomics`/`economics`) and item shapes (a goal string, or an object carrying the
-  goal + optional PER-FUNNEL economics, nested or flat). That is input tolerance over an unshipped
-  producer, NOT a fallback (absent ⇒ 502). **Narrow it to the single deployed name once brand-service
-  ships**, and drop the others.
-- **PER-FUNNEL economics** on an entry are merged OVER the brand's effective set for THAT goal only, so a
-  brand selling a $200 self-serve plan and a $20k contract is arbitrated on each funnel's own revenue
-  instead of one blended number. Absent ⇒ the brand's effective economics apply unchanged (today's
-  semantics, not a fabricated value).
+- **Read the WIRE `goal`, NOT `currentGoal`.** brand-service deliberately collapses `form_submissions`
+  onto the `signup` runtime token so "consumers never see a new value" — but features-service models form
+  submissions as their OWN goal with their own funnel (visit→form→paid), so reading `currentGoal` would
+  price a Form Magnet funnel on signup economics: a wrong answer that looks right. `currentGoal` is the
+  fallback only when the wire goal maps to nothing. `matchOptimizationGoal` covers every value the
+  producer can echo (incl. the dashboard's `sales_meetings` spelling).
+- **A brand that declared NO funnel ⇒ `[]` ⇒ 200 `unrankable` / `no_authorized_goals`.** A read that
+  cannot be ANSWERED (transport, non-OK, a brand-service predating the funnel model → 404) throws
+  `SalesFunnelsUnavailableError` ⇒ **502 `reason: "authorized_goals_unavailable"`** naming what failed —
+  never a substituted default set. Those two are DIFFERENT answers; do not collapse them. An UNMAPPABLE
+  goal value likewise 502s (`reason: "authorized_goal_unrecognised"`) rather than being dropped, which
+  would silently arbitrate a smaller set.
+- **TWO FUNNELS CAN SHARE ONE GOAL and are MERGED, not deduped-by-first.** `reply_meeting` and
+  `visit_meeting` both optimize for a booked meeting via different first signals, and this service's
+  meeting projection spans BOTH channels (`clicks·v2m + replies·r2m`), so their rate sets are
+  complementary legs of one projection — keeping only the first would arbitrate the goal on half its
+  economics. Rates union (first declaration wins a collision, producer order); a lifetime revenue stated
+  by several funnels of one goal resolves to the **LOWEST** (deterministic, and it can only understate a
+  goal's return, never inflate it into winning).
+- **PER-FUNNEL economics** are merged OVER the brand's effective set for THAT goal only, so a brand
+  selling a $200 self-serve plan and a $20k contract is arbitrated on each funnel's own revenue instead
+  of one blended number. A rate the brand never declared arrives as `null` and is **DROPPED** — never
+  coerced to 0, which would zero-collapse the funnel. Nothing declared ⇒ the brand's effective economics
+  apply unchanged (today's semantics, not a fabricated value). `meetingBookedToAttendedPct` exists only
+  on brand-service's funnel rows and is deliberately NOT imported — this service's funnel models no
+  separate show-up step, so consuming it would silently rename a rate the projection never reads.
+- **Consumer-conforms-to-producer, learned the expensive way (2026-07-31):** the first ship guessed the
+  producer would put the set on the effective-economics payload under one of several plausible names and
+  shipped a tolerant parser for that guess. brand-service had ALREADY shipped it to staging as *sales
+  funnels* on its own endpoint, so the guess matched nothing and the endpoint 502'd for every brand in
+  prod. The dup-check missed it because it searched the CONSUMER's vocabulary ("authorized goals"), not
+  the producer's. When a producer feature is "in flight", grep the producer repo for the CONCEPT before
+  designing a reader — and read the deployed shape from the registry, never a shape you authored.
 - A goal that needs a rate the brand's economics do not carry still FAILS LOUD (the same behaviour
   `/workflow-projection` has for that goal today) — a missing producer rate is a data gap to surface, not
   an "unrankable" verdict to record.
@@ -77,12 +95,13 @@ values would produce a plausible-looking but wrong set. Reading either as the se
 **Cost + coherence:** the evidence fan-out is goal-INDEPENDENT, so this endpoint reuses the SAME Gold
 snapshot `/workflow-projection` maintains (view `workflow-projection-evidence`, scope key
 `featureSlug + orgId + brandId + pricing`) and arbitrating N goals adds ZERO IO over reading one — N pure
-`projectFromEvidence` calls. Economics is read LIVE (never cached), same freshness rule as
+`projectFromEvidence` calls. Two small brand-service reads ride the request path (effective economics +
+declared funnels), both live. Economics is read LIVE (never cached), same freshness rule as
 `/workflow-projection`. `?pricing=gross|net` behaves identically to its siblings. **`/workflow-projection`
 and `/audience-stats` are UNTOUCHED** — campaign-service and the dashboard are live on them and migrate
 after this ships. Guard suites: `src/lib/goal-arbitration.test.ts` (election, never-elect-undefined-return,
 determinism/tie-break, per-funnel economics, winning-pairing rows), `src/lib/authorized-goals.test.ts`
-(never reads optimizationGoal/funnelStages as the set; null vs []), `src/routes/goal-arbitration.test.ts`
+(wire-goal-not-currentGoal, merge-two-meeting-funnels, null rates dropped, declared-nothing = []), `src/routes/goal-arbitration.test.ts`
 (drives BOTH endpoints from ONE fixture: the elected workflow equals the single-goal read's own argmin, and
 the single-goal read is byte-identical with and without an authorized set). (Set 2026-07-31.)
 
