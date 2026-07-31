@@ -28,7 +28,7 @@ import {
 const router = Router();
 
 // Target outcomes/month used to size the recommended budget (recommendedBudgetUsd = TARGET × best metric).
-const TARGET_OUTCOMES_PER_MONTH = 10;
+export const TARGET_OUTCOMES_PER_MONTH = 10;
 
 // website_visits / positive_replies are SINGLE-STEP goals (visit→paid / reply→paid). self-serve is a
 // signup alias. The `objective` echo is the canonical snake spelling; the `goal` echo is the canonical

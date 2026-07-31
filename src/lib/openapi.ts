@@ -551,6 +551,77 @@ registry.registerPath({
   },
 });
 
+// ── GET /features/:featureSlug/goal-arbitration ────────────────────────────
+
+// Which of the goals the brand AUTHORIZES returns the most per dollar, the best workflow for it, and
+// the per-audience evidence for that pairing — one answer, one request.
+
+const goalEchoEnum = z.enum(["meetingBooked", "signup", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]);
+const objectiveEnum = z.enum(["meeting-booked", "self-serve", "signup", "website_purchase", "sales", "website_visits", "positive_replies", "form_submissions", "whatsapp_conversations"]);
+
+const goalCandidateSchema = z.object({
+  goal: goalEchoEnum,
+  objective: objectiveEnum,
+  rankable: z.boolean().describe("True ⟺ the goal has a defined, positive return per dollar and is eligible to win."),
+  unrankableReason: z.enum(["no_economics", "no_workflow_evidence", "no_paid_client_path", "no_return_defined"]).nullable().describe("Why this goal could not be ranked. `no_paid_client_path` = the goal has NO defined path to a paying client (whatsappConversation carries no whatsapp→paid rate; or the funnel's rate chain collapses to 0) — such a goal can never be elected. Null ⟺ rankable."),
+  returnPerDollar: z.number().nullable().describe("lifetimeRevenueUsd / costPerPaidClientUsd of this goal's best workflow (= the workflow-projection roiMultiple, = 100 / cacPct). THE ranking basis: the only cross-goal-comparable number, since each goal's own outcome is denominated differently. Null ⟺ not rankable."),
+  costPerOutcomeUsd: z.number().nullable().describe("The goal's cost per its OWN outcome on its best workflow. NOT comparable across goals — for information only."),
+  costPerPaidClientUsd: z.number().nullable(),
+  grain: z.enum(["audience", "brand", "crossOrg"]).nullable().describe("Provenance label of the winning row's resolved pick (crossOrg = fleet benchmark)."),
+  workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() }).nullable(),
+  usesFunnelEconomics: z.boolean().describe("True when brand-service states PER-FUNNEL economics for this goal and they refined the brand's effective set for this projection."),
+});
+
+const goalArbitrationResponseSchema = z.object({
+  featureSlug: z.string(),
+  authorizedGoals: z.array(goalEchoEnum).describe("The goals the brand AUTHORIZES, canonical camel, in brand-service's order. Read from brand-service — never supplied by the caller, never inferred from the brand's single optimizationGoal."),
+  arbitration: z.object({
+    status: z.enum(["resolved", "unrankable"]).describe("`resolved` = a goal won. `unrankable` = nothing could be ranked for this brand (see reason) — distinguishable from a winner, and not an error."),
+    goal: goalEchoEnum.nullable().describe("The elected goal. Null ⟺ status = unrankable."),
+    objective: objectiveEnum.nullable(),
+    reason: z.enum(["no_authorized_goals", "no_rankable_goal"]).nullable().describe("`no_authorized_goals` = brand-service states an EMPTY authorized set. `no_rankable_goal` = every authorized goal is unrankable (see candidates[].unrankableReason). Null ⟺ status = resolved."),
+    returnPerDollar: z.number().nullable().describe("The winning goal's expected revenue per dollar of spend. Always a positive finite number when status = resolved."),
+    costPerOutcomeUsd: z.number().nullable(),
+    costPerPaidClientUsd: z.number().nullable(),
+    grain: z.enum(["audience", "brand", "crossOrg"]).nullable(),
+  }),
+  workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() }).nullable().describe("The best workflow FOR THE ELECTED GOAL — argmin resolved.costPerOutcomeUsd over the brand-level rows, the same ungated argmin the Strategy page ranks on. Null ⟺ status = unrankable."),
+  economics: workflowProjectionEconomicsSchema.nullable().describe("The brand's EFFECTIVE economics as the elected goal saw them (including any per-funnel refinement). Null at cold start."),
+  candidates: z.array(goalCandidateSchema).describe("Every authorized goal, scored, in brand-service's order — including the ones that could not be ranked, each with its reason."),
+  rows: z.array(workflowProjectionRowSchema).describe("The winning (goal × workflow) pairing's projection rows: the brand-level row plus EVERY active audience's row for that dynasty, in the SAME shape /workflow-projection serves (per-audience resolvedOutcomeCount successes, evidence.observedContacted trials, evidence.spentUsd cost). Empty when nothing could be ranked."),
+  recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the elected pairing's resolved.costPerOutcomeUsd. Null when nothing could be ranked."),
+});
+
+registry.register("GoalArbitrationResponse", goalArbitrationResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/features/{featureSlug}/goal-arbitration",
+  summary: "Arbitrate the brand's AUTHORIZED goals: best goal + best workflow + per-audience evidence",
+  description:
+    "ONE answer per brand: which of the goals the brand AUTHORIZES returns the most per dollar, the best workflow for that goal, and the per-audience evidence for that pairing — so a consumer never issues one request per goal and never ranks economics itself. " +
+    "RANKING BASIS: returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-goal-comparable number — a cost per outcome is denominated in each goal's OWN outcome (a click, a reply, a booked meeting), so normalising through each goal's funnel to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. The winner is argmax returnPerDollar; a tie is broken by the canonical goal order, so the same evidence + the same economics always produce the same answer. " +
+    "Per goal, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a goal, since the outcome→paid rate is a brand-level constant), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. " +
+    "A goal with NO defined return is NEVER elected: whatsappConversation has no path to a paying client (brand-service exposes no whatsapp→paid rate), and a goal with no economics / no workflow evidence / a non-positive return is likewise reported as a candidate with rankable=false and its reason. When nothing can be ranked the response is status='unrankable' with a reason — distinguishable from a winner, never an error that hides why. " +
+    "The AUTHORIZED SET is brand-service's to own: it is read from brand-service, never accepted from the caller and never inferred from the brand's single optimizationGoal. When brand-service states no authorized set at all the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set; an EMPTY set is a real answer served 200 as unrankable. " +
+    "Cost: ONE brand-service call (the authorized set rides the effective sales-economics payload) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — arbitrating N goals adds zero IO over reading one. /workflow-projection itself is unchanged.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ featureSlug: z.string() }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required) — the authorized set and the economics are brand-scoped."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (unit costs, cost-per-outcome, cost-per-paid-client, returnPerDollar, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when those are unavailable — never a silent fallback to gross."),
+    }),
+  },
+  responses: {
+    200: { description: "The elected goal + its best workflow + the pairing's per-audience rows (or a distinguishable unrankable verdict)", content: { "application/json": { schema: goalArbitrationResponseSchema } } },
+    400: { description: "Missing brandId, or invalid pricing value", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error, or brand-service states no authorized goal set (reason='authorized_goals_unavailable') / an unrecognised authorized goal (reason='authorized_goal_unrecognised')", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /features/:featureSlug/pipeline-activity ───────────────────────────
 
 const pipelineMetricSchema = z.object({

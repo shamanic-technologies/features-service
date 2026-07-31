@@ -2110,6 +2110,692 @@
           "recommendedBudgetUsd"
         ]
       },
+      "GoalArbitrationResponse": {
+        "type": "object",
+        "properties": {
+          "featureSlug": {
+            "type": "string"
+          },
+          "authorizedGoals": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "meetingBooked",
+                "signup",
+                "websitePurchase",
+                "sales",
+                "websiteVisit",
+                "positiveReply",
+                "formSubmission",
+                "whatsappConversation"
+              ]
+            },
+            "description": "The goals the brand AUTHORIZES, canonical camel, in brand-service's order. Read from brand-service — never supplied by the caller, never inferred from the brand's single optimizationGoal."
+          },
+          "arbitration": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "resolved",
+                  "unrankable"
+                ],
+                "description": "`resolved` = a goal won. `unrankable` = nothing could be ranked for this brand (see reason) — distinguishable from a winner, and not an error."
+              },
+              "goal": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "meetingBooked",
+                  "signup",
+                  "websitePurchase",
+                  "sales",
+                  "websiteVisit",
+                  "positiveReply",
+                  "formSubmission",
+                  "whatsappConversation"
+                ],
+                "description": "The elected goal. Null ⟺ status = unrankable."
+              },
+              "objective": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "meeting-booked",
+                  "self-serve",
+                  "signup",
+                  "website_purchase",
+                  "sales",
+                  "website_visits",
+                  "positive_replies",
+                  "form_submissions",
+                  "whatsapp_conversations"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "no_authorized_goals",
+                  "no_rankable_goal"
+                ],
+                "description": "`no_authorized_goals` = brand-service states an EMPTY authorized set. `no_rankable_goal` = every authorized goal is unrankable (see candidates[].unrankableReason). Null ⟺ status = resolved."
+              },
+              "returnPerDollar": {
+                "type": "number",
+                "nullable": true,
+                "description": "The winning goal's expected revenue per dollar of spend. Always a positive finite number when status = resolved."
+              },
+              "costPerOutcomeUsd": {
+                "type": "number",
+                "nullable": true
+              },
+              "costPerPaidClientUsd": {
+                "type": "number",
+                "nullable": true
+              },
+              "grain": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "audience",
+                  "brand",
+                  "crossOrg"
+                ]
+              }
+            },
+            "required": [
+              "status",
+              "goal",
+              "objective",
+              "reason",
+              "returnPerDollar",
+              "costPerOutcomeUsd",
+              "costPerPaidClientUsd",
+              "grain"
+            ]
+          },
+          "workflow": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "workflowDynastySlug": {
+                "type": "string"
+              },
+              "workflowDynastyName": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "workflowDynastySlug",
+              "workflowDynastyName"
+            ],
+            "description": "The best workflow FOR THE ELECTED GOAL — argmin resolved.costPerOutcomeUsd over the brand-level rows, the same ungated argmin the Strategy page ranks on. Null ⟺ status = unrankable."
+          },
+          "economics": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "lifetimeRevenueUsd": {
+                "type": "number"
+              },
+              "visitToSignupPct": {
+                "type": "number"
+              },
+              "visitToMeetingPct": {
+                "type": "number"
+              },
+              "meetingToClosePct": {
+                "type": "number"
+              },
+              "visitToClosePct": {
+                "type": "number"
+              },
+              "replyToMeetingPct": {
+                "type": "number"
+              },
+              "visitToPaidClientPct": {
+                "type": "number",
+                "description": "Single-step visit→paid rate — present when the queried goal is website_visits."
+              },
+              "replyToPaidClientPct": {
+                "type": "number",
+                "description": "Single-step reply→paid rate — present when the queried goal is positive_replies."
+              },
+              "visitToFormSubmissionPct": {
+                "type": "number",
+                "description": "Two-step visit→form rate — present when the queried goal is form_submissions."
+              },
+              "formSubmissionToPaidClientPct": {
+                "type": "number",
+                "description": "Two-step form→paid rate — present when the queried goal is form_submissions."
+              }
+            },
+            "required": [
+              "lifetimeRevenueUsd",
+              "visitToSignupPct",
+              "visitToMeetingPct",
+              "meetingToClosePct",
+              "visitToClosePct",
+              "replyToMeetingPct"
+            ],
+            "description": "The brand's EFFECTIVE economics as the elected goal saw them (including any per-funnel refinement). Null at cold start."
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "goal": {
+                  "type": "string",
+                  "enum": [
+                    "meetingBooked",
+                    "signup",
+                    "websitePurchase",
+                    "sales",
+                    "websiteVisit",
+                    "positiveReply",
+                    "formSubmission",
+                    "whatsappConversation"
+                  ]
+                },
+                "objective": {
+                  "type": "string",
+                  "enum": [
+                    "meeting-booked",
+                    "self-serve",
+                    "signup",
+                    "website_purchase",
+                    "sales",
+                    "website_visits",
+                    "positive_replies",
+                    "form_submissions",
+                    "whatsapp_conversations"
+                  ]
+                },
+                "rankable": {
+                  "type": "boolean",
+                  "description": "True ⟺ the goal has a defined, positive return per dollar and is eligible to win."
+                },
+                "unrankableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_economics",
+                    "no_workflow_evidence",
+                    "no_paid_client_path",
+                    "no_return_defined"
+                  ],
+                  "description": "Why this goal could not be ranked. `no_paid_client_path` = the goal has NO defined path to a paying client (whatsappConversation carries no whatsapp→paid rate; or the funnel's rate chain collapses to 0) — such a goal can never be elected. Null ⟺ rankable."
+                },
+                "returnPerDollar": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "lifetimeRevenueUsd / costPerPaidClientUsd of this goal's best workflow (= the workflow-projection roiMultiple, = 100 / cacPct). THE ranking basis: the only cross-goal-comparable number, since each goal's own outcome is denominated differently. Null ⟺ not rankable."
+                },
+                "costPerOutcomeUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "The goal's cost per its OWN outcome on its best workflow. NOT comparable across goals — for information only."
+                },
+                "costPerPaidClientUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "grain": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "audience",
+                    "brand",
+                    "crossOrg"
+                  ],
+                  "description": "Provenance label of the winning row's resolved pick (crossOrg = fleet benchmark)."
+                },
+                "workflow": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "workflowDynastySlug": {
+                      "type": "string"
+                    },
+                    "workflowDynastyName": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "workflowDynastySlug",
+                    "workflowDynastyName"
+                  ]
+                },
+                "usesFunnelEconomics": {
+                  "type": "boolean",
+                  "description": "True when brand-service states PER-FUNNEL economics for this goal and they refined the brand's effective set for this projection."
+                }
+              },
+              "required": [
+                "goal",
+                "objective",
+                "rankable",
+                "unrankableReason",
+                "returnPerDollar",
+                "costPerOutcomeUsd",
+                "costPerPaidClientUsd",
+                "grain",
+                "workflow",
+                "usesFunnelEconomics"
+              ]
+            },
+            "description": "Every authorized goal, scored, in brand-service's order — including the ones that could not be ranked, each with its reason."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "audienceId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "null = brand-level row (crossOrg + brand grains). Non-null = one row per (active audience × workflow dynasty) couple that ran (adds the audience grain)."
+                },
+                "workflow": {
+                  "type": "object",
+                  "properties": {
+                    "workflowDynastySlug": {
+                      "type": "string"
+                    },
+                    "workflowDynastyName": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "workflowDynastySlug",
+                    "workflowDynastyName"
+                  ]
+                },
+                "estimatesByGrain": {
+                  "type": "object",
+                  "properties": {
+                    "crossOrg": {
+                      "type": "object",
+                      "properties": {
+                        "evidence": {
+                          "type": "object",
+                          "properties": {
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                            },
+                            "observedContacted": {
+                              "type": "number"
+                            },
+                            "observedClicks": {
+                              "type": "number"
+                            },
+                            "observedPositiveReplies": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "spentUsd",
+                            "observedContacted",
+                            "observedClicks",
+                            "observedPositiveReplies"
+                          ]
+                        },
+                        "unitCosts": {
+                          "type": "object",
+                          "properties": {
+                            "costPerClickUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                            },
+                            "costPerPositiveReplyUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                            },
+                            "costPerContactedUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                            }
+                          },
+                          "required": [
+                            "costPerClickUsd",
+                            "costPerPositiveReplyUsd",
+                            "costPerContactedUsd"
+                          ]
+                        },
+                        "resolvedOutcomeCount": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                        },
+                        "projected": {
+                          "type": "object",
+                          "properties": {
+                            "costPerSignupUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "costPerPaidClientUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
+                            },
+                            "costPerMeetingBookedUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "roiMultiple": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                            },
+                            "cacPct": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                            }
+                          },
+                          "required": [
+                            "costPerSignupUsd",
+                            "costPerPaidClientUsd",
+                            "costPerMeetingBookedUsd",
+                            "roiMultiple",
+                            "cacPct"
+                          ],
+                          "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        }
+                      },
+                      "required": [
+                        "evidence",
+                        "unitCosts",
+                        "resolvedOutcomeCount",
+                        "projected"
+                      ],
+                      "description": "Fleet-wide unit costs (same source as /public/stats/best). Present for any dynasty with real fleet spend."
+                    },
+                    "brand": {
+                      "type": "object",
+                      "properties": {
+                        "evidence": {
+                          "type": "object",
+                          "properties": {
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                            },
+                            "observedContacted": {
+                              "type": "number"
+                            },
+                            "observedClicks": {
+                              "type": "number"
+                            },
+                            "observedPositiveReplies": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "spentUsd",
+                            "observedContacted",
+                            "observedClicks",
+                            "observedPositiveReplies"
+                          ]
+                        },
+                        "unitCosts": {
+                          "type": "object",
+                          "properties": {
+                            "costPerClickUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                            },
+                            "costPerPositiveReplyUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                            },
+                            "costPerContactedUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                            }
+                          },
+                          "required": [
+                            "costPerClickUsd",
+                            "costPerPositiveReplyUsd",
+                            "costPerContactedUsd"
+                          ]
+                        },
+                        "resolvedOutcomeCount": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                        },
+                        "projected": {
+                          "type": "object",
+                          "properties": {
+                            "costPerSignupUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "costPerPaidClientUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
+                            },
+                            "costPerMeetingBookedUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "roiMultiple": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                            },
+                            "cacPct": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                            }
+                          },
+                          "required": [
+                            "costPerSignupUsd",
+                            "costPerPaidClientUsd",
+                            "costPerMeetingBookedUsd",
+                            "roiMultiple",
+                            "cacPct"
+                          ],
+                          "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        }
+                      },
+                      "required": [
+                        "evidence",
+                        "unitCosts",
+                        "resolvedOutcomeCount",
+                        "projected"
+                      ],
+                      "description": "The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow."
+                    },
+                    "audience": {
+                      "type": "object",
+                      "properties": {
+                        "evidence": {
+                          "type": "object",
+                          "properties": {
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                            },
+                            "observedContacted": {
+                              "type": "number"
+                            },
+                            "observedClicks": {
+                              "type": "number"
+                            },
+                            "observedPositiveReplies": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "spentUsd",
+                            "observedContacted",
+                            "observedClicks",
+                            "observedPositiveReplies"
+                          ]
+                        },
+                        "unitCosts": {
+                          "type": "object",
+                          "properties": {
+                            "costPerClickUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                            },
+                            "costPerPositiveReplyUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                            },
+                            "costPerContactedUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                            }
+                          },
+                          "required": [
+                            "costPerClickUsd",
+                            "costPerPositiveReplyUsd",
+                            "costPerContactedUsd"
+                          ]
+                        },
+                        "resolvedOutcomeCount": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                        },
+                        "projected": {
+                          "type": "object",
+                          "properties": {
+                            "costPerSignupUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "costPerPaidClientUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
+                            },
+                            "costPerMeetingBookedUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "roiMultiple": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                            },
+                            "cacPct": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                            }
+                          },
+                          "required": [
+                            "costPerSignupUsd",
+                            "costPerPaidClientUsd",
+                            "costPerMeetingBookedUsd",
+                            "roiMultiple",
+                            "cacPct"
+                          ],
+                          "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        }
+                      },
+                      "required": [
+                        "evidence",
+                        "unitCosts",
+                        "resolvedOutcomeCount",
+                        "projected"
+                      ],
+                      "description": "Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."
+                    }
+                  },
+                  "description": "A grain block is included ONLY when that grain has spentUsd > 0."
+                },
+                "resolved": {
+                  "type": "object",
+                  "properties": {
+                    "grain": {
+                      "type": "string",
+                      "enum": [
+                        "audience",
+                        "brand",
+                        "crossOrg"
+                      ],
+                      "description": "PROVENANCE LABEL only (decoupled from the number source): the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg), else crossOrg (benchmark). A grain with spend but 0 outcomes yields a FLOORED projection, not a measured result, so it is NEVER labelled brand/audience (\"this brand's own results\") — it labels crossOrg (fleet benchmark). NOTE: the resolved NUMBERS still come from the finest grain WITH SPEND (its cascade floor max(spent, parent)), so a 0-outcome grain keeps its own spend-floor number even while labelled crossOrg. Never null-grain."
+                    },
+                    "costPerClickUsd": {
+                      "type": "number",
+                      "description": "costPerClickUsd of the finest grain WITH SPEND (never 0) — the cascade floor max(spent, parent), which may exceed the crossOrg value even when grain (label) = crossOrg."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The GOAL metric from the finest grain WITH SPEND (cascade floor) — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). A 0-outcome grain keeps its own spend floor here (not collapsed to the fleet value), while `grain` labels it crossOrg. Null only at cold start (no economics)."
+                    },
+                    "costPerPaidClientUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "costPerMeetingBookedUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "roiMultiple": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "cacPct": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "grain",
+                    "costPerClickUsd",
+                    "costPerOutcomeUsd",
+                    "costPerPaidClientUsd",
+                    "costPerMeetingBookedUsd",
+                    "roiMultiple",
+                    "cacPct"
+                  ]
+                }
+              },
+              "required": [
+                "audienceId",
+                "workflow",
+                "estimatesByGrain",
+                "resolved"
+              ]
+            },
+            "description": "The winning (goal × workflow) pairing's projection rows: the brand-level row plus EVERY active audience's row for that dynasty, in the SAME shape /workflow-projection serves (per-audience resolvedOutcomeCount successes, evidence.observedContacted trials, evidence.spentUsd cost). Empty when nothing could be ranked."
+          },
+          "recommendedBudgetUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "10 target outcomes/month × the elected pairing's resolved.costPerOutcomeUsd. Null when nothing could be ranked."
+          }
+        },
+        "required": [
+          "featureSlug",
+          "authorizedGoals",
+          "arbitration",
+          "workflow",
+          "economics",
+          "candidates",
+          "rows",
+          "recommendedBudgetUsd"
+        ]
+      },
       "PipelineActivityResponse": {
         "type": "object",
         "properties": {
@@ -6022,6 +6708,841 @@
           },
           "502": {
             "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/{featureSlug}/goal-arbitration": {
+      "get": {
+        "summary": "Arbitrate the brand's AUTHORIZED goals: best goal + best workflow + per-audience evidence",
+        "description": "ONE answer per brand: which of the goals the brand AUTHORIZES returns the most per dollar, the best workflow for that goal, and the per-audience evidence for that pairing — so a consumer never issues one request per goal and never ranks economics itself. RANKING BASIS: returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-goal-comparable number — a cost per outcome is denominated in each goal's OWN outcome (a click, a reply, a booked meeting), so normalising through each goal's funnel to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. The winner is argmax returnPerDollar; a tie is broken by the canonical goal order, so the same evidence + the same economics always produce the same answer. Per goal, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a goal, since the outcome→paid rate is a brand-level constant), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. A goal with NO defined return is NEVER elected: whatsappConversation has no path to a paying client (brand-service exposes no whatsapp→paid rate), and a goal with no economics / no workflow evidence / a non-positive return is likewise reported as a candidate with rankable=false and its reason. When nothing can be ranked the response is status='unrankable' with a reason — distinguishable from a winner, never an error that hides why. The AUTHORIZED SET is brand-service's to own: it is read from brand-service, never accepted from the caller and never inferred from the brand's single optimizationGoal. When brand-service states no authorized set at all the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set; an EMPTY set is a real answer served 200 as unrankable. Cost: ONE brand-service call (the authorized set rides the effective sales-economics payload) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — arbitrating N goals adds zero IO over reading one. /workflow-projection itself is unchanged.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "featureSlug",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID (required) — the authorized set and the economics are brand-scoped."
+            },
+            "required": true,
+            "description": "Brand UUID (required) — the authorized set and the economics are brand-scoped.",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis for every MONEY metric (unit costs, cost-per-outcome, cost-per-paid-client, returnPerDollar, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when those are unavailable — never a silent fallback to gross."
+            },
+            "required": false,
+            "description": "Pricing basis for every MONEY metric (unit costs, cost-per-outcome, cost-per-paid-client, returnPerDollar, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when those are unavailable — never a silent fallback to gross.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The elected goal + its best workflow + the pairing's per-audience rows (or a distinguishable unrankable verdict)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "authorizedGoals": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "meetingBooked",
+                          "signup",
+                          "websitePurchase",
+                          "sales",
+                          "websiteVisit",
+                          "positiveReply",
+                          "formSubmission",
+                          "whatsappConversation"
+                        ]
+                      },
+                      "description": "The goals the brand AUTHORIZES, canonical camel, in brand-service's order. Read from brand-service — never supplied by the caller, never inferred from the brand's single optimizationGoal."
+                    },
+                    "arbitration": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "resolved",
+                            "unrankable"
+                          ],
+                          "description": "`resolved` = a goal won. `unrankable` = nothing could be ranked for this brand (see reason) — distinguishable from a winner, and not an error."
+                        },
+                        "goal": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "meetingBooked",
+                            "signup",
+                            "websitePurchase",
+                            "sales",
+                            "websiteVisit",
+                            "positiveReply",
+                            "formSubmission",
+                            "whatsappConversation"
+                          ],
+                          "description": "The elected goal. Null ⟺ status = unrankable."
+                        },
+                        "objective": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "meeting-booked",
+                            "self-serve",
+                            "signup",
+                            "website_purchase",
+                            "sales",
+                            "website_visits",
+                            "positive_replies",
+                            "form_submissions",
+                            "whatsapp_conversations"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "no_authorized_goals",
+                            "no_rankable_goal"
+                          ],
+                          "description": "`no_authorized_goals` = brand-service states an EMPTY authorized set. `no_rankable_goal` = every authorized goal is unrankable (see candidates[].unrankableReason). Null ⟺ status = resolved."
+                        },
+                        "returnPerDollar": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The winning goal's expected revenue per dollar of spend. Always a positive finite number when status = resolved."
+                        },
+                        "costPerOutcomeUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "costPerPaidClientUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "grain": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "audience",
+                            "brand",
+                            "crossOrg"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "goal",
+                        "objective",
+                        "reason",
+                        "returnPerDollar",
+                        "costPerOutcomeUsd",
+                        "costPerPaidClientUsd",
+                        "grain"
+                      ]
+                    },
+                    "workflow": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "workflowDynastySlug": {
+                          "type": "string"
+                        },
+                        "workflowDynastyName": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "workflowDynastySlug",
+                        "workflowDynastyName"
+                      ],
+                      "description": "The best workflow FOR THE ELECTED GOAL — argmin resolved.costPerOutcomeUsd over the brand-level rows, the same ungated argmin the Strategy page ranks on. Null ⟺ status = unrankable."
+                    },
+                    "economics": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "lifetimeRevenueUsd": {
+                          "type": "number"
+                        },
+                        "visitToSignupPct": {
+                          "type": "number"
+                        },
+                        "visitToMeetingPct": {
+                          "type": "number"
+                        },
+                        "meetingToClosePct": {
+                          "type": "number"
+                        },
+                        "visitToClosePct": {
+                          "type": "number"
+                        },
+                        "replyToMeetingPct": {
+                          "type": "number"
+                        },
+                        "visitToPaidClientPct": {
+                          "type": "number",
+                          "description": "Single-step visit→paid rate — present when the queried goal is website_visits."
+                        },
+                        "replyToPaidClientPct": {
+                          "type": "number",
+                          "description": "Single-step reply→paid rate — present when the queried goal is positive_replies."
+                        },
+                        "visitToFormSubmissionPct": {
+                          "type": "number",
+                          "description": "Two-step visit→form rate — present when the queried goal is form_submissions."
+                        },
+                        "formSubmissionToPaidClientPct": {
+                          "type": "number",
+                          "description": "Two-step form→paid rate — present when the queried goal is form_submissions."
+                        }
+                      },
+                      "required": [
+                        "lifetimeRevenueUsd",
+                        "visitToSignupPct",
+                        "visitToMeetingPct",
+                        "meetingToClosePct",
+                        "visitToClosePct",
+                        "replyToMeetingPct"
+                      ],
+                      "description": "The brand's EFFECTIVE economics as the elected goal saw them (including any per-funnel refinement). Null at cold start."
+                    },
+                    "candidates": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "goal": {
+                            "type": "string",
+                            "enum": [
+                              "meetingBooked",
+                              "signup",
+                              "websitePurchase",
+                              "sales",
+                              "websiteVisit",
+                              "positiveReply",
+                              "formSubmission",
+                              "whatsappConversation"
+                            ]
+                          },
+                          "objective": {
+                            "type": "string",
+                            "enum": [
+                              "meeting-booked",
+                              "self-serve",
+                              "signup",
+                              "website_purchase",
+                              "sales",
+                              "website_visits",
+                              "positive_replies",
+                              "form_submissions",
+                              "whatsapp_conversations"
+                            ]
+                          },
+                          "rankable": {
+                            "type": "boolean",
+                            "description": "True ⟺ the goal has a defined, positive return per dollar and is eligible to win."
+                          },
+                          "unrankableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "no_economics",
+                              "no_workflow_evidence",
+                              "no_paid_client_path",
+                              "no_return_defined"
+                            ],
+                            "description": "Why this goal could not be ranked. `no_paid_client_path` = the goal has NO defined path to a paying client (whatsappConversation carries no whatsapp→paid rate; or the funnel's rate chain collapses to 0) — such a goal can never be elected. Null ⟺ rankable."
+                          },
+                          "returnPerDollar": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "lifetimeRevenueUsd / costPerPaidClientUsd of this goal's best workflow (= the workflow-projection roiMultiple, = 100 / cacPct). THE ranking basis: the only cross-goal-comparable number, since each goal's own outcome is denominated differently. Null ⟺ not rankable."
+                          },
+                          "costPerOutcomeUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The goal's cost per its OWN outcome on its best workflow. NOT comparable across goals — for information only."
+                          },
+                          "costPerPaidClientUsd": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "grain": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "audience",
+                              "brand",
+                              "crossOrg"
+                            ],
+                            "description": "Provenance label of the winning row's resolved pick (crossOrg = fleet benchmark)."
+                          },
+                          "workflow": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "workflowDynastySlug": {
+                                "type": "string"
+                              },
+                              "workflowDynastyName": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "workflowDynastySlug",
+                              "workflowDynastyName"
+                            ]
+                          },
+                          "usesFunnelEconomics": {
+                            "type": "boolean",
+                            "description": "True when brand-service states PER-FUNNEL economics for this goal and they refined the brand's effective set for this projection."
+                          }
+                        },
+                        "required": [
+                          "goal",
+                          "objective",
+                          "rankable",
+                          "unrankableReason",
+                          "returnPerDollar",
+                          "costPerOutcomeUsd",
+                          "costPerPaidClientUsd",
+                          "grain",
+                          "workflow",
+                          "usesFunnelEconomics"
+                        ]
+                      },
+                      "description": "Every authorized goal, scored, in brand-service's order — including the ones that could not be ranked, each with its reason."
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "audienceId": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "null = brand-level row (crossOrg + brand grains). Non-null = one row per (active audience × workflow dynasty) couple that ran (adds the audience grain)."
+                          },
+                          "workflow": {
+                            "type": "object",
+                            "properties": {
+                              "workflowDynastySlug": {
+                                "type": "string"
+                              },
+                              "workflowDynastyName": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "workflowDynastySlug",
+                              "workflowDynastyName"
+                            ]
+                          },
+                          "estimatesByGrain": {
+                            "type": "object",
+                            "properties": {
+                              "crossOrg": {
+                                "type": "object",
+                                "properties": {
+                                  "evidence": {
+                                    "type": "object",
+                                    "properties": {
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                                      },
+                                      "observedContacted": {
+                                        "type": "number"
+                                      },
+                                      "observedClicks": {
+                                        "type": "number"
+                                      },
+                                      "observedPositiveReplies": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "spentUsd",
+                                      "observedContacted",
+                                      "observedClicks",
+                                      "observedPositiveReplies"
+                                    ]
+                                  },
+                                  "unitCosts": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerClickUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                                      },
+                                      "costPerPositiveReplyUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                                      },
+                                      "costPerContactedUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerClickUsd",
+                                      "costPerPositiveReplyUsd",
+                                      "costPerContactedUsd"
+                                    ]
+                                  },
+                                  "resolvedOutcomeCount": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                                  },
+                                  "projected": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerSignupUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "costPerPaidClientUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
+                                      },
+                                      "costPerMeetingBookedUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "roiMultiple": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                                      },
+                                      "cacPct": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerSignupUsd",
+                                      "costPerPaidClientUsd",
+                                      "costPerMeetingBookedUsd",
+                                      "roiMultiple",
+                                      "cacPct"
+                                    ],
+                                    "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  }
+                                },
+                                "required": [
+                                  "evidence",
+                                  "unitCosts",
+                                  "resolvedOutcomeCount",
+                                  "projected"
+                                ],
+                                "description": "Fleet-wide unit costs (same source as /public/stats/best). Present for any dynasty with real fleet spend."
+                              },
+                              "brand": {
+                                "type": "object",
+                                "properties": {
+                                  "evidence": {
+                                    "type": "object",
+                                    "properties": {
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                                      },
+                                      "observedContacted": {
+                                        "type": "number"
+                                      },
+                                      "observedClicks": {
+                                        "type": "number"
+                                      },
+                                      "observedPositiveReplies": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "spentUsd",
+                                      "observedContacted",
+                                      "observedClicks",
+                                      "observedPositiveReplies"
+                                    ]
+                                  },
+                                  "unitCosts": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerClickUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                                      },
+                                      "costPerPositiveReplyUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                                      },
+                                      "costPerContactedUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerClickUsd",
+                                      "costPerPositiveReplyUsd",
+                                      "costPerContactedUsd"
+                                    ]
+                                  },
+                                  "resolvedOutcomeCount": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                                  },
+                                  "projected": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerSignupUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "costPerPaidClientUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
+                                      },
+                                      "costPerMeetingBookedUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "roiMultiple": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                                      },
+                                      "cacPct": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerSignupUsd",
+                                      "costPerPaidClientUsd",
+                                      "costPerMeetingBookedUsd",
+                                      "roiMultiple",
+                                      "cacPct"
+                                    ],
+                                    "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  }
+                                },
+                                "required": [
+                                  "evidence",
+                                  "unitCosts",
+                                  "resolvedOutcomeCount",
+                                  "projected"
+                                ],
+                                "description": "The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow."
+                              },
+                              "audience": {
+                                "type": "object",
+                                "properties": {
+                                  "evidence": {
+                                    "type": "object",
+                                    "properties": {
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                                      },
+                                      "observedContacted": {
+                                        "type": "number"
+                                      },
+                                      "observedClicks": {
+                                        "type": "number"
+                                      },
+                                      "observedPositiveReplies": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "spentUsd",
+                                      "observedContacted",
+                                      "observedClicks",
+                                      "observedPositiveReplies"
+                                    ]
+                                  },
+                                  "unitCosts": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerClickUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                                      },
+                                      "costPerPositiveReplyUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                                      },
+                                      "costPerContactedUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerClickUsd",
+                                      "costPerPositiveReplyUsd",
+                                      "costPerContactedUsd"
+                                    ]
+                                  },
+                                  "resolvedOutcomeCount": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                                  },
+                                  "projected": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerSignupUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "costPerPaidClientUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
+                                      },
+                                      "costPerMeetingBookedUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "roiMultiple": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                                      },
+                                      "cacPct": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerSignupUsd",
+                                      "costPerPaidClientUsd",
+                                      "costPerMeetingBookedUsd",
+                                      "roiMultiple",
+                                      "cacPct"
+                                    ],
+                                    "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  }
+                                },
+                                "required": [
+                                  "evidence",
+                                  "unitCosts",
+                                  "resolvedOutcomeCount",
+                                  "projected"
+                                ],
+                                "description": "Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."
+                              }
+                            },
+                            "description": "A grain block is included ONLY when that grain has spentUsd > 0."
+                          },
+                          "resolved": {
+                            "type": "object",
+                            "properties": {
+                              "grain": {
+                                "type": "string",
+                                "enum": [
+                                  "audience",
+                                  "brand",
+                                  "crossOrg"
+                                ],
+                                "description": "PROVENANCE LABEL only (decoupled from the number source): the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg), else crossOrg (benchmark). A grain with spend but 0 outcomes yields a FLOORED projection, not a measured result, so it is NEVER labelled brand/audience (\"this brand's own results\") — it labels crossOrg (fleet benchmark). NOTE: the resolved NUMBERS still come from the finest grain WITH SPEND (its cascade floor max(spent, parent)), so a 0-outcome grain keeps its own spend-floor number even while labelled crossOrg. Never null-grain."
+                              },
+                              "costPerClickUsd": {
+                                "type": "number",
+                                "description": "costPerClickUsd of the finest grain WITH SPEND (never 0) — the cascade floor max(spent, parent), which may exceed the crossOrg value even when grain (label) = crossOrg."
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "The GOAL metric from the finest grain WITH SPEND (cascade floor) — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). A 0-outcome grain keeps its own spend floor here (not collapsed to the fleet value), while `grain` labels it crossOrg. Null only at cold start (no economics)."
+                              },
+                              "costPerPaidClientUsd": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "costPerMeetingBookedUsd": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "roiMultiple": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "cacPct": {
+                                "type": "number",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "grain",
+                              "costPerClickUsd",
+                              "costPerOutcomeUsd",
+                              "costPerPaidClientUsd",
+                              "costPerMeetingBookedUsd",
+                              "roiMultiple",
+                              "cacPct"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "audienceId",
+                          "workflow",
+                          "estimatesByGrain",
+                          "resolved"
+                        ]
+                      },
+                      "description": "The winning (goal × workflow) pairing's projection rows: the brand-level row plus EVERY active audience's row for that dynasty, in the SAME shape /workflow-projection serves (per-audience resolvedOutcomeCount successes, evidence.observedContacted trials, evidence.spentUsd cost). Empty when nothing could be ranked."
+                    },
+                    "recommendedBudgetUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "10 target outcomes/month × the elected pairing's resolved.costPerOutcomeUsd. Null when nothing could be ranked."
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "authorizedGoals",
+                    "arbitration",
+                    "workflow",
+                    "economics",
+                    "candidates",
+                    "rows",
+                    "recommendedBudgetUsd"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing brandId, or invalid pricing value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error, or brand-service states no authorized goal set (reason='authorized_goals_unavailable') / an unrecognised authorized goal (reason='authorized_goal_unrecognised')",
             "content": {
               "application/json": {
                 "schema": {

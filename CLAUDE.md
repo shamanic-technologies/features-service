@@ -1,5 +1,91 @@
 # Features Service — CLAUDE.md
 
+## `GET /features/:slug/goal-arbitration` — the GOAL leg is arbitrated HERE; ranking basis = RETURN PER DOLLAR (`lifetimeRevenueUsd / costPerPaidClientUsd`), never a cost-per-outcome comparison
+
+campaign-service used to SUPPLY the goal (it forwarded the brand's single configured `currentGoal`) and
+ask us only to rank workflows and audiences underneath it — so nothing in the fleet ever checked whether
+another goal the brand authorizes would return more per dollar. This endpoint adds the missing leg:
+**one request per brand returns the best GOAL, the best WORKFLOW for it, and the per-audience EVIDENCE
+for that pairing.** campaign-service greedily picks the first two and Thompson-samples the third; it
+decides none of them and it must NEVER fan out one request per goal (that would put an economics ranking
+in a pacing service and multiply requests per tick, for what is ONE pure pass over evidence already
+assembled here).
+
+**RANKING BASIS (the documented, stable rule — do NOT rank goals on cost-per-outcome):**
+
+```
+returnPerDollar(goal) = lifetimeRevenueUsd / costPerPaidClientUsd(goal, that goal's best workflow)
+```
+
+= the EXISTING `workflow-projection` `roiMultiple` (= 100 / `cacPct`). It is the ONLY cross-goal-comparable
+number: a cost-per-outcome is denominated in each goal's OWN outcome (a click, a reply, a booked meeting),
+so comparing two goals' cost-per-outcome compares two different things. Normalising each goal through ITS
+OWN funnel to the same terminal unit — a paying client's lifetime revenue — is what makes them
+commensurable. Winner = `argmax returnPerDollar`; a tie breaks on the canonical `GOALS` index, so the same
+evidence + the same economics always produce the same answer.
+
+- **Best workflow per goal = `argmin resolved.costPerOutcomeUsd` over the BRAND-LEVEL rows**
+  (`audienceId === null`) — byte-for-byte the ungated argmin `fetchBrandProjectedParents` and the Strategy
+  page's `pickBestBrandRow` use, so this endpoint can never crown a different workflow than those surfaces
+  for the same brand + goal. Ranking the workflow on the COST while ranking the goal on the RETURN is not
+  a mix-up: within one goal `costPerPaidClient = costPerOutcome / (outcome→paid rate)` and that rate is a
+  brand-level constant, so the two argmins are the SAME ordering — the cost keeps coherence with the live
+  surfaces, and the return falls out of the winning row.
+- **A goal with no defined return is NEVER elected.** `whatsappConversation` has no path to a paying client
+  at all (brand-service exposes no whatsapp→paid rate), so its return is undefined — not zero, and never
+  "borrow the click funnel". It is emitted as a candidate with `rankable: false` +
+  `unrankableReason: "no_paid_client_path"`. Same for `no_economics` / `no_workflow_evidence` /
+  `no_return_defined` (a paid-client cost exists but the brand states no lifetime revenue).
+- **"A goal won" and "nothing could be ranked" are DISTINGUISHABLE, and never an error that hides why.**
+  `arbitration.status` is `"resolved"` (with `goal` + `workflow` + `rows`) or `"unrankable"` with a reason:
+  `"no_authorized_goals"` (the brand authorizes an EMPTY set) vs `"no_rankable_goal"` (every authorized
+  goal is unrankable — each candidate carries its own reason). Both are 200s.
+- **`rows` are the WINNING PAIRING's rows only** — the brand-level row plus EVERY active audience's row for
+  the elected dynasty, in the SAME `ProjectionRow` shape `/workflow-projection` serves, so campaign-service's
+  audience bandit reuses its existing parser (`resolvedOutcomeCount` successes, `evidence.observedContacted`
+  trials, `evidence.spentUsd` cost; an audience with no attributed evidence carries no audience grain = a
+  cold arm, and still resolves via the cascade — never absent, never a false $0).
+
+**The AUTHORIZED SET is brand-service's to own** (`src/lib/authorized-goals.ts`). It is read from
+brand-service, **never accepted from the caller** (campaign-service must not be able to influence which
+goals compete) and **never inferred** — in particular a brand's single `optimizationGoal` is ONE goal, not
+an authorization set, and `funnelStages` (`website_purchase | sales_meeting`) is a DIFFERENT concept whose
+values would produce a plausible-looking but wrong set. Reading either as the set is a bug.
+
+- It rides the SAME `/orgs/brands/:id/sales-economics-effective` payload this endpoint already reads
+  (`fetchEffectiveEconomicsWithAuthorization` — ONE brand-service call for both halves;
+  `fetchEffectiveEconomics` is unchanged for every other caller).
+- **No stated set ⇒ FAIL LOUD (502, `reason: "authorized_goals_unavailable"`)**, naming what is missing —
+  never a substituted default set answered as if it were real. An UNMAPPABLE goal value likewise 502s
+  (`reason: "authorized_goal_unrecognised"`) rather than being dropped, which would silently arbitrate a
+  smaller set. `parseAuthorizedGoals` returning `null` (no set stated) and `[]` (an empty set stated) are
+  therefore DIFFERENT answers — do not collapse them.
+- **TRANSITIONAL shape tolerance** — brand-service is adding the field in parallel, so the parser accepts
+  the plausible container names (`authorizedGoals` | `optimizationGoals` | `funnels` | `salesFunnels`, top
+  level or under `salesEconomics`/`economics`) and item shapes (a goal string, or an object carrying the
+  goal + optional PER-FUNNEL economics, nested or flat). That is input tolerance over an unshipped
+  producer, NOT a fallback (absent ⇒ 502). **Narrow it to the single deployed name once brand-service
+  ships**, and drop the others.
+- **PER-FUNNEL economics** on an entry are merged OVER the brand's effective set for THAT goal only, so a
+  brand selling a $200 self-serve plan and a $20k contract is arbitrated on each funnel's own revenue
+  instead of one blended number. Absent ⇒ the brand's effective economics apply unchanged (today's
+  semantics, not a fabricated value).
+- A goal that needs a rate the brand's economics do not carry still FAILS LOUD (the same behaviour
+  `/workflow-projection` has for that goal today) — a missing producer rate is a data gap to surface, not
+  an "unrankable" verdict to record.
+
+**Cost + coherence:** the evidence fan-out is goal-INDEPENDENT, so this endpoint reuses the SAME Gold
+snapshot `/workflow-projection` maintains (view `workflow-projection-evidence`, scope key
+`featureSlug + orgId + brandId + pricing`) and arbitrating N goals adds ZERO IO over reading one — N pure
+`projectFromEvidence` calls. Economics is read LIVE (never cached), same freshness rule as
+`/workflow-projection`. `?pricing=gross|net` behaves identically to its siblings. **`/workflow-projection`
+and `/audience-stats` are UNTOUCHED** — campaign-service and the dashboard are live on them and migrate
+after this ships. Guard suites: `src/lib/goal-arbitration.test.ts` (election, never-elect-undefined-return,
+determinism/tie-break, per-funnel economics, winning-pairing rows), `src/lib/authorized-goals.test.ts`
+(never reads optimizationGoal/funnelStages as the set; null vs []), `src/routes/goal-arbitration.test.ts`
+(drives BOTH endpoints from ONE fixture: the elected workflow equals the single-goal read's own argmin, and
+the single-goal read is byte-identical with and without an authorized set). (Set 2026-07-31.)
+
 ## Per-audience attribution is SEND-TAG on BOTH `audience-stats` + `workflow-projection` — cost AND outcome one basis; `workflow-projection` audience grain is now PER-(audience × dynasty), enumerating EVERY active audience (supersedes the membership + audience-WIDE notes below)
 
 Per-audience COST was always send-tag (runs `groupBy=audienceId`); per-audience OUTCOME used to be
