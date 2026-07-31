@@ -73,13 +73,57 @@ export const PLATFORM_SCOPE_ORG_ID = "00000000-0000-0000-0000-000000000000";
 /** Max age of a refresh claim before another replica may steal it (a hung refresh must not wedge). */
 const REFRESH_CLAIM_TTL_MS = 30_000;
 
+/**
+ * RETENTION — a snapshot untouched for this long is deleted.
+ *
+ * `computed_at` only ever advances when a cell is READ (miss, too-stale, or background revalidate all
+ * go through `upsertSnapshot`), so its age is exactly "time since anyone last looked at this cell".
+ * A cell nobody has opened in a week is dead weight: deleting it costs one live compute if it is ever
+ * read again, which is the miss path that already exists and is already correct.
+ *
+ * This is what keeps the Gold table from growing without bound as scope keys churn. Every input that
+ * changes a body is folded into `scope_key` — query params, `pricing`, `timezone`, and (for the
+ * economics-driven views) the economics fingerprint — so a single brand legitimately mints a NEW cell
+ * every time any of those move, and the superseded ones are orphaned by construction, never read again,
+ * never overwritten. Measured on prod 2026-07-31: `revenue` held 326 cells / 36 MB of which only 68 had
+ * been touched in 24h, plus 91 fully orphaned `workflow-projection` cells left behind by the
+ * evidence/projection split. Retired VIEWS age out under the same rule, so this needs no list of live
+ * view names to maintain (such a list would rot the moment a view is renamed).
+ *
+ * Safe by the same argument as the rest of the layer: the snapshot is DERIVED and rebuildable, siblings
+ * stay source-of-truth, and dropping every row is correct-but-slow rather than wrong.
+ */
+const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60_000;
+
+/**
+ * How often the prune sweep may run in one process. The sweep piggybacks on write traffic rather than a
+ * timer: a `setInterval` would keep the Neon compute awake around the clock for a table that only needs
+ * touching once a day, which is the opposite of what we want on a scale-to-zero project.
+ */
+const PRUNE_INTERVAL_MS = 60 * 60_000;
+
 const inFlightComputes = new Map<string, Promise<unknown>>();
+
+/** Epoch ms of the last prune attempt in THIS process. 0 = never; the first persist after boot sweeps. */
+let lastPruneAt = 0;
 
 export function viewCacheTtlMs(): number {
   const raw = process.env.FEATURE_VIEW_SNAPSHOT_TTL_MS;
   if (!raw) return DEFAULT_TTL_MS;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_TTL_MS;
+}
+
+export function viewCacheRetentionMs(): number {
+  const raw = process.env.FEATURE_VIEW_SNAPSHOT_RETENTION_MS;
+  if (!raw) return DEFAULT_RETENTION_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_RETENTION_MS;
+}
+
+/** Test seam — forget that this process has already pruned. */
+export function __resetViewCachePruneState(): void {
+  lastPruneAt = 0;
 }
 
 /** Operational kill-switch — cache is ON unless explicitly disabled (tests set "false"). */
@@ -220,6 +264,34 @@ async function upsertSnapshot(view: string, scopeKey: string, orgId: string, bod
       target: [featureViewSnapshots.view, featureViewSnapshots.scopeKey],
       set: { body, orgId, computedAt: new Date(), refreshingAt: null },
     });
+  void maybePruneStaleSnapshots();
+}
+
+/**
+ * Delete snapshots nobody has read in `viewCacheRetentionMs()`, at most once per `PRUNE_INTERVAL_MS` per
+ * process. Fire-and-forget off a persist that already succeeded, so it never sits between the caller and
+ * their body.
+ *
+ * A failure here is logged and dropped ON PURPOSE, and that is not the swallowed-error the fail-loud rule
+ * forbids: pruning is pure housekeeping on a derived table, it produces no value any caller reads, and
+ * the only consequence of it never running is a larger table. Propagating would turn a janitorial problem
+ * into a 502 on a request whose answer was already computed correctly.
+ */
+async function maybePruneStaleSnapshots(): Promise<void> {
+  const now = Date.now();
+  if (now - lastPruneAt < PRUNE_INTERVAL_MS) return;
+  lastPruneAt = now; // claim BEFORE awaiting, so concurrent persists don't each start a sweep
+  try {
+    const deleted = await db
+      .delete(featureViewSnapshots)
+      .where(lt(featureViewSnapshots.computedAt, new Date(now - viewCacheRetentionMs())))
+      .returning({ id: featureViewSnapshots.id });
+    if (deleted.length > 0) {
+      console.log(`[features-service] view-cache pruned ${deleted.length} snapshot(s) unread for over the retention window`);
+    }
+  } catch (err) {
+    console.error(`[features-service] view-cache prune failed (table keeps growing): ${(err as Error).message}`);
+  }
 }
 
 /**
