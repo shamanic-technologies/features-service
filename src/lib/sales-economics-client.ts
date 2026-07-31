@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { SalesEconomics } from "./funnel-registry.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { matchOptimizationGoal, type Goal } from "./goals.js";
+import { parseAuthorizedGoals, type AuthorizedGoalEntry } from "./authorized-goals.js";
 
 export class BrandOwnershipError extends Error {
   constructor(
@@ -119,6 +120,17 @@ export interface EffectiveEconomics {
   source: "user" | "cross-brand-average" | null;
 }
 
+/** The effective economics read, PLUS the brand's authorized goal set carried by the same payload. */
+export interface EffectiveEconomicsWithAuthorization {
+  effective: EffectiveEconomics;
+  /**
+   * The goals the brand authorizes (brand-service-owned), or `null` when the payload states no
+   * authorized set at all. `null` is NOT "no goals" — the caller fails loud on it; `[]` is the real,
+   * distinguishable "this brand authorizes nothing". See authorized-goals.ts.
+   */
+  authorizedGoals: AuthorizedGoalEntry[] | null;
+}
+
 /**
  * Fetch a brand's EFFECTIVE sales economics from brand-service — ONE call that returns either the
  * brand's own saved set ("user"), the org-wide cross-brand-average fallback ("cross-brand-average"),
@@ -135,6 +147,25 @@ export async function fetchEffectiveEconomics(
     featureSlug?: string;
   },
 ): Promise<EffectiveEconomics> {
+  return (await fetchEffectiveEconomicsWithAuthorization(brandId, headers)).effective;
+}
+
+/**
+ * The SAME single brand-service read as `fetchEffectiveEconomics`, returning the untruncated pair:
+ * the effective economics AND the brand's authorized goal set (which rides the same payload). The goal
+ * arbitration needs both and must not pay for two round-trips; every other caller keeps using
+ * `fetchEffectiveEconomics`, whose shape is unchanged.
+ */
+export async function fetchEffectiveEconomicsWithAuthorization(
+  brandId: string,
+  headers: {
+    orgId: string;
+    userId?: string;
+    runId?: string;
+    campaignId?: string;
+    featureSlug?: string;
+  },
+): Promise<EffectiveEconomicsWithAuthorization> {
   const url = process.env.BRAND_SERVICE_URL;
   const apiKey = process.env.BRAND_SERVICE_API_KEY;
   if (!url || !apiKey) {
@@ -163,7 +194,8 @@ export async function fetchEffectiveEconomics(
     throw new Error(`brand-service sales-economics-effective failed (${response.status}): ${text}`);
   }
 
-  return (await response.json()) as EffectiveEconomics;
+  const payload = (await response.json()) as EffectiveEconomics;
+  return { effective: payload, authorizedGoals: parseAuthorizedGoals(payload) };
 }
 
 /**
