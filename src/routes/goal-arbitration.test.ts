@@ -206,6 +206,34 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     );
   });
 
+  it("the declared meeting show-up rate lowers the meeting goal's return — it is not a free 100%", async () => {
+    // The meeting chain is reply → BOOKED → attended → paid. Our meetingToClosePct is BOOKED → paid,
+    // brand-service's funnel prices ATTENDED → paid, so a declared show-up rate must divide the return.
+    const meetingFunnel = (rates: Record<string, number | null>) =>
+      declaredFunnel("booked_meetings", { funnelKey: "reply_meeting", currentGoal: "meetingBooked", rates });
+
+    // 40% reply→booked, 50% booked→attended, 40% attended→paid ⇒ 20% booked→paid.
+    mockFetch({ funnels: [meetingFunnel({ replyToMeetingPct: 40, meetingBookedToAttendedPct: 50, meetingToClosePct: 40 })] });
+    const withShowUp = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
+
+    vi.restoreAllMocks();
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
+    // The SAME funnel with no show-up rate declared ⇒ 40% booked→paid, i.e. twice the conversion.
+    mockFetch({ funnels: [meetingFunnel({ replyToMeetingPct: 40, meetingToClosePct: 40 })] });
+    const without = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
+
+    expect(withShowUp.status).toBe(200);
+    expect(without.status).toBe(200);
+    expect(withShowUp.body.economics.meetingToClosePct).toBeCloseTo(20, 6);
+    expect(without.body.economics.meetingToClosePct).toBeCloseTo(40, 6);
+    // Half the booked→paid rate ⇒ twice the cost per paid client ⇒ half the return per dollar.
+    expect(withShowUp.body.arbitration.costPerPaidClientUsd).toBeCloseTo(
+      without.body.arbitration.costPerPaidClientUsd * 2,
+      6,
+    );
+    expect(withShowUp.body.arbitration.returnPerDollar).toBeCloseTo(without.body.arbitration.returnPerDollar / 2, 6);
+  });
+
   it("the single-goal read is untouched by the presence of an authorized set", async () => {
     mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies")] });
     const withSet = (await request(app).get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&goal=signup`).set(AUTH)).body;
