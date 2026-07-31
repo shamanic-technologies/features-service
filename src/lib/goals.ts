@@ -170,6 +170,9 @@ export function matchOptimizationGoal(raw: string): Goal | null {
     case "signup":
       return "signup";
     case "booked_meetings":
+    // `sales_meetings` is the dashboard's local spelling of the SAME goal; brand-service accepts both
+    // on write and can echo either on a declared sales funnel, so both must map here.
+    case "sales_meetings":
     case "meetingBooked":
       return "meetingBooked";
     default:
