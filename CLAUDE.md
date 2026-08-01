@@ -59,7 +59,7 @@ absence signals anything). Reading either as the set is a bug.
   onto the `signup` runtime token so "consumers never see a new value" — but features-service models form
   submissions as their OWN goal with their own funnel (visit→form→paid), so reading `currentGoal` would
   price a Form Magnet funnel on signup economics: a wrong answer that looks right. `currentGoal` is the
-  fallback only when the wire goal maps to nothing. `matchOptimizationGoal` covers every value the
+  fallback only when the wire goal maps to nothing. `matchBrandServiceGoal` covers every value the
   producer can echo (incl. the dashboard's `sales_meetings` spelling).
 - **READ `declared` BEFORE `funnels` — the flag is the ONLY thing separating "stated none" from "never
   stated", and the two payloads are byte-identical on the list.** `declared: true` + `[]` = the brand
@@ -214,20 +214,17 @@ column would price off the cheapest-click workflow while the Strategy page shows
 of the goal's outcome, and that is CORRECT — it is a rankable estimate, not noise to gate away.
 
 v0.107.2 gated the field on `grainHasObservedOutcome` (nulling it when no grain observed the outcome) to
-make the Strategy page stop crowning `dawn` — 13 fleet clicks, zero positive replies — at $61.73 while
-`/audience-stats` used `arcadia`'s measured $64.11. **That was wrong and was reverted in v0.107.3.** Two
-reasons, both load-bearing:
+stop the Strategy page crowning a 0-reply workflow. **Wrong; reverted in v0.107.3.** Two reasons, both
+load-bearing:
 
-- **Starvation.** campaign-service's `selectWorkflowGreedy` SKIPS a row whose `costPerOutcomeUsd` is null
-  ("no rankable economics"). A nulled workflow is therefore never selected → never runs → never produces an
-  outcome → stays nulled. An absorbing state. A **newly added workflow** (zero evidence by definition)
-  could never enter rotation at all — the fix would have frozen the fleet's workflow mix.
-- **The floor self-corrects; it is the explore/exploit mechanism.** Barely-tried reads cheap → gets picked
+- **Starvation.** campaign-service's `selectWorkflowGreedy` SKIPS a null-cost row ("no rankable
+  economics"), so a nulled workflow is never selected → never runs → never produces an outcome → stays
+  nulled. An absorbing state, and a **newly added workflow** (zero evidence by definition) could never
+  enter rotation at all — it would have frozen the fleet's workflow mix.
+- **The floor self-corrects; it IS the explore/exploit mechanism.** Barely-tried reads cheap → gets picked
   → spends → its floor RISES → it drops out on its own once it outspends the alternatives with nothing to
-  show. "The husk wins permanently" is false: its bound climbs the moment it is used. In prod the husks
-  read $61–$77 against measured workflows at $64–$421 — `dawn` beat `arcadia` by 4%, not by an order of
-  magnitude, precisely because the cascade + fallback (crossOrg best-workflow as the last-resort default)
-  already tightens these numbers. Do not describe a barely-used workflow as "artificially cheap".
+  show. In prod the husks read $61–$77 against measured workflows at $64–$421 — a 4% gap, not an order of
+  magnitude. Do not describe a barely-used workflow as "artificially cheap".
 
 **Number and LABEL stay decoupled — that is the correct place for honesty.** `resolved.grain` still runs
 `grainHasObservedOutcome`, so a floored row is labelled `crossOrg` (benchmark) and never "this brand's own
@@ -610,12 +607,42 @@ the two combinations. `costPerSaleUsd` shape unchanged (internal lib field) → 
 to `objectiveCostPerOutcome` (cross-org) + `paidClientCostForGoal`/`outcomeCostForGoal` (workflow-projection).
 (Set 2026-07-19.)
 
+## `sales` means TWO different things — resolve it by ENTRY POINT (`matchBrandServiceGoal` for a producer payload, `matchCombinedSalesGoal` for a caller's param), never with one resolver
+
+The token `sales` arrives through two doors carrying opposite meanings, so `src/lib/goals.ts` keeps two
+resolvers and they must never be merged:
+
+- **brand-service PAYLOAD** (`salesEconomics.optimizationGoal` on `/internal/brands/:id/sales-economics`;
+  a declared funnel's `goal` / `currentGoal` on `/internal/brands/:brandId/sales-funnels`) →
+  **`matchBrandServiceGoal`**, where **`sales` = WEBSITE PURCHASE**. That is brand-service's older,
+  data-backed meaning, documented there as unchangeable: the legacy `sales` wire spelling "ALWAYS means
+  website-purchase, and can NEVER be re-purposed for the new combined goal (that would silently
+  reinterpret every stored purchase-brand)". Its INTERNAL read deliberately collapses the
+  `website_purchase` wire sub-type onto `sales`, so **every** stored purchase brand reads back as `sales`
+  (verified live on `emailtoolshub.com`: stored `website_purchase`, current goal `purchase` → `"sales"`).
+  The combined goal has its own brand-new token there — `combined_sales` / runtime `combinedSales` —
+  which the old dashboard never sends, so it can never collide with a stored purchase row.
+- **a CALLER's REQUEST PARAM** (`goal` / `objective` / `lens`) → `matchCombinedSalesGoal` /
+  `normalizeObjective`, where **`sales` = COMBINED sales**, because the dashboard's local enum spells the
+  combined goal `sales` and sends it verbatim (distribute.you `strategy-model.ts`
+  `goalForOptimizationGoal("sales") === "sales"`). Unchanged until that migration lands separately.
+
+**The bug (2026-08-01):** this resolver's doc comment asserted the `sales`=purchase mapping was "gone post
+fleet-rename". brand-service never made that rename, so every website-purchase brand in prod (20+, real
+customers) was bucketed into the COMBINED-sales fleet cost-per-outcome benchmark — polluting it and
+leaving the website-purchase bucket empty. That number is customer-facing (the fleet benchmark the
+Audiences + Strategy pages floor on, and the live rate the landing prints). Guard:
+`src/lib/goals-entry-points.test.ts` drives BOTH doors and pins all three cases, naming the entry point
+each value arrives through. An unrecognised value still returns null and is excluded from every bucket —
+no silent fallback. Part of the fleet goal-vocabulary homogenization (distribute.you#3214); the rename
+waves follow separately.
+
 ## Goal vocabulary — a NEW optimization goal goes in the CANONICAL `Goal` enum + `GOALS`, NEVER a parallel "ExtendedGoal" side-type
 
 When adding an optimization goal (or renaming one), put it in the shared `Goal` enum + the `GOALS`
 array and RIPPLE it through EVERY consumer — cross-org public/staff surfaces (`objectiveCostPerOutcome`,
 `windowBaseOutcome`, `OBJECTIVE_GOAL_BUCKET`, `buildObjectiveAverages`, `normalizeObjective`,
-`matchOptimizationGoal`), customer-health, workflow-projection `goalToProjectionInputs`, the OpenAPI
+`matchBrandServiceGoal`), customer-health, workflow-projection `goalToProjectionInputs`, the OpenAPI
 enums. Do **NOT** create a parallel `ExtendedGoal = Goal | <new>` type to keep the goal OUT of `GOALS`
 just so the `GOALS`-iterating cross-org/admin surfaces "stay byte-unchanged" — that bounded-blast-radius
 dodge is a smell (two vocabularies, two names for one concept) and gets rejected ("no extended concept
@@ -1556,9 +1583,10 @@ data point; 0 fleet replies → null, never $0).
 **Bucketing is CONSUMER-SIDE composition, not a read-side derivation of a missing tag** — runs/email cost
 rows carry NO goal tag (0 of ~42k), so features-service enumerates the feature's brands
 (`fetchGoalBucketDataset`), resolves each brand's goal + saved economics from brand-service INTERNAL
-`GET /internal/brands/:id/sales-economics` (`optimizationGoal` mapped via `matchOptimizationGoal` — the
-STORED enum `signups|booked_meetings|sales|website_visits|positive_replies|form_submissions`, whose
-multi-step spellings differ from the runtime CurrentGoal), then fetches each brand's dated spend (runs
+`GET /internal/brands/:id/sales-economics` (`optimizationGoal` mapped via `matchBrandServiceGoal` — the
+STORED enum `signups|booked_meetings|sales|website_purchase|combined_sales|website_visits|positive_replies|form_submissions`,
+whose multi-step spellings differ from the runtime CurrentGoal AND whose `sales` means WEBSITE PURCHASE,
+not combined sales — see the entry-point section above), then fetches each brand's dated spend (runs
 timeseries, `brandId`-filtered — runs filters `= ANY(r.brand_ids)`, NOT comma-split, so ONE brand per
 call) + dated clicks/replies (email-gateway `/public/stats`, comma-`brandId`), and aggregates per bucket
 (`bucketBrandsForObjective` + `mergeSpendByDay`/`mergeOutcomesByDay`; `buildBucketedLifetimeAverages` is
