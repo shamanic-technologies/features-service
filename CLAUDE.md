@@ -61,10 +61,17 @@ absence signals anything). Reading either as the set is a bug.
   price a Form Magnet funnel on signup economics: a wrong answer that looks right. `currentGoal` is the
   fallback only when the wire goal maps to nothing. `matchOptimizationGoal` covers every value the
   producer can echo (incl. the dashboard's `sales_meetings` spelling).
-- **A brand that declared NO funnel ⇒ `[]` ⇒ 200 `unrankable` / `no_authorized_goals`.** A read that
-  cannot be ANSWERED (transport, non-OK, a brand-service predating the funnel model → 404) throws
+- **READ `declared` BEFORE `funnels` — the flag is the ONLY thing separating "stated none" from "never
+  stated", and the two payloads are byte-identical on the list.** `declared: true` + `[]` = the brand
+  STATED it sells through no funnel ⇒ 200 `unrankable` / `no_authorized_goals`. `declared: false` = no set
+  has ever been stated ⇒ a PRODUCER GAP, so it joins every other read that cannot be ANSWERED (transport,
+  non-OK, a brand-service predating the funnel model → 404, a payload missing the flag) in throwing
   `SalesFunnelsUnavailableError` ⇒ **502 `reason: "authorized_goals_unavailable"`** naming what failed —
-  never a substituted default set. Those two are DIFFERENT answers; do not collapse them. An UNMAPPABLE
+  never a substituted default set. Never INFER the flag from the list: dropping it (#704, the first ship
+  parsed `{ funnels }` alone) reported every brand as having ANSWERED "I sell through nothing" when none
+  had ever been asked, which is the exact substitution this endpoint rules out — and it made
+  `authorized_goals_unavailable` reachable only through a transport failure, never through the producer
+  gap it exists for. Guard: the paired route test driving BOTH flags off one empty list. An UNMAPPABLE
   goal value likewise 502s (`reason: "authorized_goal_unrecognised"`) rather than being dropped, which
   would silently arbitrate a smaller set.
 - **TWO FUNNELS CAN SHARE ONE GOAL and are MERGED, not deduped-by-first.** `reply_meeting` and
@@ -325,11 +332,9 @@ audience-stats sums an audience's spend across ALL workflows while workflow-proj
 dynasty, so an audience that outspent the benchmark shows its own (higher) spend on the Audiences table.
 That is the cascade behaving as documented, not a new incoherence.
 
-Adds three reads (`fetchPublicWorkflows` for the dynasty list + `fetchBrandWorkflowEvidence`'s two
-brand-scoped calls) plus the audience grain (`fetchAudienceGrainEvidence`, id-list reused → no extra
-human-service call) — all already used by workflow-projection, reused verbatim. No new field, no new
-endpoint, no persisted state, response shapes unchanged → no OpenAPI regen. `cost-per-outcome-trend` / `-lifetime` / `-distribution` stay POOLED on purpose (a
-different methodology on a different axis) — out of scope. (Set 2026-07-29; derived-column split same day.)
+Reuses workflow-projection's own reads verbatim (no new field/endpoint/persisted state, shapes unchanged
+→ no OpenAPI regen). `cost-per-outcome-trend` / `-lifetime` / `-distribution` stay POOLED on purpose (a
+different methodology on a different axis). (Set 2026-07-29; derived-column split same day.)
 
 ## `/revenue` `spend` cost-per-outcome is FLOORED at the SAME best-workflow benchmark the per-audience rows use — the brand/campaign AGGREGATE twin of the section above
 
@@ -465,13 +470,9 @@ already 502-ing since billing had no discount endpoint). GROSS (the default, and
 unaffected. NET self-activates once runs#179 is deployed alongside. (Set 2026-07-10; supersedes #510's
 read-time compute, shipped PR #517 → main, v0.87.6.)
 
-**Base-branch lesson (2026-07-10, this rework):** the brief said "#510 is on staging; build on staging."
-It was WRONG — #510 lived on `origin/main` (`src/lib/pricing.ts` present on main, absent on staging).
-When SUPERSEDING a PR, verify where the superseded code ACTUALLY lives (`git cat-file -e origin/<b>:<file>`
-/ `git branch -r --contains <sha>`) before choosing the base — do NOT trust the brief's named branch. A
-fresh add of the same file on the WRONG base ADD/ADD-conflicts the real one on the eventual promotion
-(the exact conflict the brief wanted to avoid). Basing on where the superseded commit lives makes the
-rework a clean in-place delta on top of it → conflict-free. Here that meant hotfix→main, not feature→staging.
+**Base-branch lesson (2026-07-10):** when SUPERSEDING a PR, verify where the superseded code ACTUALLY
+lives (`git cat-file -e origin/<b>:<file>`) rather than trusting the brief's named branch — a fresh add of
+the same file on the wrong base ADD/ADD-conflicts the real one on promotion.
 
 ## `cost-engine.ts` — FOUR named engines are the SINGLE source of truth for "cost per outcome"; default = projected everywhere except accounting
 
@@ -552,10 +553,7 @@ a 0-spend / >0-outcomes cell (cost un-attributed but outcomes tracked — the ~3
 would be a false $0 as `spent/count`, so it floors to the parent instead (or null via `observed` when the
 parent is absent). workflow-projection never hits this (grains built only at spend > 0).
 
-**PR1** wired `workflow-projection` (parent = coarser grain's unit costs; audience blocks built PER COUPLE).
-**PR2** wired `audience-stats` (audience→brand; when the brand has no parent cpc, falls back to `observed`
-null — never a false $0). **PR3** wired `/stats` currency keys → `observed`. Response shapes unchanged
-across all three → no OpenAPI change. (Set 2026-07-07.)
+All three wirings kept response shapes unchanged → no OpenAPI change. (Set 2026-07-07.)
 
 ## Per-goal `costPerPaidClient` chains through THAT goal's OWN funnel — coherent by construction (≥ the goal's outcome cost)
 
@@ -950,19 +948,13 @@ is additive/dormant (no dashboard consumer yet) — a distribute.you follow-up w
 existing env vars only (EMAIL_GATEWAY / LEAD / BILLING / RUNS). (Set 2026-07-01.)
 
 **Cross-org platform fleet reads send api-key + x-org-id ONLY — NO sentinel/faked user identity.**
-(Supersedes the earlier "stub MUST be a valid UUID" pin, #425/v0.70.3, now REMOVED.) The original 500
-(v0.70.3) came from forwarding a *marker string* `x-user-id` to runs `/v1/stats/costs`, which
-format-validates it (`400 "x-user-id header must be a valid UUID"`). The band-aid was a valid-UUID
-sentinel `00000000-0000-4000-8000-000000000000`; the REAL fix is that these reads never needed a user
-at all — `x-user-id`/`x-run-id` are OPTIONAL context on every one of them (runs `/v1/stats/costs`
-validates *only if present*; billing daily-budget authorizes on `x-org-id`). So:
-`getRunsServiceHeaders`/`getBillingServiceHeaders` (pipeline-activity) now OMIT user/run/brand/feature
-when empty (the authed dashboard path still forwards its real values), the fleet reads pass `{orgId}`
-only, and the org-balance read moved off the user-required `/v1/accounts/balance` onto billing's
-**user-less `GET /internal/accounts/by-org/:orgId/balance`** (`fetchOrgBalanceUsd`). Zero sentinel in
-`send-forecast-aggregate.ts` / `accounts-client.ts` / `accounts-compute.ts`. Any NEW cross-org fleet
-read: pass org-only, use an `/internal/*` (org-in-path) producer endpoint — never fabricate a user.
-(Set 2026-07-01, send-forecast active-gate + sentinel removal.)
+(Supersedes the earlier "stub MUST be a valid UUID" pin, #425/v0.70.3, REMOVED.) Forwarding a marker
+string as `x-user-id` 400s at runs (`must be a valid UUID`); a valid-UUID sentinel was the band-aid.
+These reads never needed a user at all — `x-user-id`/`x-run-id` are OPTIONAL on every one of them, so
+`getRunsServiceHeaders`/`getBillingServiceHeaders` OMIT user/run/brand/feature when empty (the authed
+path still forwards its real values) and the org-balance read uses billing's user-less
+`GET /internal/accounts/by-org/:orgId/balance`. Any NEW cross-org fleet read: pass org-only, use an
+`/internal/*` (org-in-path) producer endpoint — never fabricate a user. (Set 2026-07-01.)
 
 ## `GET /internal/stats/accounts` — fleet cold-email customer ACCOUNTS audit (api-key, staff-gated at api-service)
 
@@ -1033,9 +1025,7 @@ existing env vars otherwise (BILLING / LEAD / BRAND).
 `/v1/accounts/balance`, whose `computeBalance` calls **stripe-service, which has NO staging runtime**
 (prod-only). So on staging billing 502s "Failed to compose account funds" fleet-wide → this endpoint
 correctly fails loud → 500 on staging. That is NOT a features-service defect; it's the documented
-prod-only-dependency gotcha (railway-vars skill). Verified working on prod v0.72.0 (2026-07-01): 32
-rows, 10 active / 22 inactive, `totalDailyBudgetUsd`=Σ active budgets, `mrr`=×30, `arr`=×365.
-(Set 2026-07-01.)
+prod-only-dependency gotcha (railway-vars skill). Verified on prod v0.72.0. (Set 2026-07-01.)
 
 ## `GET /internal/stats/customer-health` — fleet "Customer Success" health board (api-key, staff-gated at api-service)
 
@@ -1113,12 +1103,9 @@ envVar}` from its Vercel env into key-service at startup. `src/lib/key-service-c
 (`x-api-key` + `X-Caller-*`), so the secret lives in ONE place and flows Vercel→key-service→features-service.
 `POSTHOG_API_HOST` (`https://eu.posthog.com`) + `POSTHOG_PROJECT_ID` (`171095`) are NON-secret and DEFAULT in
 code (env-overridable) — the only runtime dep is the standard fleet `KEY_SERVICE_URL`/`KEY_SERVICE_API_KEY`.
-**Self-activates** once the `posthog` provider is registered in key-service (add `{provider:"posthog",
-envVar:"POSTHOG_PERSONAL_API_KEY"}` to the admin registration list — the value already exists in admin's
-Vercel env, used by `apps/admin/src/lib/public-stats.ts`); until then `getPlatformKey` 404s → null fleet-wide
-(dormant-safe, no breakage). NO features-service Railway secret needed. Additive: needs an **api-service
-proxy** (already exists — transparent passthrough `GET /v1/features/audit/customer-success`) + the
-admin-dashboard render (shipped, distribute.you PR #2725).
+**Self-activates** once the `posthog` provider is registered in key-service; until then `getPlatformKey`
+404s → null fleet-wide (dormant-safe). NO features-service Railway secret needed. The api-service proxy
+(`GET /v1/features/audit/customer-success`) and the admin render already exist.
 Same prod-only-balance gotcha as the accounts audit (billing balance → stripe-service, no staging runtime → the
 whole board 502s on staging; **verify on PROD**). Triage: STAGING → feature. (PR #572; PostHog signal PR #577,
 features-service#576, set 2026-07-15.)
@@ -1320,16 +1307,11 @@ Do NOT bake a specific `#NNN` before confirming it. Options, cheapest first: **(
 work's own issue FIRST and tag with it; **(c)** open the PR, read its number from `gh pr create`'s output,
 THEN `sed` the tag into the code + regen OpenAPI in a follow-up commit ON THE SAME BRANCH *before* it merges.
 Baking a wrong number forces a doc-fix follow-up PR (and if the first PR auto-merged on fast CI, a whole
-new branch, since you can't push to a merged PR's branch). Cost 2026-06-25 (repliedPositive, PR #389):
-tagged `#388` (a /stats sibling) → needed PR #391 to fix. **Recurrence 2026-07-07 (per-lead signup/form
-outcomes, PR #476): guessed `#473` from the branch HEAD — but #473 was an unrelated merged "sync hotfix
-v0.80.2 to staging" PR; the feature PR auto-merged before I noticed, forcing a fresh branch + retag PR
-#477 across 19 refs. A 5-second `gh pr view 473` at tag time would have shown it was taken.**
-**THIRD recurrence 2026-07-07 (positive-reply spend fields, PR #481): guessed `#475` from HEAD PR #474
-— but #475 was the unrelated form_submissions GitHub ISSUE; forced retag PR #483. Three strikes, all
-same-day, all on the `spend`-block parallel-workspace cluster → the guess reflex is the failure. HARD
-RULE going forward: do NOT type any `features-service#NNN` from memory/arithmetic — create the issue
-(or open the PR) FIRST, then paste the REAL number. `gh {issue,pr} view <n>` before baking is mandatory.**
+new branch, since you can't push to a merged PR's branch). Cost it three times in 2026-06/07 (#389→#391,
+#476→#477 across 19 refs, #481→#483) — twice by guessing the next sequential number, which landed on an
+unrelated sync PR and an unrelated issue. **HARD RULE: never type a `features-service#NNN` from memory or
+arithmetic — create the issue (or open the PR) FIRST and paste the REAL number; `gh {issue,pr} view <n>`
+before baking is mandatory.**
 
 ## Key Files
 
@@ -1501,19 +1483,15 @@ through `projectOutcomeCosts`.** Objective params accept every fleet spelling vi
   any ONE transient Neon cold-start sub-failure — → prod HTTP 500 on every objective (v0.86.1 hotfix,
   PR #524). Fix: the handler serves the lifetime rows IMMEDIATELY with `recentCostPerOutcomeUsd = null`,
   then runs the fan-out in a SINGLE-FLIGHT background warm (`workflowRecentWarmInFlight`, `__awaitWorkflowRecentWarm`
-  test seam) that overwrites the SAME cache entry; reads within the 60s TTL get the populated rate. The warm
+  test seam) that overwrites the SAME cache entry; reads within the fresh window get the populated rate. The warm
   is PER-DYNASTY resilient (each dynasty's fan-out independently try/caught → null + loud log; one failure
   never nulls the other 24 — stat-families doctrine). If you add a NEW per-dynasty dated metric here, warm
-  it the same way; keep it off-path. **KNOWN PRODUCER BLOCKER (features-service#526): recent is null for
-  EVERY dynasty in prod today** because the dated fetches filter `workflowDynastySlug`, which runs-service
-  timeseries + email-gateway `/public/stats` resolve via workflow-service `/workflows/dynasty/slugs` — an
-  endpoint that REQUIRES `x-org-id`/`x-user-id`/`x-run-id` a cross-org PUBLIC call cannot supply → runs 500 /
-  email-gateway 502 → every dynasty fails → recent null (correct: unbacked, never a false $0). Do NOT "fix"
-  this in features-service by resolving dynasty→slugs locally + passing raw slug lists (the timeseries
-  endpoint has no `groupBy`, so there's no local-derive path anyway, and it would reimplement the producer's
-  job — forbidden). The fix is org-less dynasty resolution upstream; recent self-populates once it lands.
+  it the same way; keep it off-path. The dated fetches filter `workflowDynastySlug`, which the producers
+  resolve via workflow-service `/workflows/dynasty/slugs` — org-less since v0.38.0 (features-service#526).
+  Do NOT resolve dynasty→slugs locally + pass raw slug lists if it ever regresses: the timeseries endpoint
+  has no `groupBy`, so there is no local-derive path, and it would reimplement the producer's job.
 
-Each surface uses the shared `PublicCache` memo (60s), `__reset*Cache` test seams. **The api-service
+Each surface uses the shared `servedPublicCached` memo on `LIFETIME_AGGREGATE_WINDOWS`, `__reset*Cache` test seams. **The api-service
 gateway forwards `/public/stats/X` → `/v1/public/features/X` via EXPLICIT per-route proxies, NOT a
 wildcard — any NEW `/public/stats/*` endpoint needs a matching api-service proxy route or it 404s at the
 gateway.** The two new paths got their proxies in api-service#686. Triage: STAGING (staff-internal
@@ -1812,25 +1790,59 @@ Databricks medallion Gold, Kleppmann derived-data).
   the compute lib; transient downstream failures THROW and bypass the cache). `pipeline-activity`'s
   `generatedAt` is frozen to the snapshot's compute time (the as-of semantic). The CROSS-ORG `/public/*`
   + `/internal/stats/*` endpoints do NOT use the Gold layer (no per-org `scope_key`); they ALL go through
-  ONE shared in-memory memo primitive in `public.ts` — `type PublicCache = Map<string, {payload:unknown,
-  expiresAt}>` + `getPublicCache<T>` / `setPublicCache<T>` (single 60s `PUBLIC_STATS_TTL_MS`). Every
-  cache (ranked, best, workflow-latency, public-revenue, cost-projection, send-forecast, accounts) is a
-  `PublicCache`; the per-endpoint `__reset*` test seams stay (each clears its own Map). Do NOT re-add a
-  per-cache bespoke get/set/TTL — route new public caches through the shared helper.
+  ONE shared in-memory primitive in `public.ts` — `servedPublicCached({cache, key, windows, label,
+  compute})` over `type PublicCache = Map<string, {payload, freshUntil, staleUntil}>`. **Every read on
+  every cross-org surface goes through it; there is no `getPublicCache`/`setPublicCache`-style direct
+  read left** (the one remaining direct `setPublicCache` is the workflow recent-rate warm overwriting its
+  own entry). Per-endpoint `__reset*` seams stay and now clear the in-flight map too (`clearPublicCache`).
+  Do NOT re-add a bespoke per-cache get/set/TTL, and do NOT hand-roll a second in-flight map beside a
+  `PublicCache` — the helper owns single-flight.
 
-  **A `PublicCache` getter that guards an O(N) cross-service FAN-OUT MUST be single-flighted — a plain
-  check-then-fetch STAMPEDES on a cold cache.** The 60s `PublicCache` only dedups AFTER the first fan-out
-  finishes and sets the entry; while it is empty, every concurrent caller misses and each runs its own
-  fan-out. The admin page loads several public cost surfaces AT ONCE (trend once per objective + lifetime
-  + distribution all share `getGoalBucketDatasetCached`, which fans out ~3 cross-service calls × N brands),
-  so a cold-cache load fired 6× that fan-out simultaneously → ~6×90 concurrent calls stampeding
-  runs-service / email-gateway → gateway `HEADERS_TIMEOUT` / `SOCKET` (features-service v0.87.6, prod
-  incident 2026-07-10). Fix pattern (mirror `workflowRecentWarmInFlight`): hold an in-flight `Map<key,
-  Promise>` beside the cache; concurrent same-key callers join the ONE promise; clear the slot in a
-  `finally` on settle (success OR failure) so a later miss re-fetches and fail-loud still propagates to
-  every joiner. Also cap the fan-out itself with `mapWithConcurrency` (`src/lib/concurrency.ts`, shared
-  with the recent-rate warm) so even the single build does not burst ~3×N sockets at cold-Neon siblings.
-  Any NEW public cache whose miss triggers a per-brand / per-dynasty / per-N fan-out gets BOTH guards.
+  **It is stale-while-revalidate with TWO windows per entry, and they do DIFFERENT jobs — the same split
+  `view-cache.ts` documents for the Gold layer.** FRESH = serve with zero work, so FRESH is what governs
+  how often the expensive fan-out RE-RUNS (once per fresh window per VIEWED key; an unread key never
+  refreshes). STALE = still served INSTANTLY while a single-flight refresh runs BEHIND the response; only
+  past STALE, or on a cold key, does a reader wait. **So no caller ever blocks while a previous value
+  exists**, and lengthening FRESH cuts call count without leaving anyone on a number more than one refresh
+  cycle old. A failed BACKGROUND refresh keeps the prior entry (never zeroes real data) + logs loud; a
+  cold/past-STALE compute failure propagates → 502, nothing fabricated.
+
+  **Two window sets, and which one a surface takes is a judgement about the DATA, not about the cost:**
+  - `LIFETIME_AGGREGATE_WINDOWS` (**15 min fresh / 6 h stale**) — the cross-org COST surfaces: ranked,
+    best, public-revenue, cost-projection, cost-per-outcome trend/lifetime/distribution,
+    workflow-cost-per-outcome, best-model trend, and the shared goal-bucket dataset. Every figure on
+    these is a fleet-LIFETIME aggregate (cross-org totals over all history) and every miss costs
+    runs-service one of three unbounded ledger scans measured at **11-14 s** (runs-service#206,
+    features-service#706). At the old 60 s window that scan re-ran every minute *per replica* for numbers
+    that cannot visibly move in a minute — a lifetime pooled cost moves by the fleet's few minutes of
+    spend against months of it. 15 min is the honest freshness of the quantity (~15× fewer scans, nothing
+    observable changes); 6 h stale is sized for the low-traffic public landing, where the alternative for
+    the first visitor after a quiet night is a ~13 s cold build on the request path (#547 residual).
+  - `FLEET_AUDIT_WINDOWS` (**60 s fresh / 30 min stale**) — the staff audits: send-forecast, accounts,
+    active-users, active-users-by-user, revenue history, plus workflow engagement latency. These describe
+    MUTABLE operational state a staff member changes and then re-reads (a budget, a pause, an account
+    going active), so their freshness deliberately stays where it was; they gain only the stale half.
+    **Do NOT "harmonise" these onto the lifetime windows** — buying call-count here is paid for in "I
+    changed it and the audit still shows the old value".
+
+  **Single-flight is load-bearing on a COLD key and is now in the helper, not per-surface.** A plain
+  check-then-fetch stampedes: the entry only dedups AFTER the first fan-out finishes, so while it is empty
+  every concurrent caller runs its own. The admin page loads several public cost surfaces AT ONCE (trend
+  once per objective + lifetime + distribution all share `getGoalBucketDatasetCached`, ~3 cross-service
+  calls × N brands), so a cold load fired 6× that fan-out simultaneously → ~6×90 concurrent calls
+  stampeding runs-service / email-gateway → gateway `HEADERS_TIMEOUT` / `SOCKET` (v0.87.6, prod incident
+  2026-07-10). The helper's in-flight map (keyed off the cache object) also guards the background refresh,
+  so a burst of stale reads kicks exactly ONE rebuild. Still cap the fan-out ITSELF with
+  `mapWithConcurrency` (`src/lib/concurrency.ts`) so even the single build does not burst ~3×N sockets at
+  cold-Neon siblings. `setPublicCache` prunes past-STALE entries on write — these keys are
+  (featureSlug × objective × window params) on NO-AUTH routes, so an arbitrary caller could otherwise mint
+  unbounded keys that each pin a payload for the (now much longer) stale window.
+
+  Guard suite: `src/routes/public-cache-swr.test.ts` (repeated reads = ONE ledger scan; 5 min on still no
+  re-scan — this one fails if the window goes back to 60 s; past-fresh serves the last value with the
+  rescan behind it; past-stale recomputes synchronously; 4 concurrent cold readers = ONE scan; a failed
+  background refresh keeps the last value; a cold failure 500s). Seams:
+  `__expirePublicCacheFreshWindowsForTest()` + `__awaitPublicCacheRefreshForTest()`.
 
 **It is DERIVED + rebuildable** — dropping every row is safe (next read recomputes); siblings stay SoT.
 **Eventual-consistency is the accepted CQRS tradeoff**: a served body is "as-of `computed_at`". The cache

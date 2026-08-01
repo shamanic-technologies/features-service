@@ -28,9 +28,12 @@ const router = Router();
 //
 // FAIL-LOUD, no substituted set: when the declaration cannot be READ the endpoint 502s with
 // `reason: "authorized_goals_unavailable"` naming what failed, rather than defaulting to the brand's
-// single optimizationGoal or to the whole goal vocabulary and answering as if that were real. A brand
-// that declared NO funnel is a different thing — a real answer, served 200 as `status: "unrankable"`
-// with reason `no_authorized_goals`.
+// single optimizationGoal or to the whole goal vocabulary and answering as if that were real. That
+// covers brand-service's `declared: false` — no set has ever been STATED for this brand — which is a
+// producer gap, not an answer. A brand that STATED it sells through no funnel (`declared: true` with an
+// empty list) is a different thing entirely — a real answer, served 200 as `status: "unrankable"` with
+// reason `no_authorized_goals`. The two payloads are byte-identical on the funnels list, so collapsing
+// them would report a brand that never answered as having answered "none".
 
 router.get("/features/:featureSlug/goal-arbitration", apiKeyAuth, async (req, res) => {
   const { featureSlug } = req.params;
@@ -66,9 +69,10 @@ router.get("/features/:featureSlug/goal-arbitration", apiKeyAuth, async (req, re
       // Economics is read LIVE on every request (never cached) — an arbitration run right after an
       // economics write must rank on the NEW terms. Same rule as /workflow-projection.
       fetchEffectiveEconomics(brandId, identity),
-      // The AUTHORIZED SET, likewise live: the funnels the brand DECLARED it sells through. `[]` is a
-      // real answer (declared nothing); a read that cannot be answered throws and is reported below
-      // with its own reason, never as a substituted set.
+      // The AUTHORIZED SET, likewise live: the funnels the brand DECLARED it sells through. `[]` under
+      // `declared: true` is a real answer (the brand stated it sells through none); a read that cannot
+      // be answered — transport, non-OK, or `declared: false` (never stated) — throws and is reported
+      // below with its own reason, never as a substituted set.
       fetchDeclaredSalesFunnels(brandId),
     ]);
 
