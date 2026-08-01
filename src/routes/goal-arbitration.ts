@@ -73,7 +73,9 @@ router.get("/features/:featureSlug/goal-arbitration", apiKeyAuth, async (req, re
       // `declared: true` is a real answer (the brand stated it sells through none); a read that cannot
       // be answered — transport, non-OK, or `declared: false` (never stated) — throws and is reported
       // below with its own reason, never as a substituted set.
-      fetchDeclaredSalesFunnels(brandId),
+      // The org is part of the QUESTION, not just of the auth: a brand id is shared by every org that
+      // claims the same domain, so we must say whose declared set we want.
+      fetchDeclaredSalesFunnels(brandId, identity.orgId),
     ]);
 
     const response = arbitrateGoals({

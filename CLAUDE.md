@@ -1,5 +1,43 @@
 # Features Service — CLAUDE.md
 
+## Per-brand CONFIGURATION is (org, brand) data — every brand-service read of it names the org whose answer it wants, and a caller with NO org FAILS LOUD
+
+A brand row is a **shared global identity**: any org that claims the same domain lands on the same brand
+id. So the goal a brand optimizes for, its sales economics, its declared funnels — its CONFIGURATION —
+belong to an **(org, brand) PAIR**, not to the brand. Two orgs claiming one domain legitimately sell
+different things at different rates, so there is no single answer to give; brand-service can answer when
+exactly one org claims the brand, but for a brand claimed by several it REFUSES rather than guess
+(guessing is the cross-org read/write leak it closed). In prod 21 brands are claimed by more than one
+org, 8 of them with live campaigns.
+
+Every internal read of per-brand configuration therefore sends **`x-org-id`**, and the org is a
+**REQUIRED argument**, not a header the client resolves:
+
+| Read | Org comes from |
+|---|---|
+| `GET /internal/brands/:id/sales-funnels` (`fetchDeclaredSalesFunnels`) | the request's `identity.orgId` (`/goal-arbitration`) |
+| `GET /internal/brands/:id/sales-economics` (`fetchBrandSavedEconomicsWithGoal`) | `headers.orgId` (`/revenue` spend parents), the row's `account.orgId` (customer-health), the feature MEMBERSHIP's claiming org (cross-org goal-bucket dataset) |
+| `GET /orgs/brands/:id/sales-economics[-effective]` | already org-scoped — the in-repo precedent these two conformed to |
+
+- **NEVER pick an org on brand-service's behalf.** An empty `orgId` throws before the fetch
+  (`SalesFunnelsUnavailableError` / a loud `Error`) — a plausible stand-in IS the bug. A caller with no
+  org has no question to ask.
+- **Cross-org fleet surfaces are not org-LESS.** `fetchGoalBucketDataset` / `fetchFleetBrandEconomics`
+  take the claiming org from the lead-service feature membership that put the brand in the set
+  (`brandToOrg`, first claimant) — a REAL claimant, never a substitute. The goal-bucket dataset stays
+  **one row per brand** on purpose: its spend + outcome legs are read at BRAND grain (runs `brandId`,
+  email-gateway `brandId`), so emitting a row per (org, brand) would count a multi-org brand's fleet
+  spend once per claimant and inflate every bucket it lands in.
+- **Out of scope: `GET /internal/brands?ids=`** (accounts audit + public stats) — that reads brand NAME
+  and DOMAIN, which are the shared global identity itself, not per-org configuration.
+- **No behaviour change for a brand exactly one org claims**; the header is a no-op against a
+  brand-service that predates the change, so there is no ordering constraint either way.
+- Guard: `src/lib/brand-config-org-scoping.test.ts` asserts the header VALUE on both reads, that two
+  orgs on ONE brand id get their own answers, that an org-less caller throws before any fetch, and that
+  the fleet dataset asks under the membership's org while reading the brand's spend once. Plus the
+  call-site guards in `src/routes/goal-arbitration.test.ts` (the caller's org rides the funnels read) and
+  `src/lib/customer-health-compute.test.ts` (each row asks under its own org). (Set 2026-08-01.)
+
 ## `GET /features/:slug/goal-arbitration` — the GOAL leg is arbitrated HERE; ranking basis = RETURN PER DOLLAR (`lifetimeRevenueUsd / costPerPaidClientUsd`), never a cost-per-outcome comparison
 
 campaign-service used to SUPPLY the goal (it forwarded the brand's single configured `currentGoal`) and
@@ -47,7 +85,8 @@ evidence + the same economics always produce the same answer.
   cold arm, and still resolves via the cascade — never absent, never a false $0).
 
 **The AUTHORIZED SET is brand-service's to own** = the SALES FUNNELS a brand DECLARED it sells through,
-read from **`GET /internal/brands/:brandId/sales-funnels`** (api-key, brandId in path, no org context)
+read from **`GET /internal/brands/:brandId/sales-funnels`** (api-key + `x-org-id`, brandId in path —
+see the org-scoping section below)
 via `src/lib/sales-funnels-client.ts` → mapped by `src/lib/authorized-goals.ts`. **Never accepted from
 the caller** (campaign-service must not be able to influence which goals compete) and **never inferred** —
 a brand's single `optimizationGoal` is ONE goal, not an authorization set, and brand-service is explicit
