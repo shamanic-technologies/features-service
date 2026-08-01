@@ -8,12 +8,17 @@
  * (a positive reply, or a click onto the site) down to a paid client, and it carries the goal it
  * optimizes for plus the economics that chain is priced on.
  *
- * Two of brand-service's rules are load-bearing here and must not be softened:
+ * Three of brand-service's rules are load-bearing here and must not be softened:
  *  - **Nothing is defaulted.** A value the brand never declared reads `null`, which never means zero.
- *  - **An EMPTY array means the brand declared nothing.** Do NOT substitute a plausible set and do NOT
- *    derive one from the brand's stored economics — every rate on the brand-wide economics row is
- *    NOT NULL with a server default, so a brand that configured nothing still reads back
- *    plausible-looking numbers there and no absence signals anything.
+ *  - **READ `declared` BEFORE `funnels`.** `declared: true` with an EMPTY array is the brand STATING it
+ *    sells through none — a real answer. `declared: false` is brand-service saying no set has ever been
+ *    stated for this brand — a PRODUCER GAP, and reporting it as "the brand authorizes nothing" would
+ *    put an answer in the brand's mouth it never gave. The two payloads are byte-identical on
+ *    `funnels`, so the flag is the ONLY thing that separates them: never infer it from the list.
+ *  - **Never substitute a plausible set** and do NOT derive one from the brand's stored economics —
+ *    every rate on the brand-wide economics row is NOT NULL with a server default, so a brand that
+ *    configured nothing still reads back plausible-looking numbers there and no absence signals
+ *    anything.
  */
 
 import { fetchWithRetry } from "./fetch-retry.js";
@@ -50,8 +55,9 @@ export interface DeclaredSalesFunnel {
 /**
  * Read the funnels a brand declared. Fails loud (`SalesFunnelsUnavailableError`) on any transport /
  * non-OK response — including the 404 a brand-service that predates the funnel model returns, which is
- * exactly the dormant state the arbitration must report rather than paper over. `[]` is a SUCCESS: the
- * brand declared nothing.
+ * exactly the dormant state the arbitration must report rather than paper over — AND on
+ * `declared: false`, brand-service stating that no set has ever been declared for this brand. Only
+ * `declared: true` is an answer, and `[]` under it is a SUCCESS: the brand declared nothing.
  */
 export async function fetchDeclaredSalesFunnels(brandId: string): Promise<DeclaredSalesFunnel[]> {
   const url = process.env.BRAND_SERVICE_URL;
@@ -78,10 +84,23 @@ export async function fetchDeclaredSalesFunnels(brandId: string): Promise<Declar
     );
   }
 
-  const data = (await response.json()) as { funnels?: unknown };
+  const data = (await response.json()) as { declared?: unknown; funnels?: unknown };
   if (!Array.isArray(data.funnels)) {
     throw new SalesFunnelsUnavailableError(
       "brand-service declared sales-funnels response carried no `funnels` array",
+    );
+  }
+  // The flag is REQUIRED on the producer's contract, and it is the only thing that distinguishes
+  // "the brand stated it sells through none" from "no set has ever been stated". A payload without it
+  // cannot answer that question at all, so it is unreadable — never assumed either way.
+  if (typeof data.declared !== "boolean") {
+    throw new SalesFunnelsUnavailableError(
+      "brand-service declared sales-funnels response carried no `declared` flag, so whether this brand has ever stated a set cannot be read",
+    );
+  }
+  if (!data.declared) {
+    throw new SalesFunnelsUnavailableError(
+      "brand-service reports no sales funnel has ever been declared for this brand (declared: false) — a producer gap, not the brand stating it sells through none",
     );
   }
   return data.funnels as DeclaredSalesFunnel[];
