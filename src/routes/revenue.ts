@@ -195,7 +195,9 @@ function fetchSpendCostParentsSoft(
   campaignId: string | undefined,
   pricing: Pricing,
 ): Promise<SpendCostParents> {
-  return fetchBrandSavedEconomicsWithGoal(brandId)
+  // The caller's own org names whose configuration we want — a brand id alone is shared across every
+  // org claiming the same domain, so the goal + economics are the (org, brand) pair's data.
+  return fetchBrandSavedEconomicsWithGoal(brandId, headers.orgId)
     .then(({ goal }) => {
       if (!goal) return null;
       return fetchBrandProjectedParents(

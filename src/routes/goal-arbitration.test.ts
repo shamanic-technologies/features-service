@@ -164,6 +164,27 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     expect((await request(app).get(`/features/nope/goal-arbitration?brandId=b1`).set(AUTH)).status).toBe(404);
   });
 
+  it("asks brand-service for the CALLER'S org's declared set — a brand id alone cannot name whose funnels", async () => {
+    // A brand row is a shared global identity (every org claiming the same domain gets the same brand
+    // id), so the authorized set is the (org, brand) pair's data. brand-service refuses to guess for a
+    // multi-org brand, so the org whose answer we want has to be on the wire.
+    let funnelsOrg: string | undefined = "NEVER CALLED";
+    mockFetch({ funnels: [declaredFunnel("signups")] });
+    const inner = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      if (url.includes("/sales-funnels")) {
+        funnelsOrg = ((init?.headers as Record<string, string>) ?? {})["x-org-id"];
+      }
+      return inner(input, init);
+    });
+
+    const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
+
+    expect(res.status).toBe(200);
+    expect(funnelsOrg).toBe("org-1");
+  });
+
   it("elects the best goal, its best workflow, and the pairing's rows — in ONE request", async () => {
     mockFetch({
       funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies"), declaredFunnel("whatsapp_conversations")],

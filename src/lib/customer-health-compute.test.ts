@@ -329,6 +329,36 @@ describe("buildCustomerHealthBoard", () => {
     expect(row.health.badge).toBe("yellow");
   });
 
+  it("asks brand-service for the ROW'S OWN org's economics — a brand id is shared across every org claiming the domain", async () => {
+    // Two customers on the SAME brand id: distinct orgs claiming one domain. Each row's goal must come
+    // from that row's own org, so the read has to be told which one — never resolved from the brand.
+    const seen: Array<[string, string]> = [];
+    const deps = makeDeps({
+      accounts: [
+        account({ orgId: "org-A", brandId: "shared", status: "active" }),
+        account({ orgId: "org-B", brandId: "shared", status: "active" }),
+      ],
+      recencies: [recency("org-A", "2026-07-10"), recency("org-B", "2026-07-10")],
+      perBrand: { shared: { economics: null, goal: null } },
+    });
+    const wrapped: CustomerHealthDeps = {
+      ...deps,
+      savedEconomicsWithGoal: async (brandId, orgId) => {
+        seen.push([brandId, orgId]);
+        return { economics: null, goal: orgId === "org-A" ? "positiveReply" : "signup" };
+      },
+    };
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, wrapped);
+
+    expect(seen.sort()).toEqual([
+      ["shared", "org-A"],
+      ["shared", "org-B"],
+    ]);
+    const byOrg = new Map(board.customers.map((c) => [c.orgId, c.optimizationGoal]));
+    expect(byOrg.get("org-A")).toBe("positiveReply");
+    expect(byOrg.get("org-B")).toBe("signup");
+  });
+
   it("BrandOwnershipError on a stale membership → enrichment nulled, row still listed with identity + status", async () => {
     const deps = makeDeps({
       accounts: [account({ orgId: "g", brandId: "bg", status: "active" })],

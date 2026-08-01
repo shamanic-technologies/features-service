@@ -784,6 +784,14 @@ export function buildCostPerOutcomeDistribution(params: {
  * independent) so the trend + lifetime surfaces can share ONE cached dataset. Fails loud on any
  * transport / non-OK error (essential input, not optional enrichment); a stale membership
  * (BrandOwnershipError) is skipped, mirroring `fetchFleetBrandEconomics`.
+ *
+ * WHICH ORG'S CONFIGURATION — a brand id is shared by every org that claims the same domain, so the
+ * goal + economics belong to an (org, brand) pair and brand-service will not guess for a brand several
+ * orgs claim. The claiming org comes from the feature MEMBERSHIP that put the brand in this dataset
+ * (`brandToOrg`, byte-for-byte how `fetchFleetBrandEconomics` above resolves it) — a real claimant, not
+ * a stand-in. The dataset deliberately stays ONE ROW PER BRAND: its spend + outcome legs are read at
+ * brand grain (runs `brandId`, email-gateway `brandId`), so emitting a row per (org, brand) would count
+ * a multi-org brand's fleet spend once per claiming org and inflate every bucket it lands in.
  */
 // Cap the per-brand fan-out so the dataset build does not burst ~3×N concurrent sockets at
 // runs-service / email-gateway / brand-service at once. Even a single (single-flighted) build of N≈30
@@ -794,13 +802,16 @@ const GOAL_BUCKET_BRAND_CONCURRENCY = 8;
 
 export async function fetchGoalBucketDataset(featureSlug: string): Promise<BucketedBrand[]> {
   const memberships = await fetchFeatureMemberships(featureSlug);
-  const brandIds = [...new Set(memberships.map((m) => m.brandId))];
+  const brandToOrg = new Map<string, string>();
+  for (const m of memberships) {
+    if (!brandToOrg.has(m.brandId)) brandToOrg.set(m.brandId, m.orgId);
+  }
 
   const perBrand = await mapWithConcurrency(
-    brandIds,
+    [...brandToOrg.entries()],
     GOAL_BUCKET_BRAND_CONCURRENCY,
-    async (brandId): Promise<BucketedBrand | null> => {
-      const { economics, goal } = await fetchBrandSavedEconomicsWithGoal(brandId);
+    async ([brandId, orgId]): Promise<BucketedBrand | null> => {
+      const { economics, goal } = await fetchBrandSavedEconomicsWithGoal(brandId, orgId);
       if (!economics || !goal) return null;
 
       const [spendByDay, dayOutcomeMap] = await Promise.all([
