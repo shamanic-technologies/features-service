@@ -99,13 +99,21 @@ describe("ENTRY POINT A — a value read out of a brand-service PAYLOAD", () => 
       vi.spyOn(globalThis, "fetch").mockResolvedValue(savedEconomicsPayload("sales"));
       // Verified live 2026-08-01 against brand emailtoolshub.com (stored `website_purchase`,
       // current goal `purchase`): the internal read emits `"sales"`.
-      const { goal } = await fetchBrandSavedEconomicsWithGoal("7604c385-1f02-4016-b42f-344565bcd36d");
+      // The reader is org-scoped (#715): brand-service refuses to guess which
+      // org's configuration to answer with for a brand claimed by several orgs.
+      const { goal } = await fetchBrandSavedEconomicsWithGoal(
+        "7604c385-1f02-4016-b42f-344565bcd36d",
+        "11111111-1111-4111-8111-111111111111",
+      );
       expect(goal).toBe("websitePurchase");
     });
 
     it("a brand whose payload says `combined_sales` still resolves to combined sales", async () => {
       vi.spyOn(globalThis, "fetch").mockResolvedValue(savedEconomicsPayload("combined_sales"));
-      const { goal } = await fetchBrandSavedEconomicsWithGoal("brand-combined");
+      const { goal } = await fetchBrandSavedEconomicsWithGoal(
+        "brand-combined",
+        "11111111-1111-4111-8111-111111111111",
+      );
       expect(goal).toBe("sales");
     });
   });
