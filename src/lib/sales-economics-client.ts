@@ -70,25 +70,43 @@ export interface SavedEconomicsWithGoal {
 }
 
 /**
- * Read a brand's SAVED sales economics + its `optimizationGoal` from brand-service's INTERNAL
- * `GET /internal/brands/:brandId/sales-economics` (api-key only, brandId in path, NO org context —
- * built for service schedulers). Returns the brand's OWN saved set (NOT the cross-brand-average
- * effective one — a goal must be the brand's own, never an average), with `optimizationGoal` mapped to
- * the canonical Goal. `{ economics: null, goal: null }` when the brand has never saved economics
- * (unset is NOT a 404). Fails loud on any transport / non-OK error.
+ * Read a brand's SAVED sales economics + its `optimizationGoal` FOR ONE ORG, from brand-service's
+ * INTERNAL `GET /internal/brands/:brandId/sales-economics` (api-key + `x-org-id`, brandId in path).
+ * Returns that org's OWN saved set (NOT the cross-brand-average effective one — a goal must be the
+ * brand's own, never an average), with `optimizationGoal` mapped to the canonical Goal.
+ * `{ economics: null, goal: null }` when nothing has ever been saved (unset is NOT a 404). Fails loud
+ * on any transport / non-OK error.
+ *
+ * WHICH ORG'S ANSWER — a brand row is a SHARED GLOBAL IDENTITY (any org that claims the same domain
+ * lands on the same brand id), so the economics and the goal are the data of an (org, brand) PAIR, not
+ * of the brand alone. Two orgs claiming one domain legitimately sell different things at different
+ * rates, so brand-service refuses to guess for a brand several orgs claim: `orgId` — the org whose
+ * configuration is wanted — is REQUIRED and travels as `x-org-id`. It is never resolved to a stand-in;
+ * an org picked on brand-service's behalf is exactly the cross-org leak this closes, so a caller with
+ * no org fails loud instead of reading org-less.
  *
  * Used by the cross-org goal-bucketed cost surfaces to partition the fleet's brands by the goal they
  * optimize for, so each cost-per-outcome card only sums the spend + outcomes of the relevant brands.
  */
-export async function fetchBrandSavedEconomicsWithGoal(brandId: string): Promise<SavedEconomicsWithGoal> {
+export async function fetchBrandSavedEconomicsWithGoal(
+  brandId: string,
+  orgId: string,
+): Promise<SavedEconomicsWithGoal> {
   const url = process.env.BRAND_SERVICE_URL;
   const apiKey = process.env.BRAND_SERVICE_API_KEY;
   if (!url || !apiKey) {
     throw new Error("BRAND_SERVICE_URL or BRAND_SERVICE_API_KEY not configured");
   }
+  // No org means no question to ask — which org's economics, which org's goal? Substituting one is the
+  // leak being closed, so this fails loud rather than reading org-less.
+  if (!orgId) {
+    throw new Error(
+      "brand-service internal sales-economics read requires the org whose configuration is wanted (x-org-id); features-service will not pick one",
+    );
+  }
 
   const response = await fetchWithRetry(`${url}/internal/brands/${brandId}/sales-economics`, {
-    headers: { "x-api-key": apiKey },
+    headers: { "x-api-key": apiKey, "x-org-id": orgId },
   });
 
   if (!response.ok) {

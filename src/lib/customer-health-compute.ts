@@ -247,7 +247,12 @@ export interface CustomerHealthDeps {
   featureMemberships: (csv: string) => Promise<FeatureMembership[]>;
   accountsAudit: (csv: string, now: Date) => Promise<AccountsAudit>;
   activeUsersByUser: (csv: string, now: Date) => Promise<ActiveUsersByUser>;
-  savedEconomicsWithGoal: (brandId: string) => Promise<{ economics: SalesEconomics | null; goal: Goal | null }>;
+  /** A (org, brand) pair's own saved economics + goal. The org is part of the question — a brand id is
+   * shared by every org claiming the same domain — so it is passed, never resolved downstream. */
+  savedEconomicsWithGoal: (
+    brandId: string,
+    orgId: string,
+  ) => Promise<{ economics: SalesEconomics | null; goal: Goal | null }>;
   conversionCounts: (brandId: string) => Promise<ConversionCounts>;
   /** Realized ROI/spend for one (org, brand) via the revenue engine. Called ONLY with own economics present. */
   brandRevenue: (featureSlug: string, brandId: string, orgId: string, economics: SalesEconomics) => Promise<BrandRevenueResult>;
@@ -517,9 +522,9 @@ export async function buildCustomerHealthBoard(
     let ownershipSkipped = false;
 
     try {
-      // Light reads first: goal + economics (brand-scoped, org-less) and observed conversion counts.
+      // Light reads first: goal + economics (this row's (org, brand) pair) and observed conversion counts.
       const [saved, counts] = await Promise.all([
-        deps.savedEconomicsWithGoal(account.brandId),
+        deps.savedEconomicsWithGoal(account.brandId, account.orgId),
         deps.conversionCounts(account.brandId),
       ]);
       economics = saved.economics;
