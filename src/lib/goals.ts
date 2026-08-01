@@ -32,6 +32,16 @@
  * public/staff surfaces that iterate GOALS — speaks one vocabulary). During the fleet rename the
  * cross-org response keeps a transitional byte-equal `purchase` alias of `websitePurchase` so the admin
  * dashboard keeps rendering until it migrates.
+ *
+ * ⚠️ TWO ENTRY POINTS, TWO RESOLVERS — the token `sales` means DIFFERENT things depending on which door
+ * it came through, so the resolvers below are split by ENTRY POINT and must never be merged:
+ *   - a value on a REQUEST PARAM (`goal` / `objective` / `lens`, sent by the dashboard or
+ *     campaign-service) → `matchCombinedSalesGoal` + `matchWebsitePurchaseGoal`: `sales` = the COMBINED
+ *     goal, because the dashboard's local enum spells the combined goal `sales`.
+ *   - a value in a BRAND-SERVICE PAYLOAD (`salesEconomics.optimizationGoal`, a declared sales funnel's
+ *     `goal` / `currentGoal`) → `matchBrandServiceGoal`: `sales` = WEBSITE PURCHASE, brand-service's
+ *     older, data-backed meaning, which it documents as unchangeable.
+ * Pinned by `goals-entry-points.test.ts`.
  */
 export type Goal = "signup" | "meetingBooked" | "websitePurchase" | "sales" | "websiteVisit" | "positiveReply" | "formSubmission" | "whatsappConversation";
 
@@ -123,14 +133,32 @@ export function matchWhatsappGoal(raw: string): WhatsappGoal | null {
 }
 
 /**
- * Recognise the COMBINED-sales goal from ANY of the fleet's spellings — runtime camelCase (`sales`, =
- * brand-service CurrentGoal + campaign-service currentGoal), stored/dashboard snake_case (`sales`), and
- * `combinedSales` / `combined_sales` / `combined-sales`. Separator- and case-insensitive input tolerance
- * (NOT a silent fallback). Returns the canonical `sales`, or null when `raw` is not the combined goal.
+ * Recognise the COMBINED-sales goal on a value that arrived on a REQUEST PARAM — the `goal` /
+ * `objective` / `lens` a CALLER sends us (dashboard, campaign-service). On that entry point a bare
+ * `sales` means the COMBINED goal: the dashboard's own local enum spells the combined goal `sales` and
+ * sends it verbatim (`goalForOptimizationGoal("sales") === "sales"`, distribute.you
+ * `apps/dashboard/src/lib/strategy-model.ts`). Also accepts `combinedSales` / `combined_sales` /
+ * `combined-sales`. Separator- and case-insensitive input tolerance (NOT a silent fallback).
+ *
+ * ⚠️ ENTRY POINT MATTERS — do NOT use this on a value read out of a BRAND-SERVICE PAYLOAD. There a bare
+ * `sales` means WEBSITE PURCHASE (brand-service's older, data-backed meaning; see
+ * `matchBrandServiceGoal`). The two meanings arrive through two different doors and must keep two
+ * resolvers; collapsing them back into one is the bug this split exists to prevent.
  */
 export function matchCombinedSalesGoal(raw: string): CombinedSalesGoal | null {
   const norm = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
   return norm === "sales" || norm === "combinedsales" ? "sales" : null;
+}
+
+/**
+ * Recognise the COMBINED-sales goal on a value that arrived in a BRAND-SERVICE PAYLOAD — the twin of
+ * `matchCombinedSalesGoal` for the producer entry point. brand-service's wire token for the combined
+ * goal is `combined_sales` (its runtime token is `combinedSales`); a bare `sales` on that wire is the
+ * LEGACY spelling of website purchase and is deliberately NOT matched here.
+ */
+export function matchDeclaredCombinedSalesGoal(raw: string): CombinedSalesGoal | null {
+  const norm = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  return norm === "combinedsales" ? "sales" : null;
 }
 
 /**
@@ -148,22 +176,53 @@ export function matchWebsitePurchaseGoal(raw: string): WebsitePurchaseGoal | nul
 }
 
 /**
- * Map brand-service's STORED `OptimizationGoal` enum to the canonical Goal. This is the exact enum
- * `GET /internal/brands/:id/sales-economics` returns on `salesEconomics.optimizationGoal`:
- * `signups | booked_meetings | sales | website_visits | positive_replies | form_submissions`.
+ * Recognise the website-purchase goal on a value that arrived in a BRAND-SERVICE PAYLOAD — the twin of
+ * `matchWebsitePurchaseGoal` for the producer entry point, and the ONLY place a bare `sales` resolves to
+ * website purchase. brand-service's internal read collapses the `website_purchase` wire sub-type onto
+ * the legacy `sales` token, so that is what every stored purchase-brand reads back as.
  *
- * The MULTI-STEP spellings differ from the runtime `CurrentGoal` — the stored layer pluralises signups,
- * says `booked_meetings` for a booked meeting, `website_purchase` for the multi-step close goal, and
- * `sales` for the NEW combined goal (post fleet-rename; the former `sales`=purchase mapping is gone).
- * Accepts the runtime camel spellings + the legacy `purchase` (→ websitePurchase) for tolerance. Returns
- * null for an unrecognised value (a brand with no recognised goal is excluded from every cost bucket).
+ * ⚠️ Never reach for this on a caller's request param — there a bare `sales` means COMBINED sales.
  */
-export function matchOptimizationGoal(raw: string): Goal | null {
+export function matchBrandServiceWebsitePurchaseGoal(raw: string): WebsitePurchaseGoal | null {
+  const norm = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  return norm === "sales" ? "websitePurchase" : matchWebsitePurchaseGoal(raw);
+}
+
+/**
+ * Resolve a goal value that arrived in a BRAND-SERVICE PAYLOAD — the ONLY entry point this resolver
+ * serves. Two payload fields feed it today: `salesEconomics.optimizationGoal` on
+ * `GET /internal/brands/:id/sales-economics` (`fetchBrandSavedEconomicsWithGoal`), and a declared sales
+ * funnel's `goal` / `currentGoal` on `GET /internal/brands/:brandId/sales-funnels` (`authorized-goals`).
+ *
+ * **`sales` FROM BRAND-SERVICE MEANS WEBSITE PURCHASE.** That is brand-service's older, data-backed
+ * meaning, and it is documented there as unchangeable: `sales` is the legacy wire spelling of the
+ * website-purchase goal, "so it ALWAYS means website-purchase, and can NEVER be re-purposed for the new
+ * combined goal (that would silently reinterpret every stored purchase-brand)". Its internal read
+ * collapses the wire sub-type, so `website_purchase` brands read back as `sales` — verified live on
+ * brand `emailtoolshub.com` (stored `website_purchase`, current goal `purchase`) → `"sales"`. The
+ * combined goal has its own brand-new token, `combined_sales` / runtime `combinedSales`, which the old
+ * dashboard never sends and which therefore can never collide with a stored purchase row.
+ *
+ * ⚠️ This is the OPPOSITE of what `sales` means on a REQUEST PARAM, where the dashboard's local enum
+ * spells the COMBINED goal `sales` and sends it as the `goal` param. Two entry points, two meanings, two
+ * resolvers: caller params go through `matchCombinedSalesGoal`, producer payloads through this one. Do
+ * NOT collapse them — an earlier doc comment here asserted the `sales`=purchase mapping "is gone post
+ * fleet-rename", which was never true of brand-service, and every website-purchase brand in production
+ * was consequently bucketed as combined sales in the fleet cost-per-outcome benchmark.
+ *
+ * The stored spellings otherwise differ from the runtime `CurrentGoal` — the stored layer pluralises
+ * signups and says `booked_meetings` for a booked meeting. Accepts the runtime camel spellings + the
+ * legacy `purchase` (→ websitePurchase) for tolerance. Returns null for an unrecognised value (a brand
+ * with no recognised goal is excluded from every cost bucket).
+ */
+export function matchBrandServiceGoal(raw: string): Goal | null {
   const single = matchSingleStepGoal(raw);
   if (single) return single;
   if (matchFormSubmissionGoal(raw)) return "formSubmission";
-  if (matchCombinedSalesGoal(raw)) return "sales";
-  if (matchWebsitePurchaseGoal(raw)) return "websitePurchase"; // incl. legacy `purchase`/`website_purchase`
+  // `combined_sales` / `combinedSales` ONLY — a bare `sales` falls through to website purchase below.
+  if (matchDeclaredCombinedSalesGoal(raw)) return "sales";
+  // incl. the legacy `sales` + `purchase` spellings and the preferred `website_purchase`.
+  if (matchBrandServiceWebsitePurchaseGoal(raw)) return "websitePurchase";
   if (matchWhatsappGoal(raw)) return "whatsappConversation";
   switch (raw) {
     case "signups":

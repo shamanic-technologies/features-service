@@ -382,7 +382,7 @@ import {
   buildCostPerOutcomeDistribution,
   type BucketedBrand,
 } from "./cross-org-cost-per-outcome.js";
-import { matchOptimizationGoal, type Goal } from "./goals.js";
+import { matchBrandServiceGoal, type Goal } from "./goals.js";
 
 function brand(brandId: string, goal: Goal, spend: number, clicks: number, replies: number): BucketedBrand {
   return {
@@ -394,25 +394,26 @@ function brand(brandId: string, goal: Goal, spend: number, clicks: number, repli
   };
 }
 
-describe("matchOptimizationGoal (brand-service stored enum → Goal)", () => {
+describe("matchBrandServiceGoal (brand-service stored enum → Goal)", () => {
   it("maps every stored OptimizationGoal spelling", () => {
-    expect(matchOptimizationGoal("signups")).toBe("signup");
-    expect(matchOptimizationGoal("booked_meetings")).toBe("meetingBooked");
-    expect(matchOptimizationGoal("sales")).toBe("sales");
-    expect(matchOptimizationGoal("website_visits")).toBe("websiteVisit");
-    expect(matchOptimizationGoal("positive_replies")).toBe("positiveReply");
-    expect(matchOptimizationGoal("form_submissions")).toBe("formSubmission");
-    expect(matchOptimizationGoal("website_purchase")).toBe("websitePurchase");
-    expect(matchOptimizationGoal("sales")).toBe("sales");
+    expect(matchBrandServiceGoal("signups")).toBe("signup");
+    expect(matchBrandServiceGoal("booked_meetings")).toBe("meetingBooked");
+    // brand-service's legacy `sales` is the website-purchase goal, NOT combined sales.
+    expect(matchBrandServiceGoal("sales")).toBe("websitePurchase");
+    expect(matchBrandServiceGoal("website_visits")).toBe("websiteVisit");
+    expect(matchBrandServiceGoal("positive_replies")).toBe("positiveReply");
+    expect(matchBrandServiceGoal("form_submissions")).toBe("formSubmission");
+    expect(matchBrandServiceGoal("website_purchase")).toBe("websitePurchase");
+    expect(matchBrandServiceGoal("combined_sales")).toBe("sales");
   });
   it("also tolerates the runtime camel spellings", () => {
-    expect(matchOptimizationGoal("signup")).toBe("signup");
-    expect(matchOptimizationGoal("meetingBooked")).toBe("meetingBooked");
-    expect(matchOptimizationGoal("purchase")).toBe("websitePurchase");
+    expect(matchBrandServiceGoal("signup")).toBe("signup");
+    expect(matchBrandServiceGoal("meetingBooked")).toBe("meetingBooked");
+    expect(matchBrandServiceGoal("purchase")).toBe("websitePurchase");
   });
   it("returns null for an unrecognised value", () => {
-    expect(matchOptimizationGoal("nonsense")).toBeNull();
-    expect(matchOptimizationGoal("")).toBeNull();
+    expect(matchBrandServiceGoal("nonsense")).toBeNull();
+    expect(matchBrandServiceGoal("")).toBeNull();
   });
 });
 

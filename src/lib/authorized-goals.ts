@@ -27,7 +27,7 @@
  */
 
 import type { SalesEconomics } from "./funnel-registry.js";
-import { matchOptimizationGoal, type Goal } from "./goals.js";
+import { matchBrandServiceGoal, type Goal } from "./goals.js";
 import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
 
 /** Raised when a declared funnel names a goal features-service cannot map. Fails loud — a goal the
@@ -81,11 +81,15 @@ const CONSUMED_RATE_KEYS = [
  * token ("consumers never see a new value"), while features-service models form submissions as their
  * OWN goal with their own funnel (visit→form→paid). Reading the runtime token would arbitrate a Form
  * Magnet funnel on signup economics — a wrong answer that looks right.
+ *
+ * Both fields are BRAND-SERVICE PAYLOAD values, so they resolve through `matchBrandServiceGoal` — where
+ * `sales` means WEBSITE PURCHASE and the combined goal arrives as `combined_sales` / `combinedSales`.
+ * Never resolve a payload value with the request-param resolvers (see the `goals.ts` header).
  */
 function goalOfFunnel(funnel: DeclaredSalesFunnel): Goal {
-  const wire = typeof funnel.goal === "string" ? matchOptimizationGoal(funnel.goal) : null;
+  const wire = typeof funnel.goal === "string" ? matchBrandServiceGoal(funnel.goal) : null;
   if (wire) return wire;
-  const runtime = typeof funnel.currentGoal === "string" ? matchOptimizationGoal(funnel.currentGoal) : null;
+  const runtime = typeof funnel.currentGoal === "string" ? matchBrandServiceGoal(funnel.currentGoal) : null;
   if (runtime) return runtime;
   throw new UnknownAuthorizedGoalError(funnel.goal ?? funnel.currentGoal ?? JSON.stringify(funnel));
 }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { SalesEconomics } from "./funnel-registry.js";
 import { fetchWithRetry } from "./fetch-retry.js";
-import { matchOptimizationGoal, type Goal } from "./goals.js";
+import { matchBrandServiceGoal, type Goal } from "./goals.js";
 
 export class BrandOwnershipError extends Error {
   constructor(
@@ -121,7 +121,7 @@ export async function fetchBrandSavedEconomicsWithGoal(
   if (!saved) return { economics: null, goal: null };
 
   const rawGoal = saved.optimizationGoal;
-  const goal = typeof rawGoal === "string" ? matchOptimizationGoal(rawGoal) : null;
+  const goal = typeof rawGoal === "string" ? matchBrandServiceGoal(rawGoal) : null;
   return { economics: saved, goal };
 }
 
