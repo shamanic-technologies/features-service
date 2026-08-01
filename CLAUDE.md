@@ -61,10 +61,17 @@ absence signals anything). Reading either as the set is a bug.
   price a Form Magnet funnel on signup economics: a wrong answer that looks right. `currentGoal` is the
   fallback only when the wire goal maps to nothing. `matchOptimizationGoal` covers every value the
   producer can echo (incl. the dashboard's `sales_meetings` spelling).
-- **A brand that declared NO funnel ⇒ `[]` ⇒ 200 `unrankable` / `no_authorized_goals`.** A read that
-  cannot be ANSWERED (transport, non-OK, a brand-service predating the funnel model → 404) throws
+- **READ `declared` BEFORE `funnels` — the flag is the ONLY thing separating "stated none" from "never
+  stated", and the two payloads are byte-identical on the list.** `declared: true` + `[]` = the brand
+  STATED it sells through no funnel ⇒ 200 `unrankable` / `no_authorized_goals`. `declared: false` = no set
+  has ever been stated ⇒ a PRODUCER GAP, so it joins every other read that cannot be ANSWERED (transport,
+  non-OK, a brand-service predating the funnel model → 404, a payload missing the flag) in throwing
   `SalesFunnelsUnavailableError` ⇒ **502 `reason: "authorized_goals_unavailable"`** naming what failed —
-  never a substituted default set. Those two are DIFFERENT answers; do not collapse them. An UNMAPPABLE
+  never a substituted default set. Never INFER the flag from the list: dropping it (#704, the first ship
+  parsed `{ funnels }` alone) reported every brand as having ANSWERED "I sell through nothing" when none
+  had ever been asked, which is the exact substitution this endpoint rules out — and it made
+  `authorized_goals_unavailable` reachable only through a transport failure, never through the producer
+  gap it exists for. Guard: the paired route test driving BOTH flags off one empty list. An UNMAPPABLE
   goal value likewise 502s (`reason: "authorized_goal_unrecognised"`) rather than being dropped, which
   would silently arbitrate a smaller set.
 - **TWO FUNNELS CAN SHARE ONE GOAL and are MERGED, not deduped-by-first.** `reply_meeting` and
