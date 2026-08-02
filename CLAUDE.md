@@ -38,61 +38,82 @@ Every internal read of per-brand configuration therefore sends **`x-org-id`**, a
   call-site guards in `src/routes/goal-arbitration.test.ts` (the caller's org rides the funnels read) and
   `src/lib/customer-health-compute.test.ts` (each row asks under its own org). (Set 2026-08-01.)
 
-## `GET /features/:slug/goal-arbitration` — the GOAL leg is arbitrated HERE; ranking basis = RETURN PER DOLLAR (`lifetimeRevenueUsd / costPerPaidClientUsd`), never a cost-per-outcome comparison
+## `GET /features/:slug/goal-arbitration` — RANKS every DECLARED sales funnel by RETURN PER DOLLAR. It is a RECOMMENDATION, not a selection, and an UNFUNDED funnel is still ranked
 
-campaign-service used to SUPPLY the goal (it forwarded the brand's single configured `currentGoal`) and
-ask us only to rank workflows and audiences underneath it — so nothing in the fleet ever checked whether
-another goal the brand authorizes would return more per dollar. This endpoint adds the missing leg:
-**one request per brand returns the best GOAL, the best WORKFLOW for it, and the per-audience EVIDENCE
-for that pairing.** campaign-service greedily picks the first two and Thompson-samples the third; it
-decides none of them and it must NEVER fan out one request per goal (that would put an economics ranking
-in a pacing service and multiply requests per tick, for what is ONE pure pass over evidence already
-assembled here).
+**The funding decides what runs; this endpoint decides nothing.** It used to BE the decision —
+campaign-service asked which goal to work and ran the one that came back. That ended when the customer
+started funding each funnel separately (billing-service#344) and campaign-service began working EVERY
+funded funnel, pacing each against its own ceiling and taking whichever has spent the least relative to
+what it may spend (campaign-service#308, prod v0.48.0). So what this service owes is the one question
+only it can answer — it holds the outcomes, the spend and the economics — **which funnel returns best,
+and how do the others compare**. That is advice a customer reads to decide where to put their money.
 
-**RANKING BASIS (the documented, stable rule — do NOT rank goals on cost-per-outcome):**
+- **`ranking` IS the answer; `recommendation` is merely its head.** `ranking` carries EVERY declared
+  funnel, `rank` 1..N best-return-first, unrankable ones last with `rank: null` and their reason. The
+  COMPARISON is the value now, not the winner — a shape that says "this is THE goal to run" would be
+  lying about what the consumer does with it.
+- **NEVER ask billing which funnels are funded.** Ranking is about HISTORY: what a funnel has returned
+  per dollar is what makes it comparable, and being unfunded is a decision the customer JUST MADE, not a
+  reason to hide how it performed. A ranking that dropped the unfunded ones would answer "where should I
+  move my budget?" with only the places the budget already is. There is no billing read anywhere on this
+  path and no funding field on the response; funding is campaign-service's question at run time and it
+  already asks it. Guards: the route test asserting no request URL matches `/billing|budget|ceiling/i`,
+  and the `declaredFunnelsToRank` entry-shape test (`{funnelKey,name,goal,economics}` and nothing else).
+- **`arbitration` / `workflow` / `rows` stay byte-compatible — campaign-service reads them in PROD.**
+  `fetchGoalArbitration` (`features-workflow-projection-client.ts`) matches `arbitration.status ===
+  "resolved"`, `arbitration.goal`, `workflow.workflowDynastySlug`, `rows[]`, and the 502 body substring
+  `authorized_goals_unavailable`; a campaign that states its OWN goal (every funnel campaign does) is
+  never arbitrated, so the election now only paces a brand with NO per-funnel funding. All of it is
+  DERIVED from the head of `ranking`, so the two can never name different funnels — verified by a route
+  test. `candidates` + `authorizedGoals` were REMOVED: nothing in the fleet read either (checked in
+  campaign-service, api-service — a pure passthrough proxy — and distribute.you), and keeping a second
+  goal-grain shape beside `ranking` is the two-vocabularies smell.
+
+**RANKING BASIS (the documented, stable rule — do NOT rank on cost-per-outcome):**
 
 ```
-returnPerDollar(goal) = lifetimeRevenueUsd / costPerPaidClientUsd(goal, that goal's best workflow)
+returnPerDollar(funnel) = lifetimeRevenueUsd / costPerPaidClientUsd(funnel, its best workflow)
 ```
 
-= the EXISTING `workflow-projection` `roiMultiple` (= 100 / `cacPct`). It is the ONLY cross-goal-comparable
-number: a cost-per-outcome is denominated in each goal's OWN outcome (a click, a reply, a booked meeting),
-so comparing two goals' cost-per-outcome compares two different things. Normalising each goal through ITS
-OWN funnel to the same terminal unit — a paying client's lifetime revenue — is what makes them
-commensurable. Winner = `argmax returnPerDollar`; a tie breaks on the canonical `GOALS` index, so the same
-evidence + the same economics always produce the same answer.
+= the EXISTING `workflow-projection` `roiMultiple` (= 100 / `cacPct`). It is the ONLY cross-funnel-comparable
+number: a cost-per-outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting),
+so comparing two funnels' cost-per-outcome compares two different things. Normalising each funnel through ITS
+OWN chain to the same terminal unit — a paying client's lifetime revenue — is what makes them commensurable.
+Rankable funnels sort on `returnPerDollar` desc; ties break on the canonical `GOALS` index then `funnelKey`,
+so the same evidence + the same economics always produce the same list.
 
-- **Best workflow per goal = `argmin resolved.costPerOutcomeUsd` over the BRAND-LEVEL rows**
+- **Best workflow per funnel = `argmin resolved.costPerOutcomeUsd` over the BRAND-LEVEL rows**
   (`audienceId === null`) — byte-for-byte the ungated argmin `fetchBrandProjectedParents` and the Strategy
   page's `pickBestBrandRow` use, so this endpoint can never crown a different workflow than those surfaces
-  for the same brand + goal. Ranking the workflow on the COST while ranking the goal on the RETURN is not
-  a mix-up: within one goal `costPerPaidClient = costPerOutcome / (outcome→paid rate)` and that rate is a
-  brand-level constant, so the two argmins are the SAME ordering — the cost keeps coherence with the live
+  for the same brand + goal. Ranking the workflow on the COST while ranking the funnel on the RETURN is not
+  a mix-up: within one funnel `costPerPaidClient = costPerOutcome / (outcome→paid rate)` and that rate is a
+  constant for it, so the two argmins are the SAME ordering — the cost keeps coherence with the live
   surfaces, and the return falls out of the winning row.
-- **A goal with no defined return is NEVER elected.** `whatsappConversation` has no path to a paying client
-  at all (brand-service exposes no whatsapp→paid rate), so its return is undefined — not zero, and never
-  "borrow the click funnel". It is emitted as a candidate with `rankable: false` +
-  `unrankableReason: "no_paid_client_path"`. Same for `no_economics` / `no_workflow_evidence` /
-  `no_return_defined` (a paid-client cost exists but the brand states no lifetime revenue).
-- **"A goal won" and "nothing could be ranked" are DISTINGUISHABLE, and never an error that hides why.**
-  `arbitration.status` is `"resolved"` (with `goal` + `workflow` + `rows`) or `"unrankable"` with a reason:
-  `"no_authorized_goals"` (the brand authorizes an EMPTY set) vs `"no_rankable_goal"` (every authorized
-  goal is unrankable — each candidate carries its own reason). Both are 200s.
-- **`rows` are the WINNING PAIRING's rows only** — the brand-level row plus EVERY active audience's row for
-  the elected dynasty, in the SAME `ProjectionRow` shape `/workflow-projection` serves, so campaign-service's
+- **A funnel with no defined return is ranked LAST, never dropped.** A whatsapp funnel has no path to a
+  paying client at all (brand-service exposes no whatsapp→paid rate), so its return is undefined — not
+  zero, and never "borrow the click funnel". It stays in `ranking` with `rankable: false` +
+  `unrankableReason: "no_paid_client_path"`, carrying whatever IS known (its own outcome cost + best
+  workflow). Same for `no_economics` / `no_workflow_evidence` (no history yet) / `no_return_defined` (a
+  paid-client cost exists but the brand states no lifetime revenue). Hiding any of them would leave the
+  customer comparing against a list missing one of their own funnels.
+- **"A funnel is recommended" and "nothing could be ranked" are DISTINGUISHABLE, never an error that
+  hides why.** `arbitration.status` is `"resolved"` or `"unrankable"` with a reason:
+  `"no_declared_funnels"` (nothing to rank) vs `"no_rankable_funnel"` (every declared funnel is
+  unrankable — each entry carries its own reason). Both are 200s.
+- **`rows` are the RECOMMENDED PAIRING's rows only** — the brand-level row plus EVERY active audience's row
+  for that dynasty, in the SAME `ProjectionRow` shape `/workflow-projection` serves, so campaign-service's
   audience bandit reuses its existing parser (`resolvedOutcomeCount` successes, `evidence.observedContacted`
   trials, `evidence.spentUsd` cost; an audience with no attributed evidence carries no audience grain = a
   cold arm, and still resolves via the cascade — never absent, never a false $0).
 
-**The AUTHORIZED SET is brand-service's to own** = the SALES FUNNELS a brand DECLARED it sells through,
-read from **`GET /internal/brands/:brandId/sales-funnels`** (api-key + `x-org-id`, brandId in path —
-see the org-scoping section below)
-via `src/lib/sales-funnels-client.ts` → mapped by `src/lib/authorized-goals.ts`. **Never accepted from
-the caller** (campaign-service must not be able to influence which goals compete) and **never inferred** —
-a brand's single `optimizationGoal` is ONE goal, not an authorization set, and brand-service is explicit
-that its brand-wide economics row cannot stand in for a declaration (every rate on it is NOT NULL with a
-server default, so a brand that configured nothing still reads back plausible-looking numbers and no
-absence signals anything). Reading either as the set is a bug.
+**The DECLARED SET is brand-service's to own** = the SALES FUNNELS a brand DECLARED it sells through,
+read from **`GET /internal/brands/:brandId/sales-funnels`** (api-key + `x-org-id`, brandId in path — see
+the org-scoping section below) via `src/lib/sales-funnels-client.ts` → mapped by
+`src/lib/declared-funnels.ts`. **Never accepted from the caller** and **never inferred** — a brand's
+single `optimizationGoal` is ONE goal, not a set, and brand-service is explicit that its brand-wide
+economics row cannot stand in for a declaration (every rate on it is NOT NULL with a server default, so a
+brand that configured nothing still reads back plausible-looking numbers and no absence signals
+anything). Reading either as the set is a bug.
 
 - **Read the WIRE `goal`, NOT `currentGoal`.** brand-service deliberately collapses `form_submissions`
   onto the `signup` runtime token so "consumers never see a new value" — but features-service models form
@@ -100,31 +121,25 @@ absence signals anything). Reading either as the set is a bug.
   price a Form Magnet funnel on signup economics: a wrong answer that looks right. `currentGoal` is the
   fallback only when the wire goal maps to nothing. `matchBrandServiceGoal` covers every value the
   producer can echo (incl. the dashboard's `sales_meetings` spelling).
-- **READ `declared` BEFORE `funnels` — the flag is the ONLY thing separating "stated none" from "never
-  stated", and the two payloads are byte-identical on the list.** `declared: true` + `[]` = the brand
-  STATED it sells through no funnel ⇒ 200 `unrankable` / `no_authorized_goals`. `declared: false` = no set
-  has ever been stated ⇒ a PRODUCER GAP, so it joins every other read that cannot be ANSWERED (transport,
-  non-OK, a brand-service predating the funnel model → 404, a payload missing the flag) in throwing
-  `SalesFunnelsUnavailableError` ⇒ **502 `reason: "authorized_goals_unavailable"`** naming what failed —
-  never a substituted default set. Never INFER the flag from the list: dropping it (#704, the first ship
-  parsed `{ funnels }` alone) reported every brand as having ANSWERED "I sell through nothing" when none
-  had ever been asked, which is the exact substitution this endpoint rules out — and it made
-  `authorized_goals_unavailable` reachable only through a transport failure, never through the producer
-  gap it exists for. Guard: the paired route test driving BOTH flags off one empty list. An UNMAPPABLE
-  goal value likewise 502s (`reason: "authorized_goal_unrecognised"`) rather than being dropped, which
-  would silently arbitrate a smaller set.
-- **TWO FUNNELS CAN SHARE ONE GOAL and are MERGED, not deduped-by-first.** `reply_meeting` and
-  `visit_meeting` both optimize for a booked meeting via different first signals, and this service's
-  meeting projection spans BOTH channels (`clicks·v2m + replies·r2m`), so their rate sets are
-  complementary legs of one projection — keeping only the first would arbitrate the goal on half its
-  economics. Rates union (first declaration wins a collision, producer order); a lifetime revenue stated
-  by several funnels of one goal resolves to the **LOWEST** (deterministic, and it can only understate a
-  goal's return, never inflate it into winning).
-- **PER-FUNNEL economics** are merged OVER the brand's effective set for THAT goal only, so a brand
-  selling a $200 self-serve plan and a $20k contract is arbitrated on each funnel's own revenue instead
-  of one blended number. A rate the brand never declared arrives as `null` and is **DROPPED** — never
-  coerced to 0, which would zero-collapse the funnel. Nothing declared ⇒ the brand's effective economics
-  apply unchanged (today's semantics, not a fabricated value).
+- **The LIST answers it alone — an EMPTY list is a PRODUCER GAP, not "I sell through nothing".** An org
+  that has answered always keeps at least one funnel active (brand-service refuses to switch off the
+  last), so "answered but sells through none" cannot occur. An empty list therefore joins every other
+  read that cannot be ANSWERED (transport, non-OK, a brand-service predating the funnel model → 404) in
+  throwing `SalesFunnelsUnavailableError` ⇒ **502 `reason: "authorized_goals_unavailable"`** naming what
+  failed — never a substituted default set. The wire `reason` keeps that legacy spelling on purpose:
+  campaign-service matches on it verbatim to tell "no ranking yet" from a genuine fault. An UNMAPPABLE
+  goal value likewise 502s (`reason: "authorized_goal_unrecognised"`) rather than being dropped.
+- **TWO FUNNELS SHARING ONE GOAL are ranked SEPARATELY — the merge is GONE (supersedes #704–#711).**
+  `reply_meeting` and `visit_meeting` used to collapse into one `meetingBooked` entry whose rates unioned
+  and whose lifetime revenue took the LOWEST of the two, because a single-elected-goal answer had no
+  place to put two funnels. The customer now funds them separately, so a merged row cannot answer "where
+  should I move my budget?" for either. Nothing is lost: a rate a funnel does not state falls back to the
+  brand's EFFECTIVE economics (never to zero, never to half a funnel), and each funnel is now priced on
+  its OWN lifetime revenue — which is the whole point of per-funnel economics (a $200 self-serve plan and
+  a $20k contract ranked on their own revenue, not one blend).
+- **PER-FUNNEL economics** are merged OVER the brand's effective set for THAT funnel only. A rate the
+  brand never declared arrives as `null` and is **DROPPED** — never coerced to 0, which would
+  zero-collapse the funnel. Nothing declared ⇒ the brand's effective economics apply unchanged.
 - **A SHARED FIELD NAME IS NOT A SHARED MEANING — the meeting chain COMPOSES** (`meetingChainCloseRate`).
   Every funnel rate key lines up 1:1 with `SalesEconomics` EXCEPT `meetingToClosePct`. Our projection
   multiplies it by `visitToMeetingPct`/`replyToMeetingPct`, both of which produce a meeting **BOOKED**,
@@ -138,10 +153,9 @@ absence signals anything). Reading either as the set is a bug.
   **Do NOT "simplify" this back to a name-match copy.** #707 did (reasoning that we model no show-up
   step, so importing it would rename a rate we never read) — but the effect of dropping it is asserting
   a **100% show-up rate**: a brand declaring 50% show-up and 40% attended→close scored 40% booked→paid
-  instead of 20%, halving its cost per paid client and DOUBLING the return `meetingBooked` is ranked on
-  — enough to hand it an arbitration it should have lost. Guard: the three `meetingChainCloseRate` cases
-  in `authorized-goals.test.ts` + the route-level "not a free 100%" test, which drives the SAME funnel
-  with and without the show-up rate and asserts the return halves.
+  instead of 20%, halving its cost per paid client and DOUBLING the return `meetingBooked` is ranked on.
+  Guard: the `meetingChainCloseRate` cases in `declared-funnels.test.ts` + the route-level "not a free
+  100%" test, which drives the SAME funnel with and without the show-up rate and asserts the return halves.
 - **Consumer-conforms-to-producer, learned the expensive way (2026-07-31):** the first ship guessed the
   producer would put the set on the effective-economics payload under one of several plausible names and
   shipped a tolerant parser for that guess. brand-service had ALREADY shipped it to staging as *sales
@@ -149,22 +163,24 @@ absence signals anything). Reading either as the set is a bug.
   prod. The dup-check missed it because it searched the CONSUMER's vocabulary ("authorized goals"), not
   the producer's. When a producer feature is "in flight", grep the producer repo for the CONCEPT before
   designing a reader — and read the deployed shape from the registry, never a shape you authored.
-- A goal that needs a rate the brand's economics do not carry still FAILS LOUD (the same behaviour
+- A funnel that needs a rate the brand's economics do not carry still FAILS LOUD (the same behaviour
   `/workflow-projection` has for that goal today) — a missing producer rate is a data gap to surface, not
   an "unrankable" verdict to record.
 
 **Cost + coherence:** the evidence fan-out is goal-INDEPENDENT, so this endpoint reuses the SAME Gold
 snapshot `/workflow-projection` maintains (view `workflow-projection-evidence`, scope key
-`featureSlug + orgId + brandId + pricing`) and arbitrating N goals adds ZERO IO over reading one — N pure
+`featureSlug + orgId + brandId + pricing`) and ranking N funnels adds ZERO IO over reading one — N pure
 `projectFromEvidence` calls. Two small brand-service reads ride the request path (effective economics +
 declared funnels), both live. Economics is read LIVE (never cached), same freshness rule as
 `/workflow-projection`. `?pricing=gross|net` behaves identically to its siblings. **`/workflow-projection`
-and `/audience-stats` are UNTOUCHED** — campaign-service and the dashboard are live on them and migrate
-after this ships. Guard suites: `src/lib/goal-arbitration.test.ts` (election, never-elect-undefined-return,
-determinism/tie-break, per-funnel economics, winning-pairing rows), `src/lib/authorized-goals.test.ts`
-(wire-goal-not-currentGoal, merge-two-meeting-funnels, null rates dropped, declared-nothing = []), `src/routes/goal-arbitration.test.ts`
-(drives BOTH endpoints from ONE fixture: the elected workflow equals the single-goal read's own argmin, and
-the single-goal read is byte-identical with and without an authorized set). (Set 2026-07-31.)
+and `/audience-stats` are UNTOUCHED.** Guard suites: `src/lib/goal-arbitration.test.ts` (ordered ranking,
+arbitration-equals-ranking-head, two funnels on one goal ranked apart, never-rank-undefined-return,
+determinism/tie-break incl. funnelKey, no-funding-input, recommended-pairing rows),
+`src/lib/declared-funnels.test.ts` (wire-goal-not-currentGoal, NO merge, null rates dropped, meeting-chain
+compose, entry shape carries no funding), `src/routes/goal-arbitration.test.ts` (drives BOTH endpoints from
+ONE fixture: the recommended workflow equals the single-goal read's own argmin, the deployed
+campaign-service fields still resolve, and no billing URL is ever requested). (Set 2026-08-02; supersedes
+the goal-grain election documented 2026-07-31.)
 
 ## Per-audience attribution is SEND-TAG on BOTH `audience-stats` + `workflow-projection` — cost AND outcome one basis; `workflow-projection` audience grain is now PER-(audience × dynasty), enumerating EVERY active audience (supersedes the membership + audience-WIDE notes below)
 

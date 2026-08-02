@@ -33,7 +33,7 @@ process.env.BRAND_SERVICE_API_KEY = "brand-key";
 
 const { matchBrandServiceGoal, matchCombinedSalesGoal, matchDeclaredCombinedSalesGoal } = await import("./goals.js");
 const { normalizeObjective, goalInObjectiveBucket } = await import("./cross-org-cost-per-outcome.js");
-const { authorizedGoalsFromFunnels } = await import("./authorized-goals.js");
+const { declaredFunnelsToRank } = await import("./declared-funnels.js");
 const { fetchBrandSavedEconomicsWithGoal } = await import("./sales-economics-client.js");
 const { validateAudienceStatsQuery } = await import("./audience-stats-compute.js");
 
@@ -118,15 +118,15 @@ describe("ENTRY POINT A — a value read out of a brand-service PAYLOAD", () => 
     });
   });
 
-  describe("real reader: authorizedGoalsFromFunnels (declared sales funnels)", () => {
-    it("a declared funnel whose wire goal is `sales` authorizes websitePurchase", () => {
-      const entries = authorizedGoalsFromFunnels([funnel("sales", "purchase")]);
-      expect(entries.map((e) => e.goal)).toEqual(["websitePurchase"]);
+  describe("real reader: declaredFunnelsToRank (declared sales funnels)", () => {
+    it("a declared funnel whose wire goal is `sales` ranks as websitePurchase", () => {
+      const entries = declaredFunnelsToRank([funnel("sales", "purchase")]);
+      expect(entries.map((e: { goal: string }) => e.goal)).toEqual(["websitePurchase"]);
     });
 
-    it("a declared funnel whose wire goal is `combined_sales` authorizes combined sales", () => {
-      const entries = authorizedGoalsFromFunnels([funnel("combined_sales", "combinedSales")]);
-      expect(entries.map((e) => e.goal)).toEqual(["sales"]);
+    it("a declared funnel whose wire goal is `combined_sales` ranks as combined sales", () => {
+      const entries = declaredFunnelsToRank([funnel("combined_sales", "combinedSales")]);
+      expect(entries.map((e: { goal: string }) => e.goal)).toEqual(["sales"]);
     });
   });
 
