@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from "vitest";
 // suite runs in CI, where no DB env is set.
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
-const { arbitrateGoals } = await import("./goal-arbitration.js");
+const { rankDeclaredFunnels } = await import("./goal-arbitration.js");
 const { GOALS } = await import("./goals.js");
 type Evidence = Awaited<ReturnType<typeof import("../routes/workflow-projection.js")["fetchWorkflowProjectionEvidence"]>>;
 
@@ -14,7 +14,7 @@ type Evidence = Awaited<ReturnType<typeof import("../routes/workflow-projection.
 //   dyn-a  $1000 / 100 clicks / 50 replies / 200 contacted  → click $10,  reply $20
 //   dyn-b  $1000 /  10 clicks / 100 replies / 200 contacted → click $100, reply $10
 // So the cheapest CLICK workflow (dyn-a) and the cheapest REPLY workflow (dyn-b) are DIFFERENT — the
-// best workflow genuinely depends on which goal wins.
+// best workflow genuinely depends on which funnel is being priced.
 
 function wf(slug: string, dynasty: string, name: string) {
   return {
@@ -73,66 +73,104 @@ const ECONOMICS = {
   replyToPaidClientPct: 25,
 };
 
-const goals = (...names: Array<(typeof GOALS)[number]>) => names.map((goal) => ({ goal, economics: null }));
+type Goal = (typeof GOALS)[number];
 
-const run = (authorized: ReturnType<typeof goals>, over: Partial<Evidence> = {}, economics: unknown = ECONOMICS) =>
-  arbitrateGoals({
+/** One declared funnel to rank; the key defaults to the goal name so tests stay readable. */
+const f = (goal: Goal, over: { funnelKey?: string; name?: string; economics?: Record<string, number> } = {}) => ({
+  funnelKey: over.funnelKey ?? `${goal}_funnel`,
+  name: over.name ?? `${goal} funnel`,
+  goal,
+  economics: over.economics ?? null,
+});
+
+const run = (
+  funnels: ReturnType<typeof f>[],
+  over: Partial<Evidence> = {},
+  economics: unknown = ECONOMICS,
+) =>
+  rankDeclaredFunnels({
     featureSlug: "sales-cold-email-outreach",
-    authorizedGoals: authorized,
+    funnels: funnels as never,
     evidence: evidence(over),
     economics: economics as never,
   });
 
-const candidate = (res: ReturnType<typeof run>, goal: string) => res.candidates.find((c) => c.goal === goal)!;
+const entry = (res: ReturnType<typeof run>, funnelKey: string) =>
+  res.ranking.find((r) => r.funnelKey === funnelKey)!;
 
-describe("arbitrateGoals — which authorized goal returns the most per dollar", () => {
-  it("elects the goal with the highest return per dollar, and ITS best workflow (not the other goal's)", () => {
-    const res = run(goals("signup", "positiveReply"));
+describe("rankDeclaredFunnels — which declared funnel returns the most per dollar", () => {
+  it("RANKS every declared funnel, best return first, and names the head as a recommendation", () => {
+    const res = run([f("signup"), f("positiveReply")]);
+
+    // The ranking IS the answer: an ordered comparison, not just a winner.
+    expect(res.ranking.map((r) => r.funnelKey)).toEqual(["positiveReply_funnel", "signup_funnel"]);
+    expect(res.ranking.map((r) => r.rank)).toEqual([1, 2]);
+    // reply cost $10 on dyn-b ÷ 25% = $40 per paid client; $1000 LTR / $40 = 25× per dollar.
+    expect(res.ranking[0].returnPerDollar).toBeCloseTo(25, 6);
+    // The runner-up is scored on ITS OWN best workflow — the cheapest-click one, not dyn-b.
+    expect(res.ranking[1].returnPerDollar).toBeCloseTo(2, 6);
+    expect(res.ranking[1].workflow?.workflowDynastySlug).toBe("dyn-a");
+
+    expect(res.recommendation?.funnelKey).toBe("positiveReply_funnel");
+    expect(res.recommendation?.goal).toBe("positiveReply");
+    expect(res.recommendation?.returnPerDollar).toBeCloseTo(25, 6);
+    expect(res.recommendation?.workflow.workflowDynastySlug).toBe("dyn-b");
+    expect(res.recommendedBudgetUsd).toBeCloseTo(100, 6); // 10 target outcomes × $10
+  });
+
+  it("the compatibility `arbitration` view can never name a funnel other than the head of the ranking", () => {
+    const res = run([f("signup"), f("positiveReply")]);
 
     expect(res.arbitration.status).toBe("resolved");
-    expect(res.arbitration.goal).toBe("positiveReply");
-    expect(res.arbitration.objective).toBe("positive_replies");
+    expect(res.arbitration.goal).toBe(res.ranking[0].goal);
+    expect(res.arbitration.objective).toBe(res.ranking[0].objective);
     expect(res.arbitration.reason).toBeNull();
-    // reply cost $10 on dyn-b ÷ 25% = $40 per paid client; $1000 LTR / $40 = 25× per dollar.
-    expect(res.arbitration.returnPerDollar).toBeCloseTo(25, 6);
-    expect(res.arbitration.costPerPaidClientUsd).toBeCloseTo(40, 6);
-    // positiveReply's outcome cost IS the reply cost (single-step goal).
-    expect(res.arbitration.costPerOutcomeUsd).toBeCloseTo(10, 6);
-    expect(res.workflow?.workflowDynastySlug).toBe("dyn-b");
-    expect(res.workflow?.workflowDynastyName).toBe("Dynasty B");
-    expect(res.recommendedBudgetUsd).toBeCloseTo(100, 6); // 10 target outcomes × $10
-
-    // The loser is still scored, on ITS OWN best workflow — the cheapest-click one, not dyn-b.
-    const signup = candidate(res, "signup");
-    expect(signup.rankable).toBe(true);
-    expect(signup.returnPerDollar).toBeCloseTo(2, 6);
-    expect(signup.workflow?.workflowDynastySlug).toBe("dyn-a");
+    expect(res.arbitration.returnPerDollar).toBe(res.ranking[0].returnPerDollar);
+    expect(res.arbitration.costPerOutcomeUsd).toBe(res.ranking[0].costPerOutcomeUsd);
+    expect(res.arbitration.costPerPaidClientUsd).toBe(res.ranking[0].costPerPaidClientUsd);
+    expect(res.arbitration.grain).toBe(res.ranking[0].grain);
+    expect(res.workflow).toEqual(res.ranking[0].workflow);
   });
 
-  it("each goal's own economics decide it: a per-funnel lifetime revenue can flip the winner", () => {
-    const res = arbitrateGoals({
-      featureSlug: "sales-cold-email-outreach",
-      authorizedGoals: [
-        // The brand states this funnel sells a $100k contract; the reply funnel keeps the $1000 base.
-        { goal: "signup", economics: { lifetimeRevenueUsd: 100_000 } },
-        { goal: "positiveReply", economics: null },
-      ],
-      evidence: evidence(),
-      economics: ECONOMICS as never,
-    });
+  it("TWO FUNNELS ON ONE GOAL are ranked separately, each on its own declared terms", () => {
+    // The two routes to a booked meeting carry their own budgets, so they must compare as two rows.
+    const res = run([
+      f("meetingBooked", { funnelKey: "reply_meeting", economics: { lifetimeRevenueUsd: 20_000 } }),
+      f("meetingBooked", { funnelKey: "visit_meeting", economics: { lifetimeRevenueUsd: 2_000 } }),
+    ]);
 
-    expect(res.arbitration.goal).toBe("signup");
-    expect(res.arbitration.returnPerDollar).toBeCloseTo(200, 6); // 100000 / 500
-    expect(res.workflow?.workflowDynastySlug).toBe("dyn-a");
-    expect(candidate(res, "signup").usesFunnelEconomics).toBe(true);
-    expect(candidate(res, "positiveReply").usesFunnelEconomics).toBe(false);
-    expect(candidate(res, "positiveReply").returnPerDollar).toBeCloseTo(25, 6);
+    expect(res.ranking).toHaveLength(2);
+    expect(res.ranking.map((r) => r.funnelKey)).toEqual(["reply_meeting", "visit_meeting"]);
+    expect(res.ranking.map((r) => r.rank)).toEqual([1, 2]);
+    // Same goal, same evidence, same best workflow — only the funnel's own lifetime revenue differs,
+    // so the richer contract returns 10× more per dollar and the customer can see exactly that.
+    expect(res.ranking[0].returnPerDollar! / res.ranking[1].returnPerDollar!).toBeCloseTo(10, 6);
+    expect(res.recommendation?.funnelKey).toBe("reply_meeting");
   });
 
-  it("a goal with NO defined return is never elected — it is reported as an unrankable candidate", () => {
-    const res = run(goals("whatsappConversation", "signup"));
+  it("each funnel's own economics decide it: a per-funnel lifetime revenue can flip the head", () => {
+    const res = run([
+      // The brand states this funnel sells a $100k contract; the reply funnel keeps the $1000 base.
+      f("signup", { economics: { lifetimeRevenueUsd: 100_000 } }),
+      f("positiveReply"),
+    ]);
 
-    const whatsapp = candidate(res, "whatsappConversation");
+    expect(res.recommendation?.goal).toBe("signup");
+    expect(res.recommendation?.returnPerDollar).toBeCloseTo(200, 6); // 100000 / 500
+    expect(res.recommendation?.workflow.workflowDynastySlug).toBe("dyn-a");
+    expect(entry(res, "signup_funnel").usesFunnelEconomics).toBe(true);
+    expect(entry(res, "positiveReply_funnel").usesFunnelEconomics).toBe(false);
+    expect(entry(res, "positiveReply_funnel").returnPerDollar).toBeCloseTo(25, 6);
+  });
+
+  it("a funnel with NO defined return is listed with its reason, ranked last, never dropped", () => {
+    const res = run([f("whatsappConversation"), f("signup")]);
+
+    // Both funnels are present — a customer comparing their funnels never sees a short list.
+    expect(res.ranking).toHaveLength(2);
+    const whatsapp = entry(res, "whatsappConversation_funnel");
+    expect(res.ranking[res.ranking.length - 1]).toBe(whatsapp);
+    expect(whatsapp.rank).toBeNull();
     expect(whatsapp.rankable).toBe(false);
     expect(whatsapp.unrankableReason).toBe("no_paid_client_path");
     expect(whatsapp.returnPerDollar).toBeNull();
@@ -140,59 +178,61 @@ describe("arbitrateGoals — which authorized goal returns the most per dollar",
     expect(whatsapp.costPerOutcomeUsd).toBeCloseTo(10, 6);
     expect(whatsapp.costPerPaidClientUsd).toBeNull();
 
-    expect(res.arbitration.status).toBe("resolved");
-    expect(res.arbitration.goal).toBe("signup");
+    expect(res.recommendation?.goal).toBe("signup");
   });
 
-  it("a brand whose ONLY authorized goal has no return reports unrankable, distinguishably, not a winner", () => {
-    const res = run(goals("whatsappConversation"));
+  it("a funnel with no history yet is listed too — 'nothing to compare on' is an answer, not a hole", () => {
+    // No workflow evidence at all: every funnel is unrankable for that reason, and each says so.
+    const res = run([f("positiveReply"), f("signup")], { crossOrgCostGroups: [], crossOrgEmailStats: [] });
+
+    expect(res.ranking.map((r) => r.funnelKey)).toEqual(["positiveReply_funnel", "signup_funnel"]);
+    expect(res.ranking.every((r) => r.unrankableReason === "no_workflow_evidence")).toBe(true);
+    expect(res.ranking.every((r) => r.rank === null)).toBe(true);
+    expect(res.recommendation).toBeNull();
+    expect(res.arbitration.status).toBe("unrankable");
+    expect(res.arbitration.reason).toBe("no_rankable_funnel");
+  });
+
+  it("a brand whose ONLY funnel has no return reports unrankable, distinguishably, not a winner", () => {
+    const res = run([f("whatsappConversation")]);
 
     expect(res.arbitration.status).toBe("unrankable");
     expect(res.arbitration.goal).toBeNull();
-    expect(res.arbitration.reason).toBe("no_rankable_goal");
-    expect(res.arbitration.returnPerDollar).toBeNull();
+    expect(res.arbitration.reason).toBe("no_rankable_funnel");
+    expect(res.recommendation).toBeNull();
     expect(res.workflow).toBeNull();
     expect(res.rows).toEqual([]);
     expect(res.recommendedBudgetUsd).toBeNull();
-    // The reason is not hidden: the per-goal verdict says WHY.
-    expect(candidate(res, "whatsappConversation").unrankableReason).toBe("no_paid_client_path");
+    // The reason is not hidden: the per-funnel verdict says WHY.
+    expect(res.ranking[0].unrankableReason).toBe("no_paid_client_path");
   });
 
-  it("an EMPTY authorized set is its own verdict, distinct from 'nothing ranked'", () => {
+  it("NO declared funnel is its own verdict, distinct from 'nothing ranked'", () => {
     const res = run([]);
 
     expect(res.arbitration.status).toBe("unrankable");
-    expect(res.arbitration.reason).toBe("no_authorized_goals");
-    expect(res.authorizedGoals).toEqual([]);
-    expect(res.candidates).toEqual([]);
+    expect(res.arbitration.reason).toBe("no_declared_funnels");
+    expect(res.ranking).toEqual([]);
+    expect(res.recommendation).toBeNull();
     expect(res.rows).toEqual([]);
   });
 
-  it("no economics → every goal is unrankable for that reason (never a fabricated return)", () => {
-    const res = run(goals("signup", "positiveReply"), {}, null);
+  it("no economics → every funnel is unrankable for that reason (never a fabricated return)", () => {
+    const res = run([f("signup"), f("positiveReply")], {}, null);
 
     expect(res.arbitration.status).toBe("unrankable");
-    expect(res.arbitration.reason).toBe("no_rankable_goal");
-    expect(res.candidates.map((c) => c.unrankableReason)).toEqual(["no_economics", "no_economics"]);
+    expect(res.arbitration.reason).toBe("no_rankable_funnel");
+    expect(res.ranking.map((r) => r.unrankableReason)).toEqual(["no_economics", "no_economics"]);
     expect(res.economics).toBeNull();
   });
 
-  it("no workflow evidence at all → unrankable for that reason, not a $0 winner", () => {
-    const res = run(goals("positiveReply"), { crossOrgCostGroups: [], crossOrgEmailStats: [] });
+  it("is stable: the declared ORDER cannot change the ranking, and a tie breaks canonically", () => {
+    const forward = run([f("signup"), f("positiveReply")]);
+    const reversed = run([f("positiveReply"), f("signup")]);
+    expect(reversed.ranking.map((r) => r.funnelKey)).toEqual(forward.ranking.map((r) => r.funnelKey));
+    expect(reversed.recommendation?.returnPerDollar).toBe(forward.recommendation?.returnPerDollar);
 
-    expect(res.arbitration.status).toBe("unrankable");
-    expect(candidate(res, "positiveReply").unrankableReason).toBe("no_workflow_evidence");
-  });
-
-  it("is stable: the authorized ORDER cannot change the winner, and a tie breaks on the canonical goal order", () => {
-    const forward = run(goals("signup", "positiveReply"));
-    const reversed = run(goals("positiveReply", "signup"));
-    expect(reversed.arbitration.goal).toBe(forward.arbitration.goal);
-    expect(reversed.arbitration.returnPerDollar).toBe(forward.arbitration.returnPerDollar);
-    // Candidates keep the producer's order (the ranking never reorders the brand's own statement).
-    expect(reversed.candidates.map((c) => c.goal)).toEqual(["positiveReply", "signup"]);
-
-    // ONE dynasty + a reply→paid rate tuned so both goals return exactly 2× — the tie must not be
+    // ONE dynasty + a reply→paid rate tuned so both funnels return exactly 2× — the tie must not be
     // decided by input order. GOALS puts signup before positiveReply.
     const single = {
       workflows: [wf("wf-a", "dyn-a", "Dynasty A")],
@@ -200,17 +240,25 @@ describe("arbitrateGoals — which authorized goal returns the most per dollar",
       crossOrgEmailStats: [["wf-a", stats(200, 100, 50)]],
     } as Partial<Evidence>;
     const tiedEconomics = { ...ECONOMICS, replyToPaidClientPct: 4 }; // $20 reply / 4% = $500 = signup's
-    const tieA = run(goals("signup", "positiveReply"), single, tiedEconomics);
-    const tieB = run(goals("positiveReply", "signup"), single, tiedEconomics);
-    expect(tieA.arbitration.returnPerDollar).toBeCloseTo(2, 6);
-    expect(tieB.arbitration.returnPerDollar).toBeCloseTo(2, 6);
-    expect(tieA.arbitration.goal).toBe("signup");
-    expect(tieB.arbitration.goal).toBe("signup");
+    const tieA = run([f("signup"), f("positiveReply")], single, tiedEconomics);
+    const tieB = run([f("positiveReply"), f("signup")], single, tiedEconomics);
+    expect(tieA.recommendation?.returnPerDollar).toBeCloseTo(2, 6);
+    expect(tieB.recommendation?.returnPerDollar).toBeCloseTo(2, 6);
+    expect(tieA.recommendation?.goal).toBe("signup");
+    expect(tieB.recommendation?.goal).toBe("signup");
     expect(GOALS.indexOf("signup")).toBeLessThan(GOALS.indexOf("positiveReply"));
+
+    // Two funnels on ONE goal with identical terms tie on return too — funnelKey settles it.
+    const twins = run(
+      [f("signup", { funnelKey: "z_funnel" }), f("signup", { funnelKey: "a_funnel" })],
+      single,
+      tiedEconomics,
+    );
+    expect(twins.ranking.map((r) => r.funnelKey)).toEqual(["a_funnel", "z_funnel"]);
   });
 
-  it("returns the winning PAIRING's rows only — the brand row plus every audience row for that dynasty", () => {
-    const res = run(goals("positiveReply"), {
+  it("returns the recommended PAIRING's rows only — the brand row plus every audience row for it", () => {
+    const res = run([f("positiveReply")], {
       audienceEvidence: [
         {
           audienceId: "aud-1",
@@ -220,9 +268,9 @@ describe("arbitrateGoals — which authorized goal returns the most per dollar",
       ],
     });
 
-    expect(res.arbitration.goal).toBe("positiveReply");
+    expect(res.recommendation?.goal).toBe("positiveReply");
     expect(res.workflow?.workflowDynastySlug).toBe("dyn-b");
-    // Every returned row belongs to the winning dynasty — no dyn-a noise for the consumer to filter.
+    // Every returned row belongs to the recommended dynasty — no dyn-a noise for the consumer to filter.
     expect(res.rows.every((r) => r.workflow.workflowDynastySlug === "dyn-b")).toBe(true);
     expect(res.rows.filter((r) => r.audienceId === null)).toHaveLength(1);
 
@@ -243,8 +291,15 @@ describe("arbitrateGoals — which authorized goal returns the most per dollar",
     expect(coldArm.resolved.costPerOutcomeUsd).toBeCloseTo(10, 6);
   });
 
-  it("echoes the authorized set it ranked, canonical camel, in the producer's order", () => {
-    const res = run(goals("positiveReply", "signup", "whatsappConversation"));
-    expect(res.authorizedGoals).toEqual(["positiveReply", "signup", "whatsappConversation"]);
+  it("ranks on HISTORY alone — it takes no funding input and offers no way to pass one", () => {
+    // Being unfunded is a decision the customer just made, not a reason to hide how a funnel
+    // performed. The signature carries funnels + evidence + economics and nothing else, so there is
+    // no place a budget or a funded-flag could enter this computation.
+    const res = run([f("signup"), f("positiveReply")]);
+    expect(res.ranking).toHaveLength(2);
+    expect(res.ranking.every((r) => r.rankable)).toBe(true);
+    expect(Object.keys(res.ranking[0])).not.toContain("funded");
+    expect(Object.keys(res.ranking[0])).not.toContain("budget");
+    expect(Object.keys(res.ranking[0])).not.toContain("ceilingCents");
   });
 });
