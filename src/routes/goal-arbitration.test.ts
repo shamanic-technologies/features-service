@@ -308,6 +308,34 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     expect(byGoal).not.toHaveProperty("funnelKey");
   });
 
+  it("a `?funnel=` read prices on the funnel's OWN declared terms, exactly as the ranking does", async () => {
+    // Prod caught this after the first ship: brand `b97440f6…` declares `replyToMeetingPct: 100` on its
+    // conversation funnel, so the ranking said $73.74 per meeting while `?funnel=` — projecting on the
+    // brand-wide 40% — said $184.36. Same brand, same funnel, same moment, two numbers.
+    const declared = declaredFunnel("sales_meetings_from_conversation", {
+      rates: { replyToMeetingPct: 100, meetingToClosePct: 25 },
+      lifetimeRevenueUsd: 2500,
+    });
+    mockFetch({ funnels: [declared] });
+
+    const arbitrated = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
+    const projected = await request(app)
+      .get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&funnel=sales_meetings_from_conversation`)
+      .set(AUTH);
+    expect(projected.status).toBe(200);
+
+    const best = projected.body.rows
+      .filter((r: any) => r.audienceId === null && r.resolved.costPerOutcomeUsd > 0)
+      .sort((a: any, b: any) => a.resolved.costPerOutcomeUsd - b.resolved.costPerOutcomeUsd)[0];
+
+    // The declared 100% reply→meeting makes the meeting cost the RAW reply cost ($10 on dyn-b), not the
+    // $25 the brand-wide 40% would give — and both surfaces must say so.
+    expect(best.resolved.costPerOutcomeUsd).toBeCloseTo(10, 6);
+    expect(arbitrated.body.recommendation.costPerOutcomeUsd).toBeCloseTo(best.resolved.costPerOutcomeUsd, 6);
+    // ...including the funnel's own lifetime revenue, which drives the return.
+    expect(projected.body.economics.lifetimeRevenueUsd).toBe(2500);
+  });
+
   it("refuses to price a funnel the brand never declared — a gap is not a zero", async () => {
     mockFetch({ funnels: [declaredFunnel("website_purchases")] });
     const res = await request(app)
