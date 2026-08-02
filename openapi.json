@@ -162,6 +162,52 @@
             "type": "string",
             "nullable": true
           },
+          "campaignIdentity": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "Stable identity key. Opaque — compare it, do not parse it."
+              },
+              "funnelKey": {
+                "type": "string",
+                "nullable": true,
+                "description": "The sales funnel the campaign states, or null when it states none."
+              },
+              "acquisitionChannel": {
+                "type": "string",
+                "nullable": true,
+                "description": "The channel it acquires through, e.g. cold_email."
+              },
+              "campaignIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Every campaign id answering to this identity, this one included."
+              },
+              "liveCampaignIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The members still ongoing — at most one."
+              },
+              "representativeId": {
+                "type": "string",
+                "description": "The member to render the identity's line on: the live campaign when there is one, else the most recently created member."
+              }
+            },
+            "required": [
+              "key",
+              "funnelKey",
+              "acquisitionChannel",
+              "campaignIds",
+              "liveCampaignIds",
+              "representativeId"
+            ],
+            "description": "Present only on groupBy=campaignId: the identity these figures were totalled over. Every member of one identity carries the SAME figures — they are one campaign."
+          },
           "featureSlug": {
             "type": "string",
             "nullable": true
@@ -282,6 +328,52 @@
                 "campaignId": {
                   "type": "string",
                   "nullable": true
+                },
+                "campaignIdentity": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "description": "Stable identity key. Opaque — compare it, do not parse it."
+                    },
+                    "funnelKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The sales funnel the campaign states, or null when it states none."
+                    },
+                    "acquisitionChannel": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The channel it acquires through, e.g. cold_email."
+                    },
+                    "campaignIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Every campaign id answering to this identity, this one included."
+                    },
+                    "liveCampaignIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The members still ongoing — at most one."
+                    },
+                    "representativeId": {
+                      "type": "string",
+                      "description": "The member to render the identity's line on: the live campaign when there is one, else the most recently created member."
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "funnelKey",
+                    "acquisitionChannel",
+                    "campaignIds",
+                    "liveCampaignIds",
+                    "representativeId"
+                  ],
+                  "description": "Present only on groupBy=campaignId: the identity these figures were totalled over. Every member of one identity carries the SAME figures — they are one campaign."
                 },
                 "featureSlug": {
                   "type": "string",
@@ -414,6 +506,52 @@
                 "campaignId": {
                   "type": "string",
                   "nullable": true
+                },
+                "campaignIdentity": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "description": "Stable identity key. Opaque — compare it, do not parse it."
+                    },
+                    "funnelKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The sales funnel the campaign states, or null when it states none."
+                    },
+                    "acquisitionChannel": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The channel it acquires through, e.g. cold_email."
+                    },
+                    "campaignIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Every campaign id answering to this identity, this one included."
+                    },
+                    "liveCampaignIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The members still ongoing — at most one."
+                    },
+                    "representativeId": {
+                      "type": "string",
+                      "description": "The member to render the identity's line on: the live campaign when there is one, else the most recently created member."
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "funnelKey",
+                    "acquisitionChannel",
+                    "campaignIds",
+                    "liveCampaignIds",
+                    "representativeId"
+                  ],
+                  "description": "Present only on groupBy=campaignId: the identity these figures were totalled over. Every member of one identity carries the SAME figures — they are one campaign."
                 },
                 "featureSlug": {
                   "type": "string",
@@ -629,6 +767,52 @@
         "properties": {
           "featureSlug": {
             "type": "string"
+          },
+          "campaignIdentity": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "Stable identity key. Opaque — compare it, do not parse it."
+              },
+              "funnelKey": {
+                "type": "string",
+                "nullable": true,
+                "description": "The sales funnel the campaign states, or null when it states none."
+              },
+              "acquisitionChannel": {
+                "type": "string",
+                "nullable": true,
+                "description": "The channel it acquires through, e.g. cold_email."
+              },
+              "campaignIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Every campaign id answering to this identity, this one included."
+              },
+              "liveCampaignIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The members still ongoing — at most one."
+              },
+              "representativeId": {
+                "type": "string",
+                "description": "The member to render the identity's line on: the live campaign when there is one, else the most recently created member."
+              }
+            },
+            "required": [
+              "key",
+              "funnelKey",
+              "acquisitionChannel",
+              "campaignIds",
+              "liveCampaignIds",
+              "representativeId"
+            ],
+            "description": "Present only on a ?campaignId= read: the identity the figures were totalled over. A campaign-scoped read answers for the campaign's whole identity — its stopped ancestors included — so asking about any member returns the same, complete campaign."
           },
           "spend": {
             "type": "object",
@@ -1548,6 +1732,52 @@
                 "campaignId": {
                   "type": "string"
                 },
+                "campaignIdentity": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "description": "Stable identity key. Opaque — compare it, do not parse it."
+                    },
+                    "funnelKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The sales funnel the campaign states, or null when it states none."
+                    },
+                    "acquisitionChannel": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The channel it acquires through, e.g. cold_email."
+                    },
+                    "campaignIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Every campaign id answering to this identity, this one included."
+                    },
+                    "liveCampaignIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The members still ongoing — at most one."
+                    },
+                    "representativeId": {
+                      "type": "string",
+                      "description": "The member to render the identity's line on: the live campaign when there is one, else the most recently created member."
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "funnelKey",
+                    "acquisitionChannel",
+                    "campaignIds",
+                    "liveCampaignIds",
+                    "representativeId"
+                  ],
+                  "description": "The identity this group's figures were totalled over. Members of one identity carry identical figures — render the line once, on representativeId."
+                },
                 "headline": {
                   "type": "object",
                   "properties": {
@@ -1607,6 +1837,7 @@
               },
               "required": [
                 "campaignId",
+                "campaignIdentity",
                 "headline",
                 "costEconomics"
               ]
@@ -5974,6 +6205,52 @@
                             "type": "string",
                             "nullable": true
                           },
+                          "campaignIdentity": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "description": "Stable identity key. Opaque — compare it, do not parse it."
+                              },
+                              "funnelKey": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The sales funnel the campaign states, or null when it states none."
+                              },
+                              "acquisitionChannel": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The channel it acquires through, e.g. cold_email."
+                              },
+                              "campaignIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "Every campaign id answering to this identity, this one included."
+                              },
+                              "liveCampaignIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "The members still ongoing — at most one."
+                              },
+                              "representativeId": {
+                                "type": "string",
+                                "description": "The member to render the identity's line on: the live campaign when there is one, else the most recently created member."
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "funnelKey",
+                              "acquisitionChannel",
+                              "campaignIds",
+                              "liveCampaignIds",
+                              "representativeId"
+                            ],
+                            "description": "Present only on groupBy=campaignId: the identity these figures were totalled over. Every member of one identity carries the SAME figures — they are one campaign."
+                          },
                           "featureSlug": {
                             "type": "string",
                             "nullable": true
@@ -8974,6 +9251,52 @@
                           "campaignId": {
                             "type": "string",
                             "nullable": true
+                          },
+                          "campaignIdentity": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "description": "Stable identity key. Opaque — compare it, do not parse it."
+                              },
+                              "funnelKey": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The sales funnel the campaign states, or null when it states none."
+                              },
+                              "acquisitionChannel": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The channel it acquires through, e.g. cold_email."
+                              },
+                              "campaignIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "Every campaign id answering to this identity, this one included."
+                              },
+                              "liveCampaignIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "The members still ongoing — at most one."
+                              },
+                              "representativeId": {
+                                "type": "string",
+                                "description": "The member to render the identity's line on: the live campaign when there is one, else the most recently created member."
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "funnelKey",
+                              "acquisitionChannel",
+                              "campaignIds",
+                              "liveCampaignIds",
+                              "representativeId"
+                            ],
+                            "description": "Present only on groupBy=campaignId: the identity these figures were totalled over. Every member of one identity carries the SAME figures — they are one campaign."
                           },
                           "featureSlug": {
                             "type": "string",

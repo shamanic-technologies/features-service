@@ -1,5 +1,6 @@
 import type { EnginePerson } from "./revenue-engine.js";
 import { fetchWithRetry } from "./fetch-retry.js";
+import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 
 /**
  * Shape of one leads_campaigns row returned by lead-service GET /orgs/leads.
@@ -40,6 +41,8 @@ function domainFromUrl(websiteUrl: string | null | undefined): string | null {
 
 interface LeadRow {
   leadId: string;
+  /** The campaign the row was served under — the key a campaign family is filtered on. */
+  campaignId?: string | null;
   email?: string | null;
   // Delivery-status overlay (brand- or campaign-scoped depending on the query params).
   contacted?: boolean;
@@ -74,9 +77,17 @@ interface LeadRow {
  */
 export async function fetchLeadsForRevenue(
   brandId: string,
-  campaignId: string | undefined,
+  // One campaign, or the family sharing one identity (see campaign-identity.ts). lead-service takes
+  // no campaign LIST, so a family reads the brand-wide page and keeps the rows whose `campaignId` is
+  // a member. That is also the RIGHT delivery overlay for a family: brand-scoped status answers "did
+  // this lead ever click for this brand", which is what one campaign's total means once its stopped
+  // ancestors are folded in — and a lead served under two members is ONE lead, deduped downstream by
+  // the engine's `dedupPersonsByLead` rather than counted twice.
+  campaignScope: CampaignFilter,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
 ): Promise<EnginePerson[]> {
+  const campaignId = singleCampaignId(campaignScope);
+  const family = campaignFamilySet(campaignScope);
   const url = process.env.LEAD_SERVICE_URL;
   const apiKey = process.env.LEAD_SERVICE_API_KEY;
   if (!url || !apiKey) {
@@ -108,7 +119,8 @@ export async function fetchLeadsForRevenue(
   }
 
   const data = (await response.json()) as { leads: LeadRow[] };
-  return data.leads.map((row) => {
+  const rows = family ? data.leads.filter((row) => row.campaignId && family.has(row.campaignId)) : data.leads;
+  return rows.map((row) => {
     const org = row.lead?.organization ?? null;
     // Bounced / unsubscribed leads are dead — no forward expected revenue at any stage.
     const dead = Boolean(row.bounced) || Boolean(row.unsubscribed);

@@ -1,5 +1,7 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import type { SignalSeries } from "./revenue-engine.js";
+import { mapWithConcurrency } from "./concurrency.js";
+import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 
 /**
  * Per-day OUTREACH ACTIVITY series for the Overview graph — sourced from instantly's campaign-created
@@ -26,10 +28,31 @@ import type { SignalSeries } from "./revenue-engine.js";
  */
 export async function fetchSequencesByDay(
   brandId: string,
-  campaignId: string | undefined,
+  // One campaign, or the family sharing one identity (see campaign-identity.ts). email-gateway's
+  // `groupBy` is single-dimension, so a family cannot be split per (day × campaign) in one call:
+  // its members are read separately (capped concurrency) and their day buckets summed. Summing is
+  // exact here — the series counts SENDS, and a send belongs to exactly one campaign.
+  campaignScope: CampaignFilter,
   featureSlug: string,
   headers: { orgId: string; userId?: string; runId?: string },
 ): Promise<SignalSeries> {
+  const family = campaignFamilySet(campaignScope);
+  if (family) {
+    const perMember = await mapWithConcurrency([...family], 6, (id) =>
+      fetchSequencesByDay(brandId, id, featureSlug, headers),
+    );
+    const byDate = new Map<string, number>();
+    for (const series of perMember) {
+      for (const point of series.daily) byDate.set(point.date, (byDate.get(point.date) ?? 0) + point.count);
+    }
+    const daily = [...byDate]
+      .map(([date, count]) => ({ date, count }))
+      .filter((point) => point.count > 0)
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    return { total: daily.reduce((sum, p) => sum + p.count, 0), daily, undatedCount: 0 };
+  }
+  const campaignId = singleCampaignId(campaignScope);
+
   const url = process.env.EMAIL_GATEWAY_SERVICE_URL;
   const apiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
   if (!url || !apiKey) {

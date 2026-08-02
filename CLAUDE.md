@@ -1,5 +1,49 @@
 # Features Service — CLAUDE.md
 
+## A campaign's figures are its IDENTITY's figures — (org, brand, sales funnel, acquisition channel), read from campaign-service, never re-derived
+
+campaign-service used to create a NEW campaign row every time workflow selection switched workflows,
+so one real campaign arrives here split across many rows. Brand `f4d73dab…` showed **48 groups for
+what is one campaign**, 27 of them at 0 pipeline / no ROI, beside the single row carrying six weeks
+of history. Every figure keyed on a campaign is therefore reported for the campaign's whole
+IDENTITY — campaign-service's own key (its `uniq_campaigns_org_brand_funnel_channel`, migration
+0044), which the WORKFLOW is explicitly not part of.
+
+- **Nothing is rewritten or repointed.** The stopped rows keep their runs and their costs in
+  runs-service, keyed on their own campaign id. This service only decides which ids are TOTALLED
+  together before anything is displayed.
+- **All four parts come from campaign-service** (`GET /campaigns?brandId=&featureSlug=`,
+  `src/lib/campaign-identity-client.ts` → `campaign-identity.ts`). **NEVER infer the funnel from the
+  goal** — two funnels answer to `meetingBooked`, so that inference prints a chain the campaign never
+  stated. An UNSTATED funnel (`funnelKey: null`) is a REAL state: those pool together (the producer's
+  own `coalesce(funnel_key,'')` rule) and never fold onto a campaign that DID state one.
+- **A row that states no brand or no channel** (predating migration 0044) is its OWN family of one —
+  campaign-service could not police it either, so pooling it would invent an identity nobody asserted.
+- **Wired on `/revenue` (`?campaignId=` + `?groupBy=campaignId`) and `/stats` (both).** Every member
+  id still answers, with the identity's total, and each carries `campaignIdentity`
+  (`{key, funnelKey, acquisitionChannel, campaignIds, liveCampaignIds, representativeId}`) so the
+  dashboard renders ONE line per identity on `representativeId` (the live campaign).
+- **The scope is a `CampaignFilter`** (`campaign-scope.ts`): `undefined` / a string / a ONE-element
+  list take every client's original path BYTE for byte, so a brand with one campaign per identity is
+  unchanged. Only a genuine multi-member family aggregates, and it stays O(1) calls: runs co-groups
+  `…,campaignId`, lead-service is read brand-wide and filtered on the row's `campaignId`,
+  `/stats` folds its per-campaign maps by identity. email-gateway's `groupBy` is single-dimension, so
+  the outreach day series alone fans out per member (capped 6).
+- **A lead served under two members is ONE lead**, deduped by the engine's `dedupPersonsByLead`, and
+  the family reads the BRAND-scoped delivery overlay — so a campaign's own total can never exceed the
+  brand Overview's. Costs sum exactly (a cost row belongs to one campaign). Prod before: Σ
+  per-campaign $218.36 pipeline / $1,122.43 spend vs the brand Overview's $217.84 / $1,122.41 — the
+  $0.52 gap is exactly the leads the old per-row view counted twice.
+- **The cache key carries the IDENTITY, not the campaign**, so the dashboard's one call per rendered
+  row lands on ONE cell instead of paying for N identical fan-outs.
+- **Fail-SOFT with a loud log.** With campaign-service unreachable every campaign is its own family —
+  the grouping degrades to what it was before this feature, and no number is ever fabricated.
+- Guards: `src/lib/campaign-identity.test.ts` (the pooling rules, both meeting funnels apart, the
+  unstated funnel distinguishable, an unplaceable row alone) + `src/routes/campaign-identity-aggregation.test.ts`
+  (drives `/revenue` + `/stats` from ONE fixture: every member reports the whole campaign, a shared
+  lead counts once, one-campaign-per-identity is unchanged, campaign-service down degrades).
+  (Set 2026-08-02.)
+
 ## Per-brand CONFIGURATION is (org, brand) data — every brand-service read of it names the org whose answer it wants, and a caller with NO org FAILS LOUD
 
 A brand row is a **shared global identity**: any org that claims the same domain lands on the same brand
@@ -1374,30 +1418,17 @@ pipeline-activity's TODAY bucket `.actual`** — so fixing today's `.actual` fix
 was staging-only at ship; the fail-soft client makes prod safe (fabrication removed → "-"), fully
 self-activating to real counts once lead-service promotes the endpoint to prod. (Set 2026-07-10.)
 
-## `pipeline-activity.ts` — forecasting migrated to audiences; `customerProfileId`/brand-persona vocabulary PURGED (PR #346)
+## `pipeline-activity.ts` — forecasting is AUDIENCE-grain; `customerProfileId` / brand-persona vocabulary is PURGED (PR #346/#349)
 
-`pipeline-activity.ts` (the budget→forecast endpoint) was the LAST `customerProfileId` / brand-persona
-consumer. It now mirrors audience-stats exactly: candidates from human-service active audiences
-(`fetchActiveAudiences`), cost from runs `groupBy=audienceId` (`dimensions.audienceId`, no legacy id
-fallback), engagement from read-time membership (`fetchAudienceMemberEmails` → `fetchEmailOutcomes`,
-explicit provenance — no send-tagging/inference). `fetchBestAudienceForecast` picks the lowest-CPC
-active audience for the chosen workflow (CPC = runs cost / membership clicks) and derives its rates
-from the SAME outcome tally (one pass). `fetchBrandPersonas`/`BrandPersona` are DELETED from
-`brand-client.ts` (zero remaining callers); `fetchCurrentBrandProfile` stays (still feeds the cost
-`brandProfileId` filter). **`git grep -i customerprofile src` now returns ZERO matches** — the field is
-fully purged (the `audience-stats.test` no-legacy guard asserts `r.persona`/`personas` absent instead). campaign-service
-already reads `personas[0].audienceId` and asserts `customerProfileId` absent (campaign-service#204,
-drizzle 0035), so the purge had zero consumer blast radius — the prior "do NOT remove until T5" note was
-stale (T5 was already done).
-
-All forecast rates are AUDIENCE-GRAIN from one membership tally: `openPerOutreach = opened/contacted`,
-`clickPerOutreach = clicked/contacted`, `positiveReplyPerOutreach = positiveReplies/contacted`.
-`fetchEmailOutcomes` reads the email-gateway broadcast `brand` scope booleans
-`contacted`/`opened`/`clicked` + positive-reply (all are required fields on the
-`POST /orgs/status` contract). The caller still falls back to the chosen workflow's aggregate rates
-when NO audience qualifies (no clicks). Don't mix grains — opens/clicks/replies must all come from the
-same audience tally so the forecast stays internally coherent (a workflow-grain open rate beside an
-audience-grain click rate was a bug, fixed PR #349). (Set 2026-06-20.)
+Candidates come from human-service active audiences (`fetchActiveAudiences`), cost from runs
+`groupBy=audienceId` (`dimensions.audienceId`, no legacy id fallback), engagement from read-time
+membership (explicit provenance — no send-tagging / inference). `fetchBestAudienceForecast` picks the
+lowest-CPC active audience for the chosen workflow and derives ALL its rates from the SAME membership
+tally in one pass — `openPerOutreach` / `clickPerOutreach` / `positiveReplyPerOutreach`. **Do not mix
+grains**: a workflow-grain open rate beside an audience-grain click rate was a bug (#349). The caller
+still falls back to the workflow's aggregate rates when NO audience qualifies (no clicks).
+`fetchBrandPersonas` / `BrandPersona` are DELETED and `git grep -i customerprofile src` returns ZERO
+matches; `fetchCurrentBrandProfile` stays (it still feeds the cost `brandProfileId` filter).
 
 ## Migration gotcha — drizzle-kit meta snapshot is DRIFTED; strip spurious `features` drops
 
