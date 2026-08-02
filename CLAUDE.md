@@ -437,6 +437,37 @@ has no meeting column and ignores it. Response shapes unchanged (same fields, sa
 `/workflow-projection` from ONE downstream fixture, so the equality is a property of the two computes.
 (Set 2026-07-30.)
 
+## `/internal/stats/revenue` `netRevenueRetention` — the STANDARD aggregate NRR; the cohort is FIXED AT THE START of the period, and an unmeasurable period is `null`, never 0
+
+`src/lib/nrr-compute.ts` serves NRR/NDR monthly + weekly beside the realized-revenue series.
+`NRR(period) = (that period's revenue from the customers who had revenue in the PREVIOUS period) ÷
+(those same customers' previous-period revenue) × 100`. Every benchmark source investors read (Stripe,
+SaaS Capital, The SaaS CFO, a16z) states it that way, and a non-standard NRR is worse than none.
+
+- **The cohort is fixed at the START of the period — a customer acquired DURING it is in NEITHER leg.**
+  Including new logos turns NRR into a growth rate and inflates it; that is the usual way this ships wrong.
+  Guard: the integration test where the realized July bucket is $580 (both orgs) while NRR reads 80%
+  (the one-org cohort), not 580%.
+- **Expansion / contraction / churn need no extra computation** — they ARE what the ratio measures. And it
+  is the AGGREGATE method (all existing customers pooled); the per-acquisition-cohort curve is a different
+  metric, do not substitute it.
+- **`retentionPct: null` (with `cohortSize: 0`) = COULD NOT MEASURE; a measured 0 carries `cohortSize > 0`
+  + `priorRevenueUsd > 0`.** "We could not measure this" and "the base shrank to nothing" are different
+  statements a benchmark reader acts on differently. Never fabricate a value for an unmeasurable period and
+  never carry the previous period forward across a gap.
+- **Same NET realized cold-email revenue the series already sums** (the per-org day→cents maps
+  `buildRevenueHistory` already holds) — one basis, so the two surfaces on the page reconcile, and it adds
+  ZERO IO. Per-org resolution stays INTERNAL: only pooled cohort aggregates are on the wire.
+- The OLDEST displayed period still forms a real cohort — `buildNrrSeries` enumerates `count + 1` buckets
+  and uses the extra one as a denominator only, never emitting it.
+- **No TTM NRR** — the first billed day is March 2026, so a trailing-twelve-month figure today would be
+  assembled from months that do not exist.
+
+Everything else on the payload (`totalRevenueUsd`, monthly/weekly/daily/sinceInceptionDaily, `committedMrr`,
+`currentMrrUsd`) is byte-unchanged. Guards: `src/lib/nrr-compute.test.ts` (definition, new-logo exclusion,
+churn-vs-unmeasurable, hand-recompute, weekly ISO grain) + the NRR case in `revenue-history-compute.test.ts`.
+(Set 2026-08-02.)
+
 ## Staff admin metrics — DAILY BUDGET (+ its MRR/ARR projection) is the RAW configured value, NEVER discounted; realized-revenue stays NET (supersedes PR #592's discounted-budget)
 
 The per-org usage discount is a modifier on CHARGES only (frozen gross+net per cost row in the runs/billing
