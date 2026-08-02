@@ -154,10 +154,34 @@ describe("declaredFunnelsToRank", () => {
     expect(parsed[0].economics).toEqual({ replyToMeetingPct: 30 });
   });
 
-  it("throws on a goal it cannot map — a declared funnel must never be silently dropped", () => {
-    expect(() => declaredFunnelsToRank([funnel({ goal: "telepathy", currentGoal: "telepathy" })])).toThrow(
-      UnknownFunnelGoalError,
-    );
+  it("throws when neither the goal nor the key maps — a declared funnel must never be silently dropped", () => {
+    // The KEY has to be unmappable too. brand-service is retiring the goal off
+    // this payload, so the key is now a valid source and a known one rescues a
+    // garbage goal — which is the point. "We cannot determine this funnel's goal"
+    // means BOTH are unreadable.
+    expect(() =>
+      declaredFunnelsToRank([funnel({ funnelKey: "telepathy", goal: "telepathy", currentGoal: "telepathy" })]),
+    ).toThrow(UnknownFunnelGoalError);
+  });
+
+  it("resolves from the key alone, for a brand-service that has retired the goal", () => {
+    // The whole reason this change exists: brand-service#434 drops `goal` and
+    // `currentGoal` from the payload and renames the keys. Without this, every
+    // declared funnel throws and goal-arbitration 502s.
+    const parsed = declaredFunnelsToRank([
+      funnel({ funnelKey: "sales_meetings_from_conversation", goal: undefined, currentGoal: undefined }),
+      funnel({ funnelKey: "website_purchases", goal: undefined, currentGoal: undefined }),
+      funnel({ funnelKey: "form_magnet", goal: undefined, currentGoal: undefined }),
+    ]);
+    expect(parsed.map((e) => e.goal)).toEqual(["meetingBooked", "signup", "formSubmission"]);
+  });
+
+  it("still prefers the payload goal while brand-service sends one", () => {
+    // Key-first would have overridden a payload goal that disagrees with the key,
+    // which changes how a funnel is priced. That is a separate decision with its
+    // own evidence, not something to slip into a fix that stops a 502.
+    const parsed = declaredFunnelsToRank([funnel({ funnelKey: "visit_signup", goal: "positive_replies" })]);
+    expect(parsed[0].goal).toBe("positiveReply");
   });
 
   it("reads nothing about FUNDING — the shape it produces has no place to put a budget", () => {

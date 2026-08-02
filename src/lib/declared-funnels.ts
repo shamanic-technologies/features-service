@@ -93,11 +93,56 @@ const CONSUMED_RATE_KEYS = [
  * Never resolve a payload value with the request-param resolvers (see the `goals.ts` header).
  */
 function goalOfFunnel(funnel: DeclaredSalesFunnel): Goal {
+  // The payload fields FIRST, unchanged, so every brand-service that still sends
+  // them resolves exactly as it does today. `goal` before `currentGoal` because
+  // the runtime token is lossy here (it collapses form submissions onto signup,
+  // which would price a Form Magnet on signup economics).
   const wire = typeof funnel.goal === "string" ? matchBrandServiceGoal(funnel.goal) : null;
   if (wire) return wire;
   const runtime = typeof funnel.currentGoal === "string" ? matchBrandServiceGoal(funnel.currentGoal) : null;
   if (runtime) return runtime;
+
+  // Then the KEY, because brand-service is retiring the goal off this payload
+  // entirely (brand-service#434) and this is what keeps the funnel resolving once
+  // the fields are gone. Last rather than first on purpose: reading it first
+  // would override a payload goal that disagrees with the key, which is a change
+  // to how funnels are priced — not something to slip into a fix that stops a 502.
+  const fromKey = goalOfFunnelKey(funnel.funnelKey);
+  if (fromKey) return fromKey;
+
   throw new UnknownFunnelGoalError(funnel.goal ?? funnel.currentGoal ?? JSON.stringify(funnel));
+}
+
+/**
+ * The goal each funnel chain optimizes for, by key — both the spellings
+ * brand-service stores today and the ones it is renaming to.
+ *
+ * These are exactly the pairings brand-service's own catalogue used to send on
+ * the payload, so resolving from the key reproduces today's answer rather than
+ * changing how anything is priced. Deliberately NOT an improvement: both meeting
+ * funnels still resolve to `meetingBooked` here, which is lossy in the way the
+ * retirement exists to fix. Pricing them apart is a separate change with its own
+ * evidence, not something to slip into a fix that stops a 502.
+ *
+ * Returns null for a key we do not know, so the payload fallback still gets its
+ * turn and an unknown funnel still throws rather than being priced on a guess.
+ */
+function goalOfFunnelKey(funnelKey: string): Goal | null {
+  switch (funnelKey) {
+    case "reply_meeting":
+    case "sales_meetings_from_conversation":
+    case "visit_meeting":
+    case "sales_meetings_from_website":
+      return "meetingBooked";
+    case "visit_signup":
+    case "website_purchases":
+      return "signup";
+    case "visit_form":
+    case "form_magnet":
+      return "formSubmission";
+    default:
+      return null;
+  }
 }
 
 const finite = (value: unknown): number | null =>
