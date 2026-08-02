@@ -9,6 +9,8 @@ import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type SingleStepGoal, type Goal } from "../lib/goals.js";
+import { SALES_FUNNELS, matchSalesFunnelKey, type MeetingChannel, type SalesFunnelKey } from "../lib/sales-funnels.js";
+import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
@@ -114,6 +116,13 @@ export interface WorkflowProjectionResponse {
   featureSlug: string;
   objective: Objective;
   goal: GoalEcho;
+  /**
+   * The SALES FUNNEL this projection is priced on, when the caller named one (`?funnel=`). Absent on a
+   * goal-keyed request, so a consumer that still sends a goal reads a byte-identical body. Present, it is
+   * the authoritative answer to "what was this priced as" — `goal`/`objective` are then only echoes, and
+   * the two meeting funnels carry the same echo while carrying different numbers.
+   */
+  funnelKey?: SalesFunnelKey;
   economics: EconomicsEcho | null;
   rows: ProjectionRow[];
   recommendedWorkflowDynastySlug: string | null;
@@ -151,6 +160,62 @@ export function goalToProjectionInputs(goal: Goal): {
     case "meetingBooked":
       return { objective: "meeting-booked", goalEcho: "meetingBooked", singleStepGoal: null, formSubmissionGoal: false };
   }
+}
+
+/**
+ * Map a SALES FUNNEL to the projection compute inputs — the funnel-keyed twin of
+ * `goalToProjectionInputs`, and the whole reason the two meeting funnels can finally be priced apart.
+ *
+ * A goal is the coarser question and keeps its coarser answer: `meetingBooked` funnels a meeting from
+ * BOTH channels (clicks × visit→meeting + replies × reply→meeting), which is right when all a caller
+ * said is "I want meetings". A FUNNEL states which channel buys the meeting, so it is priced on THAT
+ * channel alone — `meetingChannel` carries it, and everything downstream masks the other channel's unit
+ * cost and observed evidence away. `sales_meetings_from_conversation` therefore reads
+ * `replyUsd / replyToMeetingPct` while `sales_meetings_from_website` reads `clickUsd / visitToMeetingPct`
+ * against the same evidence, which is the whole point.
+ *
+ * The other two funnels need no channel: `website_purchases` is visit → signup → paid (the `signup`
+ * chain, click-driven by construction) and `form_magnet` is visit → form → paid. Note
+ * `website_purchases` maps to the `signup` objective and NOT to the `websitePurchase` goal — that goal
+ * is the full self-serve-plus-meeting close funnel, whose rates are not this chain's.
+ *
+ * `goal` / `objective` here are ECHOES for consumers that still read them (campaign-service reads
+ * `arbitration.goal` in prod); they never re-decide the math, which is keyed on the funnel.
+ */
+export function funnelToProjectionInputs(key: SalesFunnelKey): {
+  objective: Objective;
+  goalEcho: GoalEcho;
+  singleStepGoal: SingleStepGoal | null;
+  formSubmissionGoal: boolean;
+  meetingChannel: MeetingChannel | null;
+} {
+  switch (key) {
+    case "sales_meetings_from_conversation":
+      return { objective: "meeting-booked", goalEcho: "meetingBooked", singleStepGoal: null, formSubmissionGoal: false, meetingChannel: "reply" };
+    case "sales_meetings_from_website":
+      return { objective: "meeting-booked", goalEcho: "meetingBooked", singleStepGoal: null, formSubmissionGoal: false, meetingChannel: "click" };
+    case "website_purchases":
+      return { objective: "signup", goalEcho: "signup", singleStepGoal: null, formSubmissionGoal: false, meetingChannel: null };
+    case "form_magnet":
+      return { objective: "form_submissions", goalEcho: "formSubmission", singleStepGoal: null, formSubmissionGoal: true, meetingChannel: null };
+  }
+}
+
+/**
+ * Narrow a grain's unit costs to the ONE channel a funnel buys through.
+ *
+ * A masked channel reads `null`, which every per-budget term in `projectOutcomeCosts` already treats as
+ * "this channel contributes nothing" — so the funnel's cost falls out of the EXISTING formulas with no
+ * new math to keep in step. `null` channel (every goal caller, and the two click-driven funnels) returns
+ * the costs untouched, which is what makes the goal path byte-identical.
+ */
+function maskUnitCostsForChannel<T extends { clickUsd: number | null; replyUsd: number | null }>(
+  unitCosts: T,
+  channel: MeetingChannel | null,
+): { clickUsd: number | null; replyUsd: number | null } {
+  if (channel === "click") return { clickUsd: unitCosts.clickUsd, replyUsd: null };
+  if (channel === "reply") return { clickUsd: null, replyUsd: unitCosts.replyUsd };
+  return { clickUsd: unitCosts.clickUsd, replyUsd: unitCosts.replyUsd };
 }
 
 type GoalInputs = { objective: Objective; goal: GoalEcho; singleStepGoal: SingleStepGoal | null; formSubmissionGoal: boolean };
@@ -193,8 +258,9 @@ function paidClientCostForGoal(
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
+  meetingChannel: MeetingChannel | null = null,
 ): number | null {
-  const p = projectOutcomeCosts(econ, unitCosts);
+  const p = projectOutcomeCosts(econ, maskUnitCostsForChannel(unitCosts, meetingChannel));
   // whatsapp_conversations has NO paid-client rate (brand-service exposes none) → null, null-safe. The
   // click on the WhatsApp link IS the tracked outcome; there is no downstream paid-client economics.
   if (objective === "whatsapp_conversations") return null;
@@ -221,7 +287,9 @@ function paidClientCostForGoal(
  *
  * EXPORTED because /audience-stats scores fleet workflows with the IDENTICAL routing to pick the single
  * best workflow behind its floor parent (`fetchBrandProjectedParents`) — one goal→cost mapping across
- * both surfaces, so the two can never rank a different workflow best for the same goal.
+ * both surfaces, so the two can never rank a different workflow best for the same goal. `meetingChannel`
+ * threads with it: a funnel-keyed request must floor its per-audience rows against a parent priced on the
+ * SAME channel, or the two surfaces disagree again one layer down.
  */
 export function outcomeCostForGoal(
   econ: ProjectionEconomics,
@@ -229,8 +297,9 @@ export function outcomeCostForGoal(
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
+  meetingChannel: MeetingChannel | null = null,
 ): number | null {
-  const p = projectOutcomeCosts(econ, unitCosts);
+  const p = projectOutcomeCosts(econ, maskUnitCostsForChannel(unitCosts, meetingChannel));
   // whatsapp_conversations: the click on the WhatsApp link IS the outcome (a started conversation) →
   // its RAW unit cost = CPC (reuses the existing click evidence), exactly like websiteVisit.
   if (objective === "whatsapp_conversations") return unitCosts.clickUsd;
@@ -277,9 +346,12 @@ function resolvedOutcomeCountForGoal(
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
+  meetingChannel: MeetingChannel | null = null,
 ): number {
-  const clicks = ev.observedClicks;
-  const replies = ev.observedPositiveReplies;
+  // A channel-scoped funnel counts outcomes on the channel it buys through and ONLY that one — the same
+  // masking the cost side applies, so `spentUsd / count == that grain's cost-per-outcome` still holds.
+  const clicks = meetingChannel === "reply" ? 0 : ev.observedClicks;
+  const replies = meetingChannel === "click" ? 0 : ev.observedPositiveReplies;
   // whatsapp_conversations: the WhatsApp-link click IS the outcome (same as websiteVisit).
   if (objective === "whatsapp_conversations") return clicks;
   if (singleStepGoal === "websiteVisit") return clicks;
@@ -313,6 +385,7 @@ function buildGrainBlock(
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
   parentUnitCosts: GrainUnitCosts | null = null,
+  meetingChannel: MeetingChannel | null = null,
 ): GrainBlock {
   const spentUsd = evidence.totalCostInUsdCents / 100;
   const observedContacted = evidence.contacted;
@@ -335,8 +408,11 @@ function buildGrainBlock(
     };
   } else {
     const unitCosts = { clickUsd: costPerClickUsd, replyUsd: costPerPositiveReplyUsd };
-    const p = projectOutcomeCosts(econ, unitCosts);
-    const costPerPaidClientUsd = paidClientCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal);
+    // Priced on the funnel's OWN channel when one is stated. `costPerMeetingBookedUsd` rides here too:
+    // it sits on the SAME object as the resolved cost-per-outcome, so leaving it on the both-channel
+    // blend would print a meeting cost that contradicts the meeting cost one field over.
+    const p = projectOutcomeCosts(econ, maskUnitCostsForChannel(unitCosts, meetingChannel));
+    const costPerPaidClientUsd = paidClientCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel);
     const roiMultiple = ltrUsd != null && costPerPaidClientUsd != null && costPerPaidClientUsd > 0 ? ltrUsd / costPerPaidClientUsd : null;
     const cacPct = roiMultiple != null && roiMultiple > 0 ? 100 / roiMultiple : null;
     projected = {
@@ -351,7 +427,7 @@ function buildGrainBlock(
   // Goal-resolved outcome count from THIS grain's OWN observed evidence (no floor). Null at cold start
   // (no economics) — mirrors the projected costs' null gate.
   const resolvedOutcomeCount = econ
-    ? resolvedOutcomeCountForGoal({ observedClicks, observedPositiveReplies }, econ, objective, singleStepGoal, formSubmissionGoal)
+    ? resolvedOutcomeCountForGoal({ observedClicks, observedPositiveReplies }, econ, objective, singleStepGoal, formSubmissionGoal, meetingChannel)
     : null;
 
   return {
@@ -376,7 +452,13 @@ export function grainHasObservedOutcome(
   ev: GrainBlock["evidence"],
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
+  meetingChannel: MeetingChannel | null = null,
 ): boolean {
+  // A channel-scoped meeting funnel is MEASURED only on the channel it buys through: a brand with clicks
+  // and no replies has observed nothing about `sales_meetings_from_conversation`, so labelling that row
+  // "this brand's own results" would be a lie in exactly the way the provenance label exists to prevent.
+  if (meetingChannel === "reply") return ev.observedPositiveReplies > 0;
+  if (meetingChannel === "click") return ev.observedClicks > 0;
   if (singleStepGoal === "positiveReply") return ev.observedPositiveReplies > 0;
   if (singleStepGoal === "websiteVisit") return ev.observedClicks > 0;
   // whatsapp_conversations is click-driven (the WhatsApp-link click IS the outcome).
@@ -431,9 +513,10 @@ function resolvePick(
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
+  meetingChannel: MeetingChannel | null = null,
 ): ResolvedBlock {
   const measured = (g: GrainName): boolean =>
-    !!estimatesByGrain[g] && grainHasObservedOutcome(estimatesByGrain[g]!.evidence, objective, singleStepGoal);
+    !!estimatesByGrain[g] && grainHasObservedOutcome(estimatesByGrain[g]!.evidence, objective, singleStepGoal, meetingChannel);
   // NUMBER source: finest grain with spend (its floored unit costs = max(spent, parent) — Kevin's cascade).
   const numberGrain: GrainName =
     estimatesByGrain.audience ? "audience" : estimatesByGrain.brand ? "brand" : "crossOrg";
@@ -443,7 +526,7 @@ function resolvePick(
   const grain: GrainName =
     measured("audience") ? "audience" : measured("brand") ? "brand" : "crossOrg";
   const unitCosts = { clickUsd: block.unitCosts.costPerClickUsd, replyUsd: block.unitCosts.costPerPositiveReplyUsd };
-  const costPerOutcomeUsd = econ ? outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal) : null;
+  const costPerOutcomeUsd = econ ? outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel) : null;
   return {
     grain,
     costPerClickUsd: block.unitCosts.costPerClickUsd,
@@ -479,14 +562,35 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
   // Resolve the queried goal → (objective echo, goal echo, singleStep flag, form flag) across every
   // fleet spelling. An ABSENT goalParam defaults to meeting-booked (preserved); a PRESENT but
   // UNRECOGNISED goalParam FAILS LOUD (400) rather than silently defaulting.
-  const resolved = resolveGoalInputs(goalParam);
-  if (!resolved.ok) {
+  // A caller may name the SALES FUNNEL it wants priced (`?funnel=`) — the vocabulary brand-service now
+  // emits, and the only one that can tell the two meeting funnels apart. When it does, the funnel WINS
+  // over any goal param: the goal is the coarser question and cannot answer the finer one. When it does
+  // not, nothing below changes and the goal path stays byte-identical.
+  const funnelParam = req.query.funnel as string | undefined;
+  let funnelKey: SalesFunnelKey | null = null;
+  if (funnelParam != null && funnelParam !== "") {
+    funnelKey = matchSalesFunnelKey(funnelParam);
+    if (!funnelKey) {
+      return res.status(400).json({
+        error: `funnel must be one of: ${Object.keys(SALES_FUNNELS).join(", ")} (pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form also accepted)`,
+      });
+    }
+  }
+
+  const resolved = funnelKey ? null : resolveGoalInputs(goalParam);
+  if (resolved && !resolved.ok) {
     return res.status(400).json({
       error:
         "goal must be one of: signup, meetingBooked, websitePurchase, sales, websiteVisit, positiveReply, formSubmission, whatsappConversation (snake/kebab spellings also accepted)",
     });
   }
-  const { objective, goal, singleStepGoal, formSubmissionGoal } = resolved;
+  const inputs = funnelKey
+    ? (() => {
+        const f = funnelToProjectionInputs(funnelKey);
+        return { objective: f.objective, goal: f.goalEcho, singleStepGoal: f.singleStepGoal, formSubmissionGoal: f.formSubmissionGoal, meetingChannel: f.meetingChannel };
+      })()
+    : { ...(resolved as { ok: true } & GoalInputs), meetingChannel: null as MeetingChannel | null };
+  const { objective, goal, singleStepGoal, formSubmissionGoal, meetingChannel } = inputs;
   const budgetUsd = budgetRaw != null && budgetRaw !== "" ? Number(budgetRaw) : null;
 
   // GROSS (default) vs NET pricing. Omitted → gross → byte-identical to today.
@@ -515,6 +619,30 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // economics reads the NEW lifetimeRevenueUsd (hence the new roiMultiple / cacPct) with no wait, no
     // opt-in param, and without re-running the fan-out. See "economics is never cached" below.
     const identity: Identity = { orgId, userId, runId, featureSlug: headerFeatureSlug };
+
+    // A funnel the brand never declared has no cost to serve. "We could not estimate this" and "it costs
+    // zero" are different statements, and only the first one is true here — so this 404s with the reason
+    // rather than pricing a chain the org never said it sells through. Fires ONLY on `?funnel=`, so the
+    // goal path takes no extra read.
+    if (funnelKey) {
+      let declared: string[];
+      try {
+        declared = (await fetchDeclaredSalesFunnels(brandId, orgId)).map((f) => f.funnelKey);
+      } catch (error) {
+        if (error instanceof SalesFunnelsUnavailableError) {
+          return res.status(502).json({ error: error.message, reason: "declared_funnels_unavailable" });
+        }
+        throw error;
+      }
+      if (!declared.includes(funnelKey)) {
+        return res.status(404).json({
+          error: `this brand has not declared the ${funnelKey} funnel, so there is no cost to estimate for it`,
+          reason: "funnel_not_declared",
+          declaredFunnelKeys: declared,
+        });
+      }
+    }
+
     const [evidence, effective] = await Promise.all([
       servedCached({
         view: "workflow-projection-evidence",
@@ -530,6 +658,8 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       goal,
       singleStepGoal,
       formSubmissionGoal,
+      meetingChannel,
+      ...(funnelKey ? { funnelKey } : {}),
       evidence,
       economics: effective.economics,
     });
@@ -611,6 +741,8 @@ export async function computeWorkflowProjection(input: {
   goal: GoalEcho;
   singleStepGoal: SingleStepGoal | null;
   formSubmissionGoal: boolean;
+  meetingChannel?: MeetingChannel | null;
+  funnelKey?: SalesFunnelKey;
   identity: Identity;
   pricing: Pricing;
 }): Promise<WorkflowProjectionResponse> {
@@ -619,7 +751,17 @@ export async function computeWorkflowProjection(input: {
     fetchWorkflowProjectionEvidence({ featureSlug, brandId, identity, pricing }),
     fetchEffectiveEconomics(brandId, identity),
   ]);
-  return projectFromEvidence({ featureSlug, objective, goal, singleStepGoal, formSubmissionGoal, evidence, economics: effective.economics });
+  return projectFromEvidence({
+    featureSlug,
+    objective,
+    goal,
+    singleStepGoal,
+    formSubmissionGoal,
+    meetingChannel: input.meetingChannel ?? null,
+    ...(input.funnelKey ? { funnelKey: input.funnelKey } : {}),
+    evidence,
+    economics: effective.economics,
+  });
 }
 
 /**
@@ -635,10 +777,15 @@ export function projectFromEvidence(input: {
   goal: GoalEcho;
   singleStepGoal: SingleStepGoal | null;
   formSubmissionGoal: boolean;
+  /** Set ONLY on a funnel-keyed projection; narrows every cost + every observed count to that channel. */
+  meetingChannel?: MeetingChannel | null;
+  /** Echoed on the response when the caller named a funnel. Never shapes the math on its own. */
+  funnelKey?: SalesFunnelKey;
   evidence: WorkflowProjectionEvidence;
   economics: SalesEconomics | null;
 }): WorkflowProjectionResponse {
   const { featureSlug, objective, goal, singleStepGoal, formSubmissionGoal, evidence, economics } = input;
+  const meetingChannel = input.meetingChannel ?? null;
   const workflows = evidence.workflows;
   const costGroups = evidence.crossOrgCostGroups;
   const emailStats = new Map(evidence.crossOrgEmailStats);
@@ -708,9 +855,9 @@ export function projectFromEvidence(input: {
       ev: WorkflowGrainEvidence,
       parentUnitCosts: GrainUnitCosts | null = null,
     ): GrainBlock =>
-      buildGrainBlock(ev, econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal, parentUnitCosts);
+      buildGrainBlock(ev, econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal, parentUnitCosts, meetingChannel);
     const resolve = (grains: Partial<Record<GrainName, GrainBlock>>): ResolvedBlock =>
-      resolvePick(grains, econ, objective, singleStepGoal, formSubmissionGoal);
+      resolvePick(grains, econ, objective, singleStepGoal, formSubmissionGoal, meetingChannel);
 
     const rows: ProjectionRow[] = [];
 
@@ -818,6 +965,7 @@ export function projectFromEvidence(input: {
       featureSlug,
       objective,
       goal,
+      ...(input.funnelKey ? { funnelKey: input.funnelKey } : {}),
       economics: economicsEcho,
       rows,
       recommendedWorkflowDynastySlug: recommended?.workflow.workflowDynastySlug ?? null,

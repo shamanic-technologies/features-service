@@ -1625,6 +1625,16 @@
           "featureSlug": {
             "type": "string"
           },
+          "funnelKey": {
+            "type": "string",
+            "enum": [
+              "sales_meetings_from_conversation",
+              "sales_meetings_from_website",
+              "website_purchases",
+              "form_magnet"
+            ],
+            "description": "The SALES FUNNEL this projection was priced on — present ONLY when the request named one via `?funnel=`. It is the authoritative answer to what was priced: the two meeting funnels carry the SAME `goal`/`objective` echo and DIFFERENT numbers, which is why the goal was retired as an identity. Absent on a goal-keyed request, so an existing consumer reads a byte-identical body."
+          },
           "objective": {
             "type": "string",
             "enum": [
@@ -2123,7 +2133,13 @@
               "properties": {
                 "funnelKey": {
                   "type": "string",
-                  "description": "brand-service's key for the funnel — the SAME key billing funds and campaign-service paces on, so a customer can map a rank straight onto a budget."
+                  "enum": [
+                    "sales_meetings_from_conversation",
+                    "sales_meetings_from_website",
+                    "website_purchases",
+                    "form_magnet"
+                  ],
+                  "description": "brand-service's key for the funnel — the SAME key billing funds and campaign-service paces on, so a customer can map a rank straight onto a budget, AND the only field that identifies what was priced. The two meeting funnels differ here and nowhere else in this shape: same goal echo, different numbers."
                 },
                 "name": {
                   "type": "string",
@@ -2140,7 +2156,8 @@
                     "positiveReply",
                     "formSubmission",
                     "whatsappConversation"
-                  ]
+                  ],
+                  "description": "LEGACY echo, derived from funnelKey. Lossy by construction — `sales_meetings_from_conversation` and `sales_meetings_from_website` both echo `meetingBooked` — so it must never be read as the identity of the row. Kept because campaign-service reads arbitration.goal in prod."
                 },
                 "objective": {
                   "type": "string",
@@ -2154,7 +2171,8 @@
                     "positive_replies",
                     "form_submissions",
                     "whatsapp_conversations"
-                  ]
+                  ],
+                  "description": "Legacy snake echo of `goal`. Same lossiness; read `funnelKey`."
                 },
                 "rank": {
                   "type": "integer",
@@ -2174,7 +2192,7 @@
                     "no_paid_client_path",
                     "no_return_defined"
                   ],
-                  "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client (a whatsapp funnel carries no whatsapp→paid rate; or its rate chain collapses to 0). `no_workflow_evidence` = no history to compare it on yet. Null ⟺ rankable."
+                  "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client — a leg of its OWN chain is undeclared or sits at 0. Note a channel-scoped meeting funnel lands here whenever ITS channel has no rate, which a goal-keyed score used to hide behind the other channel's contribution. `no_workflow_evidence` = no history to compare it on yet. Null ⟺ rankable."
                 },
                 "returnPerDollar": {
                   "type": "number",
@@ -2245,7 +2263,13 @@
             "nullable": true,
             "properties": {
               "funnelKey": {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "sales_meetings_from_conversation",
+                  "sales_meetings_from_website",
+                  "website_purchases",
+                  "form_magnet"
+                ]
               },
               "name": {
                 "type": "string"
@@ -2339,6 +2363,17 @@
                 ],
                 "description": "`resolved` = a funnel is recommended. `unrankable` = nothing could be ranked for this brand (see reason) — distinguishable from a recommendation, and not an error."
               },
+              "funnelKey": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "sales_meetings_from_conversation",
+                  "sales_meetings_from_website",
+                  "website_purchases",
+                  "form_magnet"
+                ],
+                "description": "The recommended funnel's key — the unambiguous half of this compatibility view, added beside the lossy `goal` so a consumer can migrate off it without a second endpoint. Null ⟺ status = unrankable."
+              },
               "goal": {
                 "type": "string",
                 "nullable": true,
@@ -2352,7 +2387,7 @@
                   "formSubmission",
                   "whatsappConversation"
                 ],
-                "description": "The recommended funnel's goal. Null ⟺ status = unrankable."
+                "description": "LEGACY echo of the recommended funnel's goal. Cannot distinguish the two meeting funnels; read funnelKey. Null ⟺ status = unrankable."
               },
               "objective": {
                 "type": "string",
@@ -2403,6 +2438,7 @@
             },
             "required": [
               "status",
+              "funnelKey",
               "goal",
               "objective",
               "reason",
@@ -6289,6 +6325,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "The SALES FUNNEL to price on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`, priced replyUsd / replyToMeetingPct) from one bought with a click onto the site (`sales_meetings_from_website`, priced clickUsd / visitToMeetingPct). A goal cannot express that difference: both echo `meetingBooked`, and a goal-keyed request funnels from BOTH channels. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases (visit → signup → paid), form_magnet (visit → form → paid); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever and resolve to the canonical key. WINS over `goal`/`objective` when both are sent. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared') — 'we could not estimate this' and 'it costs zero' are different statements. An unrecognised value is a 400, never a silent fall back to the goal."
+            },
+            "required": false,
+            "description": "The SALES FUNNEL to price on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`, priced replyUsd / replyToMeetingPct) from one bought with a click onto the site (`sales_meetings_from_website`, priced clickUsd / visitToMeetingPct). A goal cannot express that difference: both echo `meetingBooked`, and a goal-keyed request funnels from BOTH channels. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases (visit → signup → paid), form_magnet (visit → form → paid); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever and resolve to the canonical key. WINS over `goal`/`objective` when both are sent. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared') — 'we could not estimate this' and 'it costs zero' are different statements. An unrecognised value is a 400, never a silent fall back to the goal.",
+            "name": "funnel",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface)."
             },
             "required": false,
@@ -6364,6 +6410,16 @@
                   "properties": {
                     "featureSlug": {
                       "type": "string"
+                    },
+                    "funnelKey": {
+                      "type": "string",
+                      "enum": [
+                        "sales_meetings_from_conversation",
+                        "sales_meetings_from_website",
+                        "website_purchases",
+                        "form_magnet"
+                      ],
+                      "description": "The SALES FUNNEL this projection was priced on — present ONLY when the request named one via `?funnel=`. It is the authoritative answer to what was priced: the two meeting funnels carry the SAME `goal`/`objective` echo and DIFFERENT numbers, which is why the goal was retired as an identity. Absent on a goal-keyed request, so an existing consumer reads a byte-identical body."
                     },
                     "objective": {
                       "type": "string",
@@ -6854,7 +6910,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId",
+            "description": "Missing brandId, or an unrecognised goal / funnel / pricing value",
             "content": {
               "application/json": {
                 "schema": {
@@ -6872,7 +6928,7 @@
             }
           },
           "404": {
-            "description": "Feature not found",
+            "description": "Feature not found, or (reason='funnel_not_declared') the requested `?funnel=` is not one this brand declared — the body carries `declaredFunnelKeys`",
             "content": {
               "application/json": {
                 "schema": {
@@ -6890,7 +6946,7 @@
             }
           },
           "502": {
-            "description": "Downstream service error",
+            "description": "Downstream service error (reason='declared_funnels_unavailable' when the declared-funnel read could not be answered)",
             "content": {
               "application/json": {
                 "schema": {
@@ -6913,7 +6969,7 @@
     "/features/{featureSlug}/goal-arbitration": {
       "get": {
         "summary": "Rank the brand's DECLARED sales funnels by return per dollar (a recommendation, not a selection)",
-        "description": "ONE answer per brand: EVERY sales funnel the brand DECLARED, ranked by what it returns per dollar, plus the best workflow and the per-audience evidence for the best-returning one — so a consumer never issues one request per funnel and never ranks economics itself. IT IS ADVICE, NOT A GATE. Which funnel actually runs is decided by what the customer FUNDS: each funnel carries its own daily ceiling (billing-service) and campaign-service works every funded funnel, pacing each against its own ceiling. This endpoint answers the other question — which funnel has returned best, and how do the others compare — so a customer can decide where to move their money. The value is the COMPARISON in `ranking`; `recommendation` is simply its head. AN UNFUNDED FUNNEL IS STILL RANKED. Ranking is about history: what a funnel has returned is what makes it comparable, and being unfunded is a decision the customer just made, not a reason to hide how it performed. features-service never asks billing which funnels are funded. RANKING BASIS: returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-funnel-comparable number — a cost per outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting), so normalising through each funnel's own chain to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. Rankable funnels sort on returnPerDollar descending, ties broken by the canonical goal order then by funnelKey, so the same evidence + the same economics always produce the same list. Per funnel, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a funnel, since the outcome→paid rate is a constant for it), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. A funnel with NO defined return is ranked LAST, never dropped: a whatsapp funnel has no path to a paying client (brand-service exposes no whatsapp→paid rate), and a funnel with no economics / no workflow evidence / a non-positive return is likewise listed with rank=null, rankable=false and its reason. When nothing can be ranked at all the response is arbitration.status='unrankable' with a reason — distinguishable from a recommendation, never an error that hides why. ONE ENTRY PER FUNNEL: two funnels that optimize for the same goal (a meeting booked from a reply and from a website visit) are ranked SEPARATELY and each priced on its own declared terms, because the customer funds them separately — a merged row could not answer 'where should I move my budget?' for either. A rate a funnel does not state falls back to the brand's effective economics, never to zero. The DECLARED SET is brand-service's to own, read from brand-service, never accepted from the caller and never inferred from the brand's single optimizationGoal (nor from the brand-wide economics row, every rate of which is server-defaulted and so signals nothing). When that declaration cannot be READ — transport, a non-OK response, or an empty list, i.e. this org has never STATED what it sells through — the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set. Cost: two small brand-service reads (the effective economics and the declared funnels) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — ranking N funnels adds zero IO over reading one. /workflow-projection itself is unchanged.",
+        "description": "ONE answer per brand: EVERY sales funnel the brand DECLARED, ranked by what it returns per dollar, plus the best workflow and the per-audience evidence for the best-returning one — so a consumer never issues one request per funnel and never ranks economics itself. IT IS ADVICE, NOT A GATE. Which funnel actually runs is decided by what the customer FUNDS: each funnel carries its own daily ceiling (billing-service) and campaign-service works every funded funnel, pacing each against its own ceiling. This endpoint answers the other question — which funnel has returned best, and how do the others compare — so a customer can decide where to move their money. The value is the COMPARISON in `ranking`; `recommendation` is simply its head. AN UNFUNDED FUNNEL IS STILL RANKED. Ranking is about history: what a funnel has returned is what makes it comparable, and being unfunded is a decision the customer just made, not a reason to hide how it performed. features-service never asks billing which funnels are funded. RANKING BASIS: returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-funnel-comparable number — a cost per outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting), so normalising through each funnel's own chain to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. Rankable funnels sort on returnPerDollar descending, ties broken by the canonical funnel-catalogue order, so the same evidence + the same economics always produce the same list. Per funnel, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a funnel, since the outcome→paid rate is a constant for it), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. EACH FUNNEL IS PRICED ON ITS OWN CHAIN, keyed on funnelKey and not on a goal. A funnel carries no goal since brand-service retired the vocabulary, and the goal could not have answered this: sales_meetings_from_conversation and sales_meetings_from_website both mapped onto `meetingBooked`, so the two were charged one blended both-channel price and a brand running the reply-driven chain was benchmarked against clicks it never buys. The conversation funnel now prices replyUsd / replyToMeetingPct and the website one clickUsd / visitToMeetingPct, so a brand declaring both gets two different costs — and often two different best workflows. A funnel with NO defined return is ranked LAST, never dropped: a chain whose own legs are undeclared or sit at 0 has no path to a paying client, and a funnel with no economics / no workflow evidence / a non-positive return is likewise listed with rank=null, rankable=false and its reason. When nothing can be ranked at all the response is arbitration.status='unrankable' with a reason — distinguishable from a recommendation, never an error that hides why. ONE ENTRY PER FUNNEL: the two meeting funnels (booked from a reply, booked from a website visit) are ranked SEPARATELY and each priced on its own channel and its own declared terms, because the customer funds them separately — a merged row could not answer 'where should I move my budget?' for either. A rate a funnel does not state falls back to the brand's effective economics, never to zero. The DECLARED SET is brand-service's to own, read from brand-service, never accepted from the caller and never inferred from the brand's single optimizationGoal (nor from the brand-wide economics row, every rate of which is server-defaulted and so signals nothing). When that declaration cannot be READ — transport, a non-OK response, or an empty list, i.e. this org has never STATED what it sells through — the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set. Cost: two small brand-service reads (the effective economics and the declared funnels) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — ranking N funnels adds zero IO over reading one. /workflow-projection itself is unchanged.",
         "tags": [
           "Stats"
         ],
@@ -7012,7 +7068,13 @@
                         "properties": {
                           "funnelKey": {
                             "type": "string",
-                            "description": "brand-service's key for the funnel — the SAME key billing funds and campaign-service paces on, so a customer can map a rank straight onto a budget."
+                            "enum": [
+                              "sales_meetings_from_conversation",
+                              "sales_meetings_from_website",
+                              "website_purchases",
+                              "form_magnet"
+                            ],
+                            "description": "brand-service's key for the funnel — the SAME key billing funds and campaign-service paces on, so a customer can map a rank straight onto a budget, AND the only field that identifies what was priced. The two meeting funnels differ here and nowhere else in this shape: same goal echo, different numbers."
                           },
                           "name": {
                             "type": "string",
@@ -7029,7 +7091,8 @@
                               "positiveReply",
                               "formSubmission",
                               "whatsappConversation"
-                            ]
+                            ],
+                            "description": "LEGACY echo, derived from funnelKey. Lossy by construction — `sales_meetings_from_conversation` and `sales_meetings_from_website` both echo `meetingBooked` — so it must never be read as the identity of the row. Kept because campaign-service reads arbitration.goal in prod."
                           },
                           "objective": {
                             "type": "string",
@@ -7043,7 +7106,8 @@
                               "positive_replies",
                               "form_submissions",
                               "whatsapp_conversations"
-                            ]
+                            ],
+                            "description": "Legacy snake echo of `goal`. Same lossiness; read `funnelKey`."
                           },
                           "rank": {
                             "type": "integer",
@@ -7063,7 +7127,7 @@
                               "no_paid_client_path",
                               "no_return_defined"
                             ],
-                            "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client (a whatsapp funnel carries no whatsapp→paid rate; or its rate chain collapses to 0). `no_workflow_evidence` = no history to compare it on yet. Null ⟺ rankable."
+                            "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client — a leg of its OWN chain is undeclared or sits at 0. Note a channel-scoped meeting funnel lands here whenever ITS channel has no rate, which a goal-keyed score used to hide behind the other channel's contribution. `no_workflow_evidence` = no history to compare it on yet. Null ⟺ rankable."
                           },
                           "returnPerDollar": {
                             "type": "number",
@@ -7134,7 +7198,13 @@
                       "nullable": true,
                       "properties": {
                         "funnelKey": {
-                          "type": "string"
+                          "type": "string",
+                          "enum": [
+                            "sales_meetings_from_conversation",
+                            "sales_meetings_from_website",
+                            "website_purchases",
+                            "form_magnet"
+                          ]
                         },
                         "name": {
                           "type": "string"
@@ -7228,6 +7298,17 @@
                           ],
                           "description": "`resolved` = a funnel is recommended. `unrankable` = nothing could be ranked for this brand (see reason) — distinguishable from a recommendation, and not an error."
                         },
+                        "funnelKey": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "sales_meetings_from_conversation",
+                            "sales_meetings_from_website",
+                            "website_purchases",
+                            "form_magnet"
+                          ],
+                          "description": "The recommended funnel's key — the unambiguous half of this compatibility view, added beside the lossy `goal` so a consumer can migrate off it without a second endpoint. Null ⟺ status = unrankable."
+                        },
                         "goal": {
                           "type": "string",
                           "nullable": true,
@@ -7241,7 +7322,7 @@
                             "formSubmission",
                             "whatsappConversation"
                           ],
-                          "description": "The recommended funnel's goal. Null ⟺ status = unrankable."
+                          "description": "LEGACY echo of the recommended funnel's goal. Cannot distinguish the two meeting funnels; read funnelKey. Null ⟺ status = unrankable."
                         },
                         "objective": {
                           "type": "string",
@@ -7292,6 +7373,7 @@
                       },
                       "required": [
                         "status",
+                        "funnelKey",
                         "goal",
                         "objective",
                         "reason",
@@ -8274,6 +8356,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `goal` stays REQUIRED (it selects which conversion columns are attributed), but when a funnel is named it decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal."
+            },
+            "required": false,
+            "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `goal` stays REQUIRED (it selects which conversion columns are attributed), but when a funnel is named it decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal.",
+            "name": "funnel",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "Optional brand-profile version to scope evidence, echoed back on the response. Null when omitted (brand-service retired versioned brand-profile storage — no current-profile lookup)."
             },
             "required": false,
@@ -8658,7 +8750,7 @@
             }
           },
           "400": {
-            "description": "Missing/invalid brandId, goal, limit, or statuses",
+            "description": "Missing/invalid brandId, goal, funnel, limit, or statuses",
             "content": {
               "application/json": {
                 "schema": {
@@ -8676,7 +8768,7 @@
             }
           },
           "404": {
-            "description": "Feature not found",
+            "description": "Feature not found, or (reason='funnel_not_declared') the requested `?funnel=` is not one this brand declared — the body carries `declaredFunnelKeys`",
             "content": {
               "application/json": {
                 "schema": {
@@ -8694,7 +8786,7 @@
             }
           },
           "502": {
-            "description": "Downstream service error",
+            "description": "Downstream service error (reason='declared_funnels_unavailable' when the declared-funnel read could not be answered)",
             "content": {
               "application/json": {
                 "schema": {

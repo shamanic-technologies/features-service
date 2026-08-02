@@ -186,6 +186,14 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     if (url.includes("runs:3000/v1/stats/public/costs")) return json({ groups: fleet.costs });
     if (url.includes("email:3000/public/stats")) return json({ groups: fleet.email });
     if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    // The funnels this brand declared — both meeting chains, so a `?funnel=` request is answerable.
+    if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
+      return json({
+        funnels: ["sales_meetings_from_conversation", "sales_meetings_from_website", "website_purchases", "form_magnet"].map(
+          (funnelKey) => ({ funnelKey, active: true, name: funnelKey, steps: [], rates: {}, lifetimeRevenueUsd: null, destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-02T00:00:00.000Z" }),
+        ),
+      });
+    }
     // Conversion tracker (purchase / sale goals): no converted lead → 0 conversions, not absent.
     if (url.includes("lead:3000/internal/brands/brand-1/converted-lead-emails")) return json({ emails: [] });
 
@@ -235,10 +243,14 @@ async function bothSurfaces(
   goal: string,
   statsMetric: "cpcCents" | "cpprCents" | "cpsaleCents" | "cpfsCents",
   projectionField: "costPerOutcomeUsd" | "costPerClickUsd",
+  // The SALES FUNNEL to price on. Threaded onto BOTH URLs, because the invariant this suite guards is
+  // that the two surfaces answer with one number — which only holds if they are asked one question.
+  funnel?: string,
 ) {
-  const stats = await request(app).get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=${goal}`).set(AUTH);
+  const q = funnel ? `&funnel=${funnel}` : "";
+  const stats = await request(app).get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=${goal}${q}`).set(AUTH);
   expect(stats.status).toBe(200);
-  const projection = await request(app).get(`/features/${FEATURE.slug}/workflow-projection?brandId=brand-1&goal=${goal}`).set(AUTH);
+  const projection = await request(app).get(`/features/${FEATURE.slug}/workflow-projection?brandId=brand-1&goal=${goal}${q}`).set(AUTH);
   expect(projection.status).toBe(200);
 
   const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
@@ -362,6 +374,47 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
     const click = await bothSurfaces("websitePurchase", "cpcCents", "costPerClickUsd");
     expect(click.statsUsd).toBe(click.projectionUsd);
     expect(click.statsUsd).toBe(4); // wf-closer's click cost, NOT wf-cheap's cheaper $2.00
+  });
+
+  // THE RETIREMENT'S OWN COHERENCE CASE — the two meeting funnels are two chains bought through two
+  // different channels, so they legitimately crown DIFFERENT workflows and price the same audience
+  // differently. What must NOT differ is the two surfaces' answer for one funnel: the per-audience floor
+  // parent has to move with the funnel, or the Audiences table and the Strategy page split apart again
+  // one layer down — the exact incoherence this suite exists to prevent, in the new vocabulary.
+  it("each MEETING FUNNEL prices the audience on its own channel, and both surfaces agree per funnel", async () => {
+    fleet = FLEET_GOAL_BEATS_CLICKS;
+
+    // Bought with a positive reply: wf-cheap has none (its reply cost floors to its $200 spend), so the
+    // conversation funnel is won by wf-closer and the audience's click column reads wf-closer's $4.
+    const conversation = await bothSurfaces("meetingBooked", "cpcCents", "costPerClickUsd", "sales_meetings_from_conversation");
+    expect(conversation.statsUsd).toBe(conversation.projectionUsd);
+    expect(conversation.statsUsd).toBe(4);
+
+    // Bought with a click onto the site: wf-cheap's $2 clicks win it outright.
+    const website = await bothSurfaces("meetingBooked", "cpcCents", "costPerClickUsd", "sales_meetings_from_website");
+    expect(website.statsUsd).toBe(website.projectionUsd);
+    expect(website.statsUsd).toBe(2);
+
+    // The two funnels genuinely disagree — a goal-keyed request cannot produce this split at all, which
+    // is why a brand running only the reply chain was benchmarked against clicks it never buys.
+    expect(conversation.statsUsd).not.toBe(website.statsUsd);
+  });
+
+  it("refuses to price a funnel the brand never declared, on the audience surface too", async () => {
+    fetchSpy.mockRestore();
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = urlOf(input);
+      if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
+        return json({ funnels: [{ funnelKey: "website_purchases", active: true, name: "Website Purchase", steps: [], rates: {}, lifetimeRevenueUsd: null, destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-02T00:00:00.000Z" }] });
+      }
+      return json({});
+    }) as ReturnType<typeof vi.spyOn>;
+
+    const res = await request(app)
+      .get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=meetingBooked&funnel=sales_meetings_from_website`)
+      .set(AUTH);
+    expect(res.status).toBe(404);
+    expect(res.body.reason).toBe("funnel_not_declared");
   });
 
   it("the BRAND grain floor is part of the pick — a workflow this brand already outspent cannot win on its fleet rate", async () => {
