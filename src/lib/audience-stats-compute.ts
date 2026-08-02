@@ -9,6 +9,7 @@ import { flooredCostPerOutcome, derivedCostPerOutcome } from "./cost-engine.js";
 import { fetchBrandProjectedParents } from "./audience-stats-brand-projection.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
+import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 
 export type SortMetric = "cpc" | "cppr";
@@ -488,10 +489,11 @@ async function fetchAudienceMembership(
  * independently correct for its other caller (customer-health), and the route cannot drift from it.
  */
 export function validateAudienceStatsQuery(req: Request):
-  | { ok: true; brandId: string; goal: Goal; statuses: AudienceStatus[]; limit?: number }
+  | { ok: true; brandId: string; goal: Goal; funnelKey?: SalesFunnelKey; statuses: AudienceStatus[]; limit?: number }
   | { ok: false; status: number; error: string } {
   const brandId = req.query.brandId as string | undefined;
   const goalParam = req.query.goal as string | undefined;
+  const funnelParam = req.query.funnel as string | undefined;
   const limitParam = req.query.limit as string | undefined;
   const statusesParam = req.query.statuses as string | undefined;
 
@@ -512,6 +514,20 @@ export function validateAudienceStatsQuery(req: Request):
     return { ok: false, status: 400, error: "goal query parameter is required and must be one of: signup, meetingBooked, websitePurchase, sales, websiteVisit, positiveReply, formSubmission, whatsappConversation" };
   }
 
+  // `?funnel=` names the SALES FUNNEL to price on — the vocabulary brand-service now emits, and the only
+  // one that separates a meeting bought with a reply from one bought with a click. `goal` stays REQUIRED
+  // (it still selects which conversion columns are attributed, and every live caller sends it), but when
+  // a funnel is named it decides the cost basis. Unknown value → 400; never a silent fall back to the
+  // goal, which would answer a finer question with a coarser number and look right.
+  let funnelKey: SalesFunnelKey | undefined;
+  if (funnelParam != null && funnelParam !== "") {
+    const matched = matchSalesFunnelKey(funnelParam);
+    if (!matched) {
+      return { ok: false, status: 400, error: `funnel query parameter must be one of: ${SALES_FUNNEL_KEYS.join(", ")}` };
+    }
+    funnelKey = matched;
+  }
+
   const parsedStatuses = parseStatuses(statusesParam);
   if (!parsedStatuses.ok) {
     return { ok: false, status: 400, error: parsedStatuses.error };
@@ -526,7 +542,7 @@ export function validateAudienceStatsQuery(req: Request):
     parsedLimit = parsed;
   }
 
-  return { ok: true, brandId, goal: normalizedGoal, statuses: parsedStatuses.statuses, limit: parsedLimit };
+  return { ok: true, brandId, goal: normalizedGoal, ...(funnelKey ? { funnelKey } : {}), statuses: parsedStatuses.statuses, limit: parsedLimit };
 }
 
 export async function computeAudienceStats(req: Request, pricing: Pricing = "gross"): Promise<ComputeResult> {
@@ -540,7 +556,7 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
 
   const validated = validateAudienceStatsQuery(req);
   if (!validated.ok) return validated;
-  const { brandId, goal: normalizedGoal, limit: parsedLimit } = validated;
+  const { brandId, goal: normalizedGoal, funnelKey, limit: parsedLimit } = validated;
   const parsedStatuses = { ok: true as const, statuses: validated.statuses };
 
   const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
@@ -585,6 +601,9 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
       identity,
       pricing,
       audiences.map((audience) => audience.id),
+      // When the caller named a funnel, the floor parent is priced on THAT chain — same override the
+      // per-row projection takes, so the two can never disagree for one audience.
+      funnelKey,
     ),
   ]);
   const membership = membershipResult.perAudience;

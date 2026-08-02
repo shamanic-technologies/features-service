@@ -4,6 +4,7 @@ import { computeAudienceStats, validateAudienceStatsQuery, type ComputeResult } 
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
+import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
 
 const router = Router();
 
@@ -29,6 +30,29 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     const validated = validateAudienceStatsQuery(req);
     if (!validated.ok) {
       return res.status(validated.status).json({ error: validated.error });
+    }
+
+    // A funnel the brand never declared has no cost to serve — "we could not estimate this" and "it
+    // costs zero" are different statements, and only the first is true. 404 with the reason rather than
+    // pricing a chain the org never said it sells through. Fires ONLY on `?funnel=`, so every existing
+    // goal-keyed request takes no extra read.
+    if (validated.funnelKey) {
+      let declared: string[];
+      try {
+        declared = (await fetchDeclaredSalesFunnels(validated.brandId, orgId)).map((f) => f.funnelKey);
+      } catch (err) {
+        if (err instanceof SalesFunnelsUnavailableError) {
+          return res.status(502).json({ error: err.message, reason: "declared_funnels_unavailable" });
+        }
+        throw err;
+      }
+      if (!declared.includes(validated.funnelKey)) {
+        return res.status(404).json({
+          error: `this brand has not declared the ${validated.funnelKey} funnel, so there is no cost to estimate for it`,
+          reason: "funnel_not_declared",
+          declaredFunnelKeys: declared,
+        });
+      }
     }
 
     // The derived cost columns (cost per form submission / signup / sale) project through the brand's
@@ -62,6 +86,10 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
       orgId,
       brandId: req.query.brandId,
       goal: req.query.goal,
+      // The funnel changes the cost basis of every column, so it MUST be in the key — keyed on the
+      // CANONICAL value the validator resolved, so `reply_meeting` and `sales_meetings_from_conversation`
+      // share one cell instead of fragmenting it. Absent → dropped → byte-identical to a goal-only key.
+      funnel: validated.funnelKey,
       statuses: req.query.statuses,
       limit: req.query.limit,
       brandProfileId: req.query.brandProfileId,

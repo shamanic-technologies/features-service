@@ -4,8 +4,8 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
-import { declaredFunnelsToRank, UnknownFunnelGoalError } from "../lib/declared-funnels.js";
-import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
+import { declaredFunnelsToRank } from "../lib/declared-funnels.js";
+import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError, UnknownSalesFunnelError } from "../lib/sales-funnels-client.js";
 import { rankDeclaredFunnels } from "../lib/goal-arbitration.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
@@ -30,6 +30,12 @@ const router = Router();
 // The declared set is read from BRAND-SERVICE and is never accepted from the caller. The heavy evidence
 // fan-out is goal-INDEPENDENT and therefore SHARES the Gold snapshot `/workflow-projection` already
 // maintains (same view, same scope key) — ranking N funnels adds zero IO over reading one.
+//
+// EACH FUNNEL IS PRICED ON ITS OWN CHAIN. A funnel no longer carries a goal (brand-service #434) and
+// the goal could not have answered this anyway: `sales_meetings_from_conversation` and
+// `sales_meetings_from_website` both mapped onto `meetingBooked`, so the two were charged the same
+// blended both-channel price. They are now scored on the channel each actually buys through, so a brand
+// declaring both gets two different costs and a ranking that can tell it which one to fund.
 //
 // FAIL-LOUD, no substituted set: when the declaration cannot be READ the endpoint 502s with
 // `reason: "authorized_goals_unavailable"` naming what failed, rather than defaulting to the brand's
@@ -99,13 +105,14 @@ router.get("/features/:featureSlug/goal-arbitration", apiKeyAuth, async (req, re
         reason: "authorized_goals_unavailable",
       });
     }
-    if (error instanceof UnknownFunnelGoalError) {
-      // A funnel the brand declared that we cannot map must never be silently dropped from the
+    if (error instanceof UnknownSalesFunnelError) {
+      // A funnel the brand declared that we have no chain for must never be silently dropped from the
       // ranking — that would rank a smaller set and answer as if it were the whole one, leaving the
-      // customer comparing against a list missing one of their own funnels.
-      console.error("[features-service] Funnel ranking: unrecognised declared funnel goal:", error.raw);
+      // customer comparing against a list missing one of their own funnels. The wire `reason` keeps its
+      // deployed spelling; campaign-service matches on it verbatim.
+      console.error("[features-service] Funnel ranking: unrecognised declared sales funnel:", error.raw);
       return res.status(502).json({
-        error: `brand-service authorized goal "${error.raw}" is not a recognised optimization goal`,
+        error: `brand-service declared sales funnel "${error.raw}" is not in the known catalogue`,
         reason: "authorized_goal_unrecognised",
       });
     }

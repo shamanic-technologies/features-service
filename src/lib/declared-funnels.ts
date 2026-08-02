@@ -2,13 +2,22 @@
  * The sales funnels a brand DECLARED it sells through, prepared for ranking.
  *
  * OWNERSHIP: the declared set is BRAND-SERVICE's. A brand declares its funnels
- * (`GET /internal/brands/:brandId/sales-funnels`), each funnel carrying the goal it optimizes for and
- * the economics that chain is priced on. features-service reads that declaration and ranks it. It is
- * NEVER supplied by the caller and it is NEVER inferred here — in particular a brand's single
- * `optimizationGoal` is ONE goal, not a set, and brand-service is explicit that the brand-wide
- * economics row cannot stand in for a declaration (every rate on it is NOT NULL with a server default,
- * so a brand that configured nothing still reads back plausible-looking numbers and no absence signals
- * anything).
+ * (`GET /internal/brands/:brandId/sales-funnels`), each funnel carrying the economics that chain is
+ * priced on. features-service reads that declaration and ranks it. It is NEVER supplied by the caller
+ * and it is NEVER inferred here — in particular a brand's single `optimizationGoal` is ONE goal, not a
+ * set, and brand-service is explicit that the brand-wide economics row cannot stand in for a
+ * declaration (every rate on it is NOT NULL with a server default, so a brand that configured nothing
+ * still reads back plausible-looking numbers and no absence signals anything).
+ *
+ * ── THE FUNNEL KEY IS THE WHOLE VOCABULARY — no funnel carries a goal any more ─────────────────────
+ *
+ * A funnel used to arrive with a `goal` beside its key and this module resolved it. brand-service
+ * retired that field (#434) because it was the poorer word: `sales_meetings_from_conversation` and
+ * `sales_meetings_from_website` both mapped onto one `meetingBooked`, so this service priced a meeting
+ * won from a REPLY and one won on the WEBSITE identically — it charged a reply-driven brand against
+ * clicks it never buys. The key now drives the pricing directly (`funnelToProjectionInputs`), so the two
+ * chains are priced on their own channel and finally read apart. A goal ECHO is derived FROM the key for
+ * the consumers that still read one; nothing derives a price from a goal on this path.
  *
  * ── ONE ENTRY PER FUNNEL — funnels sharing a goal are NO LONGER MERGED ────────────────────────────
  *
@@ -31,25 +40,19 @@
  */
 
 import type { SalesEconomics } from "./funnel-registry.js";
-import { matchBrandServiceGoal, type Goal } from "./goals.js";
-import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
+import type { DeclaredSalesFunnel, SalesFunnelKey } from "./sales-funnels-client.js";
 
-/** Raised when a declared funnel names a goal features-service cannot map. Fails loud — a funnel the
- * brand declared must never be silently dropped from the ranking. */
-export class UnknownFunnelGoalError extends Error {
-  constructor(readonly raw: string) {
-    super(`brand-service declared funnel goal "${raw}" is not a recognised optimization goal`);
-    this.name = "UnknownFunnelGoalError";
-  }
-}
-
-/** One declared funnel to rank: its identity, the goal it optimizes for, and its own declared terms. */
+/** One declared funnel to rank: its identity and its own declared terms.
+ *
+ * NO `goal`. The funnel key IS what this is priced on — that is the whole retirement: two funnels that
+ * shared the `meetingBooked` goal are two different chains bought through two different channels, and a
+ * goal-keyed entry could only give them one price. The goal ECHO a consumer still reads is derived from
+ * the key downstream (`funnelToProjectionInputs`), never carried here as an input. */
 export interface RankableFunnel {
   /** brand-service's key for the funnel — the SAME key billing funds and campaign-service paces on. */
-  funnelKey: string;
+  funnelKey: SalesFunnelKey;
   /** The brand's own label for the funnel, echoed so the ranking reads as the customer named it. */
   name: string;
-  goal: Goal;
   /**
    * This funnel's OWN declared economics, merged over the brand's effective economics when projecting
    * it. `null` when the brand declared no usable number for the funnel; the brand's effective economics
@@ -78,27 +81,6 @@ const CONSUMED_RATE_KEYS = [
   "visitToPaidClientPct",
   "replyToPaidClientPct",
 ] as const;
-
-/**
- * Map ONE declared funnel to its canonical goal.
- *
- * Reads brand-service's WIRE `goal` first and only then `currentGoal`, because `currentGoal` is LOSSY
- * for this purpose: brand-service deliberately collapses `form_submissions` onto the `signup` runtime
- * token ("consumers never see a new value"), while features-service models form submissions as their
- * OWN goal with their own funnel (visit→form→paid). Reading the runtime token would price a Form Magnet
- * funnel on signup economics — a wrong answer that looks right.
- *
- * Both fields are BRAND-SERVICE PAYLOAD values, so they resolve through `matchBrandServiceGoal` — where
- * `sales` means WEBSITE PURCHASE and the combined goal arrives as `combined_sales` / `combinedSales`.
- * Never resolve a payload value with the request-param resolvers (see the `goals.ts` header).
- */
-function goalOfFunnel(funnel: DeclaredSalesFunnel): Goal {
-  const wire = typeof funnel.goal === "string" ? matchBrandServiceGoal(funnel.goal) : null;
-  if (wire) return wire;
-  const runtime = typeof funnel.currentGoal === "string" ? matchBrandServiceGoal(funnel.currentGoal) : null;
-  if (runtime) return runtime;
-  throw new UnknownFunnelGoalError(funnel.goal ?? funnel.currentGoal ?? JSON.stringify(funnel));
-}
 
 const finite = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -151,9 +133,9 @@ function declaredEconomics(funnel: DeclaredSalesFunnel): Partial<SalesEconomics>
  * producer's order.
  *
  * `[]` in ⇒ `[]` out: the brand declared nothing, which the ranking reports as having nothing to rank.
- * Throws `UnknownFunnelGoalError` on a goal value that maps to nothing — dropping it would silently
- * rank a smaller set than the brand declared, and the customer would compare against a list missing one
- * of their own funnels.
+ * An unrecognised funnel key already failed loud at the client (`UnknownSalesFunnelError`) — dropping
+ * one would silently rank a smaller set than the brand declared, and the customer would compare against
+ * a list missing one of their own funnels.
  *
  * NOTHING HERE READS FUNDING. Whether a funnel currently has a daily ceiling is billing's data and
  * campaign-service's question at run time; it has no bearing on what that funnel HAS RETURNED, which is
@@ -164,7 +146,6 @@ export function declaredFunnelsToRank(funnels: DeclaredSalesFunnel[]): RankableF
   return funnels.map((funnel) => ({
     funnelKey: funnel.funnelKey,
     name: funnel.name,
-    goal: goalOfFunnel(funnel),
     economics: declaredEconomics(funnel),
   }));
 }

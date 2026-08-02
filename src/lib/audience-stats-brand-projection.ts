@@ -74,7 +74,8 @@ import {
   type SalesEconomics,
 } from "./funnel-registry.js";
 import { projectedCostPerOutcome } from "./cost-engine.js";
-import { goalToProjectionInputs, outcomeCostForGoal, grainHasObservedOutcome } from "../routes/workflow-projection.js";
+import { goalToProjectionInputs, funnelToProjectionInputs, outcomeCostForGoal, grainHasObservedOutcome } from "../routes/workflow-projection.js";
+import type { MeetingChannel, SalesFunnelKey } from "./sales-funnels.js";
 import {
   fetchBrandWorkflowEvidence,
   fetchAudienceGrainEvidence,
@@ -210,6 +211,10 @@ export async function fetchBrandProjectedParents(
   // The caller's already-resolved audience ids (it fetched them by requested status) — reused for the
   // audience grain so this adds no human-service round-trip and covers every row the caller will render.
   audienceIds?: string[],
+  // The SALES FUNNEL the caller asked to be priced on, when it named one. It OVERRIDES `goal`: the goal
+  // cannot distinguish a meeting bought with a reply from one bought with a click, and this parent is
+  // the number every per-audience cost floors against, so it must be priced on the same chain the row is.
+  funnelKey?: SalesFunnelKey,
 ): Promise<BrandProjectedParentsUsd> {
   const workflows = await fetchPublicWorkflows(featureSlug, "all");
   // The SAME slug → dynasty map the crossOrg/brand rollups use, so the audience grain's dynasty keys line
@@ -266,8 +271,17 @@ export async function fetchBrandProjectedParents(
     });
   }
 
+  // A FUNNEL, when the caller named one, decides the pricing outright — the goal is the coarser question
+  // and cannot tell the two meeting chains apart. `meetingChannel` is the whole difference between them,
+  // and it MUST thread into this parent too: an audience row floored against a both-channel benchmark
+  // while its own row is priced on one channel is the same two-prices-for-one-thing split this module
+  // exists to close, reappearing one grain down.
+  const funnelInputs = funnelKey ? funnelToProjectionInputs(funnelKey) : null;
+  const meetingChannel: MeetingChannel | null = funnelInputs?.meetingChannel ?? null;
+  const pricedGoal: Goal = funnelInputs ? (funnelInputs.goalEcho as Goal) : goal;
+
   const economics = effective.economics;
-  const econ = economics ? buildEcon(economics, goal) : null;
+  const econ = economics ? buildEcon(economics, pricedGoal) : null;
 
   // THE single best workflow for the queried goal: the LOWEST cost of the goal's own outcome, scored
   // through the shared `outcomeCostForGoal` over EVERY dynasty — byte-for-byte the argmin the Strategy
@@ -282,12 +296,14 @@ export async function fetchBrandProjectedParents(
   // replies), both labelled "fleet benchmark". Matching the consumer's argmin is what keeps them coherent.
   // Honesty lives on the LABEL instead — `resolvePick` still tags a floored row `crossOrg` (benchmark),
   // never "this brand's own results".
-  const { objective, singleStepGoal, formSubmissionGoal } = goalToProjectionInputs(goal);
+  const { objective, singleStepGoal, formSubmissionGoal } = funnelInputs
+    ? { objective: funnelInputs.objective, singleStepGoal: funnelInputs.singleStepGoal, formSubmissionGoal: funnelInputs.formSubmissionGoal }
+    : goalToProjectionInputs(goal);
   let best: DynastyRow | null = null;
   if (econ) {
     let bestGoalCost: number | null = null;
     for (const d of perDynasty) {
-      const goalCost = outcomeCostForGoal(econ, d.unitCosts, objective, singleStepGoal, formSubmissionGoal);
+      const goalCost = outcomeCostForGoal(econ, d.unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel);
       if (goalCost == null || !(goalCost > 0)) continue;
       if (bestGoalCost == null || goalCost < bestGoalCost) {
         bestGoalCost = goalCost;
@@ -322,10 +338,15 @@ export async function fetchBrandProjectedParents(
   ): AudienceProjectedCostsUsd & { cpcUsd: number | null; cpprUsd: number | null; cpsmUsd: number | null } => {
     const cpcUsd = units.clickUsd > 0 ? units.clickUsd : null;
     const cpprUsd = units.replyUsd > 0 ? units.replyUsd : null;
-    const p = projectOutcomeCosts(econ!, { clickUsd: cpcUsd, replyUsd: cpprUsd });
+    // Masked to the funnel's own channel when one is stated — `null` on the other side is what every
+    // per-budget term in projectOutcomeCosts already reads as "this channel funds nothing".
+    const p = projectOutcomeCosts(econ!, {
+      clickUsd: meetingChannel === "reply" ? null : cpcUsd,
+      replyUsd: meetingChannel === "click" ? null : cpprUsd,
+    });
     // sales → best-channel cost-per-sale; websitePurchase → multi-step close funnel — mirrors
     // outcomeCostForGoal (both terminate in a paying client, valued distinctly per goal).
-    const cpsaleUsd = goal === "sales" ? p.costPerSaleUsd : p.costPerPurchaseUsd;
+    const cpsaleUsd = pricedGoal === "sales" ? p.costPerSaleUsd : p.costPerPurchaseUsd;
     return {
       cpcUsd,
       cpprUsd,
@@ -367,6 +388,7 @@ export async function fetchBrandProjectedParents(
         },
         objective,
         singleStepGoal,
+        meetingChannel,
       );
       if (!measured) continue;
       const units = grainUnitCosts(audEv, dynasty.unitCosts);

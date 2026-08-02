@@ -37,19 +37,6 @@ const { declaredFunnelsToRank } = await import("./declared-funnels.js");
 const { fetchBrandSavedEconomicsWithGoal } = await import("./sales-economics-client.js");
 const { validateAudienceStatsQuery } = await import("./audience-stats-compute.js");
 
-const funnel = (goal: string, currentGoal: string) => ({
-  funnelKey: `k-${goal}`,
-  name: goal,
-  steps: [],
-  goal,
-  currentGoal,
-  rates: {},
-  lifetimeRevenueUsd: null,
-  destinationUrl: null,
-  bookingUrl: null,
-  updatedAt: "2026-08-01T00:00:00.000Z",
-});
-
 const savedEconomicsPayload = (optimizationGoal: string) =>
   new Response(
     JSON.stringify({
@@ -118,15 +105,25 @@ describe("ENTRY POINT A — a value read out of a brand-service PAYLOAD", () => 
     });
   });
 
-  describe("real reader: declaredFunnelsToRank (declared sales funnels)", () => {
-    it("a declared funnel whose wire goal is `sales` ranks as websitePurchase", () => {
-      const entries = declaredFunnelsToRank([funnel("sales", "purchase")]);
-      expect(entries.map((e: { goal: string }) => e.goal)).toEqual(["websitePurchase"]);
-    });
-
-    it("a declared funnel whose wire goal is `combined_sales` ranks as combined sales", () => {
-      const entries = declaredFunnelsToRank([funnel("combined_sales", "combinedSales")]);
-      expect(entries.map((e: { goal: string }) => e.goal)).toEqual(["sales"]);
+  describe("the declared-funnel reader is NO LONGER one of these doors", () => {
+    it("a declared funnel carries no goal at all — the funnel key is the whole vocabulary", () => {
+      // brand-service retired the goal from every funnel read (#434). This reader used to be entry
+      // point A's second door and resolved `goal` / `currentGoal` through matchBrandServiceGoal; a
+      // funnel now arrives with a key and nothing else, so there is no goal here to resolve wrongly.
+      const [entry] = declaredFunnelsToRank([
+        {
+          funnelKey: "website_purchases",
+          name: "Website Purchase",
+          steps: ["Website visit", "Signup", "Paid client"],
+          rates: {},
+          lifetimeRevenueUsd: null,
+          destinationUrl: null,
+          bookingUrl: null,
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        },
+      ]);
+      expect(entry).not.toHaveProperty("goal");
+      expect(entry.funnelKey).toBe("website_purchases");
     });
   });
 

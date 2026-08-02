@@ -79,8 +79,8 @@ returnPerDollar(funnel) = lifetimeRevenueUsd / costPerPaidClientUsd(funnel, its 
 number: a cost-per-outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting),
 so comparing two funnels' cost-per-outcome compares two different things. Normalising each funnel through ITS
 OWN chain to the same terminal unit — a paying client's lifetime revenue — is what makes them commensurable.
-Rankable funnels sort on `returnPerDollar` desc; ties break on the canonical `GOALS` index then `funnelKey`,
-so the same evidence + the same economics always produce the same list.
+Rankable funnels sort on `returnPerDollar` desc; ties break on the canonical funnel-catalogue order
+(`salesFunnelIndex`), so the same evidence + the same economics always produce the same list.
 
 - **Best workflow per funnel = `argmin resolved.costPerOutcomeUsd` over the BRAND-LEVEL rows**
   (`audienceId === null`) — byte-for-byte the ungated argmin `fetchBrandProjectedParents` and the Strategy
@@ -89,11 +89,12 @@ so the same evidence + the same economics always produce the same list.
   a mix-up: within one funnel `costPerPaidClient = costPerOutcome / (outcome→paid rate)` and that rate is a
   constant for it, so the two argmins are the SAME ordering — the cost keeps coherence with the live
   surfaces, and the return falls out of the winning row.
-- **A funnel with no defined return is ranked LAST, never dropped.** A whatsapp funnel has no path to a
-  paying client at all (brand-service exposes no whatsapp→paid rate), so its return is undefined — not
-  zero, and never "borrow the click funnel". It stays in `ranking` with `rankable: false` +
-  `unrankableReason: "no_paid_client_path"`, carrying whatever IS known (its own outcome cost + best
-  workflow). Same for `no_economics` / `no_workflow_evidence` (no history yet) / `no_return_defined` (a
+- **A funnel with no defined return is ranked LAST, never dropped.** A chain whose own legs are
+  undeclared or sit at 0 has no path to a paying client, so its return is undefined — not zero, and never
+  "borrow another funnel's". Note a channel-scoped meeting funnel now lands here whenever ITS channel has
+  no rate, which the blended score used to hide behind the other channel's contribution. It stays in
+  `ranking` with `rankable: false` + `unrankableReason: "no_paid_client_path"`, carrying whatever IS known
+  (its own outcome cost + best workflow). Same for `no_economics` / `no_workflow_evidence` (no history yet) / `no_return_defined` (a
   paid-client cost exists but the brand states no lifetime revenue). Hiding any of them would leave the
   customer comparing against a list missing one of their own funnels.
 - **"A funnel is recommended" and "nothing could be ranked" are DISTINGUISHABLE, never an error that
@@ -176,8 +177,8 @@ declared funnels), both live. Economics is read LIVE (never cached), same freshn
 and `/audience-stats` are UNTOUCHED.** Guard suites: `src/lib/goal-arbitration.test.ts` (ordered ranking,
 arbitration-equals-ranking-head, two funnels on one goal ranked apart, never-rank-undefined-return,
 determinism/tie-break incl. funnelKey, no-funding-input, recommended-pairing rows),
-`src/lib/declared-funnels.test.ts` (wire-goal-not-currentGoal, NO merge, null rates dropped, meeting-chain
-compose, entry shape carries no funding), `src/routes/goal-arbitration.test.ts` (drives BOTH endpoints from
+`src/lib/declared-funnels.test.ts` (the catalogue, legacy-spelling tolerance, a goal is NOT a funnel, NO
+merge, null rates dropped, meeting-chain compose, entry shape carries neither a goal nor funding), `src/routes/goal-arbitration.test.ts` (drives BOTH endpoints from
 ONE fixture: the recommended workflow equals the single-goal read's own argmin, the deployed
 campaign-service fields still resolve, and no billing URL is ever requested). (Set 2026-08-02; supersedes
 the goal-grain election documented 2026-07-31.)
@@ -228,6 +229,10 @@ the workflow it is projected under. Both are labelled "fleet benchmark" in the U
 and the Strategy page showed **two different prices for the same audience, same brand, same goal, same
 moment** (prod: $8.33 vs $2.64 on brand `7604c385…`, a ~3x split, both audiences reading the parent
 verbatim because each had 0 clicks and own spend below it).
+
+**It takes the same `?funnel=` override the projection does** (last arg, canonical key) — priced on that
+chain's own channel, so the audience row and the projection row stay one number per funnel. Absent →
+goal-keyed, byte-identical to before.
 
 `fetchBrandProjectedParents` **rebuilds workflow-projection's BRAND-LEVEL rows** (the `audienceId: null`
 ones the Strategy page ranks — `strategy-model.ts pickBestWorkflow` filters to them) and takes the goal's
@@ -696,8 +701,8 @@ to `objectiveCostPerOutcome` (cross-org) + `paidClientCostForGoal`/`outcomeCostF
 The token `sales` arrives through two doors carrying opposite meanings, so `src/lib/goals.ts` keeps two
 resolvers and they must never be merged:
 
-- **brand-service PAYLOAD** (`salesEconomics.optimizationGoal` on `/internal/brands/:id/sales-economics`;
-  a declared funnel's `goal` / `currentGoal` on `/internal/brands/:brandId/sales-funnels`) →
+- **brand-service PAYLOAD** (`salesEconomics.optimizationGoal` on `/internal/brands/:id/sales-economics`
+  — the LAST goal-shaped read left, now that a declared funnel carries none) →
   **`matchBrandServiceGoal`**, where **`sales` = WEBSITE PURCHASE**. That is brand-service's older,
   data-backed meaning, documented there as unchangeable: the legacy `sales` wire spelling "ALWAYS means
   website-purchase, and can NEVER be re-purposed for the new combined goal (that would silently
@@ -716,8 +721,8 @@ fleet-rename". brand-service never made that rename, so every website-purchase b
 customers) was bucketed into the COMBINED-sales fleet cost-per-outcome benchmark — polluting it and
 leaving the website-purchase bucket empty. That number is customer-facing (the fleet benchmark the
 Audiences + Strategy pages floor on, and the live rate the landing prints). Guard:
-`src/lib/goals-entry-points.test.ts` drives BOTH doors and pins all three cases, naming the entry point
-each value arrives through. An unrecognised value still returns null and is excluded from every bucket —
+`src/lib/goals-entry-points.test.ts` drives both doors, pins all three cases, and pins that the
+declared-funnel reader is no longer one of them. An unrecognised value still returns null and is excluded from every bucket —
 no silent fallback. Part of the fleet goal-vocabulary homogenization (distribute.you#3214); the rename
 waves follow separately.
 
