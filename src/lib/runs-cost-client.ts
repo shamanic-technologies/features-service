@@ -13,10 +13,14 @@
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
+import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 
 export async function fetchRunsCostCents(
   brandId: string,
-  campaignId: string | undefined,
+  // One campaign, or the family of campaigns sharing one identity. A single-campaign scope keeps
+  // the original `campaignId=` filter; a family co-groups on campaignId and sums its members, so
+  // the whole family costs ONE runs call regardless of how many stopped rows it carries.
+  campaignScope: CampaignFilter,
   featureSlug: string,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
   // NET pricing: read runs-service's FROZEN net actual-cost (`netActualCostInUsdCents`) instead of the
@@ -31,8 +35,16 @@ export async function fetchRunsCostCents(
     throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   }
 
-  // Mirror /stats: group by workflowSlug, scope to the feature lineage, sum the groups.
-  const params = new URLSearchParams({ groupBy: "workflowSlug", brandId, featureSlugs: featureSlug });
+  const campaignId = singleCampaignId(campaignScope);
+  const family = campaignFamilySet(campaignScope);
+
+  // Mirror /stats: group by workflowSlug, scope to the feature lineage, sum the groups. A family
+  // co-groups campaignId so its members can be summed here — runs takes no campaign list.
+  const params = new URLSearchParams({
+    groupBy: family ? "workflowSlug,campaignId" : "workflowSlug",
+    brandId,
+    featureSlugs: featureSlug,
+  });
   if (campaignId) params.set("campaignId", campaignId);
 
   const reqHeaders: Record<string, string> = {
@@ -52,13 +64,19 @@ export async function fetchRunsCostCents(
     throw new Error(`runs-service /v1/stats/costs failed (${response.status}): ${text}`);
   }
 
-  const data = (await response.json()) as { groups?: Array<Record<string, unknown>> };
+  const data = (await response.json()) as {
+    groups?: Array<Record<string, unknown> & { dimensions?: Record<string, string | null> }>;
+  };
   if (!Array.isArray(data.groups)) {
     throw new Error("runs-service /v1/stats/costs returned no groups array");
   }
 
   let totalCents = 0;
   for (const group of data.groups) {
+    if (family) {
+      const cid = group.dimensions?.campaignId;
+      if (!cid || !family.has(cid)) continue;
+    }
     totalCents += Math.round(selectCostCents(group, "actualCostInUsdCents", pricing));
   }
   return totalCents;

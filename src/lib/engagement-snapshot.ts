@@ -1,6 +1,7 @@
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { fetchEventTimestamps } from "./email-status-client.js";
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
+import { singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 
 /**
  * The recipient-engagement counts that BOTH `/features/:slug/revenue` and
@@ -59,13 +60,16 @@ function count(persons: EnginePerson[], signal: string): number {
  */
 export async function fetchEngagementSnapshotCounts(
   brandId: string,
-  campaignId: string | undefined,
+  // One campaign, or the family sharing one identity — the SAME scope `/revenue` reads, so the two
+  // surfaces stay one number. The per-email date overlay stays brand-scoped for a family (its own
+  // superset), exactly as the revenue compute does.
+  campaignScope: CampaignFilter,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
 ): Promise<EngagementCounts> {
-  const persons = await fetchLeadsForRevenue(brandId, campaignId, headers);
+  const persons = await fetchLeadsForRevenue(brandId, campaignScope, headers);
 
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
-  const timestamps = await fetchEventTimestamps(brandId, campaignId, emails, headers).catch((err) => {
+  const timestamps = await fetchEventTimestamps(brandId, singleCampaignId(campaignScope), emails, headers).catch((err) => {
     console.warn(
       `[features-service] engagement-snapshot open-overlay failed (degrading opened to 0, mirrors /revenue): ${(err as Error).message}`,
     );

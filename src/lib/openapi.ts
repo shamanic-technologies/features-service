@@ -19,11 +19,33 @@ const systemStatsSchema = z.object({
   lastRunAt: z.string().datetime().nullable(),
 });
 
+/**
+ * The identity a campaign's figures were totalled over: (org, brand, sales funnel, acquisition
+ * channel) — campaign-service's own key, read from it, never re-derived here.
+ *
+ * A campaign changes workflow over time and campaign-service used to create a NEW campaign row each
+ * time it did, so one real campaign arrives split across many rows (one brand: ~130). Every figure
+ * keyed on a campaign is therefore reported for the whole family, and each member id resolves to the
+ * same, complete campaign. `representativeId` is the LIVE campaign when there is one, so a consumer
+ * renders exactly ONE line per identity while the stopped ancestors it folds in stay listed in
+ * `campaignIds`. `funnelKey` is null when the campaign states no sales funnel — a real state, and
+ * never inferred from its goal (two funnels answer to one goal).
+ */
+const campaignIdentitySchema = z.object({
+  key: z.string().describe("Stable identity key. Opaque — compare it, do not parse it."),
+  funnelKey: z.string().nullable().describe("The sales funnel the campaign states, or null when it states none."),
+  acquisitionChannel: z.string().nullable().describe("The channel it acquires through, e.g. cold_email."),
+  campaignIds: z.array(z.string()).describe("Every campaign id answering to this identity, this one included."),
+  liveCampaignIds: z.array(z.string()).describe("The members still ongoing — at most one."),
+  representativeId: z.string().describe("The member to render the identity's line on: the live campaign when there is one, else the most recently created member."),
+});
+
 const statsGroupSchema = z.object({
   workflowSlug: z.string().nullable().optional(),
   workflowDynastySlug: z.string().nullable().optional(),
   brandId: z.string().nullable().optional(),
   campaignId: z.string().nullable().optional(),
+  campaignIdentity: campaignIdentitySchema.optional().describe("Present only on groupBy=campaignId: the identity these figures were totalled over. Every member of one identity carries the SAME figures — they are one campaign."),
   featureSlug: z.string().nullable().optional(),
   systemStats: systemStatsSchema,
   stats: z.record(z.string(), z.number().nullable()),
@@ -370,6 +392,7 @@ const spendSchema = z.object({
 
 const featureRevenueResponseSchema = z.object({
   featureSlug: z.string(),
+  campaignIdentity: campaignIdentitySchema.optional().describe("Present only on a ?campaignId= read: the identity the figures were totalled over. A campaign-scoped read answers for the campaign's whole identity — its stopped ancestors included — so asking about any member returns the same, complete campaign."),
   spend: spendSchema.nullable().describe("Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"),
   recipientsContacted: recipientsContactedSchema.describe("Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."),
   recipientsOpened: signalSeriesSchema.describe("Opens ACTUAL series for the Overview daily graph, server-computed from the SAME leads[] snapshot — coherent with recipientsContacted + the table (features-service#377). Replaces the pipeline-activity/instantly event-day source."),
@@ -394,11 +417,16 @@ const featureRevenueResponseSchema = z.object({
 const featureRevenueResponseRef = registry.register("FeatureRevenueResponse", featureRevenueResponseSchema);
 
 // Grouped variant — returned only when ?groupBy=campaignId. One LEAN group per campaign that has
-// runs for the brand+feature: campaignId + headline.totalPipelineUsd + costEconomics ONLY (the
-// dashboard campaigns row needs just revenue + ROI). Each group is byte-equal to the standalone
-// ?campaignId= call. The heavy per-campaign arrays (timeSeries/organizations/leads/events) are omitted.
+// runs for the brand+feature: campaignId + campaignIdentity + headline.totalPipelineUsd +
+// costEconomics ONLY (the dashboard campaigns row needs just revenue + ROI). Each group is
+// byte-equal to the standalone ?campaignId= call. The heavy per-campaign arrays
+// (timeSeries/organizations/leads/events) are omitted.
+//
+// Figures are the campaign's IDENTITY's, so members of one identity carry identical ones — render
+// the line once, on `campaignIdentity.representativeId` (the live campaign).
 const revenueGroupSchema = z.object({
   campaignId: z.string(),
+  campaignIdentity: campaignIdentitySchema.describe("The identity this group's figures were totalled over. Members of one identity carry identical figures — render the line once, on representativeId."),
   headline: z.object({
     totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline for this campaign. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."),
     economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (ESTIMATE). Null when the pipeline is null."),

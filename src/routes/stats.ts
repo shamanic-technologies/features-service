@@ -10,6 +10,8 @@ import { traceEvent } from "../lib/trace-event.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
 import { fetchEngagementSnapshotCounts, SNAPSHOT_ENGAGEMENT_KEYS } from "../lib/engagement-snapshot.js";
 import { observedCostPerOutcome } from "../lib/cost-engine.js";
+import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
+import { describeIdentity, EMPTY_CAMPAIGN_FAMILIES, type CampaignIdentityView } from "../lib/campaign-identity.js";
 
 const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL!;
 const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY!;
@@ -77,6 +79,12 @@ interface StatsGroup {
   workflowDynastySlug?: string | null;
   brandId?: string | null;
   campaignId?: string | null;
+  /**
+   * The identity this group's figures were totalled over — present only on `groupBy=campaignId`.
+   * Every member of one family carries the SAME figures (they are one campaign), so a consumer
+   * renders the line once, on `representativeId` (the live campaign when there is one).
+   */
+  campaignIdentity?: CampaignIdentityView;
   featureSlug?: string | null;
   systemStats: SystemStats;
   stats: Record<string, number | null>;
@@ -1008,6 +1016,58 @@ function aggregateRunsTotals(runsStatsMap: Map<string, RunsStatsEntry>): RunsSta
   return { totalCostInUsdCents: totalCost, actualCostInUsdCents: actualCost, completedRuns: totalRuns, minStartedAt, maxStartedAt };
 }
 
+// ── Campaign identity: a campaign's stats are its IDENTITY's stats ───────────
+//
+// A campaign is (org, brand, sales funnel, acquisition channel) — campaign-service's own key. It
+// used to create a new campaign row whenever workflow selection switched workflows, so one brand's
+// two real campaigns arrive here as ~130 rows. The rows keep their runs and their costs; these two
+// helpers only decide which of them are totalled together before anything is displayed.
+
+/** Σ two raw stat maps, key by key. Counters sum; a key present in one side only carries through. */
+function addRawStats(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = { ...a };
+  for (const [key, value] of Object.entries(b)) out[key] = (out[key] ?? 0) + value;
+  return out;
+}
+
+function addRunsEntries(a: RunsStatsEntry, b: RunsStatsEntry): RunsStatsEntry {
+  return {
+    totalCostInUsdCents: a.totalCostInUsdCents + b.totalCostInUsdCents,
+    actualCostInUsdCents: a.actualCostInUsdCents + b.actualCostInUsdCents,
+    completedRuns: a.completedRuns + b.completedRuns,
+    minStartedAt:
+      a.minStartedAt && b.minStartedAt ? (a.minStartedAt < b.minStartedAt ? a.minStartedAt : b.minStartedAt) : (a.minStartedAt ?? b.minStartedAt),
+    maxStartedAt:
+      a.maxStartedAt && b.maxStartedAt ? (a.maxStartedAt > b.maxStartedAt ? a.maxStartedAt : b.maxStartedAt) : (a.maxStartedAt ?? b.maxStartedAt),
+  };
+}
+
+/**
+ * Re-key a per-campaign map onto identity keys, summing the members of each family.
+ *
+ * Summing is exact at this grain: every counter here is an EVENT total (sends, opens, clicks, runs,
+ * cost cents) attributed to exactly one campaign, so no event is counted twice by folding the rows
+ * one campaign was split across. `__total__` passes through untouched — it is already the whole
+ * population, not a member.
+ */
+function foldMapByIdentity<T>(
+  map: Map<string, T>,
+  identityKeyOfCampaign: (campaignId: string) => string,
+  add: (a: T, b: T) => T,
+): Map<string, T> {
+  const folded = new Map<string, T>();
+  for (const [key, value] of map) {
+    if (key === "__total__") {
+      folded.set(key, value);
+      continue;
+    }
+    const identityKey = identityKeyOfCampaign(key);
+    const existing = folded.get(identityKey);
+    folded.set(identityKey, existing === undefined ? value : add(existing, value));
+  }
+  return folded;
+}
+
 // ── GET /stats/registry ──────────────────────────────────────────────────────
 
 router.get("/stats/registry", apiKeyAuth, async (_req, res) => {
@@ -1055,16 +1115,59 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     // NET reads runs#179's frozen net cost fields (no billing call, no read-time multiply); GROSS reads
     // the gross fields → byte-identical. The selector is threaded into fetchRunsStats below.
 
+    // ── Campaign identity ────────────────────────────────────────────────────
+    // Anything keyed on a campaign reports that campaign's IDENTITY — (org, brand, sales funnel,
+    // acquisition channel), campaign-service's own key — so the rows one campaign was split across
+    // when workflow selection switched workflows read as the one campaign they are. All four parts
+    // come from campaign-service; none is re-derived here, and the funnel is never inferred from a
+    // goal (two funnels answer to one goal, so that inference prints a chain the campaign never
+    // stated). Fail-soft: with campaign-service unreachable every campaign is its own family and the
+    // response is exactly what it was before this feature.
+    const preIdentity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };
+    const wantsIdentity = groupBy === "campaignId" || Boolean(filters.campaignId);
+    let identityBrandId: string | null = filters.brandId ?? null;
+    if (wantsIdentity && !identityBrandId && filters.campaignId) {
+      identityBrandId = await resolveBrandIdFromCampaign(orgId, filters.campaignId, preIdentity);
+    }
+    const families =
+      wantsIdentity && identityBrandId
+        ? await fetchCampaignFamiliesSoft(identityBrandId, featureSlug, { orgId, userId, runId })
+        : EMPTY_CAMPAIGN_FAMILIES;
+    const requestedIdentity = filters.campaignId ? families.identityOf(filters.campaignId) : null;
+
     // Served through the Gold snapshot cache (O(1) read; the 10-source fan-out recomputes a viewed
-    // cell off the request path ~per TTL). Scope key spans org + every query param that changes the body.
+    // cell off the request path ~per TTL). Scope key spans org + every query param that changes the
+    // body — with the campaign REPLACED by its identity, so every member of one family shares one
+    // cell instead of each rendered row paying for its own identical fan-out.
     const payload = await servedCached({
       view: "stats",
-      scopeKey: buildScopeKey(featureSlug, { orgId, groupBy: groupByParam, ...filters, pricing }),
+      scopeKey: buildScopeKey(featureSlug, {
+        orgId,
+        groupBy: groupByParam,
+        ...filters,
+        campaignId: requestedIdentity?.key ?? filters.campaignId,
+        pricing,
+      }),
       orgId,
       compute: async () => {
     traceEvent(runId, { service: "features-service", event: "feature-stats-start", detail: `featureSlug=${featureSlug}, groupBy=${groupByParam ?? "none"}, filters=${JSON.stringify(filters)}` }, req.headers).catch(() => {});
 
     const identity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };
+    const identityKeyOfCampaign = (cid: string): string => families.identityOf(cid)?.key ?? `campaign:${cid}`;
+
+    // A single-campaign read whose campaign has stopped ancestors must total them in. No producer
+    // takes a campaign LIST, so the fan-out runs GROUPED by campaign over the brand and the family's
+    // groups are folded back into the flat body — one call per source, never one per member.
+    const foldSingleIntoTotal = Boolean(requestedIdentity && requestedIdentity.campaignIds.length > 1);
+    const fanOutGroupBy: GroupByDimension | null = foldSingleIntoTotal ? "campaignId" : groupBy;
+    // The campaign-groupable sources drop the campaign filter (the family narrows them locally) and
+    // gain the brand. The sources that cannot group by campaign keep the caller's filters untouched,
+    // so their scope is unchanged.
+    const fanOutFilters: Record<string, string> = { ...filters };
+    if (foldSingleIntoTotal) {
+      fanOutFilters.brandId = identityBrandId!;
+      delete fanOutFilters.campaignId;
+    }
 
     // Scope the fan-out to the sources this feature actually renders (its outputs + charts).
     // A feature never waits on a stat family it doesn't declare — e.g. a cold-email feature
@@ -1090,21 +1193,40 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     const wantEngagementSnapshot =
       !groupBy && Boolean(filters.brandId) && SNAPSHOT_ENGAGEMENT_KEYS.some((k) => declaredKeys.has(k));
 
-    const [emailStatsMap, runsStatsMap, outletsStatsMap, journalistsStatsMap, leadsStatsMap, pipelineStatsMap, pressKitsStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns, engagementSnapshot] = await Promise.all([
-      neededSources.has("email-gateway") ? fetchEmailStats(orgId, groupBy, filters, identity) : skip(),
-      fetchRunsStats(orgId, groupBy, filters, [featureSlug], identity, pricing),
-      neededSources.has("outlets") ? fetchOutletsStats(orgId, groupBy, filters, identity) : skip(),
-      neededSources.has("journalists") ? fetchJournalistsStats(orgId, groupBy, filters, identity) : skip(),
-      neededSources.has("leads") ? fetchLeadsStats(orgId, groupBy, filters, identity) : skip(),
-      needsRunFilter ? fetchPipelineStats(orgId, groupBy, filters, [featureSlug], identity) : skip(),
-      neededSources.has("press-kits") ? fetchPressKitsStats(orgId, groupBy, filters, identity) : skip(),
+    const [rawEmailStatsMap, rawRunsStatsMap, rawOutletsStatsMap, rawJournalistsStatsMap, rawLeadsStatsMap, rawPipelineStatsMap, rawPressKitsStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns, engagementSnapshot] = await Promise.all([
+      neededSources.has("email-gateway") ? fetchEmailStats(orgId, fanOutGroupBy, fanOutFilters, identity) : skip(),
+      fetchRunsStats(orgId, fanOutGroupBy, fanOutFilters, [featureSlug], identity, pricing),
+      neededSources.has("outlets") ? fetchOutletsStats(orgId, fanOutGroupBy, fanOutFilters, identity) : skip(),
+      neededSources.has("journalists") ? fetchJournalistsStats(orgId, fanOutGroupBy, fanOutFilters, identity) : skip(),
+      neededSources.has("leads") ? fetchLeadsStats(orgId, fanOutGroupBy, fanOutFilters, identity) : skip(),
+      needsRunFilter ? fetchPipelineStats(orgId, fanOutGroupBy, fanOutFilters, [featureSlug], identity) : skip(),
+      neededSources.has("press-kits") ? fetchPressKitsStats(orgId, fanOutGroupBy, fanOutFilters, identity) : skip(),
       neededSources.has("journalists-quotes") ? fetchJournalistsQuotesStats(orgId, filters, identity) : skip(),
       neededSources.has("ai-visibility") ? fetchAiVisibilityStats(orgId, filters, identity) : skip(),
       fetchActiveCampaigns(orgId, filters, identity),
       wantEngagementSnapshot
-        ? fetchEngagementSnapshotCounts(filters.brandId, filters.campaignId, { orgId, userId, runId, featureSlug })
+        ? fetchEngagementSnapshotCounts(filters.brandId, requestedIdentity?.campaignIds ?? filters.campaignId, { orgId, userId, runId, featureSlug })
         : Promise.resolve(null),
     ]);
+
+    // Fold the per-campaign rows of one identity together. On the GROUPED path the maps are re-keyed
+    // onto identity keys; on the single-campaign path the requested family's folded entry becomes the
+    // flat body's `__total__`. Both are no-ops when every campaign is its own family.
+    const asTotal = <T>(m: Map<string, T>): Map<string, T> => {
+      const entry = m.get(requestedIdentity!.key);
+      return new Map(entry === undefined ? [] : [["__total__", entry]]);
+    };
+    const scopeMap = <T>(m: Map<string, T>, add: (a: T, b: T) => T): Map<string, T> => {
+      if (foldSingleIntoTotal) return asTotal(foldMapByIdentity(m, identityKeyOfCampaign, add));
+      return groupBy === "campaignId" ? foldMapByIdentity(m, identityKeyOfCampaign, add) : m;
+    };
+    const emailStatsMap = scopeMap(rawEmailStatsMap, addRawStats);
+    const runsStatsMap = scopeMap(rawRunsStatsMap, addRunsEntries);
+    const outletsStatsMap = scopeMap(rawOutletsStatsMap, addRawStats);
+    const journalistsStatsMap = scopeMap(rawJournalistsStatsMap, addRawStats);
+    const leadsStatsMap = scopeMap(rawLeadsStatsMap, addRawStats);
+    const pipelineStatsMap = scopeMap(rawPipelineStatsMap, addRawStats);
+    const pressKitsStatsMap = scopeMap(rawPressKitsStatsMap, addRawStats);
 
     if (!groupBy) {
       const rawStats: Record<string, number> = {
@@ -1137,6 +1259,19 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       for (const key of m.keys()) if (key !== "__total__") allGroupKeys.add(key);
     }
 
+    // Which campaign ids each identity answers for. Taken from the FAMILY, not from the campaigns
+    // that happen to carry data, so a member that produced nothing itself still resolves — it is
+    // part of the campaign a consumer is rendering, and dropping it would blank a row.
+    const identityMembers = new Map<string, string[]>();
+    if (groupBy === "campaignId") {
+      for (const m of [rawEmailStatsMap, rawRunsStatsMap, rawOutletsStatsMap, rawJournalistsStatsMap, rawLeadsStatsMap, rawPipelineStatsMap, rawPressKitsStatsMap]) {
+        for (const cid of m.keys()) {
+          if (cid === "__total__") continue;
+          identityMembers.set(identityKeyOfCampaign(cid), families.identityOf(cid)?.campaignIds ?? [cid]);
+        }
+      }
+    }
+
     const totals = aggregateRunsTotals(runsStatsMap);
     const groups: StatsGroup[] = [];
 
@@ -1161,7 +1296,17 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       if (groupBy === "workflowSlug") group.workflowSlug = groupKey;
       if (groupBy === "workflowDynastySlug") group.workflowDynastySlug = groupKey;
       if (groupBy === "brandId") group.brandId = groupKey;
-      if (groupBy === "campaignId") group.campaignId = groupKey;
+
+      if (groupBy === "campaignId") {
+        // `groupKey` is now an IDENTITY. Every member campaign id gets its own entry carrying that
+        // identity's totals, so a consumer keyed on any campaign — the live one it renders the line
+        // on, or a stopped ancestor it still has a link to — resolves to the same, whole campaign.
+        const members = identityMembers.get(groupKey) ?? [groupKey];
+        for (const memberId of members) {
+          groups.push({ ...group, campaignId: memberId, campaignIdentity: describeIdentity(families.identityOf(memberId), memberId) });
+        }
+        continue;
+      }
 
       groups.push(group);
     }
