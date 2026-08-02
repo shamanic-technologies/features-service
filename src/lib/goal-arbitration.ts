@@ -46,20 +46,20 @@
  *
  * ── A FUNNEL WITH NO DEFINED RETURN IS RANKED LAST, NEVER DROPPED ─────────────────────────────────
  *
- * A `whatsappConversation` funnel has no path to a paying client at all (brand-service exposes no
- * whatsapp→paid rate), so its return is undefined — not zero, and never "assume the click funnel". It
- * still appears in `ranking`, with `rankable: false`, its reason, and whatever IS known about it (its
- * own outcome cost and best workflow); it just carries no `rank`. Same for a funnel with no economics,
- * no workflow evidence, or a non-positive return. Hiding it would leave the customer comparing against
- * a list missing one of their own funnels.
+ * A funnel whose chain collapses — the brand declared no rate on one of its legs, or no lifetime
+ * revenue for a client won through it — has no defined return. Not zero, and never "borrow another
+ * funnel's". It still appears in `ranking`, with `rankable: false`, its reason, and whatever IS known
+ * about it (its own outcome cost and best workflow); it just carries no `rank`. Same for a funnel with
+ * no economics and one with no workflow evidence. Hiding any of them would leave the customer comparing
+ * against a list missing one of their own funnels.
  *
  * DETERMINISM (same evidence + same economics ⇒ same answer): rankable funnels sort on returnPerDollar
- * descending, ties broken by the canonical `GOALS` index then by `funnelKey`; unrankable ones follow in
- * the producer's own order. Never by map iteration order.
+ * descending, ties broken by the canonical funnel-catalogue order (`salesFunnelIndex`); unrankable ones
+ * follow in the producer's own order. Never by map iteration order.
  */
 
 import {
-  goalToProjectionInputs,
+  funnelToProjectionInputs,
   projectFromEvidence,
   TARGET_OUTCOMES_PER_MONTH,
   type GoalEcho,
@@ -71,7 +71,7 @@ import {
 } from "../routes/workflow-projection.js";
 import type { RankableFunnel } from "./declared-funnels.js";
 import type { SalesEconomics } from "./funnel-registry.js";
-import { GOALS, type Goal } from "./goals.js";
+import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 
 /** Why a declared funnel could not be ranked. Never a substituted value — the reason IS the answer. */
 export type UnrankableReason =
@@ -79,7 +79,7 @@ export type UnrankableReason =
   | "no_economics"
   /** No workflow has a usable cost of this funnel's outcome (no brand-level row with a positive cost). */
   | "no_workflow_evidence"
-  /** The funnel has no defined path to a paying client (whatsappConversation, or a rate chain at 0). */
+  /** The funnel has no defined path to a paying client (a leg of its own chain sits at 0 / undeclared). */
   | "no_paid_client_path"
   /** A paid-client cost exists but the return is not a positive finite number (e.g. no lifetime revenue). */
   | "no_return_defined";
@@ -90,10 +90,14 @@ export interface RankedWorkflow {
 }
 
 export interface RankedFunnel {
-  /** brand-service's key for the funnel — the SAME key billing funds and campaign-service paces on. */
-  funnelKey: string;
+  /** brand-service's key for the funnel — the SAME key billing funds and campaign-service paces on, and
+   * the ONLY field that identifies what was priced. The two meeting funnels differ here and nowhere
+   * else in this shape: they carry the SAME `goal`/`objective` echo and DIFFERENT numbers. */
+  funnelKey: SalesFunnelKey;
   /** The brand's own label for the funnel. */
   name: string;
+  /** Legacy echo, DERIVED from `funnelKey`. campaign-service reads `arbitration.goal` in prod, so it
+   * stays — but it is lossy by construction and must never be read as the identity of the row. */
   goal: GoalEcho;
   objective: Objective;
   /**
@@ -117,7 +121,7 @@ export interface RankedFunnel {
 
 /** The head of the ranking, named as what it is: advice, not an instruction. */
 export interface FunnelRecommendation {
-  funnelKey: string;
+  funnelKey: SalesFunnelKey;
   name: string;
   goal: GoalEcho;
   objective: Objective;
@@ -148,6 +152,9 @@ export interface GoalArbitrationResponse {
    */
   arbitration: {
     status: ArbitrationStatus;
+    /** The recommended funnel's key — the unambiguous half of this compatibility view. Added beside the
+     * lossy `goal` so a consumer can migrate off it without a second endpoint. */
+    funnelKey: SalesFunnelKey | null;
     goal: GoalEcho | null;
     objective: Objective | null;
     reason: ArbitrationReason | null;
@@ -184,7 +191,6 @@ const isPositiveFinite = (n: number | null | undefined): n is number =>
 
 interface ScoredFunnel {
   candidate: RankedFunnel;
-  goal: Goal;
   projection: WorkflowProjectionResponse;
   row: ProjectionRow | null;
 }
@@ -204,7 +210,11 @@ function scoreFunnel(input: {
   economics: SalesEconomics | null;
 }): ScoredFunnel {
   const { featureSlug, funnel, evidence } = input;
-  const { objective, goalEcho, singleStepGoal, formSubmissionGoal } = goalToProjectionInputs(funnel.goal);
+  // Priced on the FUNNEL, not on a goal. `meetingChannel` is what makes the two meeting funnels
+  // different numbers against the identical evidence: the conversation funnel is priced on
+  // replyUsd / replyToMeetingPct, the website one on clickUsd / visitToMeetingPct.
+  const { objective, goalEcho, singleStepGoal, formSubmissionGoal, meetingChannel } =
+    funnelToProjectionInputs(funnel.funnelKey);
   const economics = mergeEconomics(input.economics, funnel.economics);
   const projection = projectFromEvidence({
     featureSlug,
@@ -212,6 +222,8 @@ function scoreFunnel(input: {
     goal: goalEcho,
     singleStepGoal,
     formSubmissionGoal,
+    meetingChannel,
+    funnelKey: funnel.funnelKey,
     evidence,
     economics,
   });
@@ -231,7 +243,6 @@ function scoreFunnel(input: {
   };
   const unrankable = (reason: UnrankableReason, extra: Partial<RankedFunnel> = {}): ScoredFunnel => ({
     candidate: { ...base, ...extra, rankable: false, unrankableReason: reason },
-    goal: funnel.goal,
     projection,
     row: null,
   });
@@ -261,8 +272,9 @@ function scoreFunnel(input: {
     workflow,
   };
 
-  // No path to a paying client → no return to compare. A whatsapp funnel lands here structurally
-  // (brand-service exposes no whatsapp→paid rate), as does any chain whose rates collapse to 0.
+  // No path to a paying client → no return to compare. Any chain with an undeclared or zero leg lands
+  // here — including a meeting funnel whose OWN channel has no rate, which is exactly the case a
+  // goal-keyed score used to hide behind the other channel's contribution.
   if (!isPositiveFinite(best.resolved.costPerPaidClientUsd)) return unrankable("no_paid_client_path", withRow);
   // roiMultiple = lifetimeRevenueUsd / costPerPaidClientUsd — non-positive/absent when the brand states
   // no lifetime revenue, so there is a paid-client cost but no return to rank on.
@@ -276,7 +288,6 @@ function scoreFunnel(input: {
       rankable: true,
       unrankableReason: null,
     },
-    goal: funnel.goal,
     projection,
     row: best,
   };
@@ -302,15 +313,12 @@ export function rankDeclaredFunnels(input: {
   // Rankable funnels first, best return per dollar down. Ties break on the canonical goal order and
   // then on funnelKey, so the same evidence always produces the same list. Unrankable funnels keep
   // brand-service's own order behind them — they are listed, never dropped.
-  const goalIndex = (goal: Goal): number => GOALS.indexOf(goal);
   const rankableScored = scored
     .filter((s) => s.candidate.rankable)
     .sort((a, b) => {
       const byReturn = b.candidate.returnPerDollar! - a.candidate.returnPerDollar!;
       if (byReturn !== 0) return byReturn;
-      const byGoal = goalIndex(a.goal) - goalIndex(b.goal);
-      if (byGoal !== 0) return byGoal;
-      return a.candidate.funnelKey < b.candidate.funnelKey ? -1 : a.candidate.funnelKey > b.candidate.funnelKey ? 1 : 0;
+      return salesFunnelIndex(a.candidate.funnelKey) - salesFunnelIndex(b.candidate.funnelKey);
     });
   rankableScored.forEach((s, i) => {
     s.candidate.rank = i + 1;
@@ -326,6 +334,7 @@ export function rankDeclaredFunnels(input: {
       recommendation: null,
       arbitration: {
         status: "unrankable",
+        funnelKey: null,
         goal: null,
         objective: null,
         reason: funnels.length === 0 ? "no_declared_funnels" : "no_rankable_funnel",
@@ -368,6 +377,7 @@ export function rankDeclaredFunnels(input: {
     recommendation,
     arbitration: {
       status: "resolved",
+      funnelKey: recommendation.funnelKey,
       goal: recommendation.goal,
       objective: recommendation.objective,
       reason: null,

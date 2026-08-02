@@ -40,7 +40,9 @@ const AUTH = {
 
 const SALES_FEATURE = { id: "feat-1", slug: "sales-cold-email-outreach", name: "Sales", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
 
-// LTR $1000; signup paid = click / (4% × 50%); reply paid = reply / 25%.
+// LTR $1000. Per funnel: website_purchases paid = click / (4% × 50%); the conversation meeting funnel
+// pays reply / (40% × 30%); the website meeting funnel pays click / (5% × 30%) — same chain, different
+// channel, which is exactly what a goal could not express.
 const ECONOMICS = {
   lifetimeRevenueUsd: 1000,
   replyToMeetingPct: 40,
@@ -86,14 +88,14 @@ const emailGroup = (slug: string, clicked: number, repliesPositive: number, cont
 const CROSSORG_COST = [costGroup("wf-a", 100_000), costGroup("wf-b", 100_000)];
 const CROSSORG_EMAIL = [emailGroup("wf-a", 100, 50), emailGroup("wf-b", 10, 100)];
 
-/** A declared sales funnel, shaped exactly like brand-service's deployed item. */
-function declaredFunnel(goal: string, over: Record<string, unknown> = {}): Record<string, unknown> {
+/** A declared sales funnel, shaped exactly like brand-service's deployed item — which carries NO
+ * `goal` and no `currentGoal` since the retirement (brand-service #434). */
+function declaredFunnel(funnelKey: string, over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    funnelKey: "visit_signup",
-    name: "Website Purchase",
-    steps: ["Website visit", "Signup", "Paid client"],
-    goal,
-    currentGoal: "signup",
+    funnelKey,
+    active: true,
+    name: funnelKey,
+    steps: [],
     rates: {},
     lifetimeRevenueUsd: null,
     destinationUrl: null,
@@ -149,7 +151,7 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("400 when brandId missing, 400 on an invalid pricing value, 404 when the feature is unknown", async () => {
-    mockFetch({ funnels: [declaredFunnel("signups")] });
+    mockFetch({ funnels: [declaredFunnel("website_purchases")] });
     expect((await request(app).get(URL_BASE).set(AUTH)).status).toBe(400);
     expect((await request(app).get(`${URL_BASE}?brandId=b1&pricing=bogus`).set(AUTH)).status).toBe(400);
 
@@ -162,7 +164,7 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     // id), so the authorized set is the (org, brand) pair's data. brand-service refuses to guess for a
     // multi-org brand, so the org whose answer we want has to be on the wire.
     let funnelsOrg: string | undefined = "NEVER CALLED";
-    mockFetch({ funnels: [declaredFunnel("signups")] });
+    mockFetch({ funnels: [declaredFunnel("website_purchases")] });
     const inner = vi.mocked(globalThis.fetch).getMockImplementation()!;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
@@ -181,9 +183,10 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
   it("ranks every declared funnel, and serves the best-returning one's workflow + rows — in ONE request", async () => {
     mockFetch({
       funnels: [
-        declaredFunnel("signups", { funnelKey: "visit_signup" }),
-        declaredFunnel("positive_replies", { funnelKey: "reply_paid" }),
-        declaredFunnel("whatsapp_conversations", { funnelKey: "whatsapp" }),
+        declaredFunnel("website_purchases"),
+        declaredFunnel("sales_meetings_from_conversation"),
+        // Declared but priced at a 0% close: there is no path to a paying client through this chain.
+        declaredFunnel("form_magnet", { rates: { visitToFormSubmissionPct: 10, formSubmissionToPaidClientPct: 0 } }),
       ],
       audiences: [{ id: "aud-1" }],
     });
@@ -191,26 +194,31 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
 
     expect(res.status).toBe(200);
     // Every declared funnel is present — the comparison is the answer, and it is never short.
-    expect(res.body.ranking.map((r: any) => r.funnelKey)).toEqual(["reply_paid", "visit_signup", "whatsapp"]);
+    expect(res.body.ranking.map((r: any) => r.funnelKey)).toEqual([
+      "sales_meetings_from_conversation",
+      "website_purchases",
+      "form_magnet",
+    ]);
     expect(res.body.ranking.map((r: any) => r.rank)).toEqual([1, 2, null]);
-    expect(res.body.recommendation.funnelKey).toBe("reply_paid");
-    expect(res.body.recommendation.goal).toBe("positiveReply");
-    expect(res.body.recommendation.returnPerDollar).toBeCloseTo(25, 6); // 1000 / (reply $10 / 25%)
+    expect(res.body.recommendation.funnelKey).toBe("sales_meetings_from_conversation");
+    expect(res.body.recommendation.goal).toBe("meetingBooked");
+    // reply $10 (dyn-b) / 40% = $25 per meeting; / 30% = $83.33 per paid client; 1000 / 83.33 = 12.
+    expect(res.body.recommendation.returnPerDollar).toBeCloseTo(12, 6);
     expect(res.body.workflow.workflowDynastySlug).toBe("dyn-b");
     expect(res.body.rows.every((r: any) => r.workflow.workflowDynastySlug === "dyn-b")).toBe(true);
     expect(res.body.rows.some((r: any) => r.audienceId === "aud-1")).toBe(true);
     expect(res.body.economics.lifetimeRevenueUsd).toBe(1000);
 
     // The funnel with no path to a paying client is scored and listed, but carries no rank.
-    const whatsapp = res.body.ranking.find((r: any) => r.funnelKey === "whatsapp");
-    expect(whatsapp.rankable).toBe(false);
-    expect(whatsapp.unrankableReason).toBe("no_paid_client_path");
+    const dead = res.body.ranking.find((r: any) => r.funnelKey === "form_magnet");
+    expect(dead.rankable).toBe(false);
+    expect(dead.unrankableReason).toBe("no_paid_client_path");
   });
 
   it("keeps the deployed campaign-service contract: arbitration.status/goal + workflow + rows", async () => {
     // campaign-service reads exactly these in prod to pace a brand with no per-funnel funding. They
     // are DERIVED from the head of the ranking, so the two surfaces can never name different funnels.
-    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies", { funnelKey: "reply_paid" })] });
+    mockFetch({ funnels: [declaredFunnel("website_purchases"), declaredFunnel("sales_meetings_from_conversation")] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(200);
@@ -224,7 +232,7 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
   it("never asks billing which funnels are funded — an unfunded funnel is ranked on its history", async () => {
     // The whole request path (route + ranking) makes exactly three downstream reads: the evidence
     // fan-out, the brand's economics, and the declared funnels. No budget, no ceiling, no billing.
-    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies", { funnelKey: "reply_paid" })] });
+    mockFetch({ funnels: [declaredFunnel("website_purchases"), declaredFunnel("sales_meetings_from_conversation")] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(200);
@@ -237,37 +245,100 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     expect(JSON.stringify(res.body.ranking)).not.toMatch(/funded|ceiling|budgetCents/i);
   });
 
-  it("the recommended workflow matches what the SINGLE-GOAL read says for that goal — same fixture, same argmin", async () => {
-    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies", { funnelKey: "reply_paid" })] });
+  it("the recommended workflow matches what the SINGLE-FUNNEL read says — same fixture, same argmin", async () => {
+    mockFetch({ funnels: [declaredFunnel("website_purchases"), declaredFunnel("sales_meetings_from_conversation")] });
     const arbitrated = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
-    const winner = arbitrated.body.recommendation.goal;
 
-    // Reproduce each goal's own economics in isolation, then check the winner against them.
-    const single = async (goal: string) =>
-      (await request(app).get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&goal=${goal}`).set(AUTH)).body;
+    // Reproduce each funnel's own projection in isolation, then check the winner against them.
+    const single = async (funnel: string) =>
+      (await request(app).get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&funnel=${funnel}`).set(AUTH)).body;
     const bestBrandRow = (body: any) =>
       body.rows
         .filter((r: any) => r.audienceId === null && r.resolved.costPerOutcomeUsd > 0)
         .sort((a: any, b: any) => a.resolved.costPerOutcomeUsd - b.resolved.costPerOutcomeUsd)[0];
 
-    const reply = bestBrandRow(await single("positiveReply"));
-    const signup = bestBrandRow(await single("signup"));
-    expect(reply.resolved.roiMultiple).toBeCloseTo(25, 6);
-    expect(signup.resolved.roiMultiple).toBeCloseTo(2, 6);
-    expect(winner).toBe("positiveReply"); // the higher return per dollar of the two, verified in isolation
-    expect(arbitrated.body.workflow.workflowDynastySlug).toBe(reply.workflow.workflowDynastySlug);
-    expect(arbitrated.body.recommendation.costPerOutcomeUsd).toBeCloseTo(reply.resolved.costPerOutcomeUsd, 6);
-    expect(arbitrated.body.recommendation.returnPerDollar).toBeCloseTo(reply.resolved.roiMultiple, 6);
+    const meeting = bestBrandRow(await single("sales_meetings_from_conversation"));
+    const purchase = bestBrandRow(await single("website_purchases"));
+    expect(meeting.resolved.roiMultiple).toBeCloseTo(12, 6);
+    expect(purchase.resolved.roiMultiple).toBeCloseTo(2, 6);
+    expect(arbitrated.body.recommendation.funnelKey).toBe("sales_meetings_from_conversation");
+    expect(arbitrated.body.workflow.workflowDynastySlug).toBe(meeting.workflow.workflowDynastySlug);
+    expect(arbitrated.body.recommendation.costPerOutcomeUsd).toBeCloseTo(meeting.resolved.costPerOutcomeUsd, 6);
+    expect(arbitrated.body.recommendation.returnPerDollar).toBeCloseTo(meeting.resolved.roiMultiple, 6);
     expect(
-      arbitrated.body.ranking.find((r: any) => r.goal === "signup").workflow.workflowDynastySlug,
-    ).toBe(signup.workflow.workflowDynastySlug);
+      arbitrated.body.ranking.find((r: any) => r.funnelKey === "website_purchases").workflow.workflowDynastySlug,
+    ).toBe(purchase.workflow.workflowDynastySlug);
+  });
+
+  it("the TWO MEETING FUNNELS get two different costs from the SAME evidence — the whole point", async () => {
+    // Both echo `meetingBooked`, so before the retirement this brand was told one blended price for
+    // both chains and could not see which of the two to fund.
+    mockFetch({
+      funnels: [declaredFunnel("sales_meetings_from_conversation"), declaredFunnel("sales_meetings_from_website")],
+    });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
+
+    expect(res.status).toBe(200);
+    const byKey = Object.fromEntries(res.body.ranking.map((r: any) => [r.funnelKey, r]));
+    expect(byKey.sales_meetings_from_conversation.costPerOutcomeUsd).toBeCloseTo(25, 6);   // reply $10 / 40%
+    expect(byKey.sales_meetings_from_website.costPerOutcomeUsd).toBeCloseTo(200, 6);       // click $10 /  5%
+    expect(byKey.sales_meetings_from_conversation.goal).toBe("meetingBooked");
+    expect(byKey.sales_meetings_from_website.goal).toBe("meetingBooked");
+    // ...bought from different workflows, too, which one blended number could never have shown.
+    expect(byKey.sales_meetings_from_conversation.workflow.workflowDynastySlug).toBe("dyn-b");
+    expect(byKey.sales_meetings_from_website.workflow.workflowDynastySlug).toBe("dyn-a");
+  });
+
+  it("a consumer that still sends a GOAL gets byte-identically the answer it got before", async () => {
+    // The transition tolerance: `?goal=meetingBooked` keeps funnelling from BOTH channels, which is the
+    // right answer to the coarser question, and carries no funnelKey. Only `?funnel=` narrows.
+    mockFetch({ funnels: [declaredFunnel("sales_meetings_from_conversation")] });
+    const byGoal = (await request(app)
+      .get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&goal=meetingBooked`)
+      .set(AUTH)).body;
+
+    // BOTH channels fund it: on dyn-b that is (1/$100)·5% + (1/$10)·40% = 0.0405 meetings per dollar,
+    // i.e. $24.69 — a blend that is neither of the two chains' real prices ($25 and $200), which is
+    // precisely why a brand running only one of them could not read its own cost off it.
+    const best = byGoal.rows
+      .filter((r: any) => r.audienceId === null && r.resolved.costPerOutcomeUsd > 0)
+      .sort((a: any, b: any) => a.resolved.costPerOutcomeUsd - b.resolved.costPerOutcomeUsd)[0];
+    expect(best.resolved.costPerOutcomeUsd).toBeCloseTo(1 / 0.0405, 6);
+    expect(byGoal.goal).toBe("meetingBooked");
+    expect(byGoal).not.toHaveProperty("funnelKey");
+  });
+
+  it("refuses to price a funnel the brand never declared — a gap is not a zero", async () => {
+    mockFetch({ funnels: [declaredFunnel("website_purchases")] });
+    const res = await request(app)
+      .get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&funnel=form_magnet`)
+      .set(AUTH);
+
+    expect(res.status).toBe(404);
+    expect(res.body.reason).toBe("funnel_not_declared");
+    expect(res.body.declaredFunnelKeys).toEqual(["website_purchases"]);
+    // ...and a word that names no funnel at all fails loud rather than falling back to the goal.
+    const bogus = await request(app)
+      .get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&funnel=telepathy`)
+      .set(AUTH);
+    expect(bogus.status).toBe(400);
+  });
+
+  it("accepts a PRE-RETIREMENT funnel spelling and answers with the canonical key", async () => {
+    mockFetch({ funnels: [declaredFunnel("reply_meeting")] });
+    const res = await request(app)
+      .get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&funnel=reply_meeting`)
+      .set(AUTH);
+
+    expect(res.status).toBe(200);
+    expect(res.body.funnelKey).toBe("sales_meetings_from_conversation");
   });
 
   it("the declared meeting show-up rate lowers the meeting goal's return — it is not a free 100%", async () => {
     // The meeting chain is reply → BOOKED → attended → paid. Our meetingToClosePct is BOOKED → paid,
     // brand-service's funnel prices ATTENDED → paid, so a declared show-up rate must divide the return.
     const meetingFunnel = (rates: Record<string, number | null>) =>
-      declaredFunnel("booked_meetings", { funnelKey: "reply_meeting", currentGoal: "meetingBooked", rates });
+      declaredFunnel("sales_meetings_from_conversation", { rates });
 
     // 40% reply→booked, 50% booked→attended, 40% attended→paid ⇒ 20% booked→paid.
     mockFetch({ funnels: [meetingFunnel({ replyToMeetingPct: 40, meetingBookedToAttendedPct: 50, meetingToClosePct: 40 })] });
@@ -295,7 +366,7 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
   });
 
   it("the single-goal read is untouched by the presence of a declared funnel set", async () => {
-    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies", { funnelKey: "reply_paid" })] });
+    mockFetch({ funnels: [declaredFunnel("website_purchases"), declaredFunnel("sales_meetings_from_conversation")] });
     const withSet = (await request(app).get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&goal=signup`).set(AUTH)).body;
     vi.restoreAllMocks();
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
@@ -313,8 +384,8 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     expect(res.body.error).toContain("sales funnels");
   });
 
-  it("502 with an explicit reason on a declared funnel goal we cannot map — never silently dropped", async () => {
-    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("telepathy", { funnelKey: "tel", currentGoal: "telepathy" })] });
+  it("502 with an explicit reason on a declared funnel we cannot map — never silently dropped", async () => {
+    mockFetch({ funnels: [declaredFunnel("website_purchases"), declaredFunnel("telepathy")] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(502);
@@ -338,7 +409,7 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
   it("reads the list alone — a payload with no `declared` flag is answered normally", async () => {
     // The flag said exactly what the list says and is being retired; brand-service serves it today
     // only because this reader used to refuse a payload without it. Nothing here may depend on it.
-    mockFetch({ funnels: [declaredFunnel("signups")] });
+    mockFetch({ funnels: [declaredFunnel("website_purchases")] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(200);
@@ -346,7 +417,9 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
   });
 
   it("200 unrankable with a per-funnel reason when nothing can be ranked", async () => {
-    mockFetch({ funnels: [declaredFunnel("whatsapp_conversations")] });
+    mockFetch({
+      funnels: [declaredFunnel("sales_meetings_from_conversation", { rates: { meetingToClosePct: 0 } })],
+    });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(200);
@@ -359,13 +432,13 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
 
   it("does not accept a funnel set from the caller", async () => {
     // The brand declared ONE funnel; the caller asks for two more. The answer must ignore the caller.
-    mockFetch({ funnels: [declaredFunnel("signups")] });
+    mockFetch({ funnels: [declaredFunnel("website_purchases")] });
     const res = await request(app)
-      .get(`${URL_BASE}?brandId=b1&authorizedGoals=positive_replies,sales&goals=positive_replies`)
+      .get(`${URL_BASE}?brandId=b1&funnel=form_magnet&funnelKeys=form_magnet,reply_meeting`)
       .set(AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.ranking.map((r: any) => r.goal)).toEqual(["signup"]);
-    expect(res.body.recommendation.goal).toBe("signup");
+    expect(res.body.ranking.map((r: any) => r.funnelKey)).toEqual(["website_purchases"]);
+    expect(res.body.recommendation.funnelKey).toBe("website_purchases");
   });
 });

@@ -29,6 +29,7 @@
  */
 
 import { fetchWithRetry } from "./fetch-retry.js";
+import { matchSalesFunnelKey, SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
 
 /** Raised when the declared-funnel read cannot be answered — the caller surfaces it as its own 502
  * reason rather than a generic downstream failure, so "we could not read the authorized set" stays
@@ -40,23 +41,36 @@ export class SalesFunnelsUnavailableError extends Error {
   }
 }
 
-/** One declared funnel, exactly as brand-service serves it. Absent values are `null`, never invented. */
+/**
+ * One declared funnel, exactly as brand-service serves it. Absent values are `null`, never invented.
+ *
+ * NO `goal` / `currentGoal`: brand-service retired the goal from every funnel read (#434). It was the
+ * poorer word — `sales_meetings_from_conversation` and `sales_meetings_from_website` both collapsed onto
+ * one `meetingBooked`, so a meeting won from a reply could not be priced apart from one won on the
+ * website. `funnelKey` is the whole answer, and it is what this service prices on.
+ */
 export interface DeclaredSalesFunnel {
-  funnelKey: string;
+  funnelKey: SalesFunnelKey;
+  /** Whether the org currently sells through this chain. The INTERNAL read serves only active ones. */
+  active?: boolean;
   name: string;
   steps: string[];
-  /** brand-service's OWN wire goal for the funnel (`booked_meetings`, `form_submissions`, …). */
-  goal: string;
-  /** The runtime token. NOTE it is LOSSY for our purposes — brand-service deliberately collapses
-   * `form_submissions` onto `signup` here — so the arbitration reads `goal` first (see
-   * authorized-goals.ts) and only falls back to this. */
-  currentGoal: string;
   /** Exactly the rates THIS funnel's chain prices, in chain order. Values may be null (undeclared). */
   rates: Record<string, number | null>;
   lifetimeRevenueUsd: number | null;
   destinationUrl: string | null;
   bookingUrl: string | null;
   updatedAt: string;
+}
+
+/** Raised when brand-service serves a funnel key this service has no chain for. Fails loud: pricing a
+ * funnel we cannot model would put a number under a name we do not understand, and dropping it would
+ * silently rank a smaller set than the brand declared. */
+export class UnknownSalesFunnelError extends Error {
+  constructor(readonly raw: string) {
+    super(`brand-service declared sales funnel "${raw}" is not in the known catalogue`);
+    this.name = "UnknownSalesFunnelError";
+  }
 }
 
 /**
@@ -118,5 +132,23 @@ export async function fetchDeclaredSalesFunnels(brandId: string, orgId: string):
       "brand-service reports no sales funnel for this brand — the org has never stated what it sells through, a producer gap",
     );
   }
-  return data.funnels as DeclaredSalesFunnel[];
+  // Canonicalise the key. brand-service emits only the canonical four, but it accepts the
+  // pre-retirement spellings forever on write, so resolving them here costs nothing and means a stored
+  // row that predates its rename can never read back as an unknown funnel. An unrecognised key FAILS
+  // LOUD — see UnknownSalesFunnelError.
+  return (data.funnels as Array<Record<string, unknown>>).map((raw) => {
+    const rawKey = typeof raw.funnelKey === "string" ? raw.funnelKey : "";
+    const funnelKey = matchSalesFunnelKey(rawKey);
+    if (!funnelKey) throw new UnknownSalesFunnelError(rawKey || JSON.stringify(raw));
+    return {
+      ...(raw as unknown as DeclaredSalesFunnel),
+      funnelKey,
+      // brand-service always names the funnel; fall back to the catalogue's own label rather than
+      // leaving the ranking with a blank row if it ever does not.
+      name: typeof raw.name === "string" && raw.name !== "" ? raw.name : SALES_FUNNELS[funnelKey].name,
+    } satisfies DeclaredSalesFunnel;
+  });
 }
+
+/** Re-exported so callers name the funnel type from one place. */
+export type { SalesFunnelKey };
