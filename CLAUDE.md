@@ -107,6 +107,48 @@ Rankable funnels sort on `returnPerDollar` desc; ties break on the canonical fun
   trials, `evidence.spentUsd` cost; an audience with no attributed evidence carries no audience grain = a
   cold arm, and still resolves via the cascade — never absent, never a false $0).
 
+**THE FUNNEL KEY IS THE PRICING KEY — a funnel carries no goal, and the goal could never have answered
+this.** brand-service#434 retired the goal from every funnel read because it was the poorer word:
+`sales_meetings_from_conversation` and `sales_meetings_from_website` both mapped onto one `meetingBooked`,
+so this service charged a meeting won from a REPLY and one won on the WEBSITE the same blended
+both-channel price, and a brand running the reply chain was benchmarked against clicks it never buys.
+`src/lib/sales-funnels.ts` mirrors the deployed catalogue (`sales_meetings_from_conversation`,
+`sales_meetings_from_website`, `website_purchases`, `form_magnet`) and `funnelToProjectionInputs`
+(`workflow-projection.ts`) maps each key to its compute inputs, incl. **`meetingChannel`** — the whole
+difference between the two meeting chains. Everything downstream MASKS the other channel's unit cost and
+observed evidence away (`maskUnitCostsForChannel`), so the conversation funnel prices
+`replyUsd / replyToMeetingPct` and the website one `clickUsd / visitToMeetingPct` against the identical
+evidence, and they routinely crown DIFFERENT workflows. `goal` / `objective` survive as ECHOES derived
+from the key; they are lossy by construction (both meeting funnels echo `meetingBooked`) and must never be
+read as a row's identity — `funnelKey` is. Note `website_purchases` maps to the **signup** objective, not
+the `websitePurchase` goal: its chain is visit → signup → paid, and the purchase goal's rates are a
+different funnel entirely.
+
+**TRANSITION TOLERANCE, both directions.** On the way IN, `matchSalesFunnelKey` accepts the four
+canonical keys AND the four pre-retirement spellings (`reply_meeting`, `visit_meeting`, `visit_signup`,
+`visit_form`) forever, plus case/separator variance; a word naming NO funnel returns null and every caller
+fails loud rather than guessing a chain. On the way OUT, **a consumer that still sends `?goal=` gets a
+byte-identical answer** — `goalToProjectionInputs` is untouched, `meetingChannel` defaults to null, and no
+`funnelKey` appears on the body. Only `?funnel=` narrows. It is accepted on `/workflow-projection` and
+`/audience-stats`, WINS over `goal` when both are sent, threads into the audience floor parent
+(`fetchBrandProjectedParents`, so the two surfaces stay one number per funnel by construction — guarded in
+`audience-cost-coherence.test.ts`), and rides the `audience-stats` scope key under its CANONICAL value so
+`pricing=net` and gross can never collide and a legacy spelling does not fragment the cell.
+
+**A `?funnel=` read prices on the funnel's OWN declared terms** — `declaredEconomicsForFunnel` +
+`mergeFunnelEconomics` (`declared-funnels.ts`) apply the SAME merge the ranking does, on both
+`/workflow-projection` and the `/audience-stats` floor parent, off the declared list those paths already
+fetch (zero extra IO). Skipping it is a two-prices-for-one-thing bug, and prod caught it the day of the
+first ship: `b97440f6…` declares `replyToMeetingPct: 100` on its conversation funnel, so the ranking read
+**$73.74** per meeting while `?funnel=` — on the brand-wide ~31% — read **$237.87**. Guard: the
+"`?funnel=` read prices on the funnel's OWN declared terms" case in `routes/goal-arbitration.test.ts`,
+which drives both surfaces from one fixture and asserts they agree.
+
+**A funnel the brand never DECLARED has no cost to serve** — both endpoints 404 with
+`reason: "funnel_not_declared"` + `declaredFunnelKeys`, never a number. "We could not estimate this" and
+"it costs zero" are different statements. The check fires ONLY on `?funnel=`, so no goal-keyed request
+pays for it.
+
 **The DECLARED SET is brand-service's to own** = the SALES FUNNELS a brand DECLARED it sells through,
 read from **`GET /internal/brands/:brandId/sales-funnels`** (api-key + `x-org-id`, brandId in path — see
 the org-scoping section below) via `src/lib/sales-funnels-client.ts` → mapped by
@@ -114,24 +156,25 @@ the org-scoping section below) via `src/lib/sales-funnels-client.ts` → mapped 
 single `optimizationGoal` is ONE goal, not a set, and brand-service is explicit that its brand-wide
 economics row cannot stand in for a declaration (every rate on it is NOT NULL with a server default, so a
 brand that configured nothing still reads back plausible-looking numbers and no absence signals
-anything). Reading either as the set is a bug.
+anything). Reading either as the set is a bug. An unrecognised funnel key fails loud
+(`UnknownSalesFunnelError` → 502 `reason: "authorized_goal_unrecognised"`, the deployed spelling
+campaign-service matches on) rather than being dropped from the ranking.
 
-- **Read the WIRE `goal`, NOT `currentGoal`.** brand-service deliberately collapses `form_submissions`
-  onto the `signup` runtime token so "consumers never see a new value" — but features-service models form
-  submissions as their OWN goal with their own funnel (visit→form→paid), so reading `currentGoal` would
-  price a Form Magnet funnel on signup economics: a wrong answer that looks right. `currentGoal` is the
-  fallback only when the wire goal maps to nothing. `matchBrandServiceGoal` covers every value the
-  producer can echo (incl. the dashboard's `sales_meetings` spelling).
+**The cross-org pooled goal BUCKETS are deliberately NOT funnel-keyed** (`cost-per-outcome-trend` /
+`-lifetime` / `-distribution`): brand-service still serves `optimizationGoal` on its saved economics, that
+axis is a fleet average rather than a per-brand price, and re-keying it needs a per-brand funnel read
+across the whole fleet plus a mapping for the objectives that have no funnel at all (`positiveReply`,
+`websiteVisit`, `sales`, `whatsapp`).
+
 - **The LIST answers it alone — an EMPTY list is a PRODUCER GAP, not "I sell through nothing".** An org
   that has answered always keeps at least one funnel active (brand-service refuses to switch off the
   last), so "answered but sells through none" cannot occur. An empty list therefore joins every other
   read that cannot be ANSWERED (transport, non-OK, a brand-service predating the funnel model → 404) in
   throwing `SalesFunnelsUnavailableError` ⇒ **502 `reason: "authorized_goals_unavailable"`** naming what
   failed — never a substituted default set. The wire `reason` keeps that legacy spelling on purpose:
-  campaign-service matches on it verbatim to tell "no ranking yet" from a genuine fault. An UNMAPPABLE
-  goal value likewise 502s (`reason: "authorized_goal_unrecognised"`) rather than being dropped.
-- **TWO FUNNELS SHARING ONE GOAL are ranked SEPARATELY — the merge is GONE (supersedes #704–#711).**
-  `reply_meeting` and `visit_meeting` used to collapse into one `meetingBooked` entry whose rates unioned
+  campaign-service matches on it verbatim to tell "no ranking yet" from a genuine fault.
+- **THE TWO MEETING FUNNELS are ranked SEPARATELY AND PRICED APART (supersedes #704–#711).**
+  They used to collapse into one `meetingBooked` entry whose rates unioned
   and whose lifetime revenue took the LOWEST of the two, because a single-elected-goal answer had no
   place to put two funnels. The customer now funds them separately, so a merged row cannot answer "where
   should I move my budget?" for either. Nothing is lost: a rate a funnel does not state falls back to the

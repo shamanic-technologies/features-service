@@ -10,6 +10,8 @@ import { fetchBrandProjectedParents } from "./audience-stats-brand-projection.js
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
 import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
+import { fetchDeclaredSalesFunnels } from "./sales-funnels-client.js";
+import { declaredEconomicsForFunnel } from "./declared-funnels.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 
 export type SortMetric = "cpc" | "cppr";
@@ -585,6 +587,12 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
   const saleEmails =
     normalizedGoal === "websitePurchase" || normalizedGoal === "sales" ? await fetchSaleEmailsSoft(brandId) : null;
 
+  // A funnel-keyed request prices on the funnel's OWN declared terms, exactly as the ranking does — read
+  // from the same declared list, and only on the funnel path so no goal-keyed request pays for it.
+  const funnelEconomics = funnelKey
+    ? declaredEconomicsForFunnel(await fetchDeclaredSalesFunnels(brandId, orgId), funnelKey)
+    : null;
+
   const [costs, membershipResult, engagementResult, brandProjected] = await Promise.all([
     fetchAudienceCosts(brandId, featureSlug, identity, pricing, scopeCampaignId),
     fetchAudienceMembership(brandId, audiences, identity, formSubmissionEmails, signupEmails, saleEmails),
@@ -601,9 +609,11 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
       identity,
       pricing,
       audiences.map((audience) => audience.id),
-      // When the caller named a funnel, the floor parent is priced on THAT chain — same override the
-      // per-row projection takes, so the two can never disagree for one audience.
+      // When the caller named a funnel, the floor parent is priced on THAT chain AND on that funnel's
+      // own declared terms — same overrides the per-row projection takes, so the two can never disagree
+      // for one audience.
       funnelKey,
+      funnelEconomics,
     ),
   ]);
   const membership = membershipResult.perAudience;
