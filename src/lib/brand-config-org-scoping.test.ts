@@ -61,7 +61,9 @@ describe("internal brand-service config reads carry the org whose configuration 
   afterEach(() => vi.restoreAllMocks());
 
   it("GET /internal/brands/:id/sales-funnels sends x-org-id (a brand id alone cannot name whose funnels)", async () => {
-    const seen = captureFetch({ declared: true, funnels: [] });
+    // A non-empty list: an empty one now means "this org never stated a set" and fails loud,
+    // which would abort before the headers this test is about could be asserted.
+    const seen = captureFetch({ funnels: [{ funnelKey: "reply_meeting", currentGoal: "meetingBooked" }] });
 
     await fetchDeclaredSalesFunnels("brand-1", "org-A");
 
@@ -104,7 +106,9 @@ describe("internal brand-service config reads carry the org whose configuration 
   });
 
   it("a caller with NO org FAILS LOUD on both reads — never a substituted stand-in, never an org-less read", async () => {
-    const seen = captureFetch({ declared: true, funnels: [] });
+    // A non-empty list: an empty one now means "this org never stated a set" and fails loud,
+    // which would abort before the headers this test is about could be asserted.
+    const seen = captureFetch({ funnels: [{ funnelKey: "reply_meeting", currentGoal: "meetingBooked" }] });
 
     await expect(fetchDeclaredSalesFunnels("brand-1", "")).rejects.toBeInstanceOf(SalesFunnelsUnavailableError);
     await expect(fetchDeclaredSalesFunnels("brand-1", "")).rejects.toThrow(/requires the org/);

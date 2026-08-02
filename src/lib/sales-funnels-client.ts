@@ -18,11 +18,10 @@
  *
  * Three of brand-service's rules are load-bearing here and must not be softened:
  *  - **Nothing is defaulted.** A value the brand never declared reads `null`, which never means zero.
- *  - **READ `declared` BEFORE `funnels`.** `declared: true` with an EMPTY array is the brand STATING it
- *    sells through none — a real answer. `declared: false` is brand-service saying no set has ever been
- *    stated for this brand — a PRODUCER GAP, and reporting it as "the brand authorizes nothing" would
- *    put an answer in the brand's mouth it never gave. The two payloads are byte-identical on
- *    `funnels`, so the flag is the ONLY thing that separates them: never infer it from the list.
+ *  - **An EMPTY list is a PRODUCER GAP, not an answer.** It means this org has never stated what it
+ *    sells through. Reporting it as "the brand authorizes nothing" would put an answer in the org's
+ *    mouth it never gave. "Answered, but sells through nothing" does not exist: brand-service refuses
+ *    to switch off an org's last active funnel, so having answered always leaves at least one.
  *  - **Never substitute a plausible set** and do NOT derive one from the brand's stored economics —
  *    every rate on the brand-wide economics row is NOT NULL with a server default, so a brand that
  *    configured nothing still reads back plausible-looking numbers there and no absence signals
@@ -65,9 +64,8 @@ export interface DeclaredSalesFunnel {
  * required (see the org note at the top of this file). Fails loud
  * (`SalesFunnelsUnavailableError`) on any transport / non-OK response — including the 404 a
  * brand-service that predates the funnel model returns, which is exactly the dormant state the
- * arbitration must report rather than paper over — AND on `declared: false`, brand-service stating that
- * no set has ever been declared for this brand. Only `declared: true` is an answer, and `[]` under it
- * is a SUCCESS: the brand declared nothing.
+ * arbitration must report rather than paper over — AND on an EMPTY list, which says this org has
+ * never stated a set.
  */
 export async function fetchDeclaredSalesFunnels(brandId: string, orgId: string): Promise<DeclaredSalesFunnel[]> {
   const url = process.env.BRAND_SERVICE_URL;
@@ -102,23 +100,22 @@ export async function fetchDeclaredSalesFunnels(brandId: string, orgId: string):
     );
   }
 
-  const data = (await response.json()) as { declared?: unknown; funnels?: unknown };
+  const data = (await response.json()) as { funnels?: unknown };
   if (!Array.isArray(data.funnels)) {
     throw new SalesFunnelsUnavailableError(
-      "brand-service declared sales-funnels response carried no `funnels` array",
+      "brand-service sales-funnels response carried no `funnels` array",
     );
   }
-  // The flag is REQUIRED on the producer's contract, and it is the only thing that distinguishes
-  // "the brand stated it sells through none" from "no set has ever been stated". A payload without it
-  // cannot answer that question at all, so it is unreadable — never assumed either way.
-  if (typeof data.declared !== "boolean") {
+  // The LIST answers it on its own. An org that has told us what it sells through always keeps at
+  // least one funnel active — brand-service refuses to switch off the last one — so "answered but
+  // sells through nothing" cannot occur, and an empty list means only that this org has never
+  // answered. That is a producer gap to surface, never a brand stating it sells through none.
+  //
+  // This used to read a separate `declared` boolean. It said exactly what the list says, and it is
+  // being retired: brand-service still serves it only because this refused a payload without it.
+  if (data.funnels.length === 0) {
     throw new SalesFunnelsUnavailableError(
-      "brand-service declared sales-funnels response carried no `declared` flag, so whether this brand has ever stated a set cannot be read",
-    );
-  }
-  if (!data.declared) {
-    throw new SalesFunnelsUnavailableError(
-      "brand-service reports no sales funnel has ever been declared for this brand (declared: false) — a producer gap, not the brand stating it sells through none",
+      "brand-service reports no sales funnel for this brand — the org has never stated what it sells through, a producer gap",
     );
   }
   return data.funnels as DeclaredSalesFunnel[];

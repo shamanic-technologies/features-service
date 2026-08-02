@@ -500,11 +500,9 @@ nothing to discount" note. It surfaces no cost COLUMN, but its expected series a
 `expected.outreach = dailyBudgetUsd / effectiveOutreachUsd`, and that divisor is a cost per outreach. See
 the dedicated section below.
 
-**Deploy ordering (dormant until runs#179 reaches the same env).** NET reads runs' `net*` fields; on any
-env where runs-service predates #179, NET fails loud (502) — the SAME dormant state as before (NET was
-already 502-ing since billing had no discount endpoint). GROSS (the default, and the only live path) is
-unaffected. NET self-activates once runs#179 is deployed alongside. (Set 2026-07-10; supersedes #510's
-read-time compute, shipped PR #517 → main, v0.87.6.)
+**Deploy ordering.** NET reads runs' `net*` fields, so on any env where runs-service predates #179 it
+fails loud (502) while GROSS (the default) is unaffected. Live since runs#179 deployed. (Set 2026-07-10;
+supersedes #510's read-time compute, PR #517 → v0.87.6.)
 
 **Base-branch lesson (2026-07-10):** when SUPERSEDING a PR, verify where the superseded code ACTUALLY
 lives (`git cat-file -e origin/<b>:<file>`) rather than trusting the brief's named branch — a fresh add of
@@ -1333,6 +1331,27 @@ fully (so generate stops re-emitting the `features` drops) is a deferred follow-
 absent), install with `pnpm install --frozen-lockfile` — not `npm ci` — so the local tree
 matches CI. The `npm run <script>` aliases above still work once deps are installed (pnpm
 just runs the same `package.json` scripts).
+
+**...but `pnpm` is unusable on the default node 20.19.1 — use node 22 for the install + the local
+gates.** The corepack shim dies before doing anything: `TypeError
+[ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING]: A dynamic import callback was not specified` out of
+`corepack/v1/pnpm/11.18.0/bin/pnpm.cjs`. It is a corepack/node incompatibility, NOT a repo or
+lockfile problem, so re-running or switching to `npm ci` is the wrong move (npm's tree ≠ CI's).
+Prefix the whole session instead — `export PATH="$HOME/.nvm/versions/node/v22.16.0/bin:$PATH"` —
+then `pnpm install --frozen-lockfile` succeeds (it exits 1 on an `ERR_PNPM_IGNORED_BUILDS` warning
+about esbuild; deps ARE installed and the suite runs fine). Same PATH for `./node_modules/.bin/tsc`
+and `./node_modules/.bin/vitest`. pnpm 11 also drops a `pnpm-workspace.yaml` `allowBuilds` stub in
+the repo root — an install artifact, delete it, never commit it.
+
+**A workspace branch is cut from `origin/main` but PRs target `staging`, so a staging-only change to
+a function you CALL breaks only after the merge.** The release skill's base-branch check
+(`git diff origin/staging <branch> --stat` shows only your files) does NOT catch this: your diff is
+clean, and the break is that staging changed a signature your NEW code calls with the OLD arity. It
+surfaces as a red CI on the merge commit, not on your PR. So when writing a new caller of an
+internal client, check the signature on the branch you are MERGING INTO — `git show
+origin/staging:src/lib/<client>.ts` — not the one in your working tree. Cost 2026-08-01 (#717): a new
+test called `fetchBrandSavedEconomicsWithGoal(brandId)` while staging's #715 had org-scoped it to
+`(brandId, orgId)`.
 
 ## CI test flake — `EnvironmentTeardownError` (FIXED v0.41.3)
 
