@@ -28,6 +28,7 @@ import { addUtcDays } from "./send-forecast-compute.js";
 import { bucketOf, enumerateBuckets, type Granularity } from "./active-users-compute.js";
 import { recordCommittedMrrSnapshotSoft, readCommittedMrrSnapshotsSoft } from "./committed-mrr-store.js";
 import { buildCommittedMrrHistory, type CommittedMrrHistory } from "./committed-mrr-compute.js";
+import { buildNetRevenueRetention, type NrrHistory } from "./nrr-compute.js";
 
 /** Cap the per-org runs-service fan-out so a cold-Neon sibling is not hit with N sockets at once. */
 const ORG_FANOUT_CONCURRENCY = 6;
@@ -77,6 +78,14 @@ export interface RevenueHistory {
    * point only if the snapshot store is unavailable.
    */
   committedMrr: CommittedMrrHistory;
+  /**
+   * NET REVENUE RETENTION over time (monthly + weekly) — of the money existing customers were spending at
+   * the START of a period, how much those SAME customers still spend now (expansion + contraction + churn
+   * among them; nothing from customers acquired during the period). Same realized-revenue basis as the
+   * series above, so the two reconcile. A period with no prior-period cohort carries `retentionPct: null`
+   * (NOT 0, NOT carried forward). Aggregate only — no per-org rows.
+   */
+  netRevenueRetention: NrrHistory;
   asOf: string;
 }
 
@@ -215,6 +224,8 @@ export async function buildRevenueHistory(
     daily: bucketizeRevenue(orgDailyCents, dailyBuckets, "day"),
     sinceInceptionDaily,
     committedMrr,
+    // Same per-org realized-spend maps the series above sum — one revenue basis for the whole payload.
+    netRevenueRetention: buildNetRevenueRetention(orgDailyCents, todayIso, { weeks: windows.weeks, months: windows.months }),
     asOf: now.toISOString(),
   };
 }

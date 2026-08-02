@@ -1334,6 +1334,27 @@ const committedMrrHistorySchema = z.object({
   weekly: z.array(committedMrrBucketSchema).describe("Committed MRR/ARR by ISO week (oldest→newest). Same snapshot sourcing as monthly."),
 });
 
+const nrrBucketSchema = z.object({
+  period: z.string().describe("Bucket label — `YYYY-MM` (monthly) or `YYYY-Www` ISO week (weekly)."),
+  periodStart: z.string().describe("UTC start date of the bucket (`YYYY-MM-DD`): the month's 1st or the ISO week's Monday. For charting."),
+  retentionPct: z
+    .number()
+    .nullable()
+    .describe(
+      "Net revenue retention for this period, in percent (1-decimal): the period's revenue from the customers who had revenue in the PREVIOUS period, " +
+        "divided by those same customers' previous-period revenue. null when the rate could NOT be measured (no prior-period cohort — the first period, or a gap); " +
+        "that is DISTINCT from a measured 0 (cohortSize > 0, priorRevenueUsd > 0, retainedRevenueUsd 0 = the base shrank to nothing). Never a substitute value, never carried forward.",
+    ),
+  cohortSize: z.number().describe("Number of orgs in the cohort FIXED AT THE START of the period (orgs with revenue in the PREVIOUS period). 0 ⇒ the rate is unmeasurable."),
+  priorRevenueUsd: z.number().describe("The cohort's NET realized revenue in the PREVIOUS period (the denominator), USD 2-decimal."),
+  retainedRevenueUsd: z.number().describe("The SAME cohort's NET realized revenue in THIS period (the numerator) — excludes every customer acquired during the period, USD 2-decimal."),
+});
+
+const nrrHistorySchema = z.object({
+  monthly: z.array(nrrBucketSchema).describe("Net revenue retention by calendar month (oldest→newest), one point per bucket of the monthly revenue series."),
+  weekly: z.array(nrrBucketSchema).describe("Net revenue retention by ISO week (oldest→newest), one point per bucket of the weekly revenue series."),
+});
+
 const revenueHistoryResponseSchema = z.object({
   totalRevenueUsd: z.number().describe("Cumulative NET realized revenue since inception (all orgs, all time; post per-org usage discount), in USD (2-decimal)."),
   currentMrrUsd: z.number().describe("LIVE committed MRR — fleet active daily budget × 30 (UNDISCOUNTED budget projection). Matches the mrrUsd the admin page renders from GET /internal/stats/accounts."),
@@ -1342,6 +1363,13 @@ const revenueHistoryResponseSchema = z.object({
   daily: z.array(revenueBucketSchema).describe("Trailing UTC-day revenue buckets (oldest→newest)."),
   sinceInceptionDaily: z.array(revenueBucketSchema).describe("Per-day realized-revenue line from the first billed day to today (the 'MRR over time' series)."),
   committedMrr: committedMrrHistorySchema.describe("COMMITTED MRR/ARR over time (monthly + weekly, each with growth) — the point-in-time run-rate the fleet is CONTRACTED to bill (Σ active daily budget × 30), NOT realized spend. Recorded as daily snapshots going forward (no historical backfill); the current-period point equals currentMrrUsd, ARR = MRR × 12. Additive + non-breaking to the realized series above."),
+  netRevenueRetention: nrrHistorySchema.describe(
+    "NET REVENUE RETENTION (NRR / NDR) over time, monthly + weekly. Standard aggregate definition: of the revenue existing customers produced in the PREVIOUS " +
+      "period, how much those SAME customers produce in this one — expansion, contraction and churn among them, and NOTHING from customers acquired during the " +
+      "period (the cohort is fixed at the start of the period; including new logos would turn this into a growth rate). Same NET realized cold-email revenue basis " +
+      "as the series above, so the two reconcile. Aggregate method (all existing customers pooled), not a per-acquisition-cohort curve. Benchmarks: >100% the base " +
+      "grows on its own, >120% is where public SaaS trades at a premium, <100% the base is shrinking. No TTM figure — the first billed day is March 2026.",
+  ),
   asOf: z.string().describe("ISO timestamp the series was computed."),
 });
 
@@ -1362,6 +1390,10 @@ registry.registerPath({
     "Also returns committedMrr: the COMMITTED MRR/ARR run-rate over time (monthly + weekly, each with growth) — Σ active daily budget × 30, what the fleet " +
     "is CONTRACTED to bill (distinct from realized spend). Committed MRR is a point-in-time snapshot that cannot be reconstructed from spend, so it is " +
     "persisted as a daily snapshot recorded GOING FORWARD (no historical backfill); the current-period point equals currentMrrUsd (reconciles) and ARR = MRR × 12. " +
+    "Also returns netRevenueRetention: NRR/NDR over time (monthly + weekly) on the SAME realized-revenue basis — the period's revenue from the customers who had " +
+    "revenue in the PREVIOUS period, over those same customers' previous-period revenue. The cohort is fixed at the start of the period, so customers acquired " +
+    "during it contribute to neither leg; expansion, contraction and churn are already what the ratio measures. A period with no prior-period cohort reports " +
+    "retentionPct null (unmeasurable), which is distinct from a measured 0. " +
     "Windows are trailing and end at today (UTC): daily default 90 (max 365), weekly default 26 (max 104), monthly default 12 (max 36). All amounts in USD.",
   tags: ["Internal"],
   request: {

@@ -161,6 +161,35 @@ describe("buildRevenueHistory — integration via injected deps", () => {
     ]);
   });
 
+  it("NRR rides the SAME realized-revenue basis as the series, on both grains", async () => {
+    const history = await buildRevenueHistory(
+      COLD,
+      NOW,
+      { days: 3, weeks: 2, months: 2 },
+      deps({
+        orgs: ["existing", "newLogo"],
+        dailyCents: {
+          existing: { "2026-06-10": 100_00, "2026-07-02": 80_00 }, // contraction: 80%
+          newLogo: { "2026-07-05": 500_00 }, // acquired in July — must not inflate NRR
+        },
+        currentMrrUsd: 0,
+      }),
+    );
+
+    // The realized-revenue series still sees BOTH orgs (July = 80 + 500 = $580) …
+    expect(history.monthly.at(-1)).toMatchObject({ period: "2026-07", revenueUsd: 580 });
+    // … while NRR sees only the start-of-July cohort: 80/100 = 80%, not 580/100.
+    expect(history.netRevenueRetention.monthly.at(-1)).toMatchObject({
+      period: "2026-07",
+      retentionPct: 80,
+      cohortSize: 1,
+      priorRevenueUsd: 100,
+      retainedRevenueUsd: 80,
+    });
+    expect(history.netRevenueRetention.monthly).toHaveLength(2);
+    expect(history.netRevenueRetention.weekly).toHaveLength(2);
+  });
+
   it("empty cold-email universe → zero totals + empty since-inception line, never throws", async () => {
     const history = await buildRevenueHistory("", NOW, { days: 2, weeks: 1, months: 1 }, deps({ orgs: [], dailyCents: {}, currentMrrUsd: 0 }));
     expect(history.totalRevenueUsd).toBe(0);
