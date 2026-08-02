@@ -76,6 +76,7 @@ import {
 import { projectedCostPerOutcome } from "./cost-engine.js";
 import { goalToProjectionInputs, funnelToProjectionInputs, outcomeCostForGoal, grainHasObservedOutcome } from "../routes/workflow-projection.js";
 import type { MeetingChannel, SalesFunnelKey } from "./sales-funnels.js";
+import { mergeFunnelEconomics } from "./declared-funnels.js";
 import {
   fetchBrandWorkflowEvidence,
   fetchAudienceGrainEvidence,
@@ -215,6 +216,10 @@ export async function fetchBrandProjectedParents(
   // cannot distinguish a meeting bought with a reply from one bought with a click, and this parent is
   // the number every per-audience cost floors against, so it must be priced on the same chain the row is.
   funnelKey?: SalesFunnelKey,
+  // That funnel's OWN declared terms, merged over the brand's effective economics — the SAME merge the
+  // ranking does. Without it this parent prices on the brand-wide rates while the projection row prices
+  // on the funnel's, and the two surfaces split apart for one funnel.
+  funnelEconomics?: Partial<SalesEconomics> | null,
 ): Promise<BrandProjectedParentsUsd> {
   const workflows = await fetchPublicWorkflows(featureSlug, "all");
   // The SAME slug → dynasty map the crossOrg/brand rollups use, so the audience grain's dynasty keys line
@@ -280,7 +285,7 @@ export async function fetchBrandProjectedParents(
   const meetingChannel: MeetingChannel | null = funnelInputs?.meetingChannel ?? null;
   const pricedGoal: Goal = funnelInputs ? (funnelInputs.goalEcho as Goal) : goal;
 
-  const economics = effective.economics;
+  const economics = mergeFunnelEconomics(effective.economics, funnelEconomics ?? null);
   const econ = economics ? buildEcon(economics, pricedGoal) : null;
 
   // THE single best workflow for the queried goal: the LOWEST cost of the goal's own outcome, scored

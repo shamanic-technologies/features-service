@@ -11,6 +11,7 @@ import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type SingleStepGoal, type Goal } from "../lib/goals.js";
 import { SALES_FUNNELS, matchSalesFunnelKey, type MeetingChannel, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
+import { declaredEconomicsForFunnel, mergeFunnelEconomics } from "../lib/declared-funnels.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
@@ -624,16 +625,18 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // zero" are different statements, and only the first one is true here — so this 404s with the reason
     // rather than pricing a chain the org never said it sells through. Fires ONLY on `?funnel=`, so the
     // goal path takes no extra read.
+    let funnelEconomics: Partial<SalesEconomics> | null = null;
     if (funnelKey) {
-      let declared: string[];
+      let declaredFunnels: Awaited<ReturnType<typeof fetchDeclaredSalesFunnels>>;
       try {
-        declared = (await fetchDeclaredSalesFunnels(brandId, orgId)).map((f) => f.funnelKey);
+        declaredFunnels = await fetchDeclaredSalesFunnels(brandId, orgId);
       } catch (error) {
         if (error instanceof SalesFunnelsUnavailableError) {
           return res.status(502).json({ error: error.message, reason: "declared_funnels_unavailable" });
         }
         throw error;
       }
+      const declared = declaredFunnels.map((f) => f.funnelKey);
       if (!declared.includes(funnelKey)) {
         return res.status(404).json({
           error: `this brand has not declared the ${funnelKey} funnel, so there is no cost to estimate for it`,
@@ -641,6 +644,12 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
           declaredFunnelKeys: declared,
         });
       }
+      // Price on the funnel's OWN declared terms — the SAME merge the ranking does. Without this the
+      // two surfaces print different numbers for one brand + one funnel: prod `b97440f6…` declares
+      // `replyToMeetingPct: 100` on its conversation funnel, so the ranking read $73.74 per meeting
+      // while this endpoint, on the brand-wide ~31%, read $237.87. Read off the list already fetched
+      // for the declared-set check, so it costs no extra IO.
+      funnelEconomics = declaredEconomicsForFunnel(declaredFunnels, funnelKey);
     }
 
     const [evidence, effective] = await Promise.all([
@@ -661,7 +670,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       meetingChannel,
       ...(funnelKey ? { funnelKey } : {}),
       evidence,
-      economics: effective.economics,
+      economics: mergeFunnelEconomics(effective.economics, funnelEconomics),
     });
     res.json(response);
   } catch (error) {
