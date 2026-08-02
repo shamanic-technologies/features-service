@@ -107,12 +107,6 @@ interface MockOpts {
   economics?: unknown;
   /** The funnels brand-service serves. Omitted → the endpoint 404s (a brand-service without the model). */
   funnels?: unknown[];
-  /**
-   * brand-service's `declared` flag, the ONLY thing separating "the brand stated it sells through
-   * none" from "no set has ever been stated". Defaults to `true` when `funnels` is given; `null`
-   * serves a payload carrying no flag at all.
-   */
-  declared?: boolean | null;
   audiences?: Array<{ id: string }>;
 }
 
@@ -130,8 +124,7 @@ function mockFetch(opts: MockOpts = {}): void {
       if (!("funnels" in opts)) {
         return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
       }
-      const declared = opts.declared === undefined ? true : opts.declared;
-      return json(declared === null ? { funnels: opts.funnels } : { declared, funnels: opts.funnels });
+      return json({ funnels: opts.funnels });
     }
     if (url.includes("/sales-economics-effective")) {
       const economics = "economics" in opts ? opts.economics : ECONOMICS;
@@ -290,39 +283,27 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     expect(res.body.error).toContain("telepathy");
   });
 
-  it("never-stated and stated-none are DIFFERENT answers — same empty funnels list, only the `declared` flag differs", async () => {
-    // The two payloads are byte-identical on `funnels`, so a test that drives only one of them proves
-    // nothing: it passes just as happily against a reader that ignores the flag entirely.
-    const ask = () => request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
-
-    mockFetch({ funnels: [], declared: false }); // brand-service: no set has ever been stated
-    const neverStated = await ask();
-
-    vi.restoreAllMocks();
-    vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
-    mockFetch({ funnels: [], declared: true }); // brand-service: the brand stated it sells through none
-    const statedNone = await ask();
-
-    // Never stated → a producer gap, surfaced. NOT reported as the brand answering "none".
-    expect(neverStated.status).toBe(502);
-    expect(neverStated.body.reason).toBe("authorized_goals_unavailable");
-    expect(neverStated.body.error).toContain("declared: false");
-
-    // Stated none → a real answer, 200 and unrankable.
-    expect(statedNone.status).toBe(200);
-    expect(statedNone.body.arbitration.status).toBe("unrankable");
-    expect(statedNone.body.arbitration.reason).toBe("no_authorized_goals");
-    expect(statedNone.body.arbitration.goal).toBeNull();
-    expect(statedNone.body.rows).toEqual([]);
-  });
-
-  it("a response carrying no `declared` flag at all is unreadable — never read as the brand stating none", async () => {
-    mockFetch({ funnels: [], declared: null });
+  it("an EMPTY funnel list is a producer gap, never the org answering \"I sell through none\"", async () => {
+    // There is no "answered, but sells through nothing" state to confuse this with: brand-service
+    // refuses to switch off an org's last active funnel, so having answered always leaves at least
+    // one. An empty list therefore means only that this org has never stated a set — a gap to
+    // surface, not an answer to act on.
+    mockFetch({ funnels: [] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(502);
     expect(res.body.reason).toBe("authorized_goals_unavailable");
-    expect(res.body.error).toContain("`declared` flag");
+    expect(res.body.error).toContain("never stated");
+  });
+
+  it("reads the list alone — a payload with no `declared` flag is answered normally", async () => {
+    // The flag said exactly what the list says and is being retired; brand-service serves it today
+    // only because this reader used to refuse a payload without it. Nothing here may depend on it.
+    mockFetch({ funnels: [declaredFunnel("signups")] });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
+
+    expect(res.status).toBe(200);
+    expect(res.body.arbitration.status).not.toBe("unrankable");
   });
 
   it("200 unrankable with a per-goal reason when nothing can be ranked", async () => {

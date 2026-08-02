@@ -29,11 +29,10 @@ const router = Router();
 // FAIL-LOUD, no substituted set: when the declaration cannot be READ the endpoint 502s with
 // `reason: "authorized_goals_unavailable"` naming what failed, rather than defaulting to the brand's
 // single optimizationGoal or to the whole goal vocabulary and answering as if that were real. That
-// covers brand-service's `declared: false` — no set has ever been STATED for this brand — which is a
-// producer gap, not an answer. A brand that STATED it sells through no funnel (`declared: true` with an
-// empty list) is a different thing entirely — a real answer, served 200 as `status: "unrankable"` with
-// reason `no_authorized_goals`. The two payloads are byte-identical on the funnels list, so collapsing
-// them would report a brand that never answered as having answered "none".
+// covers an EMPTY funnel list from brand-service — this org has never STATED what it sells through,
+// which is a producer gap, not an answer. There is no "answered, but sells through nothing" to
+// confuse it with: brand-service refuses to switch off an org's last active funnel, so having
+// answered always leaves at least one.
 
 router.get("/features/:featureSlug/goal-arbitration", apiKeyAuth, async (req, res) => {
   const { featureSlug } = req.params;
@@ -69,10 +68,9 @@ router.get("/features/:featureSlug/goal-arbitration", apiKeyAuth, async (req, re
       // Economics is read LIVE on every request (never cached) — an arbitration run right after an
       // economics write must rank on the NEW terms. Same rule as /workflow-projection.
       fetchEffectiveEconomics(brandId, identity),
-      // The AUTHORIZED SET, likewise live: the funnels the brand DECLARED it sells through. `[]` under
-      // `declared: true` is a real answer (the brand stated it sells through none); a read that cannot
-      // be answered — transport, non-OK, or `declared: false` (never stated) — throws and is reported
-      // below with its own reason, never as a substituted set.
+      // The AUTHORIZED SET, likewise live: the funnels this org sells this brand through. A read that
+      // cannot be answered — transport, non-OK, or an empty list (never stated) — throws and is
+      // reported below with its own reason, never as a substituted set.
       // The org is part of the QUESTION, not just of the auth: a brand id is shared by every org that
       // claims the same domain, so we must say whose declared set we want.
       fetchDeclaredSalesFunnels(brandId, identity.orgId),
