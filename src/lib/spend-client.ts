@@ -30,6 +30,7 @@
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
+import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 
 export interface SpendSource {
   /** runs-service cost name (the billable line item, e.g. "apollo people-search", "email-send-step-1"). */
@@ -122,6 +123,41 @@ function sumGroups(groups: RunsCostGroup[], pricing: Pricing): { totalCents: num
   return { totalCents, actualCents };
 }
 
+/**
+ * Fold a family's (costName, campaignId) groups back onto costName, keeping only its members.
+ *
+ * The selector runs HERE, so NET stays fail-loud on a group missing runs#179's frozen net twin —
+ * and the folded group carries the selected cents under BOTH the gross and net names, so the
+ * caller's later `selectCostCents` reads that same already-selected number on either basis.
+ * Returns the groups untouched when the scope is not a multi-member family.
+ */
+function collapseFamilyGroups(
+  groups: RunsCostGroup[],
+  family: Set<string> | null,
+  pricing: Pricing,
+): RunsCostGroup[] {
+  if (!family) return groups;
+  const byCostName = new Map<string, { total: number; actual: number; runCount: number }>();
+  for (const g of groups) {
+    const cid = g.dimensions?.campaignId;
+    if (!cid || !family.has(cid)) continue;
+    const costName = g.dimensions?.costName ?? "unknown";
+    const acc = byCostName.get(costName) ?? { total: 0, actual: 0, runCount: 0 };
+    acc.total += Math.round(selectCostCents(g, "totalCostInUsdCents", pricing));
+    acc.actual += Math.round(selectCostCents(g, "actualCostInUsdCents", pricing));
+    acc.runCount += g.runCount ?? 0;
+    byCostName.set(costName, acc);
+  }
+  return [...byCostName].map(([costName, acc]) => ({
+    dimensions: { costName },
+    totalCostInUsdCents: String(acc.total),
+    actualCostInUsdCents: String(acc.actual),
+    netTotalCostInUsdCents: String(acc.total),
+    netActualCostInUsdCents: String(acc.actual),
+    runCount: acc.runCount,
+  }));
+}
+
 /** Start of the current UTC day as an ISO timestamp (for the today-spend filter). */
 function startOfUtcDay(now: Date): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
@@ -129,7 +165,10 @@ function startOfUtcDay(now: Date): string {
 
 export async function fetchSpendBreakdown(
   brandId: string,
-  campaignId: string | undefined,
+  // One campaign, or the family sharing one identity (see campaign-identity.ts). A family
+  // co-groups campaignId and re-aggregates by costName here, so the whole family still costs the
+  // same TWO runs calls a single campaign does.
+  campaignScope: CampaignFilter,
   featureSlug: string,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
   now: Date = new Date(),
@@ -145,22 +184,31 @@ export async function fetchSpendBreakdown(
     throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   }
 
+  const campaignId = singleCampaignId(campaignScope);
+  const family = campaignFamilySet(campaignScope);
+  const groupBy = family ? "costName,campaignId" : "costName";
+
   const reqHeaders = buildHeaders(apiKey, brandId, campaignId, headers);
 
   // By-source (groupBy=costName): the per-line-item rows carrying committed + actual. The totals are
   // Σ of these, so "Total spent" == sum of the source list the dashboard renders (coherent by
   // construction) for each of committed / actual / provisioned.
-  const sourceParams = new URLSearchParams({ groupBy: "costName", brandId, featureSlugs: featureSlug });
+  const sourceParams = new URLSearchParams({ groupBy, brandId, featureSlugs: featureSlug });
   if (campaignId) sourceParams.set("campaignId", campaignId);
 
   // Today: the same feature-scoped population restricted to runs started since 00:00 UTC.
-  const todayParams = new URLSearchParams({ groupBy: "costName", brandId, featureSlugs: featureSlug, startedAfter: startOfUtcDay(now) });
+  const todayParams = new URLSearchParams({ groupBy, brandId, featureSlugs: featureSlug, startedAfter: startOfUtcDay(now) });
   if (campaignId) todayParams.set("campaignId", campaignId);
 
-  const [sourceGroups, todayGroups] = await Promise.all([
+  const [rawSourceGroups, rawTodayGroups] = await Promise.all([
     fetchCostGroups(baseUrl, apiKey, sourceParams, reqHeaders),
     fetchCostGroups(baseUrl, apiKey, todayParams, reqHeaders),
   ]);
+
+  // A family's groups arrive split per (costName, campaignId): keep only its members and fold the
+  // split back onto costName, so the per-source rows below read exactly as a single campaign's do.
+  const sourceGroups = collapseFamilyGroups(rawSourceGroups, family, pricing);
+  const todayGroups = collapseFamilyGroups(rawTodayGroups, family, pricing);
 
   const all = sumGroups(sourceGroups, pricing);
   const today = sumGroups(todayGroups, pricing);

@@ -40,6 +40,9 @@ import {
 import { traceEvent } from "../lib/trace-event.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
+import { singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js";
+import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
+import { describeIdentity } from "../lib/campaign-identity.js";
 
 const router = Router();
 
@@ -432,11 +435,11 @@ function emptyBody(
  */
 function fetchSequencesSoft(
   brandId: string,
-  campaignId: string | undefined,
+  campaignScope: CampaignFilter,
   featureSlug: string,
   headers: DownstreamHeaders,
 ): Promise<SignalSeries | null> {
-  return fetchSequencesByDay(brandId, campaignId, featureSlug, headers).catch((err) => {
+  return fetchSequencesByDay(brandId, campaignScope, featureSlug, headers).catch((err) => {
     console.warn(
       `[features-service] sequences enrichment failed (degrading to null): ${(err as Error).message}`,
     );
@@ -677,7 +680,11 @@ function buildLensBody(
 export async function computeFeatureRevenue(
   featureSlug: string,
   brandId: string,
-  campaignId: string | undefined,
+  // One campaign, or the FAMILY of campaigns sharing one identity — (org, brand, sales funnel,
+  // acquisition channel), campaign-service's own key. A family totals as ONE campaign: its stopped
+  // ancestors carry real runs and real costs, and the customer reads them as the campaign that is
+  // still running. A single-campaign scope keeps every downstream read byte-identical.
+  campaignScope: CampaignFilter,
   funnel: ReturnType<typeof getFunnel>,
   headers: DownstreamHeaders,
   lens?: Lens,
@@ -695,6 +702,14 @@ export async function computeFeatureRevenue(
   // (the default) is byte-identical; the CROSS-ORG public revenue caller (staff) never sets it → gross.
   pricing: Pricing = "gross",
 ): Promise<RevenueBody> {
+  // The single campaign id the campaign-SCOPED downstream reads still take: the requested campaign
+  // for a single scope, `undefined` for a family (no producer accepts a campaign list). The reads
+  // that must be family-EXACT — cost, spend, leads, the outreach series — take `campaignScope`
+  // itself. The rest (economics, the per-email date + qualification overlays, the projected cost
+  // parents) answer about the BRAND and a campaign only narrows them, so a family reads the brand's
+  // answer — its own superset, and the same one the brand Overview reads.
+  const campaignId = singleCampaignId(campaignScope);
+
   // No funnel wired for this feature yet → null pipeline (not an error). `funnel` is known up
   // front (caller param), so short-circuit BEFORE Wave A and fetch ONLY the cost the empty body
   // needs — never over-fetching economics/rates/leads on the no-funnel path. Fail-loud: a
@@ -704,15 +719,15 @@ export async function computeFeatureRevenue(
       // Overview: fetch spend (fail-loud) + sequences (fail-soft) in parallel. Outreach activity
       // is independent of the funnel — a no-funnel feature still launches campaigns worth graphing.
       const [breakdown, sequences, counts, parents] = await Promise.all([
-        fetchSpendBreakdown(brandId, campaignId, featureSlug, headers, new Date(), pricing),
-        fetchSequencesSoft(brandId, campaignId, featureSlug, headers),
+        fetchSpendBreakdown(brandId, campaignScope, featureSlug, headers, new Date(), pricing),
+        fetchSequencesSoft(brandId, campaignScope, featureSlug, headers),
         fetchConversionCountsSoft(brandId),
         fetchSpendCostParentsSoft(brandId, featureSlug, headers, campaignId, pricing),
       ]);
       // ROI/CAC ride ACTUAL spend; the `spend` block carries the committed total separately.
       return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, [], counts, parents), sequences);
     }
-    const actualCostInUsdCents = await fetchRunsCostCents(brandId, campaignId, featureSlug, headers, pricing);
+    const actualCostInUsdCents = await fetchRunsCostCents(brandId, campaignScope, featureSlug, headers, pricing);
     return emptyBody(null, actualCostInUsdCents, null);
   }
 
@@ -729,15 +744,15 @@ export async function computeFeatureRevenue(
   // cold-start path below over-fetches rates+leads — accepted for the common-path win.
   const [costResult, { economics, source }, platformRates, persons, sequences, counts, conversionEmails, parents] = await Promise.all([
     includeSpend
-      ? fetchSpendBreakdown(brandId, campaignId, featureSlug, headers, new Date(), pricing)
-      : fetchRunsCostCents(brandId, campaignId, featureSlug, headers, pricing),
+      ? fetchSpendBreakdown(brandId, campaignScope, featureSlug, headers, new Date(), pricing)
+      : fetchRunsCostCents(brandId, campaignScope, featureSlug, headers, pricing),
     economicsOverride ?? fetchEffectiveEconomics(brandId, { ...headers, campaignId }),
     fetchPlatformEmailRates(),
-    fetchLeadsForRevenue(brandId, campaignId, headers),
+    fetchLeadsForRevenue(brandId, campaignScope, headers),
     // Overview-only sequences day series (email-gateway groupBy=day). Pre-caught → resolves to
     // null on failure, so it never rejects fail-loud Wave A. Off-overview it's null (not fetched).
     includeSpend
-      ? fetchSequencesSoft(brandId, campaignId, featureSlug, headers)
+      ? fetchSequencesSoft(brandId, campaignScope, featureSlug, headers)
       : Promise.resolve<SignalSeries | null>(null),
     // Overview-only REAL conversion counts (lead-service) for the Signups / Sales Meetings tiles +
     // cost-per-conversion. Pre-caught → null on failure (never rejects fail-loud Wave A). Off-overview null.
@@ -867,9 +882,21 @@ export async function computeFeatureRevenue(
 // the cumulative time-series and the per-event ledger.
 //
 // With ?groupBy=campaignId the response collapses to one LEAN group per campaign that has runs
-// for the brand+feature — { campaignId, headline.totalPipelineUsd, costEconomics } only — so the
-// dashboard campaigns list gets every campaign's revenue + ROI in ONE call instead of N. Each
-// group's values are byte-equal to the standalone ?campaignId= call (same per-campaign compute).
+// for the brand+feature — { campaignId, campaignIdentity, headline.totalPipelineUsd, costEconomics }
+// — so the dashboard campaigns list gets every campaign's revenue + ROI in ONE call instead of N.
+// Each group's values are byte-equal to the standalone ?campaignId= call.
+//
+// BOTH forms report a campaign's IDENTITY total, not its row's: every campaign sharing (org, brand,
+// sales funnel, acquisition channel) — campaign-service's own key — totals as ONE campaign, because
+// that is what it is. campaign-service used to create a new campaign row every time workflow
+// selection switched workflows, so one brand's two real campaigns arrived here as ~130 rows: dozens
+// reading 0.0x / $0.00 beside the one row holding six weeks of history. The stopped rows are not
+// rewritten, repointed or hidden — their runs and costs stay theirs in runs-service, and every id
+// still answers, now with its identity's total. A brand with one campaign per identity is unchanged.
+//
+// `campaignIdentity` on each group names the family — its funnel (NULL when the campaign states
+// none, which is a real state and stays distinguishable from a stated funnel), its channel, its
+// members and the LIVE one a consumer renders the line on.
 
 router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
   const { featureSlug } = req.params;
@@ -938,20 +965,44 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing, econ }),
         orgId,
         compute: async () => {
-          const campaignIds = await fetchCampaignIdsWithRuns(brandId, featureSlug, headers);
+          const [campaignIds, families] = await Promise.all([
+            fetchCampaignIdsWithRuns(brandId, featureSlug, headers),
+            fetchCampaignFamiliesSoft(brandId, featureSlug, headers),
+          ]);
 
           traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaigns=${campaignIds.length}` }, req.headers).catch(() => {});
 
-          // Economics are brand-scoped (identical across campaigns) — resolved ONCE above and shared, so
-          // N campaigns don't each re-hit brand-service.
-          const groups = await Promise.all(
-            campaignIds.map(async (cid) => {
-              const body = await computeFeatureRevenue(featureSlug, brandId, cid, funnel, headers, undefined, effectiveEconomics, false, pricing);
-              return { campaignId: cid, headline: body.headline, costEconomics: body.costEconomics };
-            }),
-          );
+          // ONE compute per IDENTITY, not per campaign row: the members of a family answer to the
+          // same campaign, so recomputing per row would be the same figure N times. Every member id
+          // still gets a group carrying it, so a consumer keyed on any campaign id keeps resolving.
+          // Economics are brand-scoped (identical across campaigns) — resolved ONCE above and shared.
+          const byIdentity = new Map<string, string[]>();
+          for (const cid of campaignIds) {
+            const key = families.identityOf(cid)?.key ?? `campaign:${cid}`;
+            const bucket = byIdentity.get(key);
+            if (bucket) bucket.push(cid);
+            else byIdentity.set(key, [cid]);
+          }
 
-          traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}` }, req.headers).catch(() => {});
+          const groups = (
+            await Promise.all(
+              [...byIdentity.values()].map(async (idsWithRuns) => {
+                // The family's WHOLE membership scopes the compute — a member with no runs of its
+                // own still belongs to the campaign, and dropping it would drop its leads.
+                const identity = families.identityOf(idsWithRuns[0]);
+                const scope = identity?.campaignIds ?? idsWithRuns;
+                const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, effectiveEconomics, false, pricing);
+                return idsWithRuns.map((cid) => ({
+                  campaignId: cid,
+                  campaignIdentity: describeIdentity(identity, cid),
+                  headline: body.headline,
+                  costEconomics: body.costEconomics,
+                }));
+              }),
+            )
+          ).flat();
+
+          traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}, identities=${byIdentity.size}` }, req.headers).catch(() => {});
 
           return { featureSlug, groupBy: "campaignId", groups };
         },
@@ -961,19 +1012,36 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     }
 
     // ── Overview / lens: single brand-scoped (optionally one-campaign) response ──
+    //
+    // A campaign-scoped read answers for the campaign's whole IDENTITY, so asking about any member
+    // — the live row or one of its stopped ancestors — returns the same, complete campaign. Every
+    // member therefore lands on ONE cache cell (keyed by the identity), instead of the dashboard
+    // firing a separate full compute per rendered row.
+    const identity = campaignId
+      ? (await fetchCampaignFamiliesSoft(brandId, featureSlug, headers)).identityOf(campaignId)
+      : null;
+    const campaignScope: CampaignFilter = identity?.campaignIds ?? campaignId;
+
     const payload = await servedCached({
       view: lens ? "revenue-lens" : "revenue",
-      scopeKey: buildScopeKey(featureSlug, { orgId, brandId, campaignId, lens, pricing, econ }),
+      scopeKey: buildScopeKey(featureSlug, {
+        orgId,
+        brandId,
+        campaignId: identity?.key ?? campaignId,
+        lens,
+        pricing,
+        econ,
+      }),
       orgId,
       compute: async () => {
         traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
 
         // Overview (no lens) emits the canonical spend block; the lens path omits it (brand-total concept).
-        const body = await computeFeatureRevenue(featureSlug, brandId, campaignId, funnel, headers, lens, effectiveEconomics, !lens, pricing);
+        const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, lens, effectiveEconomics, !lens, pricing);
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 
-        return { featureSlug, ...body };
+        return { featureSlug, ...body, campaignIdentity: campaignId ? describeIdentity(identity, campaignId) : undefined };
       },
     });
 
