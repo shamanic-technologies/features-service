@@ -2116,22 +2116,217 @@
           "featureSlug": {
             "type": "string"
           },
-          "authorizedGoals": {
+          "ranking": {
             "type": "array",
             "items": {
-              "type": "string",
-              "enum": [
-                "meetingBooked",
-                "signup",
-                "websitePurchase",
-                "sales",
-                "websiteVisit",
-                "positiveReply",
-                "formSubmission",
-                "whatsappConversation"
+              "type": "object",
+              "properties": {
+                "funnelKey": {
+                  "type": "string",
+                  "description": "brand-service's key for the funnel — the SAME key billing funds and campaign-service paces on, so a customer can map a rank straight onto a budget."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "The brand's own label for the funnel."
+                },
+                "goal": {
+                  "type": "string",
+                  "enum": [
+                    "meetingBooked",
+                    "signup",
+                    "websitePurchase",
+                    "sales",
+                    "websiteVisit",
+                    "positiveReply",
+                    "formSubmission",
+                    "whatsappConversation"
+                  ]
+                },
+                "objective": {
+                  "type": "string",
+                  "enum": [
+                    "meeting-booked",
+                    "self-serve",
+                    "signup",
+                    "website_purchase",
+                    "sales",
+                    "website_visits",
+                    "positive_replies",
+                    "form_submissions",
+                    "whatsapp_conversations"
+                  ]
+                },
+                "rank": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "1 for the best-returning funnel, 2 for the next, and so on. NULL when the funnel could not be ranked — it is still listed, with its reason, so the comparison is never silently short. A rank says how a funnel HAS PERFORMED, never whether it should run."
+                },
+                "rankable": {
+                  "type": "boolean",
+                  "description": "True ⟺ the funnel has a defined, positive return per dollar and therefore carries a rank."
+                },
+                "unrankableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_economics",
+                    "no_workflow_evidence",
+                    "no_paid_client_path",
+                    "no_return_defined"
+                  ],
+                  "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client (a whatsapp funnel carries no whatsapp→paid rate; or its rate chain collapses to 0). `no_workflow_evidence` = no history to compare it on yet. Null ⟺ rankable."
+                },
+                "returnPerDollar": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "lifetimeRevenueUsd / costPerPaidClientUsd of this funnel's best workflow (= the workflow-projection roiMultiple, = 100 / cacPct). THE ranking basis: the only cross-funnel-comparable number, since each funnel's own outcome is denominated differently. Null ⟺ not rankable."
+                },
+                "costPerOutcomeUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "The funnel's cost per its OWN outcome on its best workflow. NOT comparable across funnels — for information only."
+                },
+                "costPerPaidClientUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "grain": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "audience",
+                    "brand",
+                    "crossOrg"
+                  ],
+                  "description": "Provenance label of the best row's resolved pick (crossOrg = fleet benchmark)."
+                },
+                "workflow": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "workflowDynastySlug": {
+                      "type": "string"
+                    },
+                    "workflowDynastyName": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "workflowDynastySlug",
+                    "workflowDynastyName"
+                  ]
+                },
+                "usesFunnelEconomics": {
+                  "type": "boolean",
+                  "description": "True when this funnel carries economics of its own (its own lifetime revenue and/or rates), which refined the brand's effective set for this projection. A rate the brand never declared is dropped, never read as 0."
+                }
+              },
+              "required": [
+                "funnelKey",
+                "name",
+                "goal",
+                "objective",
+                "rank",
+                "rankable",
+                "unrankableReason",
+                "returnPerDollar",
+                "costPerOutcomeUsd",
+                "costPerPaidClientUsd",
+                "grain",
+                "workflow",
+                "usesFunnelEconomics"
               ]
             },
-            "description": "The goals the brand AUTHORIZES, canonical camel, in brand-service's order. Derived from the sales funnels the brand DECLARED it sells through (brand-service) — never supplied by the caller, never inferred from the brand's single optimizationGoal. Two funnels that optimize for the same goal (e.g. a meeting booked from a reply and from a website visit) collapse to ONE entry whose economics merge their complementary legs."
+            "description": "EVERY sales funnel the brand declared — FUNDED OR NOT — best return per dollar first, the unrankable ones after in brand-service's own order. This is the answer the endpoint exists to give: the COMPARISON, not the winner. A funnel with no current daily ceiling is still ranked, because its history is what makes it comparable and a ranking that dropped the unfunded ones would answer 'where should I move my budget?' with only the places the budget already is. features-service never asks billing which funnels are funded."
+          },
+          "recommendation": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "funnelKey": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "goal": {
+                "type": "string",
+                "enum": [
+                  "meetingBooked",
+                  "signup",
+                  "websitePurchase",
+                  "sales",
+                  "websiteVisit",
+                  "positiveReply",
+                  "formSubmission",
+                  "whatsappConversation"
+                ]
+              },
+              "objective": {
+                "type": "string",
+                "enum": [
+                  "meeting-booked",
+                  "self-serve",
+                  "signup",
+                  "website_purchase",
+                  "sales",
+                  "website_visits",
+                  "positive_replies",
+                  "form_submissions",
+                  "whatsapp_conversations"
+                ]
+              },
+              "returnPerDollar": {
+                "type": "number",
+                "description": "Always a positive finite number."
+              },
+              "costPerOutcomeUsd": {
+                "type": "number",
+                "nullable": true
+              },
+              "costPerPaidClientUsd": {
+                "type": "number",
+                "nullable": true
+              },
+              "grain": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "audience",
+                  "brand",
+                  "crossOrg"
+                ]
+              },
+              "workflow": {
+                "type": "object",
+                "properties": {
+                  "workflowDynastySlug": {
+                    "type": "string"
+                  },
+                  "workflowDynastyName": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "workflowDynastySlug",
+                  "workflowDynastyName"
+                ]
+              }
+            },
+            "required": [
+              "funnelKey",
+              "name",
+              "goal",
+              "objective",
+              "returnPerDollar",
+              "costPerOutcomeUsd",
+              "costPerPaidClientUsd",
+              "grain",
+              "workflow"
+            ],
+            "description": "The best-returning funnel — the head of `ranking`, named as what it is: advice, not an instruction. Null when nothing in `ranking` could be ranked."
           },
           "arbitration": {
             "type": "object",
@@ -2142,7 +2337,7 @@
                   "resolved",
                   "unrankable"
                 ],
-                "description": "`resolved` = a goal won. `unrankable` = nothing could be ranked for this brand (see reason) — distinguishable from a winner, and not an error."
+                "description": "`resolved` = a funnel is recommended. `unrankable` = nothing could be ranked for this brand (see reason) — distinguishable from a recommendation, and not an error."
               },
               "goal": {
                 "type": "string",
@@ -2157,7 +2352,7 @@
                   "formSubmission",
                   "whatsappConversation"
                 ],
-                "description": "The elected goal. Null ⟺ status = unrankable."
+                "description": "The recommended funnel's goal. Null ⟺ status = unrankable."
               },
               "objective": {
                 "type": "string",
@@ -2178,15 +2373,15 @@
                 "type": "string",
                 "nullable": true,
                 "enum": [
-                  "no_authorized_goals",
-                  "no_rankable_goal"
+                  "no_declared_funnels",
+                  "no_rankable_funnel"
                 ],
-                "description": "`no_authorized_goals` = the brand STATED it sells through no sales funnel, so it authorizes nothing (a brand that never stated a set at all is a 502 reason='authorized_goals_unavailable', not this). `no_rankable_goal` = every authorized goal is unrankable (see candidates[].unrankableReason). Null ⟺ status = resolved."
+                "description": "`no_declared_funnels` = there was no declared funnel to rank (a brand that never stated a set at all is a 502 reason='authorized_goals_unavailable', not this). `no_rankable_funnel` = every declared funnel is unrankable (see ranking[].unrankableReason). Null ⟺ status = resolved."
               },
               "returnPerDollar": {
                 "type": "number",
                 "nullable": true,
-                "description": "The winning goal's expected revenue per dollar of spend. Always a positive finite number when status = resolved."
+                "description": "The recommended funnel's expected revenue per dollar of spend. Always a positive finite number when status = resolved."
               },
               "costPerOutcomeUsd": {
                 "type": "number",
@@ -2215,7 +2410,8 @@
               "costPerOutcomeUsd",
               "costPerPaidClientUsd",
               "grain"
-            ]
+            ],
+            "description": "COMPATIBILITY VIEW of `recommendation`, kept byte-compatible for campaign-service, which reads status/goal in prod to pace a brand that has no per-funnel funding. Derived from the same pick, so it can never name a different funnel than the head of `ranking`. New consumers should read `ranking` / `recommendation`."
           },
           "workflow": {
             "type": "object",
@@ -2233,7 +2429,7 @@
               "workflowDynastySlug",
               "workflowDynastyName"
             ],
-            "description": "The best workflow FOR THE ELECTED GOAL — argmin resolved.costPerOutcomeUsd over the brand-level rows, the same ungated argmin the Strategy page ranks on. Null ⟺ status = unrankable."
+            "description": "The best workflow FOR THE RECOMMENDED FUNNEL — argmin resolved.costPerOutcomeUsd over the brand-level rows, the same ungated argmin the Strategy page ranks on. Null ⟺ status = unrankable."
           },
           "economics": {
             "type": "object",
@@ -2282,115 +2478,7 @@
               "visitToClosePct",
               "replyToMeetingPct"
             ],
-            "description": "The brand's EFFECTIVE economics as the elected goal saw them (including any per-funnel refinement). Null at cold start."
-          },
-          "candidates": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "goal": {
-                  "type": "string",
-                  "enum": [
-                    "meetingBooked",
-                    "signup",
-                    "websitePurchase",
-                    "sales",
-                    "websiteVisit",
-                    "positiveReply",
-                    "formSubmission",
-                    "whatsappConversation"
-                  ]
-                },
-                "objective": {
-                  "type": "string",
-                  "enum": [
-                    "meeting-booked",
-                    "self-serve",
-                    "signup",
-                    "website_purchase",
-                    "sales",
-                    "website_visits",
-                    "positive_replies",
-                    "form_submissions",
-                    "whatsapp_conversations"
-                  ]
-                },
-                "rankable": {
-                  "type": "boolean",
-                  "description": "True ⟺ the goal has a defined, positive return per dollar and is eligible to win."
-                },
-                "unrankableReason": {
-                  "type": "string",
-                  "nullable": true,
-                  "enum": [
-                    "no_economics",
-                    "no_workflow_evidence",
-                    "no_paid_client_path",
-                    "no_return_defined"
-                  ],
-                  "description": "Why this goal could not be ranked. `no_paid_client_path` = the goal has NO defined path to a paying client (whatsappConversation carries no whatsapp→paid rate; or the funnel's rate chain collapses to 0) — such a goal can never be elected. Null ⟺ rankable."
-                },
-                "returnPerDollar": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "lifetimeRevenueUsd / costPerPaidClientUsd of this goal's best workflow (= the workflow-projection roiMultiple, = 100 / cacPct). THE ranking basis: the only cross-goal-comparable number, since each goal's own outcome is denominated differently. Null ⟺ not rankable."
-                },
-                "costPerOutcomeUsd": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "The goal's cost per its OWN outcome on its best workflow. NOT comparable across goals — for information only."
-                },
-                "costPerPaidClientUsd": {
-                  "type": "number",
-                  "nullable": true
-                },
-                "grain": {
-                  "type": "string",
-                  "nullable": true,
-                  "enum": [
-                    "audience",
-                    "brand",
-                    "crossOrg"
-                  ],
-                  "description": "Provenance label of the winning row's resolved pick (crossOrg = fleet benchmark)."
-                },
-                "workflow": {
-                  "type": "object",
-                  "nullable": true,
-                  "properties": {
-                    "workflowDynastySlug": {
-                      "type": "string"
-                    },
-                    "workflowDynastyName": {
-                      "type": "string",
-                      "nullable": true
-                    }
-                  },
-                  "required": [
-                    "workflowDynastySlug",
-                    "workflowDynastyName"
-                  ]
-                },
-                "usesFunnelEconomics": {
-                  "type": "boolean",
-                  "description": "True when the declared funnel(s) behind this goal carry economics of their own (their own lifetime revenue and/or rates), which refined the brand's effective set for this projection. A rate the brand never declared is dropped, never read as 0."
-                }
-              },
-              "required": [
-                "goal",
-                "objective",
-                "rankable",
-                "unrankableReason",
-                "returnPerDollar",
-                "costPerOutcomeUsd",
-                "costPerPaidClientUsd",
-                "grain",
-                "workflow",
-                "usesFunnelEconomics"
-              ]
-            },
-            "description": "Every authorized goal, scored, in brand-service's order — including the ones that could not be ranked, each with its reason."
+            "description": "The brand's EFFECTIVE economics as the recommended funnel saw them (including its own per-funnel refinement). Null at cold start."
           },
           "rows": {
             "type": "array",
@@ -2777,21 +2865,21 @@
                 "resolved"
               ]
             },
-            "description": "The winning (goal × workflow) pairing's projection rows: the brand-level row plus EVERY active audience's row for that dynasty, in the SAME shape /workflow-projection serves (per-audience resolvedOutcomeCount successes, evidence.observedContacted trials, evidence.spentUsd cost). Empty when nothing could be ranked."
+            "description": "The recommended (funnel × workflow) pairing's projection rows: the brand-level row plus EVERY active audience's row for that dynasty, in the SAME shape /workflow-projection serves (per-audience resolvedOutcomeCount successes, evidence.observedContacted trials, evidence.spentUsd cost). Empty when nothing could be ranked."
           },
           "recommendedBudgetUsd": {
             "type": "number",
             "nullable": true,
-            "description": "10 target outcomes/month × the elected pairing's resolved.costPerOutcomeUsd. Null when nothing could be ranked."
+            "description": "10 target outcomes/month × the recommended pairing's resolved.costPerOutcomeUsd. Null when nothing could be ranked."
           }
         },
         "required": [
           "featureSlug",
-          "authorizedGoals",
+          "ranking",
+          "recommendation",
           "arbitration",
           "workflow",
           "economics",
-          "candidates",
           "rows",
           "recommendedBudgetUsd"
         ]
@@ -6729,8 +6817,8 @@
     },
     "/features/{featureSlug}/goal-arbitration": {
       "get": {
-        "summary": "Arbitrate the brand's AUTHORIZED goals: best goal + best workflow + per-audience evidence",
-        "description": "ONE answer per brand: which of the goals the brand AUTHORIZES returns the most per dollar, the best workflow for that goal, and the per-audience evidence for that pairing — so a consumer never issues one request per goal and never ranks economics itself. RANKING BASIS: returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-goal-comparable number — a cost per outcome is denominated in each goal's OWN outcome (a click, a reply, a booked meeting), so normalising through each goal's funnel to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. The winner is argmax returnPerDollar; a tie is broken by the canonical goal order, so the same evidence + the same economics always produce the same answer. Per goal, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a goal, since the outcome→paid rate is a brand-level constant), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. A goal with NO defined return is NEVER elected: whatsappConversation has no path to a paying client (brand-service exposes no whatsapp→paid rate), and a goal with no economics / no workflow evidence / a non-positive return is likewise reported as a candidate with rankable=false and its reason. When nothing can be ranked the response is status='unrankable' with a reason — distinguishable from a winner, never an error that hides why. The AUTHORIZED SET is brand-service's to own: it is the sales funnels the brand DECLARED it sells through, read from brand-service, never accepted from the caller and never inferred from the brand's single optimizationGoal (nor from the brand-wide economics row, every rate of which is server-defaulted and so signals nothing). When that declaration cannot be READ the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set — and that covers brand-service answering declared=false, i.e. no set has ever been STATED for this brand, which is a producer gap rather than an answer. A brand that STATED it sells through no funnel (declared=true with an empty list) is a real answer, served 200 as unrankable; the two payloads carry the same empty funnels list, so only the flag separates them and it is never inferred. Cost: two small brand-service reads (the effective economics and the declared funnels) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — arbitrating N goals adds zero IO over reading one. /workflow-projection itself is unchanged.",
+        "summary": "Rank the brand's DECLARED sales funnels by return per dollar (a recommendation, not a selection)",
+        "description": "ONE answer per brand: EVERY sales funnel the brand DECLARED, ranked by what it returns per dollar, plus the best workflow and the per-audience evidence for the best-returning one — so a consumer never issues one request per funnel and never ranks economics itself. IT IS ADVICE, NOT A GATE. Which funnel actually runs is decided by what the customer FUNDS: each funnel carries its own daily ceiling (billing-service) and campaign-service works every funded funnel, pacing each against its own ceiling. This endpoint answers the other question — which funnel has returned best, and how do the others compare — so a customer can decide where to move their money. The value is the COMPARISON in `ranking`; `recommendation` is simply its head. AN UNFUNDED FUNNEL IS STILL RANKED. Ranking is about history: what a funnel has returned is what makes it comparable, and being unfunded is a decision the customer just made, not a reason to hide how it performed. features-service never asks billing which funnels are funded. RANKING BASIS: returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-funnel-comparable number — a cost per outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting), so normalising through each funnel's own chain to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. Rankable funnels sort on returnPerDollar descending, ties broken by the canonical goal order then by funnelKey, so the same evidence + the same economics always produce the same list. Per funnel, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a funnel, since the outcome→paid rate is a constant for it), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. A funnel with NO defined return is ranked LAST, never dropped: a whatsapp funnel has no path to a paying client (brand-service exposes no whatsapp→paid rate), and a funnel with no economics / no workflow evidence / a non-positive return is likewise listed with rank=null, rankable=false and its reason. When nothing can be ranked at all the response is arbitration.status='unrankable' with a reason — distinguishable from a recommendation, never an error that hides why. ONE ENTRY PER FUNNEL: two funnels that optimize for the same goal (a meeting booked from a reply and from a website visit) are ranked SEPARATELY and each priced on its own declared terms, because the customer funds them separately — a merged row could not answer 'where should I move my budget?' for either. A rate a funnel does not state falls back to the brand's effective economics, never to zero. The DECLARED SET is brand-service's to own, read from brand-service, never accepted from the caller and never inferred from the brand's single optimizationGoal (nor from the brand-wide economics row, every rate of which is server-defaulted and so signals nothing). When that declaration cannot be READ — transport, a non-OK response, or an empty list, i.e. this org has never STATED what it sells through — the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set. Cost: two small brand-service reads (the effective economics and the declared funnels) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — ranking N funnels adds zero IO over reading one. /workflow-projection itself is unchanged.",
         "tags": [
           "Stats"
         ],
@@ -6746,10 +6834,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Brand UUID (required) — the authorized set and the economics are brand-scoped."
+              "description": "Brand UUID (required) — the declared funnel set and the economics are brand-scoped."
             },
             "required": true,
-            "description": "Brand UUID (required) — the authorized set and the economics are brand-scoped.",
+            "description": "Brand UUID (required) — the declared funnel set and the economics are brand-scoped.",
             "name": "brandId",
             "in": "query"
           },
@@ -6813,7 +6901,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The elected goal + its best workflow + the pairing's per-audience rows (or a distinguishable unrankable verdict)",
+            "description": "Every declared funnel ranked by return per dollar + the recommended funnel's best workflow and per-audience rows (or a distinguishable unrankable verdict)",
             "content": {
               "application/json": {
                 "schema": {
@@ -6822,22 +6910,217 @@
                     "featureSlug": {
                       "type": "string"
                     },
-                    "authorizedGoals": {
+                    "ranking": {
                       "type": "array",
                       "items": {
-                        "type": "string",
-                        "enum": [
-                          "meetingBooked",
-                          "signup",
-                          "websitePurchase",
-                          "sales",
-                          "websiteVisit",
-                          "positiveReply",
-                          "formSubmission",
-                          "whatsappConversation"
+                        "type": "object",
+                        "properties": {
+                          "funnelKey": {
+                            "type": "string",
+                            "description": "brand-service's key for the funnel — the SAME key billing funds and campaign-service paces on, so a customer can map a rank straight onto a budget."
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "The brand's own label for the funnel."
+                          },
+                          "goal": {
+                            "type": "string",
+                            "enum": [
+                              "meetingBooked",
+                              "signup",
+                              "websitePurchase",
+                              "sales",
+                              "websiteVisit",
+                              "positiveReply",
+                              "formSubmission",
+                              "whatsappConversation"
+                            ]
+                          },
+                          "objective": {
+                            "type": "string",
+                            "enum": [
+                              "meeting-booked",
+                              "self-serve",
+                              "signup",
+                              "website_purchase",
+                              "sales",
+                              "website_visits",
+                              "positive_replies",
+                              "form_submissions",
+                              "whatsapp_conversations"
+                            ]
+                          },
+                          "rank": {
+                            "type": "integer",
+                            "nullable": true,
+                            "description": "1 for the best-returning funnel, 2 for the next, and so on. NULL when the funnel could not be ranked — it is still listed, with its reason, so the comparison is never silently short. A rank says how a funnel HAS PERFORMED, never whether it should run."
+                          },
+                          "rankable": {
+                            "type": "boolean",
+                            "description": "True ⟺ the funnel has a defined, positive return per dollar and therefore carries a rank."
+                          },
+                          "unrankableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "no_economics",
+                              "no_workflow_evidence",
+                              "no_paid_client_path",
+                              "no_return_defined"
+                            ],
+                            "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client (a whatsapp funnel carries no whatsapp→paid rate; or its rate chain collapses to 0). `no_workflow_evidence` = no history to compare it on yet. Null ⟺ rankable."
+                          },
+                          "returnPerDollar": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "lifetimeRevenueUsd / costPerPaidClientUsd of this funnel's best workflow (= the workflow-projection roiMultiple, = 100 / cacPct). THE ranking basis: the only cross-funnel-comparable number, since each funnel's own outcome is denominated differently. Null ⟺ not rankable."
+                          },
+                          "costPerOutcomeUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The funnel's cost per its OWN outcome on its best workflow. NOT comparable across funnels — for information only."
+                          },
+                          "costPerPaidClientUsd": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "grain": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "audience",
+                              "brand",
+                              "crossOrg"
+                            ],
+                            "description": "Provenance label of the best row's resolved pick (crossOrg = fleet benchmark)."
+                          },
+                          "workflow": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "workflowDynastySlug": {
+                                "type": "string"
+                              },
+                              "workflowDynastyName": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "workflowDynastySlug",
+                              "workflowDynastyName"
+                            ]
+                          },
+                          "usesFunnelEconomics": {
+                            "type": "boolean",
+                            "description": "True when this funnel carries economics of its own (its own lifetime revenue and/or rates), which refined the brand's effective set for this projection. A rate the brand never declared is dropped, never read as 0."
+                          }
+                        },
+                        "required": [
+                          "funnelKey",
+                          "name",
+                          "goal",
+                          "objective",
+                          "rank",
+                          "rankable",
+                          "unrankableReason",
+                          "returnPerDollar",
+                          "costPerOutcomeUsd",
+                          "costPerPaidClientUsd",
+                          "grain",
+                          "workflow",
+                          "usesFunnelEconomics"
                         ]
                       },
-                      "description": "The goals the brand AUTHORIZES, canonical camel, in brand-service's order. Derived from the sales funnels the brand DECLARED it sells through (brand-service) — never supplied by the caller, never inferred from the brand's single optimizationGoal. Two funnels that optimize for the same goal (e.g. a meeting booked from a reply and from a website visit) collapse to ONE entry whose economics merge their complementary legs."
+                      "description": "EVERY sales funnel the brand declared — FUNDED OR NOT — best return per dollar first, the unrankable ones after in brand-service's own order. This is the answer the endpoint exists to give: the COMPARISON, not the winner. A funnel with no current daily ceiling is still ranked, because its history is what makes it comparable and a ranking that dropped the unfunded ones would answer 'where should I move my budget?' with only the places the budget already is. features-service never asks billing which funnels are funded."
+                    },
+                    "recommendation": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "funnelKey": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "goal": {
+                          "type": "string",
+                          "enum": [
+                            "meetingBooked",
+                            "signup",
+                            "websitePurchase",
+                            "sales",
+                            "websiteVisit",
+                            "positiveReply",
+                            "formSubmission",
+                            "whatsappConversation"
+                          ]
+                        },
+                        "objective": {
+                          "type": "string",
+                          "enum": [
+                            "meeting-booked",
+                            "self-serve",
+                            "signup",
+                            "website_purchase",
+                            "sales",
+                            "website_visits",
+                            "positive_replies",
+                            "form_submissions",
+                            "whatsapp_conversations"
+                          ]
+                        },
+                        "returnPerDollar": {
+                          "type": "number",
+                          "description": "Always a positive finite number."
+                        },
+                        "costPerOutcomeUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "costPerPaidClientUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "grain": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "audience",
+                            "brand",
+                            "crossOrg"
+                          ]
+                        },
+                        "workflow": {
+                          "type": "object",
+                          "properties": {
+                            "workflowDynastySlug": {
+                              "type": "string"
+                            },
+                            "workflowDynastyName": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "workflowDynastySlug",
+                            "workflowDynastyName"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "funnelKey",
+                        "name",
+                        "goal",
+                        "objective",
+                        "returnPerDollar",
+                        "costPerOutcomeUsd",
+                        "costPerPaidClientUsd",
+                        "grain",
+                        "workflow"
+                      ],
+                      "description": "The best-returning funnel — the head of `ranking`, named as what it is: advice, not an instruction. Null when nothing in `ranking` could be ranked."
                     },
                     "arbitration": {
                       "type": "object",
@@ -6848,7 +7131,7 @@
                             "resolved",
                             "unrankable"
                           ],
-                          "description": "`resolved` = a goal won. `unrankable` = nothing could be ranked for this brand (see reason) — distinguishable from a winner, and not an error."
+                          "description": "`resolved` = a funnel is recommended. `unrankable` = nothing could be ranked for this brand (see reason) — distinguishable from a recommendation, and not an error."
                         },
                         "goal": {
                           "type": "string",
@@ -6863,7 +7146,7 @@
                             "formSubmission",
                             "whatsappConversation"
                           ],
-                          "description": "The elected goal. Null ⟺ status = unrankable."
+                          "description": "The recommended funnel's goal. Null ⟺ status = unrankable."
                         },
                         "objective": {
                           "type": "string",
@@ -6884,15 +7167,15 @@
                           "type": "string",
                           "nullable": true,
                           "enum": [
-                            "no_authorized_goals",
-                            "no_rankable_goal"
+                            "no_declared_funnels",
+                            "no_rankable_funnel"
                           ],
-                          "description": "`no_authorized_goals` = the brand STATED it sells through no sales funnel, so it authorizes nothing (a brand that never stated a set at all is a 502 reason='authorized_goals_unavailable', not this). `no_rankable_goal` = every authorized goal is unrankable (see candidates[].unrankableReason). Null ⟺ status = resolved."
+                          "description": "`no_declared_funnels` = there was no declared funnel to rank (a brand that never stated a set at all is a 502 reason='authorized_goals_unavailable', not this). `no_rankable_funnel` = every declared funnel is unrankable (see ranking[].unrankableReason). Null ⟺ status = resolved."
                         },
                         "returnPerDollar": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The winning goal's expected revenue per dollar of spend. Always a positive finite number when status = resolved."
+                          "description": "The recommended funnel's expected revenue per dollar of spend. Always a positive finite number when status = resolved."
                         },
                         "costPerOutcomeUsd": {
                           "type": "number",
@@ -6921,7 +7204,8 @@
                         "costPerOutcomeUsd",
                         "costPerPaidClientUsd",
                         "grain"
-                      ]
+                      ],
+                      "description": "COMPATIBILITY VIEW of `recommendation`, kept byte-compatible for campaign-service, which reads status/goal in prod to pace a brand that has no per-funnel funding. Derived from the same pick, so it can never name a different funnel than the head of `ranking`. New consumers should read `ranking` / `recommendation`."
                     },
                     "workflow": {
                       "type": "object",
@@ -6939,7 +7223,7 @@
                         "workflowDynastySlug",
                         "workflowDynastyName"
                       ],
-                      "description": "The best workflow FOR THE ELECTED GOAL — argmin resolved.costPerOutcomeUsd over the brand-level rows, the same ungated argmin the Strategy page ranks on. Null ⟺ status = unrankable."
+                      "description": "The best workflow FOR THE RECOMMENDED FUNNEL — argmin resolved.costPerOutcomeUsd over the brand-level rows, the same ungated argmin the Strategy page ranks on. Null ⟺ status = unrankable."
                     },
                     "economics": {
                       "type": "object",
@@ -6988,115 +7272,7 @@
                         "visitToClosePct",
                         "replyToMeetingPct"
                       ],
-                      "description": "The brand's EFFECTIVE economics as the elected goal saw them (including any per-funnel refinement). Null at cold start."
-                    },
-                    "candidates": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "goal": {
-                            "type": "string",
-                            "enum": [
-                              "meetingBooked",
-                              "signup",
-                              "websitePurchase",
-                              "sales",
-                              "websiteVisit",
-                              "positiveReply",
-                              "formSubmission",
-                              "whatsappConversation"
-                            ]
-                          },
-                          "objective": {
-                            "type": "string",
-                            "enum": [
-                              "meeting-booked",
-                              "self-serve",
-                              "signup",
-                              "website_purchase",
-                              "sales",
-                              "website_visits",
-                              "positive_replies",
-                              "form_submissions",
-                              "whatsapp_conversations"
-                            ]
-                          },
-                          "rankable": {
-                            "type": "boolean",
-                            "description": "True ⟺ the goal has a defined, positive return per dollar and is eligible to win."
-                          },
-                          "unrankableReason": {
-                            "type": "string",
-                            "nullable": true,
-                            "enum": [
-                              "no_economics",
-                              "no_workflow_evidence",
-                              "no_paid_client_path",
-                              "no_return_defined"
-                            ],
-                            "description": "Why this goal could not be ranked. `no_paid_client_path` = the goal has NO defined path to a paying client (whatsappConversation carries no whatsapp→paid rate; or the funnel's rate chain collapses to 0) — such a goal can never be elected. Null ⟺ rankable."
-                          },
-                          "returnPerDollar": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "lifetimeRevenueUsd / costPerPaidClientUsd of this goal's best workflow (= the workflow-projection roiMultiple, = 100 / cacPct). THE ranking basis: the only cross-goal-comparable number, since each goal's own outcome is denominated differently. Null ⟺ not rankable."
-                          },
-                          "costPerOutcomeUsd": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "The goal's cost per its OWN outcome on its best workflow. NOT comparable across goals — for information only."
-                          },
-                          "costPerPaidClientUsd": {
-                            "type": "number",
-                            "nullable": true
-                          },
-                          "grain": {
-                            "type": "string",
-                            "nullable": true,
-                            "enum": [
-                              "audience",
-                              "brand",
-                              "crossOrg"
-                            ],
-                            "description": "Provenance label of the winning row's resolved pick (crossOrg = fleet benchmark)."
-                          },
-                          "workflow": {
-                            "type": "object",
-                            "nullable": true,
-                            "properties": {
-                              "workflowDynastySlug": {
-                                "type": "string"
-                              },
-                              "workflowDynastyName": {
-                                "type": "string",
-                                "nullable": true
-                              }
-                            },
-                            "required": [
-                              "workflowDynastySlug",
-                              "workflowDynastyName"
-                            ]
-                          },
-                          "usesFunnelEconomics": {
-                            "type": "boolean",
-                            "description": "True when the declared funnel(s) behind this goal carry economics of their own (their own lifetime revenue and/or rates), which refined the brand's effective set for this projection. A rate the brand never declared is dropped, never read as 0."
-                          }
-                        },
-                        "required": [
-                          "goal",
-                          "objective",
-                          "rankable",
-                          "unrankableReason",
-                          "returnPerDollar",
-                          "costPerOutcomeUsd",
-                          "costPerPaidClientUsd",
-                          "grain",
-                          "workflow",
-                          "usesFunnelEconomics"
-                        ]
-                      },
-                      "description": "Every authorized goal, scored, in brand-service's order — including the ones that could not be ranked, each with its reason."
+                      "description": "The brand's EFFECTIVE economics as the recommended funnel saw them (including its own per-funnel refinement). Null at cold start."
                     },
                     "rows": {
                       "type": "array",
@@ -7483,21 +7659,21 @@
                           "resolved"
                         ]
                       },
-                      "description": "The winning (goal × workflow) pairing's projection rows: the brand-level row plus EVERY active audience's row for that dynasty, in the SAME shape /workflow-projection serves (per-audience resolvedOutcomeCount successes, evidence.observedContacted trials, evidence.spentUsd cost). Empty when nothing could be ranked."
+                      "description": "The recommended (funnel × workflow) pairing's projection rows: the brand-level row plus EVERY active audience's row for that dynasty, in the SAME shape /workflow-projection serves (per-audience resolvedOutcomeCount successes, evidence.observedContacted trials, evidence.spentUsd cost). Empty when nothing could be ranked."
                     },
                     "recommendedBudgetUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "10 target outcomes/month × the elected pairing's resolved.costPerOutcomeUsd. Null when nothing could be ranked."
+                      "description": "10 target outcomes/month × the recommended pairing's resolved.costPerOutcomeUsd. Null when nothing could be ranked."
                     }
                   },
                   "required": [
                     "featureSlug",
-                    "authorizedGoals",
+                    "ranking",
+                    "recommendation",
                     "arbitration",
                     "workflow",
                     "economics",
-                    "candidates",
                     "rows",
                     "recommendedBudgetUsd"
                   ]
@@ -7542,7 +7718,7 @@
             }
           },
           "502": {
-            "description": "Downstream service error, or the brand's declared sales funnels could not be read — transport, a non-OK response, a payload missing the `declared` flag, or brand-service reporting declared=false because no set has ever been stated (all reason='authorized_goals_unavailable') / an unrecognised authorized goal (reason='authorized_goal_unrecognised')",
+            "description": "Downstream service error, or the brand's declared sales funnels could not be read — transport, a non-OK response, or an empty list because no set has ever been stated for this org (all reason='authorized_goals_unavailable') / a declared funnel naming a goal we cannot map (reason='authorized_goal_unrecognised')",
             "content": {
               "application/json": {
                 "schema": {

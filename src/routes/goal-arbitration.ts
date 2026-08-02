@@ -4,9 +4,9 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
-import { authorizedGoalsFromFunnels, UnknownAuthorizedGoalError } from "../lib/authorized-goals.js";
+import { declaredFunnelsToRank, UnknownFunnelGoalError } from "../lib/declared-funnels.js";
 import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
-import { arbitrateGoals } from "../lib/goal-arbitration.js";
+import { rankDeclaredFunnels } from "../lib/goal-arbitration.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
 import { fetchWorkflowProjectionEvidence } from "./workflow-projection.js";
@@ -16,15 +16,20 @@ const router = Router();
 
 // ── GET /features/:featureSlug/goal-arbitration ──────────────────────────────
 //
-// ONE answer per brand: which of the goals the brand AUTHORIZES returns the most per dollar, the best
-// workflow for that goal, and the per-audience evidence for that pairing. campaign-service greedily
-// picks the first two and Thompson-samples the third; it decides none of them, and it never issues one
-// request per goal.
+// ONE answer per brand: EVERY sales funnel the brand declared, ranked by what it returns per dollar,
+// plus the best workflow and per-audience evidence for the best-returning one.
 //
-// The authorized set is read from BRAND-SERVICE — the sales funnels the brand DECLARED it sells
-// through — and is never accepted from the caller. The heavy evidence fan-out is goal-INDEPENDENT and
-// therefore SHARES the Gold snapshot `/workflow-projection` already maintains (same view, same scope
-// key) — arbitrating N goals adds zero IO over reading one.
+// IT IS ADVICE, NOT A GATE. Which funnel actually runs is decided by what the customer FUNDS —
+// campaign-service works every funded funnel, each paced against its own ceiling. This endpoint answers
+// the other question: which funnel has returned best, and how do the others compare, so a customer can
+// decide where to move their money. Every declared funnel is ranked on its HISTORY, funded or not;
+// there is deliberately no billing read here (see lib/goal-arbitration.ts). The legacy
+// `arbitration` / `workflow` / `rows` fields stay byte-compatible for campaign-service, which still
+// reads them to pace a brand that has no per-funnel funding, and are derived from the same pick.
+//
+// The declared set is read from BRAND-SERVICE and is never accepted from the caller. The heavy evidence
+// fan-out is goal-INDEPENDENT and therefore SHARES the Gold snapshot `/workflow-projection` already
+// maintains (same view, same scope key) — ranking N funnels adds zero IO over reading one.
 //
 // FAIL-LOUD, no substituted set: when the declaration cannot be READ the endpoint 502s with
 // `reason: "authorized_goals_unavailable"` naming what failed, rather than defaulting to the brand's
@@ -68,7 +73,7 @@ router.get("/features/:featureSlug/goal-arbitration", apiKeyAuth, async (req, re
       // Economics is read LIVE on every request (never cached) — an arbitration run right after an
       // economics write must rank on the NEW terms. Same rule as /workflow-projection.
       fetchEffectiveEconomics(brandId, identity),
-      // The AUTHORIZED SET, likewise live: the funnels this org sells this brand through. A read that
+      // The DECLARED SET, likewise live: the funnels this org sells this brand through. A read that
       // cannot be answered — transport, non-OK, or an empty list (never stated) — throws and is
       // reported below with its own reason, never as a substituted set.
       // The org is part of the QUESTION, not just of the auth: a brand id is shared by every org that
@@ -76,34 +81,36 @@ router.get("/features/:featureSlug/goal-arbitration", apiKeyAuth, async (req, re
       fetchDeclaredSalesFunnels(brandId, identity.orgId),
     ]);
 
-    const response = arbitrateGoals({
+    const response = rankDeclaredFunnels({
       featureSlug,
-      authorizedGoals: authorizedGoalsFromFunnels(funnels),
+      funnels: declaredFunnelsToRank(funnels),
       evidence,
       economics: effective.economics,
     });
     res.json(response);
   } catch (error) {
     if (error instanceof SalesFunnelsUnavailableError) {
-      // We could not READ what the brand authorizes — distinct from the brand authorizing nothing,
-      // and never answered with a substituted default set.
-      console.error("[features-service] Goal arbitration: authorized set unavailable:", error.message);
+      // We could not READ what the brand declared — distinct from the brand declaring nothing, and
+      // never answered with a substituted default set. The wire `reason` keeps its deployed spelling:
+      // campaign-service matches on it verbatim to tell "no ranking yet" from a genuine fault.
+      console.error("[features-service] Funnel ranking: declared set unavailable:", error.message);
       return res.status(502).json({
         error: `could not read the sales funnels this brand declared, and features-service will not substitute a default set: ${error.message}`,
         reason: "authorized_goals_unavailable",
       });
     }
-    if (error instanceof UnknownAuthorizedGoalError) {
-      // A goal the brand authorized that we cannot map must never be silently dropped from the
-      // competition — that would arbitrate a smaller set and answer as if it were the whole one.
-      console.error("[features-service] Goal arbitration: unrecognised authorized goal:", error.raw);
+    if (error instanceof UnknownFunnelGoalError) {
+      // A funnel the brand declared that we cannot map must never be silently dropped from the
+      // ranking — that would rank a smaller set and answer as if it were the whole one, leaving the
+      // customer comparing against a list missing one of their own funnels.
+      console.error("[features-service] Funnel ranking: unrecognised declared funnel goal:", error.raw);
       return res.status(502).json({
         error: `brand-service authorized goal "${error.raw}" is not a recognised optimization goal`,
         reason: "authorized_goal_unrecognised",
       });
     }
-    console.error("[features-service] Goal arbitration error:", error);
-    res.status(502).json({ error: "Failed to arbitrate goals" });
+    console.error("[features-service] Funnel ranking error:", error);
+    res.status(502).json({ error: "Failed to rank the brand's declared sales funnels" });
   }
 });
 

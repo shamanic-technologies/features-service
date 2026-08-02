@@ -178,33 +178,69 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     expect(funnelsOrg).toBe("org-1");
   });
 
-  it("elects the best goal, its best workflow, and the pairing's rows — in ONE request", async () => {
+  it("ranks every declared funnel, and serves the best-returning one's workflow + rows — in ONE request", async () => {
     mockFetch({
-      funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies"), declaredFunnel("whatsapp_conversations")],
+      funnels: [
+        declaredFunnel("signups", { funnelKey: "visit_signup" }),
+        declaredFunnel("positive_replies", { funnelKey: "reply_paid" }),
+        declaredFunnel("whatsapp_conversations", { funnelKey: "whatsapp" }),
+      ],
       audiences: [{ id: "aud-1" }],
     });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.authorizedGoals).toEqual(["signup", "positiveReply", "whatsappConversation"]);
-    expect(res.body.arbitration.status).toBe("resolved");
-    expect(res.body.arbitration.goal).toBe("positiveReply");
-    expect(res.body.arbitration.returnPerDollar).toBeCloseTo(25, 6); // 1000 / (reply $10 / 25%)
+    // Every declared funnel is present — the comparison is the answer, and it is never short.
+    expect(res.body.ranking.map((r: any) => r.funnelKey)).toEqual(["reply_paid", "visit_signup", "whatsapp"]);
+    expect(res.body.ranking.map((r: any) => r.rank)).toEqual([1, 2, null]);
+    expect(res.body.recommendation.funnelKey).toBe("reply_paid");
+    expect(res.body.recommendation.goal).toBe("positiveReply");
+    expect(res.body.recommendation.returnPerDollar).toBeCloseTo(25, 6); // 1000 / (reply $10 / 25%)
     expect(res.body.workflow.workflowDynastySlug).toBe("dyn-b");
     expect(res.body.rows.every((r: any) => r.workflow.workflowDynastySlug === "dyn-b")).toBe(true);
     expect(res.body.rows.some((r: any) => r.audienceId === "aud-1")).toBe(true);
     expect(res.body.economics.lifetimeRevenueUsd).toBe(1000);
 
-    // The goal with no path to a paying client is scored but can never win.
-    const whatsapp = res.body.candidates.find((c: any) => c.goal === "whatsappConversation");
+    // The funnel with no path to a paying client is scored and listed, but carries no rank.
+    const whatsapp = res.body.ranking.find((r: any) => r.funnelKey === "whatsapp");
     expect(whatsapp.rankable).toBe(false);
     expect(whatsapp.unrankableReason).toBe("no_paid_client_path");
   });
 
-  it("the elected workflow matches what the SINGLE-GOAL read says for that goal — same fixture, same argmin", async () => {
-    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies")] });
+  it("keeps the deployed campaign-service contract: arbitration.status/goal + workflow + rows", async () => {
+    // campaign-service reads exactly these in prod to pace a brand with no per-funnel funding. They
+    // are DERIVED from the head of the ranking, so the two surfaces can never name different funnels.
+    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies", { funnelKey: "reply_paid" })] });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
+
+    expect(res.status).toBe(200);
+    expect(res.body.arbitration.status).toBe("resolved");
+    expect(res.body.arbitration.goal).toBe(res.body.ranking[0].goal);
+    expect(res.body.arbitration.returnPerDollar).toBe(res.body.ranking[0].returnPerDollar);
+    expect(res.body.workflow).toEqual(res.body.ranking[0].workflow);
+    expect(Array.isArray(res.body.rows)).toBe(true);
+  });
+
+  it("never asks billing which funnels are funded — an unfunded funnel is ranked on its history", async () => {
+    // The whole request path (route + ranking) makes exactly three downstream reads: the evidence
+    // fan-out, the brand's economics, and the declared funnels. No budget, no ceiling, no billing.
+    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies", { funnelKey: "reply_paid" })] });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
+
+    expect(res.status).toBe(200);
+    const urls = vi.mocked(globalThis.fetch).mock.calls.map(([input]) =>
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url,
+    );
+    expect(urls.some((u) => /billing|budget|ceiling/i.test(u))).toBe(false);
+    // Both funnels rank purely on what they returned, with no funded/ceiling field anywhere.
+    expect(res.body.ranking.map((r: any) => r.rank)).toEqual([1, 2]);
+    expect(JSON.stringify(res.body.ranking)).not.toMatch(/funded|ceiling|budgetCents/i);
+  });
+
+  it("the recommended workflow matches what the SINGLE-GOAL read says for that goal — same fixture, same argmin", async () => {
+    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies", { funnelKey: "reply_paid" })] });
     const arbitrated = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
-    const winner = arbitrated.body.arbitration.goal;
+    const winner = arbitrated.body.recommendation.goal;
 
     // Reproduce each goal's own economics in isolation, then check the winner against them.
     const single = async (goal: string) =>
@@ -220,11 +256,11 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     expect(signup.resolved.roiMultiple).toBeCloseTo(2, 6);
     expect(winner).toBe("positiveReply"); // the higher return per dollar of the two, verified in isolation
     expect(arbitrated.body.workflow.workflowDynastySlug).toBe(reply.workflow.workflowDynastySlug);
-    expect(arbitrated.body.arbitration.costPerOutcomeUsd).toBeCloseTo(reply.resolved.costPerOutcomeUsd, 6);
-    expect(arbitrated.body.arbitration.returnPerDollar).toBeCloseTo(reply.resolved.roiMultiple, 6);
-    expect(arbitrated.body.candidates.find((c: any) => c.goal === "signup").workflow.workflowDynastySlug).toBe(
-      signup.workflow.workflowDynastySlug,
-    );
+    expect(arbitrated.body.recommendation.costPerOutcomeUsd).toBeCloseTo(reply.resolved.costPerOutcomeUsd, 6);
+    expect(arbitrated.body.recommendation.returnPerDollar).toBeCloseTo(reply.resolved.roiMultiple, 6);
+    expect(
+      arbitrated.body.ranking.find((r: any) => r.goal === "signup").workflow.workflowDynastySlug,
+    ).toBe(signup.workflow.workflowDynastySlug);
   });
 
   it("the declared meeting show-up rate lowers the meeting goal's return — it is not a free 100%", async () => {
@@ -248,15 +284,18 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     expect(withShowUp.body.economics.meetingToClosePct).toBeCloseTo(20, 6);
     expect(without.body.economics.meetingToClosePct).toBeCloseTo(40, 6);
     // Half the booked→paid rate ⇒ twice the cost per paid client ⇒ half the return per dollar.
-    expect(withShowUp.body.arbitration.costPerPaidClientUsd).toBeCloseTo(
-      without.body.arbitration.costPerPaidClientUsd * 2,
+    expect(withShowUp.body.recommendation.costPerPaidClientUsd).toBeCloseTo(
+      without.body.recommendation.costPerPaidClientUsd * 2,
       6,
     );
-    expect(withShowUp.body.arbitration.returnPerDollar).toBeCloseTo(without.body.arbitration.returnPerDollar / 2, 6);
+    expect(withShowUp.body.recommendation.returnPerDollar).toBeCloseTo(
+      without.body.recommendation.returnPerDollar / 2,
+      6,
+    );
   });
 
-  it("the single-goal read is untouched by the presence of an authorized set", async () => {
-    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies")] });
+  it("the single-goal read is untouched by the presence of a declared funnel set", async () => {
+    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("positive_replies", { funnelKey: "reply_paid" })] });
     const withSet = (await request(app).get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&goal=signup`).set(AUTH)).body;
     vi.restoreAllMocks();
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
@@ -274,8 +313,8 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     expect(res.body.error).toContain("sales funnels");
   });
 
-  it("502 with an explicit reason on an authorized goal we cannot map — never silently dropped", async () => {
-    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("telepathy", { currentGoal: "telepathy" })] });
+  it("502 with an explicit reason on a declared funnel goal we cannot map — never silently dropped", async () => {
+    mockFetch({ funnels: [declaredFunnel("signups"), declaredFunnel("telepathy", { funnelKey: "tel", currentGoal: "telepathy" })] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(502);
@@ -306,17 +345,19 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     expect(res.body.arbitration.status).not.toBe("unrankable");
   });
 
-  it("200 unrankable with a per-goal reason when nothing can be ranked", async () => {
+  it("200 unrankable with a per-funnel reason when nothing can be ranked", async () => {
     mockFetch({ funnels: [declaredFunnel("whatsapp_conversations")] });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(200);
     expect(res.body.arbitration.status).toBe("unrankable");
-    expect(res.body.arbitration.reason).toBe("no_rankable_goal");
-    expect(res.body.candidates[0].unrankableReason).toBe("no_paid_client_path");
+    expect(res.body.arbitration.reason).toBe("no_rankable_funnel");
+    expect(res.body.recommendation).toBeNull();
+    expect(res.body.ranking[0].unrankableReason).toBe("no_paid_client_path");
+    expect(res.body.ranking[0].rank).toBeNull();
   });
 
-  it("does not accept an authorized set from the caller", async () => {
+  it("does not accept a funnel set from the caller", async () => {
     // The brand declared ONE funnel; the caller asks for two more. The answer must ignore the caller.
     mockFetch({ funnels: [declaredFunnel("signups")] });
     const res = await request(app)
@@ -324,7 +365,7 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
       .set(AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.authorizedGoals).toEqual(["signup"]);
-    expect(res.body.arbitration.goal).toBe("signup");
+    expect(res.body.ranking.map((r: any) => r.goal)).toEqual(["signup"]);
+    expect(res.body.recommendation.goal).toBe("signup");
   });
 });
