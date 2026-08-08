@@ -136,6 +136,13 @@ function mockFetch(opts: {
    * loud on rather than silently serving full price.
    */
   netDiscountPct?: number;
+  /**
+   * Timezone spellings the day-bucketing chain REFUSES (email-gateway → instantly-service 500). Prod
+   * behaves exactly this way for a family of legacy IANA aliases — `Asia/Saigon` 500s while
+   * `Asia/Ho_Chi_Minh`, the same zone, answers — which is why a customer in Vietnam had a permanently
+   * empty chart. `"*"` refuses every spelling, i.e. the chain is genuinely down.
+   */
+  dayStatsRefusesTimezones?: string[];
 } = {}): void {
   vi.mocked(fetchWithRetry).mockImplementation(async (input, init) => {
     const rawInput = input as unknown;
@@ -255,6 +262,14 @@ function mockFetch(opts: {
 
     // email-gateway: daily broadcast actuals (GET /orgs/stats?groupBy=day)
     if (parsed.pathname === "/orgs/stats") {
+      const refused = opts.dayStatsRefusesTimezones ?? [];
+      const requestedTz = parsed.searchParams.get("timezone") ?? "";
+      if (refused.includes("*") || refused.includes(requestedTz)) {
+        return new Response(JSON.stringify({ error: "Failed to aggregate stats" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       return new Response(JSON.stringify({ groups: opts.dailyStats ?? [] }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
@@ -777,10 +792,76 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
       // No netDiscountPct → the cost groups carry gross only (a runs-service predating #179).
       mockFetch(brandEvidence("4000", 4));
 
-      await request(app)
+      const res = await request(app)
         .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=America/New_York&pricing=net")
         .set(AUTH)
-        .expect(502);
+        .expect(500);
+
+      // Still fail-loud, and now the body survives the edge (a 502's body does not) and says what failed.
+      expect(res.body.error).toMatch(/pipeline activity/i);
+      expect(res.body.detail).toBeTruthy();
+      expect(res.body.query).toMatchObject({ pricing: "net", timezone: "America/New_York" });
+    });
+
+    it("serves an alias timezone exactly like its canonical twin (features-service#741)", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      const dailyStats = [
+        { key: "2026-06-17", broadcast: { recipientStats: { contacted: 2, sent: 2, opened: 1, clicked: 1 } } },
+      ];
+
+      mockFetch({ dailyStats });
+      const alias = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=Asia/Saigon")
+        .set(AUTH)
+        .expect(200);
+
+      mockFetch({ dailyStats });
+      const canonical = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=Asia/Ho_Chi_Minh")
+        .set(AUTH)
+        .expect(200);
+
+      // Same instant, same zone, two spellings — the buckets and every number must agree. The echoed
+      // `timezone` legitimately differs: it is the caller's own input, echoed verbatim.
+      expect(alias.body.timezone).toBe("Asia/Saigon");
+      expect(canonical.body.timezone).toBe("Asia/Ho_Chi_Minh");
+      expect(alias.body.days).toEqual(canonical.body.days);
+      expect(alias.body.summary).toEqual(canonical.body.summary);
+    });
+
+    it("400s NAMING the timezone when the day-bucketing chain cannot serve that spelling", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      // The prod split: this one spelling is refused, UTC (and everything else) answers.
+      mockFetch({ dayStatsRefusesTimezones: ["Asia/Saigon"] });
+
+      const res = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=Asia/Saigon")
+        .set(AUTH)
+        .expect(400);
+
+      expect(res.body.parameter).toBe("timezone");
+      expect(res.body.timezone).toBe("Asia/Saigon");
+      expect(res.body.error).toMatch(/Asia\/Saigon/);
+      // NOT served from the UTC probe — the probe only attributes the failure, it never supplies data.
+      expect(res.body.days).toBeUndefined();
+    });
+
+    it("500s WITH a body — not a blame-the-caller 400 — when the chain is down for every timezone", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
+      mockFetch({ dayStatsRefusesTimezones: ["*"] });
+
+      const res = await request(app)
+        .get("/features/sales-cold-email-outreach/pipeline-activity?brandId=brand-1&days=7&timezone=Asia/Saigon")
+        .set(AUTH)
+        .expect(500);
+
+      expect(res.body.error).toMatch(/pipeline activity/i);
+      expect(res.body.detail).toMatch(/orgs\/stats/);
+      expect(res.body.query).toMatchObject({ brandId: "brand-1", timezone: "Asia/Saigon", days: 7 });
+      expect(res.body.parameter).toBeUndefined();
     });
 
     it("400s an unknown pricing value (no coercion, no silent default)", async () => {

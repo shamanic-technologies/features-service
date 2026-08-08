@@ -277,6 +277,31 @@ function readStatsNumber(value: unknown, label: string): number {
   throw new Error(`email-gateway day group missing numeric ${label}`);
 }
 
+/**
+ * The day-bucketing read failed for the CALLER'S timezone specifically — the identical read with `UTC`
+ * succeeds, so the brand, the feature, the identity and the whole downstream chain are healthy and the
+ * one input we cannot serve is the `timezone` query parameter. Carried as its own type so the route can
+ * answer 400 NAMING that parameter instead of an opaque upstream-failure status.
+ *
+ * This is an ATTRIBUTION, never a fallback: the UTC read is made only on the error path, its buckets are
+ * discarded, and no response is ever built from a timezone the caller did not ask for. Day boundaries are
+ * the whole point of the parameter, so serving UTC buckets under a `Asia/Saigon` request would be silently
+ * wrong data — far worse than a loud refusal.
+ */
+export class TimezoneNotServableError extends Error {
+  constructor(
+    readonly timezone: string,
+    readonly upstreamStatus: number,
+    readonly upstreamBody: string,
+  ) {
+    super(
+      `email-gateway /orgs/stats daily broadcast cannot serve timezone "${timezone}" ` +
+        `(${upstreamStatus}: ${upstreamBody}); the identical read succeeds with UTC`,
+    );
+    this.name = "TimezoneNotServableError";
+  }
+}
+
 async function fetchDailyBroadcastActivity(
   brandId: string,
   featureSlug: string,
@@ -289,19 +314,32 @@ async function fetchDailyBroadcastActivity(
     throw new Error("EMAIL_GATEWAY_SERVICE_URL or EMAIL_GATEWAY_SERVICE_API_KEY not configured");
   }
 
-  const params = new URLSearchParams({
-    type: "broadcast",
-    groupBy: "day",
-    brandId,
-    featureSlugs: featureSlug,
-    timezone,
-  });
-  const response = await fetchWithRetry(`${url}/orgs/stats?${params}`, {
-    headers: getEmailGatewayHeaders(apiKey, { ...headers, brandId, featureSlug }),
-  });
+  const requestUrl = (tz: string) =>
+    `${url}/orgs/stats?${new URLSearchParams({
+      type: "broadcast",
+      groupBy: "day",
+      brandId,
+      featureSlugs: featureSlug,
+      timezone: tz,
+    })}`;
+  const requestHeaders = getEmailGatewayHeaders(apiKey, { ...headers, brandId, featureSlug });
+
+  const response = await fetchWithRetry(requestUrl(timezone), { headers: requestHeaders });
 
   if (!response.ok) {
     const body = await response.text();
+    // Which input is at fault? Re-run the SAME read with UTC — the one parameter we can always serve. If
+    // that answers, the outage is not ours and not the brand's: it is this timezone spelling, and the
+    // caller deserves to be told exactly that (a customer whose browser reports `Asia/Saigon` rather than
+    // `Asia/Ho_Chi_Minh` spent a day looking like a generic gateway fault). If UTC fails too, the chain is
+    // genuinely down and the original failure is the honest one to raise.
+    if (timezone !== "UTC") {
+      const probe = await fetchWithRetry(requestUrl("UTC"), { headers: requestHeaders }).catch(() => null);
+      if (probe?.ok) {
+        await probe.text().catch(() => "");
+        throw new TimezoneNotServableError(timezone, response.status, body.slice(0, 300));
+      }
+    }
     throw new Error(`email-gateway /orgs/stats daily broadcast failed (${response.status}): ${body}`);
   }
 
@@ -839,7 +877,28 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
     res.json(response);
   } catch (error) {
     console.error("[features-service] Pipeline activity error:", error);
-    res.status(502).json({ error: "Failed to compute pipeline activity" });
+
+    // A timezone we accepted as valid but cannot actually serve is a REQUEST problem, and it is named as
+    // one. Anything else is ours or an upstream's.
+    if (error instanceof TimezoneNotServableError) {
+      return res.status(400).json({
+        error: `timezone "${error.timezone}" is a valid IANA name but cannot be served for day bucketing`,
+        parameter: "timezone",
+        timezone: error.timezone,
+        detail: error.message,
+      });
+    }
+
+    // 500, not 502, and always with a body. Cloudflare fronts this service and REPLACES an origin 502's
+    // body with its own bare `error code: 502` text — so every diagnostic we wrote was destroyed in
+    // transit and the caller got sixteen bytes that name neither the endpoint nor the input at fault.
+    // Measured against prod: instantly-service's 500 body reaches the caller intact through the same edge,
+    // our 502 body did not. A 500 with the offending parameters in it is the floor.
+    res.status(500).json({
+      error: "Failed to compute pipeline activity",
+      detail: (error as Error).message,
+      query: { brandId, days, timezone, pricing },
+    });
   }
 });
 

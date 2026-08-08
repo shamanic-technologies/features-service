@@ -1345,10 +1345,44 @@ by `workflow-projection`, and both covered by the existing `servedCached` scope 
 brandId + timezone + days; the new inputs are pure functions of brand + feature). Response shape unchanged
 → no OpenAPI regen, no dashboard change (`metrics.outreach.expected` renders verbatim).
 
-**Prod (2026-07-29, brand `b97440f6…`, `sales-cold-email-outreach`):** $15/day budget returned
-`expected.outreach` 107.717/day = $0.1393 implied per send, while the brand's real committed spend ÷
-contacted was $14.67/36 = **$0.41**. At the $1/day budget the user reported, that printed **7** sends/day
-against a reality of ~2-3. (Set 2026-07-30.)
+**Prod (2026-07-29, brand `b97440f6…`):** a $15/day budget returned `expected.outreach` 107.717/day =
+$0.1393 implied per send against a real $14.67/36 = **$0.41**; at the user's $1/day that printed **7**
+sends/day for a reality of ~2-3. (Set 2026-07-30.)
+
+## `pipeline-activity` never answers an un-servable `timezone` with an opaque failure — it 400s NAMING the parameter, and it returns 500 (not 502) because the edge eats a 502's body
+
+A timezone this service accepts as valid must be one the whole chain can serve, and when it is not, the
+caller has to be TOLD WHICH INPUT — not handed a gateway-shaped error that reads as an outage.
+
+- **The chain refuses a family of legacy IANA aliases.** `pipeline-activity` forwards the caller's
+  `timezone` verbatim to email-gateway `/orgs/stats?groupBy=day` → instantly-service, and instantly 500s
+  for `Asia/Saigon` / `Asia/Calcutta` / `Europe/Kiev` / `America/Buenos_Aires` / `Asia/Rangoon` /
+  `US/Pacific` / `Japan` (and ~15 more) while answering for the MODERN spelling of the identical zone.
+  The dashboard sends whatever the browser's `Intl.DateTimeFormat().resolvedOptions().timeZone` says, so
+  whole countries had a permanently empty Overview chart while everyone else saw nothing wrong. The bug is
+  instantly-service's (features-service#741); this service's job is to stop laundering it into a mystery.
+- **Attribution, never a fallback.** On a non-OK day-bucket read `fetchDailyBroadcastActivity` re-runs the
+  SAME request with `UTC` — the one spelling always servable. UTC answers ⇒ the fault is this timezone ⇒
+  `TimezoneNotServableError` ⇒ **400** carrying `parameter: "timezone"`. UTC fails too ⇒ the chain is
+  genuinely down ⇒ the original error stands. The probe's buckets are DISCARDED: day boundaries are the
+  entire point of the parameter, so serving UTC days under an `Asia/Saigon` request would be silently
+  wrong data, which is worse than a loud refusal. The probe runs on the ERROR path only — a healthy
+  request pays nothing.
+- **DO NOT "fix" this by canonicalising the timezone before forwarding.** `resolvedOptions().timeZone`
+  canonicalises in whichever direction the RUNTIME's ICU happens to encode, and it is not stable across
+  versions: on Node 20.19 `Asia/Ho_Chi_Minh` canonicalises **to** `Asia/Saigon` — i.e. exactly onto the
+  spelling that 500s. A canonicalising shim is therefore a coin-flip that can break every zone that works
+  today, and it papers over another service's bug instead of fixing it.
+- **500, not 502, and always with a body.** Cloudflare fronts this service and REPLACES an origin 502's
+  body with its own bare `error code: 502` (16 bytes, text/plain) — so every diagnostic we wrote was
+  destroyed in transit, which is why this took a day to place instead of five minutes. Measured against
+  prod: instantly-service's **500** body reaches the caller intact through the same edge; our 502 body did
+  not. The generic catch now returns 500 with `detail` + the `query` it was computed with. Fail-loud is
+  unchanged — only the status and the body are.
+- Guards (`pipeline-activity.test.ts`): both spellings of one zone driven from ONE fixture must produce
+  identical `days` + `summary`; a chain that refuses only the alias yields a 400 naming `timezone` and NO
+  days; a chain down for every timezone yields a 500 with a body and NO `parameter` (an outage is not the
+  caller's fault). (Set 2026-08-08.)
 
 ## `pipeline-activity` accepts `?pricing=gross|net` — a COUNT can be money-derived, and this one is
 
