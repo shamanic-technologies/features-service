@@ -8231,10 +8231,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "IANA timezone used for calendar day ordering and today's event bucket."
+              "description": "IANA timezone used for calendar day ordering and today's event bucket. Any spelling the runtime accepts is accepted here, aliases included (`Asia/Saigon` as well as `Asia/Ho_Chi_Minh`). A name that is valid IANA but that the day-bucketing chain cannot actually serve comes back as a 400 naming this parameter — never an opaque upstream failure."
             },
             "required": true,
-            "description": "IANA timezone used for calendar day ordering and today's event bucket.",
+            "description": "IANA timezone used for calendar day ordering and today's event bucket. Any spelling the runtime accepts is accepted here, aliases included (`Asia/Saigon` as well as `Asia/Ho_Chi_Minh`). A name that is valid IANA but that the day-bucketing chain cannot actually serve comes back as a 400 naming this parameter — never an opaque upstream failure.",
             "name": "timezone",
             "in": "query"
           },
@@ -8514,7 +8514,7 @@
             }
           },
           "400": {
-            "description": "Missing/invalid brandId, days, timezone, or pricing",
+            "description": "Missing/invalid brandId, days, timezone, or pricing — including a timezone that is a valid IANA name but that the day-bucketing chain cannot serve (body carries `parameter: \"timezone\"`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8549,8 +8549,8 @@
               }
             }
           },
-          "502": {
-            "description": "Downstream service error",
+          "500": {
+            "description": "Failed to compute pipeline activity — body carries the underlying failure and the query parameters it was computed with. 500 rather than 502 on purpose: the edge in front of this service replaces an origin 502's body with its own bare text, so a 502 reaches the caller with no diagnostic at all",
             "content": {
               "application/json": {
                 "schema": {

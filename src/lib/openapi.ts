@@ -738,15 +738,15 @@ registry.registerPath({
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
       days: z.string().optional().describe("Number of days to return. Defaults to 7."),
-      timezone: z.string().describe("IANA timezone used for calendar day ordering and today's event bucket."),
+      timezone: z.string().describe("IANA timezone used for calendar day ordering and today's event bucket. Any spelling the runtime accepts is accepted here, aliases included (`Asia/Saigon` as well as `Asia/Ho_Chi_Minh`). A name that is valid IANA but that the day-bucketing chain cannot actually serve comes back as a 400 naming this parameter — never an opaque upstream failure."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every COST input behind the expected series (the fleet cost-per-outreach benchmark, the brand's own observed cost per outreach it is floored at, and the per-audience cost that ranks the forecast audience). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount), so a discounted org's forecast promises the volume its budget really buys; fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. The daily BUDGET is a configuration ceiling, not a charge — it is NEVER discounted — and counts/rates are identical either way."),
     }),
   },
   responses: {
     200: { description: "Pipeline activity buckets", content: { "application/json": { schema: pipelineActivityResponseSchema } } },
-    400: { description: "Missing/invalid brandId, days, timezone, or pricing", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing/invalid brandId, days, timezone, or pricing — including a timezone that is a valid IANA name but that the day-bucketing chain cannot serve (body carries `parameter: \"timezone\"`)", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
-    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Failed to compute pipeline activity — body carries the underlying failure and the query parameters it was computed with. 500 rather than 502 on purpose: the edge in front of this service replaces an origin 502's body with its own bare text, so a 502 reaches the caller with no diagnostic at all", content: { "application/json": { schema: errorResponse } } },
   },
 });
 
