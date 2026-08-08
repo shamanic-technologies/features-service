@@ -1382,7 +1382,13 @@ caller has to be TOLD WHICH INPUT — not handed a gateway-shaped error that rea
 - Guards (`pipeline-activity.test.ts`): both spellings of one zone driven from ONE fixture must produce
   identical `days` + `summary`; a chain that refuses only the alias yields a 400 naming `timezone` and NO
   days; a chain down for every timezone yields a 500 with a body and NO `parameter` (an outage is not the
-  caller's fault). (Set 2026-08-08.)
+  caller's fault).
+- **Verifying a deploy of this service: `GET /openapi.json` is generated at RUNTIME from
+  `src/lib/openapi.ts` (`res.json(openApiDocument)`), so grepping the SERVED document for a string only
+  the new build contains is an exact "is my code live" discriminator** — independent of the value under
+  test, and it works when the Railway CLI does not (it intermittently answers `Project is deleted` for a
+  project that plainly exists). Note the served document does NOT match the committed `openapi.json` byte
+  for byte (different size); compare CONTENT, never length. (Set 2026-08-08.)
 
 ## `pipeline-activity` accepts `?pricing=gross|net` — a COUNT can be money-derived, and this one is
 
