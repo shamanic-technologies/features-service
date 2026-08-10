@@ -583,8 +583,9 @@ no "net budget"; the admin only ever read `dailyBudgetUsd`, so the gross* twins 
   The distinction: budget-derived = undiscounted (config projection), realized-charge = net (money we bill).
 
 **Why in-place:** the admin renders `dailyBudgetUsd`/`mrrUsd` verbatim (no discount math of its own), so
-fixing the value at the source corrects the admin display with ZERO dashboard change (distribute.you is
-main=prod Vercel, no staging buffer).
+fixing the value at the source corrects the admin display with ZERO dashboard change (distribute.you
+deploys to PROD straight off `main` — it has no staging buffer, so a dashboard-side fix could not be
+smoke-tested before customers saw it).
 
 **Realized-revenue NET is DORMANT + self-activating until runs ships net-on-timeseries.** The frozen-net
 twin is live on the UNTIMED `/v1/stats/public/costs` (runs#179) but **NOT yet on `/costs/timeseries`**
@@ -1221,14 +1222,16 @@ per-(org,brand); brand name/domain is one batched brand-service call. Fail loud 
 
 Rows sort active-first, then daily budget desc (nulls last), tiebreak brandId. **Depends on the NEW
 client-service `GET /internal/orgs/:orgId` + the SHARED `CLIENT_SERVICE_URL`/`CLIENT_SERVICE_API_KEY`
-on features-service Railway (prod + staging).** Additive/dormant (no dashboard consumer yet). Reuses
+in features-service's env file on the deploy host (`/root/distribute/env/features-service.env`), for
+both prod and staging.** Additive/dormant (no dashboard consumer yet). Reuses
 existing env vars otherwise (BILLING / LEAD / BRAND).
 
 **VERIFY ON PROD, NOT STAGING — the balance path is prod-only.** `orgBalanceUsd` reads billing
 `/v1/accounts/balance`, whose `computeBalance` calls **stripe-service, which has NO staging runtime**
 (prod-only). So on staging billing 502s "Failed to compose account funds" fleet-wide → this endpoint
 correctly fails loud → 500 on staging. That is NOT a features-service defect; it's the documented
-prod-only-dependency gotcha (railway-vars skill). Verified on prod v0.72.0. (Set 2026-07-01.)
+prod-only-dependency gotcha — a sibling with no staging runtime makes every staging read of the path
+that composes it fail, so verify this endpoint against PROD. Verified on prod v0.72.0. (Set 2026-07-01.)
 
 ## `GET /internal/stats/customer-health` — fleet "Customer Success" health board (api-key, staff-gated at api-service)
 
@@ -1299,15 +1302,16 @@ that slot for response-path stability with the dashboard. No new env var (reuses
 wiring for billing-service#266 + campaign-service#270; features-service#576 shipped the PostHog twin.)
 
 **The PostHog personal API key is resolved from KEY-SERVICE, NOT a features-service env var (do NOT
-re-introduce a `POSTHOG_*_API_KEY` Railway var).** The fleet's single secret source is key-service platform
-providers — the admin app (`distribute.you apps/admin/src/instrumentation.ts`) registers each `{provider,
-envVar}` from its Vercel env into key-service at startup. `src/lib/key-service-client.ts` `getPlatformKey`
-(mirrors ahref-service) fetches the decrypted key via `GET {KEY_SERVICE_URL}/keys/platform/posthog/decrypt`
-(`x-api-key` + `X-Caller-*`), so the secret lives in ONE place and flows Vercel→key-service→features-service.
+re-introduce a `POSTHOG_*_API_KEY` env var on this service).** The fleet's single secret source is
+key-service platform providers — the admin app (`distribute.you apps/admin/src/instrumentation.ts`)
+registers each `{provider, envVar}` from its OWN env into key-service at startup.
+`src/lib/key-service-client.ts` `getPlatformKey` (mirrors ahref-service) fetches the decrypted key via
+`GET {KEY_SERVICE_URL}/keys/platform/posthog/decrypt` (`x-api-key` + `X-Caller-*`), so the secret lives in
+ONE place and flows admin env → key-service → features-service.
 `POSTHOG_API_HOST` (`https://eu.posthog.com`) + `POSTHOG_PROJECT_ID` (`171095`) are NON-secret and DEFAULT in
 code (env-overridable) — the only runtime dep is the standard fleet `KEY_SERVICE_URL`/`KEY_SERVICE_API_KEY`.
 **Self-activates** once the `posthog` provider is registered in key-service; until then `getPlatformKey`
-404s → null fleet-wide (dormant-safe). NO features-service Railway secret needed. The api-service proxy
+404s → null fleet-wide (dormant-safe). NO features-service env secret needed. The api-service proxy
 (`GET /v1/features/audit/customer-success`) and the admin render already exist.
 Same prod-only-balance gotcha as the accounts audit (billing balance → stripe-service, no staging runtime → the
 whole board 502s on staging; **verify on PROD**). Triage: STAGING → feature. (PR #572; PostHog signal PR #577,
@@ -1385,10 +1389,13 @@ caller has to be TOLD WHICH INPUT — not handed a gateway-shaped error that rea
   caller's fault).
 - **Verifying a deploy of this service: `GET /openapi.json` is generated at RUNTIME from
   `src/lib/openapi.ts` (`res.json(openApiDocument)`), so grepping the SERVED document for a string only
-  the new build contains is an exact "is my code live" discriminator** — independent of the value under
-  test, and it works when the Railway CLI does not (it intermittently answers `Project is deleted` for a
-  project that plainly exists). Note the served document does NOT match the committed `openapi.json` byte
-  for byte (different size); compare CONTENT, never length. (Set 2026-08-08.)
+  the new build contains is an exact "is my code live" discriminator** — it asks the RUNNING process what
+  code it is executing, independent of the value under test and of whatever the deploy platform claims.
+  Prefer it to any platform status/CLI read: this was learned when the Railway CLI (since retired) kept
+  answering `Project is deleted` for a project that plainly existed, and the same reasoning holds for any
+  control-plane that reports a deploy as green while the old build is still serving. Note the served
+  document does NOT match the committed `openapi.json` byte for byte (different size); compare CONTENT,
+  never length. (Set 2026-08-08.)
 
 ## `pipeline-activity` accepts `?pricing=gross|net` — a COUNT can be money-derived, and this one is
 
@@ -1477,7 +1484,8 @@ matches; `fetchCurrentBrandProfile` stays (it still feeds the cost `brandProfile
 unrelated teardown of `features` — `DROP COLUMN display_name/category/channel/audience_type/
 signature/forked_from/upgraded_to`, `DROP INDEX idx_features_signature`, and a **no-`IF EXISTS`
 `ALTER TABLE features DROP CONSTRAINT features_signature_unique`** that will **crash-loop boot**
-if those objects are already gone (migrations run at boot; a throw = Railway restart loop).
+if those objects are already gone (migrations run at boot, so a throw kills the process before it
+listens — the container then restart-loops and the deploy's health check never passes).
 
 When you generate a new migration, **hand-strip the SQL down to ONLY your intended statements**
 before committing (the runtime migrator checks journal `when`-ordering, not content, so editing the
@@ -1487,10 +1495,18 @@ fully (so generate stops re-emitting the `features` drops) is a deferred follow-
 
 ## Stack
 
-- TypeScript (strict), Express, Zod, Drizzle ORM, Postgres (Neon)
+- TypeScript (strict), Express, Zod, Drizzle ORM, Postgres
 - Tests: Vitest + Supertest
 - OpenAPI: auto-generated from Zod schemas via `@asteasolutions/zod-to-openapi`
-- Deployed on Railway via Dockerfile
+- Deployed from the Dockerfile onto the self-hosted box; deploys are a cron running `./deploy.sh --all`
+  (health-checked, rolls back automatically on failure). Env lives in `/root/distribute/env/<svc>.env`
+  on that box.
+
+**The database is ONE self-hosted Postgres container shared by the whole fleet** — every service has its
+own database inside it, reached over ssh with
+`docker exec distribute-postgres-1 psql -U postgres -d features_service`. (It replaced a per-service Neon
+project, which is why several notes below reason about Neon cold starts — see those notes for what
+survived the move.)
 
 **Package manager: pnpm is canonical.** The repo ships BOTH `package-lock.json` and
 `pnpm-lock.yaml`, but CI runs `pnpm test`. On a fresh Conductor workspace (`node_modules`
@@ -1640,7 +1656,7 @@ across client brands; null only when no brand has usable economics. No forced or
 costs — high self-serve `v2c` lets purchases bypass meetings, so cost-per-meeting CAN exceed
 cost-per-purchase (correct, not a bug). (#274, PR #275.)
 
-## `workflow-cost-per-outcome` per-workflow RECENT rate — the OFF-request-path warm pattern (4 cold-Neon failure modes; features-service#526)
+## `workflow-cost-per-outcome` per-workflow RECENT rate — the OFF-request-path warm pattern (4 slow-sibling failure modes; features-service#526)
 
 The per-workflow `recentCostPerOutcomeUsd` (trailing-window moving average) can NOT be computed on the
 request path: it needs, PER dynasty, a dated-spend timeseries (runs) + dated outcomes (email-gateway), and
@@ -1648,20 +1664,23 @@ neither producer exposes a single `(day × dynasty)` call (runs' timeseries only
 email-gateway `groupBy` is single-dimension), so it is an O(dynasty-count) cross-service fan-out. Running it
 on the request path 500s/timeouts (PR #521 regression). It runs as a background SWR **warm** in
 `handleWorkflowCostPerOutcome` (`src/routes/public.ts`) that overwrites the cache entry + a persisted
-recent-rate store. That warm hits the Neon-scale-to-zero siblings and went through FOUR cold-start failure
-modes before it populated reliably in prod — **any new off-request-path fan-out warm MUST carry all four**
+recent-rate store. That warm hammers several sibling services at once, and it went through FOUR failure
+modes before it populated reliably in prod (they were first hit against Neon computes that suspended when
+idle; the same four bite any burst of concurrent calls to a sibling that answers slowly, which a shared
+database instance under load still does) — **any new off-request-path fan-out warm MUST carry all four**
 (do NOT re-discover them one prod hotfix at a time, v0.87.1→v0.87.4):
 
 1. **Per-dynasty resilience** (`try/catch` per item, not one all-or-nothing `Promise.all`) — one failing
    dynasty nulls only itself, never the whole set.
-2. **Per-item timeout** (`withTimeout`, 45s) — a HUNG fetch (cold Neon TCP stall, no reject) would leave the
+2. **Per-item timeout** (`withTimeout`, 45s) — a HUNG fetch (a sibling that accepts the connection and
+   then never answers, so nothing ever rejects) would leave the
    outer `Promise.all` pending forever → the warm never settles → its `.finally()` never clears the
    single-flight flag → NO future warm runs → recent permanently null. The timeout guarantees the warm
    always settles + clears its flag.
 3. **Capped concurrency** (`mapWithConcurrency`, 6) — firing all ~25 dynasties' fan-outs at once = ~50
-   connections that OVERWHELM cold-start siblings, making every fetch slow enough to trip the timeout →
+   connections that OVERWHELM the siblings, making every fetch slow enough to trip the timeout →
    all-null. The cap keeps each fetch fast enough to beat the timeout. (Timeout + concurrency are a PAIR:
-   the timeout without the cap is what turned a slow-cold warm into an all-null one.)
+   the timeout without the cap is what turned a slow warm into an all-null one.)
 4. **Variable store TTL + serve-from-store** — the served payload is seeded from the persisted store (a
    payload-TTL miss never re-nulls the column, no flicker); a CLEAN warm (0 failures) is trusted 10 min
    (no re-warm → no contention with the request-path lifetime fan-out for the same cold siblings), a
@@ -2018,7 +2037,8 @@ author it. (Set 2026-07-07.)
 
 features-service is otherwise a **derive-on-read aggregator** (the API-Composition pattern, Richardson):
 it owns no domain data, computing `/revenue` + `/stats` by live-fanning-out to N sibling services per
-request. That fan-out — amplified by sibling Neon cold-starts — is the dashboard's latency. The fix is
+request. That fan-out — as slow as its slowest sibling, and paid on every page view — is the dashboard's
+latency. The fix is
 the industry-canon answer to "API Composition too slow": a **Gold read model** (Richardson CQRS,
 Databricks medallion Gold, Kleppmann derived-data).
 
@@ -2086,7 +2106,7 @@ Databricks medallion Gold, Kleppmann derived-data).
   2026-07-10). The helper's in-flight map (keyed off the cache object) also guards the background refresh,
   so a burst of stale reads kicks exactly ONE rebuild. Still cap the fan-out ITSELF with
   `mapWithConcurrency` (`src/lib/concurrency.ts`) so even the single build does not burst ~3×N sockets at
-  cold-Neon siblings. `setPublicCache` prunes past-STALE entries on write — these keys are
+  the siblings. `setPublicCache` prunes past-STALE entries on write — these keys are
   (featureSlug × objective × window params) on NO-AUTH routes, so an arbitrary caller could otherwise mint
   unbounded keys that each pin a payload for the (now much longer) stale window.
 
@@ -2129,7 +2149,7 @@ backend that blocked to look fresh was fighting its only consumer. Only the very
 absence can show an older value, for the seconds until the background refresh lands.
 
 **Do NOT drop the TTL back toward 5s while the dashboard polls at 15s** — every poll would then be a stale
-hit and trigger the fan-out, doubling load on the Neon-backed siblings. TTL ≥ poll interval is the rule.
+hit and trigger the fan-out, doubling load on the sibling services. TTL ≥ poll interval is the rule.
 
 ### A third window — `RETENTION` (7d) deletes cells nobody reads; the sweep rides write traffic, never a timer
 
@@ -2147,9 +2167,12 @@ existing miss path recomputes it. Retired VIEWS age out under the same rule, so 
 live view names — such a list would rot the moment a view is renamed.
 
 **The sweep piggybacks on a successful persist, at most once an hour per process — do NOT convert it to a
-`setInterval`.** A timer keeps the Neon compute awake around the clock for a table that needs touching
-once a day, which is the exact anti-pattern the fleet's scale-to-zero notes call out (reap on-read, never
-on a clock). It is also fire-and-forget: a prune failure is logged and dropped, which is NOT the swallowed
+`setInterval`.** A timer fires on every replica, forever, at the same rate whether the service served a
+million requests that hour or none — for a table that needs touching about once a day. Riding write
+traffic scales the sweep to the traffic that actually creates the rows it prunes, and an idle service
+does no work at all. (The rule was first written when the databases suspended while idle and a timer
+would have kept them awake; the platform changed, the reasoning did not — reap on-read, never on a
+clock.) It is also fire-and-forget: a prune failure is logged and dropped, which is NOT the swallowed
 error the fail-loud rule forbids — pruning produces no value any caller reads, its only failure
 consequence is a larger table, and propagating would turn janitorial work into a 502 on a request whose
 answer was already computed correctly.
