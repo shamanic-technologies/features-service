@@ -367,13 +367,13 @@ describe("buildWorkflowCostPerOutcome", () => {
   });
 });
 
-// ── Goal-bucketed cost per outcome ───────────────────────────────────────────
+// ── Funnel-bucketed cost per outcome ─────────────────────────────────────────
 
 import {
-  OBJECTIVE_GOAL_BUCKET,
+  OBJECTIVE_FUNNEL_BUCKET,
   GOAL_AGNOSTIC_OBJECTIVES,
   isGoalAgnosticObjective,
-  goalInObjectiveBucket,
+  funnelsInObjectiveBucket,
   bucketBrandsForObjective,
   mergeSpendByDay,
   mergeOutcomesByDay,
@@ -382,104 +382,96 @@ import {
   buildCostPerOutcomeDistribution,
   type BucketedBrand,
 } from "./cross-org-cost-per-outcome.js";
-import { matchBrandServiceGoal, type Goal } from "./goals.js";
+import type { SalesFunnelKey } from "./sales-funnels.js";
 
-function brand(brandId: string, goal: Goal, spend: number, clicks: number, replies: number): BucketedBrand {
+function brand(brandId: string, funnels: SalesFunnelKey[], spend: number, clicks: number, replies: number): BucketedBrand {
   return {
     brandId,
-    goal,
+    funnels,
     economics: FULL_ECON,
     spendByDay: new Map([["2026-07-08", spend]]),
     outcomesByDay: new Map([["2026-07-08", { clicks, replies }]]),
   };
 }
 
-describe("matchBrandServiceGoal (brand-service stored enum → Goal)", () => {
-  it("maps every stored OptimizationGoal spelling", () => {
-    expect(matchBrandServiceGoal("signups")).toBe("signup");
-    expect(matchBrandServiceGoal("booked_meetings")).toBe("meetingBooked");
-    // brand-service's legacy `sales` is the website-purchase goal, NOT combined sales.
-    expect(matchBrandServiceGoal("sales")).toBe("websitePurchase");
-    expect(matchBrandServiceGoal("website_visits")).toBe("websiteVisit");
-    expect(matchBrandServiceGoal("positive_replies")).toBe("positiveReply");
-    expect(matchBrandServiceGoal("form_submissions")).toBe("formSubmission");
-    expect(matchBrandServiceGoal("website_purchase")).toBe("websitePurchase");
-    expect(matchBrandServiceGoal("combined_sales")).toBe("sales");
+describe("OBJECTIVE_FUNNEL_BUCKET", () => {
+  it("cpc = every CLICK-bought chain; the reply-bought meeting chain is excluded", () => {
+    expect(OBJECTIVE_FUNNEL_BUCKET.websiteVisit).toEqual([
+      "sales_meetings_from_website",
+      "website_purchases",
+      "form_magnet",
+    ]);
+    expect(OBJECTIVE_FUNNEL_BUCKET.websiteVisit).not.toContain("sales_meetings_from_conversation");
   });
-  it("also tolerates the runtime camel spellings", () => {
-    expect(matchBrandServiceGoal("signup")).toBe("signup");
-    expect(matchBrandServiceGoal("meetingBooked")).toBe("meetingBooked");
-    expect(matchBrandServiceGoal("purchase")).toBe("websitePurchase");
+  it("each single-outcome objective takes the chain that step belongs to", () => {
+    expect(OBJECTIVE_FUNNEL_BUCKET.positiveReply).toEqual(["sales_meetings_from_conversation"]);
+    expect(OBJECTIVE_FUNNEL_BUCKET.signup).toEqual(["website_purchases"]);
+    expect(OBJECTIVE_FUNNEL_BUCKET.formSubmission).toEqual(["form_magnet"]);
+    expect(OBJECTIVE_FUNNEL_BUCKET.websitePurchase).toEqual(["website_purchases"]);
   });
-  it("returns null for an unrecognised value", () => {
-    expect(matchBrandServiceGoal("nonsense")).toBeNull();
-    expect(matchBrandServiceGoal("")).toBeNull();
+  it("meeting bucket = BOTH meeting chains — each priced apart elsewhere, both bought meetings here", () => {
+    expect(OBJECTIVE_FUNNEL_BUCKET.meetingBooked).toEqual([
+      "sales_meetings_from_conversation",
+      "sales_meetings_from_website",
+    ]);
   });
-});
-
-describe("OBJECTIVE_GOAL_BUCKET", () => {
-  it("cpc = every click-driven goal except reply-driven + meeting-driven", () => {
-    expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).toEqual(["websiteVisit", "signup", "formSubmission"]);
-    expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).not.toContain("positiveReply");
-    expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).not.toContain("meetingBooked");
-    expect(OBJECTIVE_GOAL_BUCKET.websiteVisit).not.toContain("websitePurchase");
+  it("sales = every chain (each terminates in a paying client); whatsapp = EMPTY, no funnel expresses it", () => {
+    expect(OBJECTIVE_FUNNEL_BUCKET.sales).toHaveLength(4);
+    expect(OBJECTIVE_FUNNEL_BUCKET.whatsappConversation).toEqual([]);
   });
-  it("each single-outcome objective is its own goal only", () => {
-    expect(OBJECTIVE_GOAL_BUCKET.positiveReply).toEqual(["positiveReply"]);
-    expect(OBJECTIVE_GOAL_BUCKET.signup).toEqual(["signup"]);
-    expect(OBJECTIVE_GOAL_BUCKET.formSubmission).toEqual(["formSubmission"]);
-    expect(OBJECTIVE_GOAL_BUCKET.websitePurchase).toEqual(["websitePurchase"]);
-    expect(OBJECTIVE_GOAL_BUCKET.sales).toEqual(["sales"]);
-  });
-  it("meeting bucket = meetingBooked + purchase (purchase closes via meeting)", () => {
-    expect(OBJECTIVE_GOAL_BUCKET.meetingBooked).toEqual(["meetingBooked", "websitePurchase"]);
-  });
-  it("goalInObjectiveBucket agrees with the table", () => {
-    expect(goalInObjectiveBucket("websiteVisit", "signup")).toBe(true);
-    expect(goalInObjectiveBucket("websiteVisit", "positiveReply")).toBe(false);
-    expect(goalInObjectiveBucket("meetingBooked", "websitePurchase")).toBe(true);
-    expect(goalInObjectiveBucket("signup", "websitePurchase")).toBe(false);
+  it("funnelsInObjectiveBucket agrees with the table, and a multi-funnel brand matches on ANY chain", () => {
+    expect(funnelsInObjectiveBucket("websiteVisit", ["website_purchases"])).toBe(true);
+    expect(funnelsInObjectiveBucket("websiteVisit", ["sales_meetings_from_conversation"])).toBe(false);
+    expect(funnelsInObjectiveBucket("websiteVisit", ["sales_meetings_from_conversation", "form_magnet"])).toBe(true);
+    expect(funnelsInObjectiveBucket("signup", ["form_magnet"])).toBe(false);
+    // A brand that declared nothing lands in no bucket — it is omitted from the dataset upstream too.
+    expect(funnelsInObjectiveBucket("sales", [])).toBe(false);
   });
 });
 
 describe("bucketBrandsForObjective + merge", () => {
   const brands = [
-    brand("b-visit", "websiteVisit", 100, 50, 0),
-    brand("b-signup", "signup", 200, 40, 0),
-    brand("b-reply", "positiveReply", 300, 5, 20),
-    brand("b-meeting", "meetingBooked", 400, 10, 3),
-    brand("b-purchase", "websitePurchase", 500, 8, 2),
+    brand("b-form", ["form_magnet"], 100, 50, 0),
+    brand("b-purchase", ["website_purchases"], 200, 40, 0),
+    brand("b-reply-meeting", ["sales_meetings_from_conversation"], 300, 5, 20),
+    brand("b-web-meeting", ["sales_meetings_from_website"], 400, 10, 3),
+    brand("b-both-meetings", ["sales_meetings_from_conversation", "sales_meetings_from_website"], 500, 8, 2),
   ];
 
-  it("cpc bucket excludes reply + meeting + purchase brands", () => {
+  it("cpc bucket excludes the reply-bought chain, and keeps a brand that also declares a click-bought one", () => {
     const bucket = bucketBrandsForObjective(brands, "websiteVisit");
-    expect(bucket.map((b) => b.brandId).sort()).toEqual(["b-signup", "b-visit"]);
-    // spend + clicks summed over ONLY the click-driven brands
-    expect(mergeSpendByDay(bucket).get("2026-07-08")).toBe(300); // 100 + 200
-    expect(mergeOutcomesByDay(bucket).get("2026-07-08")).toEqual({ clicks: 90, replies: 0 });
+    expect(bucket.map((b) => b.brandId).sort()).toEqual(["b-both-meetings", "b-form", "b-purchase", "b-web-meeting"]);
+    expect(bucket.map((b) => b.brandId)).not.toContain("b-reply-meeting");
+    // spend + clicks summed over ONLY the click-bought brands: 100 + 200 + 400 + 500
+    expect(mergeSpendByDay(bucket).get("2026-07-08")).toBe(1200);
+    expect(mergeOutcomesByDay(bucket).get("2026-07-08")).toEqual({ clicks: 108, replies: 5 });
   });
 
-  it("signup bucket = signup brand only (purchase excluded)", () => {
+  it("signup bucket = the website-purchase chain only (the form chain is excluded)", () => {
     const bucket = bucketBrandsForObjective(brands, "signup");
-    expect(bucket.map((b) => b.brandId)).toEqual(["b-signup"]);
+    expect(bucket.map((b) => b.brandId)).toEqual(["b-purchase"]);
   });
 
-  it("meeting bucket = meeting + purchase brands", () => {
+  it("meeting bucket = every brand selling through EITHER meeting chain", () => {
     const bucket = bucketBrandsForObjective(brands, "meetingBooked");
-    expect(bucket.map((b) => b.brandId).sort()).toEqual(["b-meeting", "b-purchase"]);
-    expect(mergeSpendByDay(bucket).get("2026-07-08")).toBe(900); // 400 + 500
+    expect(bucket.map((b) => b.brandId).sort()).toEqual(["b-both-meetings", "b-reply-meeting", "b-web-meeting"]);
+    expect(mergeSpendByDay(bucket).get("2026-07-08")).toBe(1200); // 300 + 400 + 500
   });
 
-  it("positiveReply is GOAL-AGNOSTIC: pools replies across ALL brands, not just reply-goal brands", () => {
-    // A positive reply is produced by every cold-email brand regardless of its declared goal, so the
-    // bucket = the whole dataset (never filtered to optimizationGoal=positiveReply).
+  it("whatsapp has no funnel to identify its brands, so its bucket is EMPTY (→ null, never a mislabelled fleet CPC)", () => {
+    expect(bucketBrandsForObjective(brands, "whatsappConversation")).toEqual([]);
+  });
+
+  it("positiveReply is FLEET-WIDE: pools replies across ALL brands, not just the reply-bought chain", () => {
+    // A positive reply is produced by every cold-email brand regardless of what it sells through, so the
+    // bucket = the whole dataset (never filtered to the conversation funnel).
     const bucket = bucketBrandsForObjective(brands, "positiveReply");
     expect(bucket.map((b) => b.brandId).sort()).toEqual([
-      "b-meeting",
+      "b-both-meetings",
+      "b-form",
       "b-purchase",
-      "b-reply",
-      "b-signup",
-      "b-visit",
+      "b-reply-meeting",
+      "b-web-meeting",
     ]);
     // clicks 50+40+5+10+8 = 113, replies 0+0+20+3+2 = 25 — every brand's outcomes counted
     expect(mergeOutcomesByDay(bucket).get("2026-07-08")).toEqual({ clicks: 113, replies: 25 });
@@ -489,7 +481,7 @@ describe("bucketBrandsForObjective + merge", () => {
 });
 
 describe("isGoalAgnosticObjective / GOAL_AGNOSTIC_OBJECTIVES", () => {
-  it("positiveReply is goal-agnostic; websiteVisit + projected + whatsapp stay goal-bucketed", () => {
+  it("positiveReply pools fleet-wide; websiteVisit + projected + whatsapp stay funnel-bucketed", () => {
     expect(isGoalAgnosticObjective("positiveReply")).toBe(true);
     expect(GOAL_AGNOSTIC_OBJECTIVES).toEqual(["positiveReply"]);
     for (const g of ["websiteVisit", "signup", "formSubmission", "meetingBooked", "websitePurchase", "sales", "whatsappConversation"] as const) {
@@ -501,18 +493,18 @@ describe("isGoalAgnosticObjective / GOAL_AGNOSTIC_OBJECTIVES", () => {
 describe("buildBucketedLifetimeAverages", () => {
   it("cost-per-click uses ONLY click-driven brands' pooled spend/clicks (websiteVisit stays bucketed)", () => {
     const brands = [
-      brand("b-visit", "websiteVisit", 100, 50, 0),
-      brand("b-reply", "positiveReply", 900, 0, 30),
+      brand("b-visit", ["website_purchases"], 100, 50, 0),
+      brand("b-reply", ["sales_meetings_from_conversation"], 900, 0, 30),
     ];
     const avgs = buildBucketedLifetimeAverages(brands);
     // websiteVisit = pooled CPC over the visit brand only: 100 / 50 = 2 (reply brand's $900 excluded)
     expect(avgs.websiteVisit).toBeCloseTo(2, 5);
   });
 
-  it("positiveReply is GOAL-AGNOSTIC: pooled CPPR over EVERY brand's spend ÷ replies, not just reply brands", () => {
+  it("positiveReply is FLEET-WIDE: pooled CPPR over EVERY brand's spend ÷ replies, not just reply-bought chains", () => {
     const brands = [
-      brand("b-visit", "websiteVisit", 100, 50, 0), // 0 replies — its $100 STILL counts toward fleet CPPR
-      brand("b-reply", "positiveReply", 900, 0, 30),
+      brand("b-visit", ["website_purchases"], 100, 50, 0), // 0 replies — its $100 STILL counts toward fleet CPPR
+      brand("b-reply", ["sales_meetings_from_conversation"], 900, 0, 30),
     ];
     const avgs = buildBucketedLifetimeAverages(brands);
     // pooled over ALL brands: total spend 1000 ÷ total replies 30 = 33.33 (the honest fleet-wide cost —
@@ -521,7 +513,7 @@ describe("buildBucketedLifetimeAverages", () => {
   });
 
   it("positiveReply null when NO brand produced any reply, never a false $0", () => {
-    const brands = [brand("b-visit", "websiteVisit", 100, 50, 0)]; // 0 replies fleet-wide → 0 denominator
+    const brands = [brand("b-visit", ["website_purchases"], 100, 50, 0)]; // 0 replies fleet-wide → 0 denominator
     const avgs = buildBucketedLifetimeAverages(brands);
     expect(avgs.positiveReply).toBeNull();
   });
@@ -530,9 +522,9 @@ describe("buildBucketedLifetimeAverages", () => {
 describe("perBrandCostPerOutcome", () => {
   it("one data point per brand = its pooled cost-per-outcome (CPC), 0-outcome brands dropped", () => {
     const brands = [
-      brand("b1", "websiteVisit", 100, 50, 0), // CPC 2
-      brand("b2", "websiteVisit", 300, 50, 0), // CPC 6
-      brand("b3", "websiteVisit", 100, 0, 0), // 0 clicks → no data point (never a false $0)
+      brand("b1", ["website_purchases"], 100, 50, 0), // CPC 2
+      brand("b2", ["website_purchases"], 300, 50, 0), // CPC 6
+      brand("b3", ["website_purchases"], 100, 0, 0), // 0 clicks → no data point (never a false $0)
     ];
     const values = perBrandCostPerOutcome(brands, "websiteVisit").sort((a, b) => a - b);
     expect(values).toEqual([2, 6]);
@@ -540,8 +532,8 @@ describe("perBrandCostPerOutcome", () => {
 
   it("positiveReply uses each brand's CPPR", () => {
     const brands = [
-      brand("b1", "positiveReply", 200, 0, 10), // CPPR 20
-      brand("b2", "positiveReply", 300, 0, 10), // CPPR 30
+      brand("b1", ["sales_meetings_from_conversation"], 200, 0, 10), // CPPR 20
+      brand("b2", ["sales_meetings_from_conversation"], 300, 0, 10), // CPPR 30
     ];
     const values = perBrandCostPerOutcome(brands, "positiveReply").sort((a, b) => a - b);
     expect(values).toEqual([20, 30]);
@@ -551,7 +543,7 @@ describe("perBrandCostPerOutcome", () => {
 describe("buildCostPerOutcomeDistribution", () => {
   const visitBrands = (cpcs: number[]): BucketedBrand[] =>
     // clicks fixed at 100 → spend = cpc*100 gives that CPC
-    cpcs.map((cpc, i) => brand(`b${i}`, "websiteVisit", cpc * 100, 100, 0));
+    cpcs.map((cpc, i) => brand(`b${i}`, ["website_purchases"], cpc * 100, 100, 0));
 
   it("empty/soft below the minimum brand count — buckets [] + all scalars null, brandCount reported", () => {
     const dist = buildCostPerOutcomeDistribution({ objective: "websiteVisit", brands: visitBrands([5]), bucketCount: 10, minBrands: 2 });
@@ -597,12 +589,12 @@ describe("buildCostPerOutcomeDistribution", () => {
     expect(dist.max).toBe(4);
   });
 
-  it("goal-bucketed inputs excluded upstream: callers pass bucketBrandsForObjective — off-goal brands never contribute", () => {
+  it("funnel-bucketed inputs excluded upstream: callers pass bucketBrandsForObjective — off-chain brands never contribute", () => {
     // a positiveReply brand carries no CPC data point even if it has spend
     const brands = [
-      brand("b-visit-1", "websiteVisit", 200, 100, 0), // CPC 2
-      brand("b-visit-2", "websiteVisit", 600, 100, 0), // CPC 6
-      brand("b-reply", "positiveReply", 9999, 0, 40), // 0 clicks → excluded from CPC
+      brand("b-visit-1", ["website_purchases"], 200, 100, 0), // CPC 2
+      brand("b-visit-2", ["website_purchases"], 600, 100, 0), // CPC 6
+      brand("b-reply", ["sales_meetings_from_conversation"], 9999, 0, 40), // 0 clicks → excluded from CPC
     ];
     const dist = buildCostPerOutcomeDistribution({
       objective: "websiteVisit",

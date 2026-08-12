@@ -1,5 +1,70 @@
 # Features Service — CLAUDE.md
 
+## THE GOAL IS RETIRED — a brand has DECLARED SALES FUNNELS, and the objective is always maximise ROI
+
+Nothing in this service reads a brand's `optimizationGoal` any more, and nothing may read one again.
+Two reasons, and the second is why it could not wait: the goal could not say what it was for
+(`sales_meetings_from_conversation` and `sales_meetings_from_website` both collapsed onto one
+`meetingBooked`, so the two could not be priced apart), and it was **wrong at the source** —
+brand-service's column is NOT NULL with a server default, so a brand that never chose a goal read back
+as selling through website purchases. Nobody stated that; a default did. brand-service is dropping the
+column, so a read left behind becomes a failure.
+
+What a brand sells through is its **DECLARED SALES FUNNEL SET** (`GET /internal/brands/:brandId/sales-funnels`,
+`sales-funnels-client.ts` → `brand-funnels.ts`). It is a real declaration with no default behind it:
+either stated, or absent — and absent is a producer gap we surface, never fill.
+
+- **`GET /features/:slug/funnel-ranking`** (was `/goal-arbitration`) — the name now says what it does. It
+  arbitrates nothing and the objective is not a variable; it ranks the declared funnels by return per
+  dollar. **`/goal-arbitration` stays mounted as a DEPRECATED ALIAS on the SAME handler**, byte-identical
+  body, because campaign-service reads `arbitration` / `workflow` / `rows` off it in prod to pace the 4
+  brands with a live campaign and no per-funnel budget row. Removing the alias is a SEPARATE change.
+  Guard: the byte-identical-body case in `routes/funnel-ranking.test.ts`.
+- **`?funnel=` is the canonical request parameter; `?goal=` is a DEPRECATION with a stated end.** On
+  `/audience-stats` a funnel alone is now sufficient — the goal is DERIVED from it
+  (`SALES_FUNNEL_GOAL_ECHO`) rather than demanded of the caller — and a named funnel WINS when both are
+  sent. `/workflow-projection` already behaved this way. `/revenue` gained `?funnel=`, which prices the
+  spend block's cost-per-outcome columns. Sending neither is a 400; an unrecognised funnel is a 400.
+  Every pre-retirement funnel spelling stays accepted forever. **The dashboard sweep follows this PR and
+  conforms to what is shipped here.**
+- **The goal survives ONLY as an ECHO, derived FROM the funnel key, never the reverse.**
+  `SALES_FUNNEL_GOAL_ECHO` (`sales-funnels.ts`) is lossy by construction (both meeting funnels echo
+  `meetingBooked`) and must never be read as a row's identity. **Do NOT add the inverse map.** A
+  goal→funnel table is exactly the compatibility layer this retirement exists to avoid, and it could not
+  be written honestly anyway. The producer-payload resolvers (`matchBrandServiceGoal`,
+  `matchBrandServiceWebsitePurchaseGoal`, `matchDeclaredCombinedSalesGoal`) are DELETED; their absence is
+  asserted by `goals-entry-points.test.ts`, which is now a guard that the producer door stays shut.
+- **`fetchBrandSavedEconomicsWithGoal` → `fetchBrandSavedEconomics`.** Same endpoint, same org-scoping
+  rules (see the section below), no goal resolved. The payload may still carry the column while
+  brand-service has it; passing it through is fine, BRANCHING on it is not.
+- **`/revenue` spend cost parents** price on `?funnel=` when named, else the brand's **FIRST DECLARED
+  funnel in catalogue order** — a deterministic pick over the brand's OWN declarations, not a default and
+  not an inference. A funnel the brand never declared is ignored in favour of that pick. **No declared
+  funnel ⇒ the columns stay OBSERVED (null at 0 outcomes)**, exactly as they did for a brand with no
+  goal; a chain is never substituted. Still fail-SOFT with a loud log (display enrichment on the
+  Overview), and it still never degrades to the raw-spend floor.
+- **`/internal/stats/customer-health`**: `optimizationGoal` is REPLACED by `salesFunnels` (the whole
+  declared set) + `primarySalesFunnel` (the first, which the row's single-valued fields — conversion
+  tracker, best audience, best workflow — are computed on). The tracker is needed for the chains that
+  convert on the CLIENT's own site (`website_purchases`, `form_magnet`); a meeting chain qualifies on
+  ours. An unreadable/empty declaration soft-degrades to `[]` and nulls the funnel-keyed fields — the row
+  is still LISTED.
+- **The cross-org cost buckets are keyed on DECLARED FUNNELS** (`OBJECTIVE_FUNNEL_BUCKET`,
+  `funnelsInObjectiveBucket`, `fetchFunnelBucketDataset` — renamed from the goal-bucket trio). The
+  objective vocabulary is UNCHANGED: it names the OUTCOME being priced, not a brand's goal, and the
+  public/staff response contract is untouched. Only bucket MEMBERSHIP moved. CPC = every CLICK-bought
+  chain (the reply-bought meeting chain stays excluded, same reasoning as #499); `signup` /
+  `websitePurchase` = `website_purchases`; `formSubmission` = `form_magnet`; `meetingBooked` = BOTH
+  meeting chains; `sales` = every chain (each terminates in a paying client); `positiveReply` stays
+  FLEET-WIDE (raw measured, publicly claimed "across every brand"). **`whatsappConversation`'s bucket is
+  EMPTY on purpose** — its outcome needs a WhatsApp link that no funnel expresses, so there is no honest
+  way to identify those brands now; an empty bucket reads `null` ("could not compute"), which is the
+  truth. Substituting "all brands" would print a fleet CPC under a WhatsApp label. A brand whose
+  declaration is missing/unreadable is OMITTED from the dataset (loud log), the same treatment a brand
+  with no goal used to get.
+- **NO ranking was re-scored.** This is a vocabulary + contract change: `rankDeclaredFunnels` and the
+  return-per-dollar basis are untouched. (Set 2026-08-12.)
+
 ## A campaign's figures are its IDENTITY's figures — (org, brand, sales funnel, acquisition channel), read from campaign-service, never re-derived
 
 campaign-service used to create a NEW campaign row every time workflow selection switched workflows,
@@ -82,7 +147,7 @@ Every internal read of per-brand configuration therefore sends **`x-org-id`**, a
   call-site guards in `src/routes/goal-arbitration.test.ts` (the caller's org rides the funnels read) and
   `src/lib/customer-health-compute.test.ts` (each row asks under its own org). (Set 2026-08-01.)
 
-## `GET /features/:slug/goal-arbitration` — RANKS every DECLARED sales funnel by RETURN PER DOLLAR. It is a RECOMMENDATION, not a selection, and an UNFUNDED funnel is still ranked
+## `GET /features/:slug/funnel-ranking` (deprecated alias: `/goal-arbitration`) — RANKS every DECLARED sales funnel by RETURN PER DOLLAR. It is a RECOMMENDATION, not a selection, and an UNFUNDED funnel is still ranked
 
 **The funding decides what runs; this endpoint decides nothing.** It used to BE the decision —
 campaign-service asked which goal to work and ran the one that came back. That ended when the customer

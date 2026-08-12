@@ -7,7 +7,6 @@ import { getFunnel, orP, singleStepRateDecimal, combinedSaleProbability, type Ec
 import { matchSingleStepGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal } from "../lib/goals.js";
 import {
   fetchEffectiveEconomics,
-  fetchBrandSavedEconomicsWithGoal,
   economicsFingerprint,
   type EffectiveEconomics,
 } from "../lib/sales-economics-client.js";
@@ -40,6 +39,10 @@ import {
 import { traceEvent } from "../lib/trace-event.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
+import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
+import { declaredEconomicsForFunnel } from "../lib/declared-funnels.js";
+import { primaryDeclaredFunnel } from "../lib/brand-funnels.js";
+import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
@@ -165,31 +168,41 @@ export interface Spend {
 
 /**
  * The AGGREGATE (brand / campaign grain) twin of /audience-stats' per-audience floor parents — the
- * fleet-backed projected cost-per-outcome of the workflow the brand's GOAL crowns, one value per cost
- * column, in USD. `null` for the whole block when the brand declares no optimization goal (there is no
- * goal-specific benchmark to be coherent with) or when the projection read degrades (below).
+ * fleet-backed projected cost-per-outcome of the workflow that the SALES FUNNEL being priced crowns, one
+ * value per cost column, in USD. `null` for the whole block when the brand has declared no funnel (there
+ * is no chain to be coherent with) or when the projection read degrades (below).
  */
 type SpendCostParents = BrandProjectedParentsUsd | null;
 
 /**
  * Resolve the aggregate floor parents for the OVERVIEW spend block.
  *
- * The brand's declared `optimizationGoal` (brand-service internal saved economics — the brand's OWN
- * goal, never a cross-brand average) selects the winning workflow, then `fetchBrandProjectedParents`
- * rebuilds workflow-projection's BRAND-LEVEL rows and returns that winner's resolved unit + funnel
- * costs. Same module, same argmin, same cascade as /audience-stats → the Overview, the Audiences table
- * and the Strategy page price a 0-outcome cell identically by construction.
+ * **PRICED ON A SALES FUNNEL, never on a goal.** This used to read the brand's `optimizationGoal` to
+ * pick the winning workflow. That column carries a NOT NULL server default, so a brand that never chose
+ * a goal was priced through the website-purchase chain nobody had said it sells through — and
+ * brand-service is dropping the column. The chain now comes from what the brand DECLARED it sells
+ * through (`GET /internal/brands/:brandId/sales-funnels`):
+ *
+ *   - the caller's `?funnel=` when it named one (the dashboard knows which chain the customer is
+ *     looking at, and a brand selling through several has a different price for each), else
+ *   - the brand's FIRST DECLARED funnel in catalogue order — a deterministic pick over the brand's OWN
+ *     declarations, not a default and not an inference.
+ *
+ * The funnel's OWN declared terms ride with it (`declaredEconomicsForFunnel`), the same merge the
+ * ranking applies, so these columns price on exactly the chain `/workflow-projection?funnel=` prices on.
+ *
+ * NO DECLARED FUNNEL → null (and the fetch is skipped): "what they sell through" does not exist yet, so
+ * there is no expected cost to floor against and the columns stay OBSERVED (null at 0 outcomes) exactly
+ * as they did for a brand with no goal. A funnel is NEVER substituted.
  *
  * `audienceIds: []` deliberately skips the per-audience grain entirely (the aggregate has no audience
  * column), so this adds ZERO human-service round-trips and none of the per-audience fan-out.
  *
- * NO declared goal → null (skip the fetch): "the goal they optimise for" does not exist, so there is no
- * expected cost to floor against, and the columns stay OBSERVED (null at 0 outcomes) exactly as today.
- *
  * Fail-SOFT with a loud log, mirroring the sequences / conversion-counts enrichment reads on this same
- * Overview path: a projection blip degrades the cost columns to today's OBSERVED behaviour ("-", i.e.
- * "we could not estimate this") rather than 502-ing the customer's Overview. It NEVER degrades to the
- * raw-spend floor — that is the exact "cost per reply == total spent" output this feature removes.
+ * Overview path: a projection blip (or an unreadable declaration) degrades the cost columns to today's
+ * OBSERVED behaviour ("-", i.e. "we could not estimate this") rather than 502-ing the customer's
+ * Overview. It NEVER degrades to the raw-spend floor — that is the exact "cost per reply == total spent"
+ * output this feature removes — and it never degrades to a guessed chain.
  */
 function fetchSpendCostParentsSoft(
   brandId: string,
@@ -197,24 +210,40 @@ function fetchSpendCostParentsSoft(
   headers: DownstreamHeaders,
   campaignId: string | undefined,
   pricing: Pricing,
+  requestedFunnel: SalesFunnelKey | undefined,
 ): Promise<SpendCostParents> {
   // The caller's own org names whose configuration we want — a brand id alone is shared across every
-  // org claiming the same domain, so the goal + economics are the (org, brand) pair's data.
-  return fetchBrandSavedEconomicsWithGoal(brandId, headers.orgId)
-    .then(({ goal }) => {
-      if (!goal) return null;
+  // org claiming the same domain, so what it sells through is the (org, brand) pair's data.
+  return fetchDeclaredSalesFunnels(brandId, headers.orgId)
+    .then((declared) => {
+      const declaredKeys = declared.map((f) => f.funnelKey).sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
+      // An explicit `?funnel=` is honoured only when the brand actually declared it — pricing a brand on
+      // a chain it never said it sells through would be the same fiction the goal default produced.
+      const funnelKey =
+        requestedFunnel && declaredKeys.includes(requestedFunnel)
+          ? requestedFunnel
+          : primaryDeclaredFunnel(declaredKeys);
+      if (!funnelKey) return null;
       return fetchBrandProjectedParents(
         brandId,
         featureSlug,
-        goal,
+        // The goal ECHO, derived FROM the funnel purely because the projection's internal routing still
+        // speaks it. The funnel key below OVERRIDES it, so the two meeting chains stay priced apart.
+        SALES_FUNNEL_GOAL_ECHO[funnelKey],
         { orgId: headers.orgId, userId: headers.userId, runId: headers.runId, campaignId, featureSlug: headers.featureSlug },
         pricing,
         [],
+        funnelKey,
+        declaredEconomicsForFunnel(declared, funnelKey),
       );
     })
     .catch((err) => {
+      const what =
+        err instanceof SalesFunnelsUnavailableError
+          ? "this brand has declared no sales funnel we could read"
+          : (err as Error).message;
       console.warn(
-        `[features-service] spend cost-parent projection failed (degrading the aggregate cost columns to observed): ${(err as Error).message}`,
+        `[features-service] spend cost-parent projection failed (degrading the aggregate cost columns to observed): ${what}`,
       );
       return null;
     });
@@ -701,6 +730,10 @@ export async function computeFeatureRevenue(
   // cost reads (fetchRunsCostCents / fetchSpendBreakdown) so the engine derives net CAC/ROI/spend. GROSS
   // (the default) is byte-identical; the CROSS-ORG public revenue caller (staff) never sets it → gross.
   pricing: Pricing = "gross",
+  // The SALES FUNNEL the caller asked the spend block's cost-per-outcome columns to be priced on
+  // (`?funnel=`). Omitted → the brand's first declared funnel. A funnel the brand never declared is
+  // ignored rather than honoured: see fetchSpendCostParentsSoft.
+  requestedFunnel?: SalesFunnelKey,
 ): Promise<RevenueBody> {
   // The single campaign id the campaign-SCOPED downstream reads still take: the requested campaign
   // for a single scope, `undefined` for a family (no producer accepts a campaign list). The reads
@@ -722,7 +755,7 @@ export async function computeFeatureRevenue(
         fetchSpendBreakdown(brandId, campaignScope, featureSlug, headers, new Date(), pricing),
         fetchSequencesSoft(brandId, campaignScope, featureSlug, headers),
         fetchConversionCountsSoft(brandId),
-        fetchSpendCostParentsSoft(brandId, featureSlug, headers, campaignId, pricing),
+        fetchSpendCostParentsSoft(brandId, featureSlug, headers, campaignId, pricing, requestedFunnel),
       ]);
       // ROI/CAC ride ACTUAL spend; the `spend` block carries the committed total separately.
       return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, [], counts, parents), sequences);
@@ -765,7 +798,7 @@ export async function computeFeatureRevenue(
     // /audience-stats floors each audience against. Pre-caught → null on failure (never rejects
     // fail-loud Wave A; the columns then degrade to observed). Off-overview null (no spend block).
     includeSpend
-      ? fetchSpendCostParentsSoft(brandId, featureSlug, headers, campaignId, pricing)
+      ? fetchSpendCostParentsSoft(brandId, featureSlug, headers, campaignId, pricing, requestedFunnel)
       : Promise.resolve<SpendCostParents>(null),
   ]);
   const breakdown: SpendBreakdown | null = typeof costResult === "number" ? null : costResult;
@@ -905,9 +938,23 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
   const campaignId = req.query.campaignId as string | undefined;
   const groupBy = req.query.groupBy as string | undefined;
   const lensParam = req.query.lens as string | undefined;
+  const funnelParam = req.query.funnel as string | undefined;
 
   if (!brandId) {
     return res.status(400).json({ error: "brandId query parameter is required" });
+  }
+
+  // `?funnel=` names the SALES FUNNEL the spend block's cost-per-outcome columns are priced on — the
+  // vocabulary a brand actually declares, and the only one that tells a meeting bought with a reply from
+  // one bought with a click. Omitted → the brand's first declared funnel (never a default chain).
+  // An unknown value 400s: a silent fall-back would answer about a chain the caller did not ask for.
+  let requestedFunnel: SalesFunnelKey | undefined;
+  if (funnelParam != null && funnelParam !== "") {
+    const matched = matchSalesFunnelKey(funnelParam);
+    if (!matched) {
+      return res.status(400).json({ error: `funnel must be one of: ${SALES_FUNNEL_KEYS.join(", ")}` });
+    }
+    requestedFunnel = matched;
   }
 
   // Normalise every lens's fleet spellings (camel/kebab/legacy → canonical) before validating.
@@ -991,7 +1038,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
                 // own still belongs to the campaign, and dropping it would drop its leads.
                 const identity = families.identityOf(idsWithRuns[0]);
                 const scope = identity?.campaignIds ?? idsWithRuns;
-                const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, effectiveEconomics, false, pricing);
+                const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, effectiveEconomics, false, pricing, requestedFunnel);
                 return idsWithRuns.map((cid) => ({
                   campaignId: cid,
                   campaignIdentity: describeIdentity(identity, cid),
@@ -1029,6 +1076,10 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         brandId,
         campaignId: identity?.key ?? campaignId,
         lens,
+        // The funnel changes the cost basis of every cost-per-outcome column in the spend block, so it
+        // MUST be in the key — keyed on the CANONICAL value the validator resolved, so a legacy spelling
+        // shares one cell instead of fragmenting it. Absent → dropped → byte-identical to today's key.
+        funnel: requestedFunnel,
         pricing,
         econ,
       }),
@@ -1037,7 +1088,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
 
         // Overview (no lens) emits the canonical spend block; the lens path omits it (brand-total concept).
-        const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, lens, effectiveEconomics, !lens, pricing);
+        const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, lens, effectiveEconomics, !lens, pricing, requestedFunnel);
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 

@@ -10,7 +10,7 @@ import featuresRoutes from "./routes/features.js";
 import statsRoutes from "./routes/stats.js";
 import revenueRoutes from "./routes/revenue.js";
 import workflowProjectionRoutes from "./routes/workflow-projection.js";
-import goalArbitrationRoutes from "./routes/goal-arbitration.js";
+import funnelRankingRoutes from "./routes/funnel-ranking.js";
 import pipelineActivityRoutes from "./routes/pipeline-activity.js";
 import audienceStatsRoutes from "./routes/audience-stats.js";
 import publicRoutes from "./routes/public.js";
@@ -43,7 +43,7 @@ app.use(featuresRoutes);
 app.use(statsRoutes);
 app.use(revenueRoutes);
 app.use(workflowProjectionRoutes);
-app.use(goalArbitrationRoutes);
+app.use(funnelRankingRoutes);
 app.use(pipelineActivityRoutes);
 app.use(audienceStatsRoutes);
 

@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 
-// `goal-arbitration` imports the workflow-projection route module, which transitively imports the DB
+// `funnel-ranking` imports the workflow-projection route module, which transitively imports the DB
 // module (it throws at import time without FEATURES_SERVICE_DATABASE_URL). Mock it so this pure-logic
 // suite runs in CI, where no DB env is set.
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
-const { rankDeclaredFunnels } = await import("./goal-arbitration.js");
+const { rankDeclaredFunnels } = await import("./funnel-ranking.js");
 const { SALES_FUNNEL_KEYS } = await import("./sales-funnels.js");
 type Evidence = Awaited<ReturnType<typeof import("../routes/workflow-projection.js")["fetchWorkflowProjectionEvidence"]>>;
 

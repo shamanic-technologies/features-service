@@ -23,11 +23,14 @@ import {
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import {
   fetchEffectiveEconomics,
-  fetchBrandSavedEconomicsWithGoal,
+  fetchBrandSavedEconomics,
   BrandOwnershipError,
 } from "./sales-economics-client.js";
 import { fetchFleetSpendByDay, fetchPublicEmailStats } from "./public-stats-clients.js";
 import { mapWithConcurrency } from "./concurrency.js";
+import { fetchDeclaredFunnelKeys } from "./brand-funnels.js";
+import { SalesFunnelsUnavailableError } from "./sales-funnels-client.js";
+import type { SalesFunnelKey } from "./sales-funnels.js";
 
 /** The objective family the admin page charts, = the brand optimization-goal set. */
 export const OBJECTIVES: readonly Goal[] = GOALS;
@@ -474,94 +477,106 @@ export function addUtcDays(iso: string, delta: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-// ── Goal-bucketed cost per outcome (per-brand-goal scoping) ───────────────────
+// ── Funnel-bucketed cost per outcome (per-brand scoping by what the brand SELLS THROUGH) ─────
 //
-// A GOAL-BUCKETED objective's spend + outcomes count toward its cost-per-outcome CARD only when the
-// brand's optimization goal is RELEVANT to that card — otherwise a brand that optimizes for meetings
-// dilutes the fleet CPC. So a bucketed objective's fleet spend + outcomes are summed over ONLY the brands
-// whose declared `optimizationGoal` sits in that objective's bucket below. A GOAL-AGNOSTIC objective
-// (`GOAL_AGNOSTIC_OBJECTIVES` — currently `positiveReply`) is the EXCEPTION: its outcome is a raw measured
-// fact produced fleet-wide and its consumer claims "observed across every brand we run", so it pools over
-// EVERY contributing brand regardless of goal (see `bucketBrandsForObjective` / `GOAL_AGNOSTIC_OBJECTIVES`).
-// Because runs/email cost rows are NOT
-// goal-tagged (0 of ~42k carry a non-null goal), the bucketing is done consumer-side: enumerate the
-// feature's brands, resolve each brand's goal (brand-service saved economics), fetch each brand's dated
-// spend (runs, brandId-filtered) + dated outcomes (email-gateway, brandId-filtered), then aggregate per
-// bucket. This is composition of data the fleet already owns, NOT a read-side derivation of a missing tag.
+// A BUCKETED objective's spend + outcomes count toward its cost-per-outcome CARD only when the brand is
+// RELEVANT to that card — otherwise a brand that sells through meetings dilutes the fleet CPC. Relevance
+// used to be read off the brand's `optimizationGoal`. That is retired: the column is NOT NULL with a
+// server default, so a brand that never chose a goal was bucketed as a website-purchase brand nobody had
+// said it was, and brand-service is dropping it. Relevance is now the brand's DECLARED SALES FUNNEL SET —
+// a real declaration with no default behind it — and a bucketed objective sums only the brands that
+// declared a funnel in its bucket. A GOAL-AGNOSTIC objective (`GOAL_AGNOSTIC_OBJECTIVES` — currently
+// `positiveReply`) is the EXCEPTION: its outcome is a raw measured fact produced fleet-wide and its
+// consumer claims "observed across every brand we run", so it pools over EVERY contributing brand
+// regardless of what that brand sells through (see `bucketBrandsForObjective`).
+//
+// Because runs/email cost rows are NOT tagged with any of this (0 of ~42k carry a goal), the bucketing is
+// done consumer-side: enumerate the feature's brands, read each brand's declared funnels + saved
+// economics (brand-service), fetch each brand's dated spend (runs, brandId-filtered) + dated outcomes
+// (email-gateway, brandId-filtered), then aggregate per bucket. This is composition of data the fleet
+// already owns, NOT a read-side derivation of a missing tag.
 
 /**
- * Which `optimizationGoal`s contribute to each objective's cost-per-outcome bucket.
+ * Which DECLARED SALES FUNNELS put a brand in each objective's cost-per-outcome bucket.
  *
- * - **websiteVisit (CPC)** — every click-driven goal EXCEPT the reply-driven + meeting-driven ones
- *   (websitePurchase closes via a meeting, so it belongs to the meeting bucket, not CPC).
- * - **positiveReply / signup / formSubmission** — their own goal only.
- * - **meetingBooked** — meetingBooked + websitePurchase (a website purchase closes partly through a meeting).
- * - **websitePurchase** — its own goal only.
- * - **sales** — its own goal only (the combined goal has its own denominator; the visit + reply channels
- *   are already unioned inside its cost, so it is NOT folded into the CPC or reply buckets).
+ * Read each row as "whose spend legitimately produced this outcome":
+ * - **websiteVisit (CPC)** — every CLICK-bought chain: the website meeting funnel, website purchases and
+ *   the form magnet all buy their first signal with a click. The conversation meeting funnel is excluded,
+ *   exactly as the reply-driven goal was: its link-light copy yields incidental, artificially-low click
+ *   rates that dilute the fleet CPC.
+ * - **signup** — `website_purchases` (visit → signup → paid: the signup is that chain's own step).
+ * - **formSubmission** — `form_magnet`.
+ * - **meetingBooked** — BOTH meeting chains. They are priced apart everywhere it matters (each on its own
+ *   channel); this bucket only asks whose spend bought meetings, and both did.
+ * - **websitePurchase** — `website_purchases`.
+ * - **sales** — every chain: each one terminates in a paying client, which is what this objective prices.
+ * - **whatsappConversation** — EMPTY, and deliberately so. Its outcome needs a WhatsApp link in the email,
+ *   which no declared funnel expresses, so there is no honest way to identify those brands now that the
+ *   goal is gone. An empty bucket yields `null` — "we could not compute this" — which is the truth, and
+ *   is what the surface already renders for an unbacked objective. Substituting "all brands" would print
+ *   a fleet CPC under a WhatsApp label.
  *
- * A brand may fall in SEVERAL buckets (a `signup` brand feeds both CPC and cost-per-signup) — intended:
- * each card is a distinct ratio over a distinct denominator, and the same spend legitimately produced
- * clicks AND signups.
+ * A brand may fall in SEVERAL buckets (a `website_purchases` brand feeds CPC, signup, purchase and sales)
+ * — intended: each card is a distinct ratio over a distinct denominator, and the same spend legitimately
+ * produced clicks AND signups.
  */
-export const OBJECTIVE_GOAL_BUCKET: Record<Goal, readonly Goal[]> = {
-  websiteVisit: ["websiteVisit", "signup", "formSubmission"],
-  positiveReply: ["positiveReply"],
-  signup: ["signup"],
-  formSubmission: ["formSubmission"],
-  meetingBooked: ["meetingBooked", "websitePurchase"],
-  websitePurchase: ["websitePurchase"],
-  sales: ["sales"],
-  // Click-outcome goal (the WhatsApp-link click IS the outcome) — its own CPC denominator, like a
-  // single-outcome objective; not folded into the websiteVisit CPC bucket.
-  whatsappConversation: ["whatsappConversation"],
+export const OBJECTIVE_FUNNEL_BUCKET: Record<Goal, readonly SalesFunnelKey[]> = {
+  websiteVisit: ["sales_meetings_from_website", "website_purchases", "form_magnet"],
+  positiveReply: ["sales_meetings_from_conversation"],
+  signup: ["website_purchases"],
+  formSubmission: ["form_magnet"],
+  meetingBooked: ["sales_meetings_from_conversation", "sales_meetings_from_website"],
+  websitePurchase: ["website_purchases"],
+  sales: ["sales_meetings_from_conversation", "sales_meetings_from_website", "website_purchases", "form_magnet"],
+  whatsappConversation: [],
 };
 
-/** True when a brand whose optimization goal is `goal` contributes to `objective`'s cost bucket.
- * Consulted ONLY for the goal-BUCKETED objectives — the goal-AGNOSTIC objectives (below) bypass the
- * table entirely (every contributing brand counts), so this predicate is not the last word for them. */
-export function goalInObjectiveBucket(objective: Goal, goal: Goal): boolean {
-  return OBJECTIVE_GOAL_BUCKET[objective].includes(goal);
+/** True when a brand that declared `funnels` contributes to `objective`'s cost bucket. Consulted ONLY for
+ * the BUCKETED objectives — the goal-AGNOSTIC ones (below) bypass the table entirely (every contributing
+ * brand counts), so this predicate is not the last word for them. */
+export function funnelsInObjectiveBucket(objective: Goal, funnels: readonly SalesFunnelKey[]): boolean {
+  const bucket = OBJECTIVE_FUNNEL_BUCKET[objective];
+  return funnels.some((f) => bucket.includes(f));
 }
 
 /**
- * Objectives whose cross-org cost-per-outcome is GOAL-AGNOSTIC: their outcome is a RAW MEASURED fact
- * (an observed event, not a projection through economics) produced by the ENTIRE cold-email fleet
- * regardless of a brand's declared `optimizationGoal`, AND the surface consuming it claims the number is
- * "observed across every brand we run". So EVERY contributing brand's outcome + attributable spend counts
- * — NOT only the brands whose declared goal matches. These bypass `OBJECTIVE_GOAL_BUCKET`.
+ * Objectives whose cross-org cost-per-outcome is pooled over the WHOLE fleet: their outcome is a RAW
+ * MEASURED fact (an observed event, not a projection through economics) produced by the ENTIRE cold-email
+ * fleet regardless of what a brand sells through, AND the surface consuming it claims the number is
+ * "observed across every brand we run". So EVERY contributing brand's outcome + attributable spend counts.
+ * These bypass `OBJECTIVE_FUNNEL_BUCKET`.
  *
  * Currently just `positiveReply`. A positive reply can come from ANY cold-email recipient (hitting reply
  * to any brand's outreach), and the public homepage headlines its cost as the fleet-wide average CAC
- * ("the average cost of acquisition observed across every brand we run"). Scoping it to
- * `optimizationGoal=positiveReply` brands (a tiny subset) made the headline a biased, small-denominator
- * metric whose weekly delta swung on noise — directly contradicting the "every brand" claim.
+ * ("the average cost of acquisition observed across every brand we run"). Scoping it to the brands whose
+ * chain is reply-bought (a tiny subset) made the headline a biased, small-denominator metric whose weekly
+ * delta swung on noise — directly contradicting the "every brand" claim.
  *
- * DELIBERATELY NOT goal-agnostic (kept goal-bucketed via `OBJECTIVE_GOAL_BUCKET`) — reconciles with
- * PR #499, which added the bucketing on purpose:
- *  - **websiteVisit (CPC)** — a click is also raw-measured, but #499 deliberately EXCLUDES reply/meeting
- *    -goal brands whose link-light copy yields incidental, artificially-low click rates that dilute the
- *    fleet CPC, and the CPC card carries NO fleet-wide public claim (staff-analytical). That deliberate
- *    scoping is preserved: the metric's scope matches its consumer's claim (positiveReply claims "every
- *    brand" → agnostic; CPC does not → optimized subset).
- *  - **whatsappConversation** — its outcome (a WhatsApp-link click) requires a WhatsApp link in the email,
- *    so it is NOT produced fleet-wide (only WhatsApp-goal brands generate it). Own-goal bucket stays.
+ * DELIBERATELY NOT pooled fleet-wide:
+ *  - **websiteVisit (CPC)** — a click is also raw-measured, but the reply-bought chain is excluded on
+ *    purpose (link-light copy → incidental, artificially-low click rates), and the CPC card carries NO
+ *    fleet-wide public claim. The metric's scope matches its consumer's claim.
+ *  - **whatsappConversation** — its outcome requires a WhatsApp link in the email, so it is not produced
+ *    fleet-wide.
  *  - **the PROJECTED objectives** (signup / formSubmission / meetingBooked / websitePurchase / sales) —
  *    each projects spend through a brand's conversion economics, which is only meaningful for brands whose
- *    funnel those economics describe. Goal-relevance is load-bearing here; #499's bucketing is correct.
+ *    chain those economics describe.
  */
 export const GOAL_AGNOSTIC_OBJECTIVES: readonly Goal[] = ["positiveReply"];
 
-/** True when `objective`'s cost-per-outcome is pooled over ALL contributing brands regardless of their
- * declared optimization goal (see `GOAL_AGNOSTIC_OBJECTIVES`). */
+/** True when `objective`'s cost-per-outcome is pooled over ALL contributing brands regardless of what
+ * they sell through (see `GOAL_AGNOSTIC_OBJECTIVES`). */
 export function isGoalAgnosticObjective(objective: Goal): boolean {
   return GOAL_AGNOSTIC_OBJECTIVES.includes(objective);
 }
 
-/** One feature brand's goal + saved economics + its dated spend / outcome evidence (cross-org). */
+/** One feature brand's DECLARED SALES FUNNELS + saved economics + its dated spend / outcome evidence
+ * (cross-org). No goal: a brand is placed in a bucket by what it declared it sells through. */
 export interface BucketedBrand {
   brandId: string;
-  goal: Goal;
+  /** The chains this brand declared it sells through. Never empty — a brand with no declaration is
+   * omitted from the dataset entirely rather than carried with a substituted chain. */
+  funnels: SalesFunnelKey[];
   economics: SalesEconomics;
   /** Dated fleet spend for THIS brand (USD per UTC day). */
   spendByDay: Map<string, number>;
@@ -571,11 +586,11 @@ export interface BucketedBrand {
 
 /** The brands of a feature that belong to `objective`'s cost bucket. A GOAL-AGNOSTIC objective
  * (`positiveReply` — raw measured, produced fleet-wide, publicly claimed "across every brand") pools
- * over EVERY contributing brand regardless of its declared goal; every other objective filters by the
- * `OBJECTIVE_GOAL_BUCKET` table (PR #499's deliberate goal-relevance scoping). */
+ * over EVERY contributing brand regardless of what it sells through; every other objective filters by
+ * the `OBJECTIVE_FUNNEL_BUCKET` table. */
 export function bucketBrandsForObjective(brands: BucketedBrand[], objective: Goal): BucketedBrand[] {
   if (isGoalAgnosticObjective(objective)) return brands;
-  return brands.filter((b) => goalInObjectiveBucket(objective, b.goal));
+  return brands.filter((b) => funnelsInObjectiveBucket(objective, b.funnels));
 }
 
 /** Sum a set of brands' dated spend into one day→USD map. */
@@ -777,30 +792,34 @@ export function buildCostPerOutcomeDistribution(params: {
 }
 
 /**
- * Fetch the goal-bucketed per-brand dataset for a feature (cross-org): enumerate the feature's distinct
- * brands, resolve each brand's saved economics + optimization goal, and fetch each brand's dated spend
- * (runs) + dated clicks / positive replies (email-gateway). A brand with no saved goal/economics is
- * OMITTED (it cannot be bucketed). One fetch per brand, run concurrently. Feature-level (objective-
- * independent) so the trend + lifetime surfaces can share ONE cached dataset. Fails loud on any
- * transport / non-OK error (essential input, not optional enrichment); a stale membership
- * (BrandOwnershipError) is skipped, mirroring `fetchFleetBrandEconomics`.
+ * Fetch the funnel-bucketed per-brand dataset for a feature (cross-org): enumerate the feature's distinct
+ * brands, read each brand's saved economics + the SALES FUNNELS it declared it sells through, and fetch
+ * each brand's dated spend (runs) + dated clicks / positive replies (email-gateway). One fetch per brand,
+ * run concurrently. Feature-level (objective-independent) so the trend + lifetime surfaces can share ONE
+ * cached dataset. Fails loud on any transport / non-OK error (essential input, not optional enrichment).
+ *
+ * A brand is OMITTED — never carried on a substituted chain — when it has no saved economics, or when its
+ * declaration cannot be read or is EMPTY (`SalesFunnelsUnavailableError`, logged loud). That is the same
+ * treatment the retired goal read gave a brand with no goal, and it is the only honest one: a brand that
+ * has not said what it sells through cannot be placed in a bucket, and placing it anyway is exactly the
+ * fiction the defaulted goal column produced. A stale membership (`BrandOwnershipError`) is likewise
+ * skipped, mirroring `fetchFleetBrandEconomics`.
  *
  * WHICH ORG'S CONFIGURATION — a brand id is shared by every org that claims the same domain, so the
- * goal + economics belong to an (org, brand) pair and brand-service will not guess for a brand several
- * orgs claim. The claiming org comes from the feature MEMBERSHIP that put the brand in this dataset
- * (`brandToOrg`, byte-for-byte how `fetchFleetBrandEconomics` above resolves it) — a real claimant, not
- * a stand-in. The dataset deliberately stays ONE ROW PER BRAND: its spend + outcome legs are read at
- * brand grain (runs `brandId`, email-gateway `brandId`), so emitting a row per (org, brand) would count
- * a multi-org brand's fleet spend once per claiming org and inflate every bucket it lands in.
+ * declared funnels + economics belong to an (org, brand) pair and brand-service will not guess for a
+ * brand several orgs claim. The claiming org comes from the feature MEMBERSHIP that put the brand in this
+ * dataset (`brandToOrg`, byte-for-byte how `fetchFleetBrandEconomics` above resolves it) — a real
+ * claimant, not a stand-in. The dataset deliberately stays ONE ROW PER BRAND: its spend + outcome legs are
+ * read at brand grain (runs `brandId`, email-gateway `brandId`), so emitting a row per (org, brand) would
+ * count a multi-org brand's fleet spend once per claiming org and inflate every bucket it lands in.
  */
 // Cap the per-brand fan-out so the dataset build does not burst ~3×N concurrent sockets at
 // runs-service / email-gateway / brand-service at once. Even a single (single-flighted) build of N≈30
-// brands would otherwise open ~90 simultaneous cross-service connections, spiking load on cold-Neon
-// siblings; a bounded pool smooths it into waves. Fail-loud is preserved — any worker rejection
-// propagates out of the pool.
-const GOAL_BUCKET_BRAND_CONCURRENCY = 8;
+// brands would otherwise open ~90 simultaneous cross-service connections; a bounded pool smooths it into
+// waves. Fail-loud is preserved — any worker rejection propagates out of the pool.
+const FUNNEL_BUCKET_BRAND_CONCURRENCY = 8;
 
-export async function fetchGoalBucketDataset(featureSlug: string): Promise<BucketedBrand[]> {
+export async function fetchFunnelBucketDataset(featureSlug: string): Promise<BucketedBrand[]> {
   const memberships = await fetchFeatureMemberships(featureSlug);
   const brandToOrg = new Map<string, string>();
   for (const m of memberships) {
@@ -809,10 +828,21 @@ export async function fetchGoalBucketDataset(featureSlug: string): Promise<Bucke
 
   const perBrand = await mapWithConcurrency(
     [...brandToOrg.entries()],
-    GOAL_BUCKET_BRAND_CONCURRENCY,
+    FUNNEL_BUCKET_BRAND_CONCURRENCY,
     async ([brandId, orgId]): Promise<BucketedBrand | null> => {
-      const { economics, goal } = await fetchBrandSavedEconomicsWithGoal(brandId, orgId);
-      if (!economics || !goal) return null;
+      const [{ economics }, funnels] = await Promise.all([
+        fetchBrandSavedEconomics(brandId, orgId),
+        fetchDeclaredFunnelKeys(brandId, orgId).catch((error): SalesFunnelKey[] => {
+          if (error instanceof SalesFunnelsUnavailableError) {
+            console.warn(
+              `[features-service] funnel-bucket dataset: brand ${brandId} (org ${orgId}) has declared no readable sales funnel — omitted from every bucket rather than placed on a substituted chain: ${error.message}`,
+            );
+            return [];
+          }
+          throw error;
+        }),
+      ]);
+      if (!economics || funnels.length === 0) return null;
 
       const [spendByDay, dayOutcomeMap] = await Promise.all([
         fetchFleetSpendByDay(featureSlug, brandId),
@@ -828,7 +858,7 @@ export async function fetchGoalBucketDataset(featureSlug: string): Promise<Bucke
         });
       }
 
-      return { brandId, goal, economics, spendByDay, outcomesByDay };
+      return { brandId, funnels, economics, spendByDay, outcomesByDay };
     },
   );
 
