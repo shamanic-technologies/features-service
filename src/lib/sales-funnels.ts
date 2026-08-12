@@ -116,3 +116,27 @@ export function matchSalesFunnelKey(raw: string): SalesFunnelKey | null {
 
 /** Stable order for tie-breaking a ranking, so the same evidence always produces the same list. */
 export const salesFunnelIndex = (key: SalesFunnelKey): number => SALES_FUNNEL_KEYS.indexOf(key);
+
+/**
+ * The GOAL a funnel ECHOES, derived FROM the funnel key — never the reverse.
+ *
+ * A goal is the poorer word and it is retired as an INPUT: both meeting funnels echo `meetingBooked`,
+ * so the echo is lossy by construction and can never be read back as a funnel's identity. It exists
+ * only so the fields consumers still read (`arbitration.goal`, `rows[].workflow`, the projection's
+ * `goal` / `objective` echoes, the conversion columns a chain terminates in) keep resolving while the
+ * fleet migrates to the funnel key.
+ *
+ * `website_purchases` echoes `signup`, NOT `websitePurchase`: its chain is visit → signup → paid, and
+ * the `websitePurchase` goal is the full self-serve-plus-meeting close funnel, whose rates are not this
+ * chain's. That is the same routing `funnelToProjectionInputs` applies.
+ *
+ * ⚠️ DO NOT add the inverse map. A goal→funnel table would be exactly the compatibility layer this
+ * retirement exists to avoid, and it could not be written honestly anyway (one `meetingBooked` maps to
+ * two funnels bought through two different channels).
+ */
+export const SALES_FUNNEL_GOAL_ECHO: Record<SalesFunnelKey, "meetingBooked" | "signup" | "formSubmission"> = {
+  sales_meetings_from_conversation: "meetingBooked",
+  sales_meetings_from_website: "meetingBooked",
+  website_purchases: "signup",
+  form_magnet: "formSubmission",
+};

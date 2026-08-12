@@ -174,7 +174,7 @@ export function declaredEconomicsForFunnel(
 
 /**
  * Merge a funnel's declared terms OVER a brand's effective economics — the SAME merge the ranking does
- * (`mergeEconomics` in goal-arbitration.ts): only stated fields win, and a rate the brand never declared
+ * (`mergeEconomics` in funnel-ranking.ts): only stated fields win, and a rate the brand never declared
  * is absent here rather than 0, so it falls through to the effective value instead of zero-collapsing
  * the chain.
  */

@@ -33,14 +33,22 @@
  * cross-org response keeps a transitional byte-equal `purchase` alias of `websitePurchase` so the admin
  * dashboard keeps rendering until it migrates.
  *
- * ⚠️ TWO ENTRY POINTS, TWO RESOLVERS — the token `sales` means DIFFERENT things depending on which door
- * it came through, so the resolvers below are split by ENTRY POINT and must never be merged:
- *   - a value on a REQUEST PARAM (`goal` / `objective` / `lens`, sent by the dashboard or
- *     campaign-service) → `matchCombinedSalesGoal` + `matchWebsitePurchaseGoal`: `sales` = the COMBINED
- *     goal, because the dashboard's local enum spells the combined goal `sales`.
- *   - a value in a BRAND-SERVICE PAYLOAD (`salesEconomics.optimizationGoal`, a declared sales funnel's
- *     `goal` / `currentGoal`) → `matchBrandServiceGoal`: `sales` = WEBSITE PURCHASE, brand-service's
- *     older, data-backed meaning, which it documents as unchangeable.
+ * ⚠️ THIS VOCABULARY IS AN ECHO NOW, AND IT HAS EXACTLY ONE ENTRY POINT LEFT: a CALLER's request param
+ * (`goal` / `objective` / `lens`). On that door a bare `sales` means the COMBINED goal, because the
+ * dashboard's local enum spells the combined goal `sales` and sends it verbatim.
+ *
+ * The OTHER door — a value read out of a BRAND-SERVICE PAYLOAD, where a bare `sales` meant WEBSITE
+ * PURCHASE — is GONE, along with its resolver (`matchBrandServiceGoal` and friends, deleted). Nothing in
+ * this service reads a brand's `optimizationGoal` any more: that column carries a NOT NULL server
+ * default, so a brand that never chose a goal read back as selling through website purchases when nobody
+ * had said so, and brand-service is dropping it. What a brand sells through is its DECLARED SALES FUNNEL
+ * SET (`sales-funnels.ts` / `brand-funnels.ts`), and every internal computation keys on that.
+ *
+ * DO NOT re-introduce a goal→funnel mapping here as a compatibility layer. The point of the retirement
+ * is that the vocabulary is gone, not translated. The one tolerance that remains is the INBOUND request
+ * spelling above, which is a deprecation with a stated end (the dashboard migrates to `?funnel=`).
+ * A funnel→goal ECHO exists in the opposite direction only (`SALES_FUNNEL_GOAL_ECHO`, derived FROM the
+ * funnel key), so consumers that still read a `goal` field keep reading one.
  * Pinned by `goals-entry-points.test.ts`.
  */
 export type Goal = "signup" | "meetingBooked" | "websitePurchase" | "sales" | "websiteVisit" | "positiveReply" | "formSubmission" | "whatsappConversation";
@@ -151,17 +159,6 @@ export function matchCombinedSalesGoal(raw: string): CombinedSalesGoal | null {
 }
 
 /**
- * Recognise the COMBINED-sales goal on a value that arrived in a BRAND-SERVICE PAYLOAD — the twin of
- * `matchCombinedSalesGoal` for the producer entry point. brand-service's wire token for the combined
- * goal is `combined_sales` (its runtime token is `combinedSales`); a bare `sales` on that wire is the
- * LEGACY spelling of website purchase and is deliberately NOT matched here.
- */
-export function matchDeclaredCombinedSalesGoal(raw: string): CombinedSalesGoal | null {
-  const norm = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
-  return norm === "combinedsales" ? "sales" : null;
-}
-
-/**
  * Recognise the "website purchase" goal (the RENAMED former `purchase` goal) from ANY of the fleet's
  * spellings — runtime camelCase (`websitePurchase`), stored/dashboard snake_case (`website_purchase`),
  * kebab, AND the LEGACY `purchase` / `purchases` spellings (campaign-service forwards the brand's
@@ -173,68 +170,4 @@ export function matchWebsitePurchaseGoal(raw: string): WebsitePurchaseGoal | nul
   return norm === "websitepurchase" || norm === "websitepurchases" || norm === "purchase" || norm === "purchases"
     ? "websitePurchase"
     : null;
-}
-
-/**
- * Recognise the website-purchase goal on a value that arrived in a BRAND-SERVICE PAYLOAD — the twin of
- * `matchWebsitePurchaseGoal` for the producer entry point, and the ONLY place a bare `sales` resolves to
- * website purchase. brand-service's internal read collapses the `website_purchase` wire sub-type onto
- * the legacy `sales` token, so that is what every stored purchase-brand reads back as.
- *
- * ⚠️ Never reach for this on a caller's request param — there a bare `sales` means COMBINED sales.
- */
-export function matchBrandServiceWebsitePurchaseGoal(raw: string): WebsitePurchaseGoal | null {
-  const norm = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
-  return norm === "sales" ? "websitePurchase" : matchWebsitePurchaseGoal(raw);
-}
-
-/**
- * Resolve a goal value that arrived in a BRAND-SERVICE PAYLOAD — the ONLY entry point this resolver
- * serves. Two payload fields feed it today: `salesEconomics.optimizationGoal` on
- * `GET /internal/brands/:id/sales-economics` (`fetchBrandSavedEconomicsWithGoal`), and a declared sales
- * funnel's `goal` / `currentGoal` on `GET /internal/brands/:brandId/sales-funnels` (`authorized-goals`).
- *
- * **`sales` FROM BRAND-SERVICE MEANS WEBSITE PURCHASE.** That is brand-service's older, data-backed
- * meaning, and it is documented there as unchangeable: `sales` is the legacy wire spelling of the
- * website-purchase goal, "so it ALWAYS means website-purchase, and can NEVER be re-purposed for the new
- * combined goal (that would silently reinterpret every stored purchase-brand)". Its internal read
- * collapses the wire sub-type, so `website_purchase` brands read back as `sales` — verified live on
- * brand `emailtoolshub.com` (stored `website_purchase`, current goal `purchase`) → `"sales"`. The
- * combined goal has its own brand-new token, `combined_sales` / runtime `combinedSales`, which the old
- * dashboard never sends and which therefore can never collide with a stored purchase row.
- *
- * ⚠️ This is the OPPOSITE of what `sales` means on a REQUEST PARAM, where the dashboard's local enum
- * spells the COMBINED goal `sales` and sends it as the `goal` param. Two entry points, two meanings, two
- * resolvers: caller params go through `matchCombinedSalesGoal`, producer payloads through this one. Do
- * NOT collapse them — an earlier doc comment here asserted the `sales`=purchase mapping "is gone post
- * fleet-rename", which was never true of brand-service, and every website-purchase brand in production
- * was consequently bucketed as combined sales in the fleet cost-per-outcome benchmark.
- *
- * The stored spellings otherwise differ from the runtime `CurrentGoal` — the stored layer pluralises
- * signups and says `booked_meetings` for a booked meeting. Accepts the runtime camel spellings + the
- * legacy `purchase` (→ websitePurchase) for tolerance. Returns null for an unrecognised value (a brand
- * with no recognised goal is excluded from every cost bucket).
- */
-export function matchBrandServiceGoal(raw: string): Goal | null {
-  const single = matchSingleStepGoal(raw);
-  if (single) return single;
-  if (matchFormSubmissionGoal(raw)) return "formSubmission";
-  // `combined_sales` / `combinedSales` ONLY — a bare `sales` falls through to website purchase below.
-  if (matchDeclaredCombinedSalesGoal(raw)) return "sales";
-  // incl. the legacy `sales` + `purchase` spellings and the preferred `website_purchase`.
-  if (matchBrandServiceWebsitePurchaseGoal(raw)) return "websitePurchase";
-  if (matchWhatsappGoal(raw)) return "whatsappConversation";
-  switch (raw) {
-    case "signups":
-    case "signup":
-      return "signup";
-    case "booked_meetings":
-    // `sales_meetings` is the dashboard's local spelling of the SAME goal; brand-service accepts both
-    // on write and can echo either on a declared sales funnel, so both must map here.
-    case "sales_meetings":
-    case "meetingBooked":
-      return "meetingBooked";
-    default:
-      return null;
-  }
 }

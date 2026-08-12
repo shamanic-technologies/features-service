@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
@@ -6,7 +6,7 @@ import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { declaredFunnelsToRank } from "../lib/declared-funnels.js";
 import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError, UnknownSalesFunnelError } from "../lib/sales-funnels-client.js";
-import { rankDeclaredFunnels } from "../lib/goal-arbitration.js";
+import { rankDeclaredFunnels } from "../lib/funnel-ranking.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
 import { fetchWorkflowProjectionEvidence } from "./workflow-projection.js";
@@ -14,7 +14,15 @@ import type { Identity } from "../lib/workflow-projection-grains.js";
 
 const router = Router();
 
-// ── GET /features/:featureSlug/goal-arbitration ──────────────────────────────
+// ── GET /features/:featureSlug/funnel-ranking ────────────────────────────────
+//
+// THE NAME SAYS WHAT IT DOES. This endpoint used to be `goal-arbitration`, and it used to BE the
+// decision: campaign-service asked which goal to work and ran the one that came back. It does not
+// arbitrate anything any more, and the objective is not a variable — it is always the same one, maximise
+// return per dollar. So it RANKS the sales funnels a brand declared it sells through, best return first.
+// `/features/:featureSlug/goal-arbitration` stays mounted as a DEPRECATED ALIAS serving a byte-identical
+// body, for exactly as long as it takes the fleet's callers to move to `/funnel-ranking`; its removal is
+// a separate change.
 //
 // ONE answer per brand: EVERY sales funnel the brand declared, ranked by what it returns per dollar,
 // plus the best workflow and per-audience evidence for the best-returning one.
@@ -23,7 +31,7 @@ const router = Router();
 // campaign-service works every funded funnel, each paced against its own ceiling. This endpoint answers
 // the other question: which funnel has returned best, and how do the others compare, so a customer can
 // decide where to move their money. Every declared funnel is ranked on its HISTORY, funded or not;
-// there is deliberately no billing read here (see lib/goal-arbitration.ts). The legacy
+// there is deliberately no billing read here (see lib/funnel-ranking.ts). The legacy
 // `arbitration` / `workflow` / `rows` fields stay byte-compatible for campaign-service, which still
 // reads them to pace a brand that has no per-funnel funding, and are derived from the same pick.
 //
@@ -45,7 +53,7 @@ const router = Router();
 // confuse it with: brand-service refuses to switch off an org's last active funnel, so having
 // answered always leaves at least one.
 
-router.get("/features/:featureSlug/goal-arbitration", apiKeyAuth, async (req, res) => {
+const handleFunnelRanking = async (req: Request, res: Response) => {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
   const brandId = req.query.brandId as string | undefined;
@@ -119,6 +127,13 @@ router.get("/features/:featureSlug/goal-arbitration", apiKeyAuth, async (req, re
     console.error("[features-service] Funnel ranking error:", error);
     res.status(502).json({ error: "Failed to rank the brand's declared sales funnels" });
   }
-});
+};
+
+// The canonical path, named for what it does.
+router.get("/features/:featureSlug/funnel-ranking", apiKeyAuth, handleFunnelRanking);
+// DEPRECATED ALIAS — the pre-retirement path, kept byte-identical while the fleet's callers migrate
+// (campaign-service reads `arbitration` / `workflow` / `rows` off it in production to pace a brand with
+// no per-funnel funding). Removing it is a SEPARATE change, made once no caller is left on it.
+router.get("/features/:featureSlug/goal-arbitration", apiKeyAuth, handleFunnelRanking);
 
 export default router;

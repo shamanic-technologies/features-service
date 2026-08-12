@@ -25,7 +25,7 @@ import {
   recentWindowCostPerOutcome,
   windowBaseOutcome,
   fetchFleetBrandEconomics,
-  fetchGoalBucketDataset,
+  fetchFunnelBucketDataset,
   bucketBrandsForObjective,
   mergeSpendByDay,
   mergeOutcomesByDay,
@@ -283,29 +283,29 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 const goalBucketDatasetCache: PublicCache = new Map();
 
 /** Test seam — reset the shared goal-bucketed dataset cache (entries + in-flight). */
-export function __resetGoalBucketDatasetCache(): void {
+export function __resetFunnelBucketDatasetCache(): void {
   clearPublicCache(goalBucketDatasetCache);
 }
 
 /** Test seam — expire ONLY the fresh window (keeping the stale payload), to assert a past-fresh read is
  * served from the last-known dataset WITHOUT a synchronous request-path fan-out. */
-export function __expireGoalBucketFreshCacheForTest(): void {
+export function __expireFunnelBucketFreshCacheForTest(): void {
   expirePublicCacheFreshWindow(goalBucketDatasetCache);
 }
 
 /** Test seam — await any in-flight background goal-bucket dataset refresh(es), so a follow-up request
  * deterministically observes the refreshed dataset. */
-export async function __awaitGoalBucketRefresh(): Promise<void> {
+export async function __awaitFunnelBucketRefresh(): Promise<void> {
   await awaitPublicCacheRefresh(goalBucketDatasetCache);
 }
 
-function getGoalBucketDatasetCached(featureSlug: string): Promise<BucketedBrand[]> {
+function getFunnelBucketDatasetCached(featureSlug: string): Promise<BucketedBrand[]> {
   return servedPublicCached<BucketedBrand[]>({
     cache: goalBucketDatasetCache,
     key: featureSlug,
     windows: LIFETIME_AGGREGATE_WINDOWS,
     label: "goal-bucket dataset",
-    compute: () => fetchGoalBucketDataset(featureSlug),
+    compute: () => fetchFunnelBucketDataset(featureSlug),
   });
 }
 
@@ -1179,7 +1179,7 @@ export async function handleCostPerOutcomeTrend(
     // Goal-bucketed: sum spend + outcomes over ONLY the brands whose optimization goal is relevant to
     // this objective (e.g. CPC excludes reply-driven + meeting-driven brands) so the moving average is
     // not diluted by off-goal spend.
-    const dataset = await getGoalBucketDatasetCached(featureSlug);
+    const dataset = await getFunnelBucketDatasetCached(featureSlug);
     const bucket = bucketBrandsForObjective(dataset, objective);
     const spendByDay = mergeSpendByDay(bucket);
     const outcomesByDay = mergeOutcomesByDay(bucket);
@@ -1726,7 +1726,7 @@ export async function handleCostPerOutcomeLifetime(
     // Goal-bucketed: each objective's pooled all-history cost is summed over ONLY the brands whose
     // optimization goal is relevant to it (the window→∞ limit of the objective's bucketed trend). The
     // SAME per-brand dataset the trend uses. Top-level totals sum ALL bucketable brands (context).
-    const dataset = await getGoalBucketDatasetCached(featureSlug);
+    const dataset = await getFunnelBucketDatasetCached(featureSlug);
     const objectives = buildBucketedLifetimeAverages(dataset);
 
     let totalSpentUsd = 0;
@@ -1761,7 +1761,7 @@ export async function handleCostPerOutcomeLifetime(
 // BRAND: each brand contributes ONE data point = its pooled all-history cost-per-outcome, goal-bucketed
 // exactly like the trend + lifetime surfaces (a brand feeds an objective only when its optimization goal
 // is in that objective's bucket), so the contributing brand set + central tendency stay coherent with
-// those surfaces. Reuses the SAME shared per-brand dataset (getGoalBucketDatasetCached).
+// those surfaces. Reuses the SAME shared per-brand dataset (getFunnelBucketDatasetCached).
 //
 // PUBLIC / no-auth → the payload carries ONLY aggregate histogram buckets + summary stats, NEVER a
 // per-brand value or id. Empty/soft below MIN_DISTRIBUTION_BRANDS: buckets = [] and every scalar null
@@ -1829,7 +1829,7 @@ export async function handleCostPerOutcomeDistribution(
     compute: async () => {
     // Goal-bucketed: only the brands whose optimization goal is relevant to this objective contribute a
     // data point (a reply-driven brand does not appear in the CPC histogram). SAME dataset as trend/lifetime.
-    const dataset = await getGoalBucketDatasetCached(featureSlug);
+    const dataset = await getFunnelBucketDatasetCached(featureSlug);
     const bucketBrands = bucketBrandsForObjective(dataset, objective);
     const distribution = buildCostPerOutcomeDistribution({
       objective,

@@ -2351,7 +2351,7 @@
           "recommendedBudgetUsd"
         ]
       },
-      "GoalArbitrationResponse": {
+      "FunnelRankingResponse": {
         "type": "object",
         "properties": {
           "featureSlug": {
@@ -4088,20 +4088,29 @@
                 "autoTopupEnabled": {
                   "type": "boolean"
                 },
-                "optimizationGoal": {
+                "salesFunnels": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "sales_meetings_from_conversation",
+                      "sales_meetings_from_website",
+                      "website_purchases",
+                      "form_magnet"
+                    ]
+                  },
+                  "description": "The SALES FUNNELS this (org, brand) DECLARED it sells through, catalogue order. Replaces the retired optimizationGoal, which was a single NOT NULL server-defaulted column and therefore read 'website purchases' for brands that had chosen nothing. `[]` when the declaration is missing or unreadable — a producer gap surfaced, never a substituted chain (every funnel-keyed field on the row then reads null)."
+                },
+                "primarySalesFunnel": {
                   "type": "string",
                   "nullable": true,
                   "enum": [
-                    "signup",
-                    "meetingBooked",
-                    "websitePurchase",
-                    "sales",
-                    "websiteVisit",
-                    "positiveReply",
-                    "formSubmission",
-                    "whatsappConversation"
+                    "sales_meetings_from_conversation",
+                    "sales_meetings_from_website",
+                    "website_purchases",
+                    "form_magnet"
                   ],
-                  "description": "The brand's 'Maximising X' goal (canonical camelCase). websitePurchase = renamed former purchase; sales = combined-sales goal. null when the brand saved no recognised goal."
+                  "description": "The ONE funnel the single-valued fields on this row (conversion tracker, best audience, best workflow) are computed on: the brand's first declared funnel in catalogue order. A deterministic pick over the brand's OWN declarations — not a default. null when nothing is declared."
                 },
                 "conversionTracker": {
                   "type": "object",
@@ -4501,7 +4510,8 @@
                 "orgBalanceUsd",
                 "orgActualBalanceUsd",
                 "autoTopupEnabled",
-                "optimizationGoal",
+                "salesFunnels",
+                "primarySalesFunnel",
                 "conversionTracker",
                 "breakevenCacUsd",
                 "ltrUsd",
@@ -6413,6 +6423,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "The SALES FUNNEL the spend block's cost-per-outcome columns are priced on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`). Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. Omitted → the brand's FIRST DECLARED funnel in catalogue order (a deterministic pick over the brand's own declarations, never a default chain); a brand that has declared nothing keeps OBSERVED columns (null at 0 outcomes), never a substituted chain. A value the brand never declared is ignored in favour of that same pick. An unrecognised value is a 400."
+            },
+            "required": false,
+            "description": "The SALES FUNNEL the spend block's cost-per-outcome columns are priced on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`). Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. Omitted → the brand's FIRST DECLARED funnel in catalogue order (a deterministic pick over the brand's own declarations, never a default chain); a brand that has declared nothing keeps OBSERVED columns (null at 0 outcomes), never a substituted chain. A value the brand never declared is ignored in favour of that same pick. An unrecognised value is a 400.",
+            "name": "funnel",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "enum": [
                 "gross",
                 "net"
@@ -6487,7 +6507,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId, invalid lens, or invalid pricing value",
+            "description": "Missing brandId, invalid lens, invalid funnel, or invalid pricing value",
             "content": {
               "application/json": {
                 "schema": {
@@ -7243,10 +7263,10 @@
         }
       }
     },
-    "/features/{featureSlug}/goal-arbitration": {
+    "/features/{featureSlug}/funnel-ranking": {
       "get": {
         "summary": "Rank the brand's DECLARED sales funnels by return per dollar (a recommendation, not a selection)",
-        "description": "ONE answer per brand: EVERY sales funnel the brand DECLARED, ranked by what it returns per dollar, plus the best workflow and the per-audience evidence for the best-returning one — so a consumer never issues one request per funnel and never ranks economics itself. IT IS ADVICE, NOT A GATE. Which funnel actually runs is decided by what the customer FUNDS: each funnel carries its own daily ceiling (billing-service) and campaign-service works every funded funnel, pacing each against its own ceiling. This endpoint answers the other question — which funnel has returned best, and how do the others compare — so a customer can decide where to move their money. The value is the COMPARISON in `ranking`; `recommendation` is simply its head. AN UNFUNDED FUNNEL IS STILL RANKED. Ranking is about history: what a funnel has returned is what makes it comparable, and being unfunded is a decision the customer just made, not a reason to hide how it performed. features-service never asks billing which funnels are funded. RANKING BASIS: returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-funnel-comparable number — a cost per outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting), so normalising through each funnel's own chain to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. Rankable funnels sort on returnPerDollar descending, ties broken by the canonical funnel-catalogue order, so the same evidence + the same economics always produce the same list. Per funnel, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a funnel, since the outcome→paid rate is a constant for it), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. EACH FUNNEL IS PRICED ON ITS OWN CHAIN, keyed on funnelKey and not on a goal. A funnel carries no goal since brand-service retired the vocabulary, and the goal could not have answered this: sales_meetings_from_conversation and sales_meetings_from_website both mapped onto `meetingBooked`, so the two were charged one blended both-channel price and a brand running the reply-driven chain was benchmarked against clicks it never buys. The conversation funnel now prices replyUsd / replyToMeetingPct and the website one clickUsd / visitToMeetingPct, so a brand declaring both gets two different costs — and often two different best workflows. A funnel with NO defined return is ranked LAST, never dropped: a chain whose own legs are undeclared or sit at 0 has no path to a paying client, and a funnel with no economics / no workflow evidence / a non-positive return is likewise listed with rank=null, rankable=false and its reason. When nothing can be ranked at all the response is arbitration.status='unrankable' with a reason — distinguishable from a recommendation, never an error that hides why. ONE ENTRY PER FUNNEL: the two meeting funnels (booked from a reply, booked from a website visit) are ranked SEPARATELY and each priced on its own channel and its own declared terms, because the customer funds them separately — a merged row could not answer 'where should I move my budget?' for either. A rate a funnel does not state falls back to the brand's effective economics, never to zero. The DECLARED SET is brand-service's to own, read from brand-service, never accepted from the caller and never inferred from the brand's single optimizationGoal (nor from the brand-wide economics row, every rate of which is server-defaulted and so signals nothing). When that declaration cannot be READ — transport, a non-OK response, or an empty list, i.e. this org has never STATED what it sells through — the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set. Cost: two small brand-service reads (the effective economics and the declared funnels) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — ranking N funnels adds zero IO over reading one. /workflow-projection itself is unchanged.",
+        "description": "NAMED FOR WHAT IT DOES. This endpoint was `/goal-arbitration`, back when it WAS the decision (campaign-service asked which goal to work and ran the answer). It arbitrates nothing now, and the objective is not a variable — it is always maximise return per dollar — so it ranks the funnels a brand declared it sells through. `/features/{featureSlug}/goal-arbitration` remains mounted as a DEPRECATED alias serving a byte-identical body while callers migrate; its removal is a separate change. ONE answer per brand: EVERY sales funnel the brand DECLARED, ranked by what it returns per dollar, plus the best workflow and the per-audience evidence for the best-returning one — so a consumer never issues one request per funnel and never ranks economics itself. IT IS ADVICE, NOT A GATE. Which funnel actually runs is decided by what the customer FUNDS: each funnel carries its own daily ceiling (billing-service) and campaign-service works every funded funnel, pacing each against its own ceiling. This endpoint answers the other question — which funnel has returned best, and how do the others compare — so a customer can decide where to move their money. The value is the COMPARISON in `ranking`; `recommendation` is simply its head. AN UNFUNDED FUNNEL IS STILL RANKED. Ranking is about history: what a funnel has returned is what makes it comparable, and being unfunded is a decision the customer just made, not a reason to hide how it performed. features-service never asks billing which funnels are funded. RANKING BASIS: returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-funnel-comparable number — a cost per outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting), so normalising through each funnel's own chain to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. Rankable funnels sort on returnPerDollar descending, ties broken by the canonical funnel-catalogue order, so the same evidence + the same economics always produce the same list. Per funnel, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a funnel, since the outcome→paid rate is a constant for it), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. EACH FUNNEL IS PRICED ON ITS OWN CHAIN, keyed on funnelKey and not on a goal. A funnel carries no goal since brand-service retired the vocabulary, and the goal could not have answered this: sales_meetings_from_conversation and sales_meetings_from_website both mapped onto `meetingBooked`, so the two were charged one blended both-channel price and a brand running the reply-driven chain was benchmarked against clicks it never buys. The conversation funnel now prices replyUsd / replyToMeetingPct and the website one clickUsd / visitToMeetingPct, so a brand declaring both gets two different costs — and often two different best workflows. A funnel with NO defined return is ranked LAST, never dropped: a chain whose own legs are undeclared or sit at 0 has no path to a paying client, and a funnel with no economics / no workflow evidence / a non-positive return is likewise listed with rank=null, rankable=false and its reason. When nothing can be ranked at all the response is arbitration.status='unrankable' with a reason — distinguishable from a recommendation, never an error that hides why. ONE ENTRY PER FUNNEL: the two meeting funnels (booked from a reply, booked from a website visit) are ranked SEPARATELY and each priced on its own channel and its own declared terms, because the customer funds them separately — a merged row could not answer 'where should I move my budget?' for either. A rate a funnel does not state falls back to the brand's effective economics, never to zero. The DECLARED SET is brand-service's to own, read from brand-service, never accepted from the caller and never inferred (a brand no longer has an optimizationGoal at all — that column was NOT NULL with a server default, so it said 'website purchases' for brands that had chosen nothing — and the brand-wide economics row cannot stand in either, every rate of which is server-defaulted and so signals nothing). When that declaration cannot be READ — transport, a non-OK response, or an empty list, i.e. this org has never STATED what it sells through — the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set. Cost: two small brand-service reads (the effective economics and the declared funnels) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — ranking N funnels adds zero IO over reading one. /workflow-projection itself is unchanged.",
         "tags": [
           "Stats"
         ],
@@ -8609,10 +8629,10 @@
                 "formSubmission",
                 "whatsappConversation"
               ],
-              "description": "Active optimization goal (required). signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet."
+              "description": "DEPRECATED — send `funnel` instead. Kept working only until the dashboard migrates; a named `funnel` WINS over it, and when only a funnel is named the goal is DERIVED from it. Exactly one of `funnel` / `goal` is required. Legacy meaning: active optimization goal. signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet."
             },
-            "required": true,
-            "description": "Active optimization goal (required). signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet.",
+            "required": false,
+            "description": "DEPRECATED — send `funnel` instead. Kept working only until the dashboard migrates; a named `funnel` WINS over it, and when only a funnel is named the goal is DERIVED from it. Exactly one of `funnel` / `goal` is required. Legacy meaning: active optimization goal. signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet.",
             "name": "goal",
             "in": "query"
           },
@@ -8633,10 +8653,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `goal` stays REQUIRED (it selects which conversion columns are attributed), but when a funnel is named it decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal."
+              "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `funnel` is the CANONICAL parameter: name it and nothing else. It decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal."
             },
             "required": false,
-            "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `goal` stays REQUIRED (it selects which conversion columns are attributed), but when a funnel is named it decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal.",
+            "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `funnel` is the CANONICAL parameter: name it and nothing else. It decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal.",
             "name": "funnel",
             "in": "query"
           },

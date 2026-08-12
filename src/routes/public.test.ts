@@ -71,7 +71,7 @@ vi.mock("../lib/send-forecast-aggregate.js", () => ({
 }));
 
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __resetBestModelCostPerOutcomeTrendCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __mapWithConcurrencyForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetGoalBucketDatasetCache, __expireGoalBucketFreshCacheForTest, __awaitGoalBucketRefresh } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __resetBestModelCostPerOutcomeTrendCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __mapWithConcurrencyForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetFunnelBucketDatasetCache, __expireFunnelBucketFreshCacheForTest, __awaitFunnelBucketRefresh } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
@@ -1574,11 +1574,12 @@ function mockCostProjectionFetch(opts: {
   return spy as unknown as ReturnType<typeof vi.fn>;
 }
 
-// ── Goal-bucketed cost surfaces (trend + lifetime) shared fetch mock ───────────
+// ── Funnel-bucketed cost surfaces (trend + lifetime) shared fetch mock ────────
 
 interface MockBrandData {
-  /** brand-service stored optimizationGoal spelling, or null when the brand has no saved economics. */
-  goal: string | null;
+  /** The SALES FUNNELS this brand declared it sells through, or null when it has declared nothing /
+   * saved no economics — either way it is omitted from every bucket, never defaulted into one. */
+  funnels: string[] | null;
   econ: MockEconomics & { visitToSignupPct?: number };
   /** This brand's dated spend (runs timeseries, brandId-filtered). */
   spendBuckets: Array<{ period: string; totalCostInUsdCents: string }>;
@@ -1586,9 +1587,10 @@ interface MockBrandData {
   dayOutcomes: Array<{ key: string; clicked: number; repliesPositive: number }>;
 }
 
-/** Mocks the goal-bucketed data path: memberships, per-brand saved economics + goal (brand-service
- * INTERNAL sales-economics), per-brand dated spend (runs timeseries, brandId-filtered) + per-brand
- * dated outcomes (email day stats, brandId-filtered). Both the trend + lifetime surfaces read this. */
+/** Mocks the funnel-bucketed data path: memberships, per-brand saved economics (brand-service INTERNAL
+ * sales-economics) + declared sales funnels (brand-service INTERNAL sales-funnels), per-brand dated spend
+ * (runs timeseries, brandId-filtered) + per-brand dated outcomes (email day stats, brandId-filtered).
+ * Both the trend + lifetime surfaces read this. */
 function mockBucketedFetch(opts: {
   memberships: Array<{ orgId: string; brandId: string; workflowSlug: string }>;
   brands: Record<string, MockBrandData>;
@@ -1599,13 +1601,22 @@ function mockBucketedFetch(opts: {
     if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
       return new Response(JSON.stringify({ memberships: opts.memberships }), { status: 200, headers: { "content-type": "application/json" } });
     }
+    const funnelsMatch = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/]+)\/sales-funnels/);
+    if (funnelsMatch) {
+      const b = opts.brands[funnelsMatch[1]];
+      const funnels = (b?.funnels ?? []).map((funnelKey) => ({
+        funnelKey, name: funnelKey, steps: [], rates: {}, lifetimeRevenueUsd: null,
+        destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-01T00:00:00.000Z",
+      }));
+      return new Response(JSON.stringify({ funnels }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     const savedMatch = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/]+)\/sales-economics/);
     if (savedMatch) {
       const b = opts.brands[savedMatch[1]];
-      if (!b || b.goal == null) {
+      if (!b || b.funnels == null) {
         return new Response(JSON.stringify({ salesEconomics: null }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      return new Response(JSON.stringify({ salesEconomics: { ...b.econ, optimizationGoal: b.goal } }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ salesEconomics: b.econ }), { status: 200, headers: { "content-type": "application/json" } });
     }
     if (url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) {
       const b = brandOf(url) ? opts.brands[brandOf(url)!] : undefined;
@@ -1623,12 +1634,12 @@ function mockBucketedFetch(opts: {
 
 const ECON_FULL = { lifetimeRevenueUsd: 1000, replyToMeetingPct: 40, visitToMeetingPct: 5, meetingToClosePct: 30, visitToClosePct: 2, visitToSignupPct: 20 };
 
-describe("GET /public/stats/cost-per-outcome-trend (goal-bucketed)", () => {
+describe("GET /public/stats/cost-per-outcome-trend (funnel-bucketed)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
     __resetCostPerOutcomeTrendCache();
-    __resetGoalBucketDatasetCache();
+    __resetFunnelBucketDatasetCache();
   });
 
   it("CPC window sums ONLY click-driven brands — a positiveReply brand's spend/clicks are excluded", async () => {
@@ -1640,9 +1651,9 @@ describe("GET /public/stats/cost-per-outcome-trend (goal-bucketed)", () => {
       ],
       brands: {
         // click-driven brand: $200 for 100 clicks → CPC 2
-        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+        "brand-visit": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
         // reply-driven brand: heavy spend, MUST NOT dilute CPC
-        "brand-reply": { goal: "positive_replies", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "999900" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 40 }] },
+        "brand-reply": { funnels: ["sales_meetings_from_conversation"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "999900" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 40 }] },
       },
     });
 
@@ -1663,8 +1674,8 @@ describe("GET /public/stats/cost-per-outcome-trend (goal-bucketed)", () => {
       ],
       brands: {
         // a website-visit-goal brand STILL produces (incidental) positive replies — its spend + replies count
-        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 10 }] },
-        "brand-reply": { goal: "positive_replies", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "90000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 30 }] },
+        "brand-visit": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 10 }] },
+        "brand-reply": { funnels: ["sales_meetings_from_conversation"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "90000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 30 }] },
       },
     });
 
@@ -1685,7 +1696,7 @@ describe("goal-bucket dataset single-flight (no cold-cache stampede)", () => {
     vi.restoreAllMocks();
     __resetCostPerOutcomeTrendCache();
     __resetCostPerOutcomeLifetimeCache();
-    __resetGoalBucketDatasetCache();
+    __resetFunnelBucketDatasetCache();
   });
 
   it("concurrent trend + lifetime requests share ONE dataset fan-out (1 memberships fetch, not 4)", async () => {
@@ -1696,8 +1707,8 @@ describe("goal-bucket dataset single-flight (no cold-cache stampede)", () => {
         { orgId: "org-B", brandId: "brand-reply", workflowSlug: "wf-2" },
       ],
       brands: {
-        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
-        "brand-reply": { goal: "positive_replies", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "50000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 25 }] },
+        "brand-visit": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+        "brand-reply": { funnels: ["sales_meetings_from_conversation"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "50000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 25 }] },
       },
     });
 
@@ -1710,19 +1721,19 @@ describe("goal-bucket dataset single-flight (no cold-cache stampede)", () => {
     ]);
     for (const r of responses) expect(r.status).toBe(200);
 
-    // One `feature-memberships` fetch marks one `fetchGoalBucketDataset` fan-out. Without the single-flight
+    // One `feature-memberships` fetch marks one `fetchFunnelBucketDataset` fan-out. Without the single-flight
     // guard each of the 4 concurrent cold-cache handlers launches its own → 4 stampeding fan-outs. With it: 1.
     const membershipCalls = spy.mock.calls.filter(([input]) => String(input).includes("/internal/feature-memberships"));
     expect(membershipCalls.length).toBe(1);
   });
 });
 
-describe("goal-bucket dataset stale-while-revalidate (cold-freshness read served off the request path)", () => {
+describe("funnel-bucket dataset stale-while-revalidate (cold-freshness read served off the request path)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
     __resetCostPerOutcomeTrendCache();
-    __resetGoalBucketDatasetCache();
+    __resetFunnelBucketDatasetCache();
   });
 
   it("a cold-freshness trend read serves the STORED dataset instantly (no synchronous cold fan-out); the background refresh self-heals", async () => {
@@ -1731,7 +1742,7 @@ describe("goal-bucket dataset stale-while-revalidate (cold-freshness read served
     mockBucketedFetch({
       memberships: [{ orgId: "org-A", brandId: "brand-visit", workflowSlug: "wf-1" }],
       brands: {
-        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+        "brand-visit": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
       },
     });
     const first = await request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=websiteVisit&windowOutcomes=50");
@@ -1742,7 +1753,7 @@ describe("goal-bucket dataset stale-while-revalidate (cold-freshness read served
     const spy = mockBucketedFetch({
       memberships: [{ orgId: "org-A", brandId: "brand-visit", workflowSlug: "wf-1" }],
       brands: {
-        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "60000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+        "brand-visit": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "60000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
       },
     });
 
@@ -1750,7 +1761,7 @@ describe("goal-bucket dataset stale-while-revalidate (cold-freshness read served
     // payload cache), keeping the long-lived stale dataset store. This is the "first page-load after the
     // short public cache expired" state that used to pay the ~13s cold fan-out on the request path.
     __resetCostPerOutcomeTrendCache();
-    __expireGoalBucketFreshCacheForTest();
+    __expireFunnelBucketFreshCacheForTest();
 
     const cold = await request(app).get("/public/stats/cost-per-outcome-trend?featureSlug=sales-cold-email-outreach&objective=websiteVisit&windowOutcomes=50");
     expect(cold.status).toBe(200);
@@ -1760,7 +1771,7 @@ describe("goal-bucket dataset stale-while-revalidate (cold-freshness read served
     expect(cold.body.points.at(-1).costPerOutcomeUsd).toBeCloseTo(2, 6);
 
     // The background refresh runs OFF the request path and self-heals the store/cache to CPC 6.
-    await __awaitGoalBucketRefresh();
+    await __awaitFunnelBucketRefresh();
     expect(spy.mock.calls.some(([input]) => String(input).includes("/internal/feature-memberships"))).toBe(true);
 
     __resetCostPerOutcomeTrendCache();
@@ -1770,15 +1781,15 @@ describe("goal-bucket dataset stale-while-revalidate (cold-freshness read served
   });
 });
 
-describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
+describe("GET /public/stats/cost-per-outcome-lifetime (funnel-bucketed)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
     __resetCostPerOutcomeLifetimeCache();
-    __resetGoalBucketDatasetCache();
+    __resetFunnelBucketDatasetCache();
   });
 
-  it("CPC stays goal-BUCKETED (excludes reply brand) but CPPR is goal-AGNOSTIC (pools every brand's spend÷replies)", async () => {
+  it("CPC stays funnel-BUCKETED (excludes the reply-bought chain) but CPPR is FLEET-WIDE (pools every brand's spend÷replies)", async () => {
     mockFindFirst.mockResolvedValue(MOCK_FEATURE);
     mockBucketedFetch({
       memberships: [
@@ -1786,8 +1797,8 @@ describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
         { orgId: "org-B", brandId: "brand-reply", workflowSlug: "wf-2" },
       ],
       brands: {
-        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "40000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 200, repliesPositive: 6 }] },
-        "brand-reply": { goal: "positive_replies", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "90000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 30 }] },
+        "brand-visit": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "40000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 200, repliesPositive: 6 }] },
+        "brand-reply": { funnels: ["sales_meetings_from_conversation"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "90000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 30 }] },
       },
     });
 
@@ -1800,9 +1811,13 @@ describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
     // CPPR is goal-agnostic: pools BOTH brands → total spend 1300 ÷ total replies 36 = 36.11
     // (the website-visit brand's $400 + its 6 incidental replies both count — a reply is a fleet-wide fact)
     expect(res.body.avgCostPerOutcomeByObjective.positiveReply).toBeCloseTo(1300 / 36, 5);
-    // no signup/meeting brand → those buckets are empty → null (never a false $0)
+    // no brand sells through the website-purchase chain → the signup bucket is empty → null (never $0)
     expect(res.body.avgCostPerOutcomeByObjective.signup).toBeNull();
-    expect(res.body.avgCostPerOutcomeByObjective.meetingBooked).toBeNull();
+    // the meeting bucket IS backed here: the reply-bought meeting chain is one of its two members, and
+    // it is priced on that chain's own channel — which is the whole reason the two are ranked apart.
+    expect(res.body.avgCostPerOutcomeByObjective.meetingBooked).not.toBeNull();
+    // and whatsapp has no chain that expresses it → empty bucket → null, never a mislabelled fleet CPC
+    expect(res.body.avgCostPerOutcomeByObjective.whatsappConversation).toBeNull();
   });
 
   it("projected objective populated when its bucket has a backed brand (signup)", async () => {
@@ -1810,7 +1825,7 @@ describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
     mockBucketedFetch({
       memberships: [{ orgId: "org-A", brandId: "brand-signup", workflowSlug: "wf-1" }],
       brands: {
-        "brand-signup": { goal: "signups", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+        "brand-signup": { funnels: ["website_purchases"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
       },
     });
 
@@ -1827,7 +1842,7 @@ describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
     mockBucketedFetch({
       memberships: [{ orgId: "org-A", brandId: "brand-visit", workflowSlug: "wf-1" }],
       brands: {
-        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 0 }] },
+        "brand-visit": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 0 }] },
       },
     });
 
@@ -1839,7 +1854,7 @@ describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
     expect(res.body.avgCostPerOutcomeByObjective.signup).toBeNull();
   });
 
-  it("a brand with no saved goal/economics is omitted from every bucket", async () => {
+  it("a brand with no declared funnels / economics is omitted from every bucket", async () => {
     mockFindFirst.mockResolvedValue(MOCK_FEATURE);
     mockBucketedFetch({
       memberships: [
@@ -1847,8 +1862,8 @@ describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
         { orgId: "org-B", brandId: "brand-nogoal", workflowSlug: "wf-2" },
       ],
       brands: {
-        "brand-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
-        "brand-nogoal": { goal: null, econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "500000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 999, repliesPositive: 0 }] },
+        "brand-visit": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+        "brand-nogoal": { funnels: null, econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "500000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 999, repliesPositive: 0 }] },
       },
     });
 
@@ -1871,12 +1886,12 @@ describe("GET /public/stats/cost-per-outcome-lifetime (goal-bucketed)", () => {
   });
 });
 
-describe("GET /public/stats/cost-per-outcome-distribution (goal-bucketed, per-brand)", () => {
+describe("GET /public/stats/cost-per-outcome-distribution (funnel-bucketed, per-brand)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
     __resetCostPerOutcomeDistributionCache();
-    __resetGoalBucketDatasetCache();
+    __resetFunnelBucketDatasetCache();
   });
 
   it("histogram + stats over per-brand CPCs, only click-driven brands contribute", async () => {
@@ -1889,10 +1904,10 @@ describe("GET /public/stats/cost-per-outcome-distribution (goal-bucketed, per-br
       ],
       brands: {
         // CPC 2 (200/100) and CPC 6 (600/100)
-        "b-visit-1": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
-        "b-visit-2": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "60000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+        "b-visit-1": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+        "b-visit-2": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "60000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
         // reply-driven brand — excluded from the CPC distribution
-        "b-reply": { goal: "positive_replies", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "999900" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 40 }] },
+        "b-reply": { funnels: ["sales_meetings_from_conversation"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "999900" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 40 }] },
       },
     });
 
@@ -1920,9 +1935,9 @@ describe("GET /public/stats/cost-per-outcome-distribution (goal-bucketed, per-br
       ],
       brands: {
         // off-goal brands STILL contribute their own CPPR data point (spend ÷ their replies)
-        "b-visit": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 10 }] }, // CPPR 20
-        "b-signup": { goal: "signups", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "30000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 80, repliesPositive: 10 }] }, // CPPR 30
-        "b-reply": { goal: "positive_replies", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "40000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 10 }] }, // CPPR 40
+        "b-visit": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 10 }] }, // CPPR 20
+        "b-signup": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "30000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 80, repliesPositive: 10 }] }, // CPPR 30
+        "b-reply": { funnels: ["sales_meetings_from_conversation"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "40000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 0, repliesPositive: 10 }] }, // CPPR 40
       },
     });
 
@@ -1939,7 +1954,7 @@ describe("GET /public/stats/cost-per-outcome-distribution (goal-bucketed, per-br
     mockBucketedFetch({
       memberships: [{ orgId: "org-A", brandId: "b-visit-1", workflowSlug: "wf-1" }],
       brands: {
-        "b-visit-1": { goal: "website_visits", econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
+        "b-visit-1": { funnels: ["form_magnet"], econ: ECON_FULL, spendBuckets: [{ period: "2026-07-08", totalCostInUsdCents: "20000" }], dayOutcomes: [{ key: "2026-07-08", clicked: 100, repliesPositive: 0 }] },
       },
     });
 
