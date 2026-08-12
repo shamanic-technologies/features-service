@@ -27,10 +27,10 @@ process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
 
 const { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } = await import("./sales-funnels-client.js");
-const { fetchBrandSavedEconomicsWithGoal, fetchEffectiveEconomics, fetchSalesEconomics } = await import(
+const { fetchBrandSavedEconomics, fetchEffectiveEconomics, fetchSalesEconomics } = await import(
   "./sales-economics-client.js"
 );
-const { fetchGoalBucketDataset } = await import("./cross-org-cost-per-outcome.js");
+const { fetchFunnelBucketDataset } = await import("./cross-org-cost-per-outcome.js");
 
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -54,7 +54,8 @@ const SAVED_ECONOMICS = {
   visitToMeetingPct: 2,
   meetingToClosePct: 30,
   replyToMeetingPct: 20,
-  optimizationGoal: "positive_replies",
+  // NO optimizationGoal — the column is retired and nothing here reads one. What a brand sells through
+  // comes from its DECLARED SALES FUNNELS, on their own endpoint.
 };
 
 describe("internal brand-service config reads carry the org whose configuration is wanted", () => {
@@ -75,20 +76,23 @@ describe("internal brand-service config reads carry the org whose configuration 
   it("GET /internal/brands/:id/sales-economics sends x-org-id", async () => {
     const seen = captureFetch({ salesEconomics: SAVED_ECONOMICS });
 
-    const res = await fetchBrandSavedEconomicsWithGoal("brand-1", "org-A");
+    const res = await fetchBrandSavedEconomics("brand-1", "org-A");
 
     expect(seen.url()).toBe("http://brand:3000/internal/brands/brand-1/sales-economics");
     expect(seen.headers()["x-api-key"]).toBe("brand-key");
     expect(seen.headers()["x-org-id"]).toBe("org-A");
-    expect(res.goal).toBe("positiveReply");
+    expect(res.economics?.lifetimeRevenueUsd).toBe(1000);
+    // The retired goal is not read back under any name — a consumer reading one again would resurrect
+    // the defaulted column this change exists to stop trusting.
+    expect(Object.keys(res)).toEqual(["economics"]);
   });
 
   it("two orgs claiming ONE brand each get their OWN answer — the org, not the brand, selects it", async () => {
     // Exactly the case brand-service now refuses to guess at: same brand id, two claiming orgs, two
-    // different declared goals. The read must be able to ask for either one.
+    // different sets of terms. The read must be able to ask for either one.
     const byOrg: Record<string, unknown> = {
-      "org-A": { salesEconomics: { ...SAVED_ECONOMICS, optimizationGoal: "positive_replies" } },
-      "org-B": { salesEconomics: { ...SAVED_ECONOMICS, optimizationGoal: "signups" } },
+      "org-A": { salesEconomics: { ...SAVED_ECONOMICS, lifetimeRevenueUsd: 1000 } },
+      "org-B": { salesEconomics: { ...SAVED_ECONOMICS, lifetimeRevenueUsd: 7777 } },
     };
     const seenOrgs: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
@@ -97,12 +101,12 @@ describe("internal brand-service config reads carry the org whose configuration 
       return json(byOrg[orgId]);
     });
 
-    const a = await fetchBrandSavedEconomicsWithGoal("shared-brand", "org-A");
-    const b = await fetchBrandSavedEconomicsWithGoal("shared-brand", "org-B");
+    const a = await fetchBrandSavedEconomics("shared-brand", "org-A");
+    const b = await fetchBrandSavedEconomics("shared-brand", "org-B");
 
     expect(seenOrgs).toEqual(["org-A", "org-B"]);
-    expect(a.goal).toBe("positiveReply");
-    expect(b.goal).toBe("signup");
+    expect(a.economics?.lifetimeRevenueUsd).toBe(1000);
+    expect(b.economics?.lifetimeRevenueUsd).toBe(7777);
   });
 
   it("a caller with NO org FAILS LOUD on both reads — never a substituted stand-in, never an org-less read", async () => {
@@ -112,18 +116,19 @@ describe("internal brand-service config reads carry the org whose configuration 
 
     await expect(fetchDeclaredSalesFunnels("brand-1", "")).rejects.toBeInstanceOf(SalesFunnelsUnavailableError);
     await expect(fetchDeclaredSalesFunnels("brand-1", "")).rejects.toThrow(/requires the org/);
-    await expect(fetchBrandSavedEconomicsWithGoal("brand-1", "")).rejects.toThrow(/requires the org/);
+    await expect(fetchBrandSavedEconomics("brand-1", "")).rejects.toThrow(/requires the org/);
 
     // The point of failing loud: nothing was asked of brand-service without an org.
     expect(seen.url()).toBe("");
   });
 
-  it("the cross-org goal-bucket dataset asks under the CLAIMING org from the feature membership, one row per brand", async () => {
+  it("the cross-org funnel-bucket dataset asks under the CLAIMING org from the feature membership, one row per brand", async () => {
     // Cross-org fleet analytics has no single caller org, but it is not org-LESS either: the membership
     // that put a brand in the dataset names a real claiming org, and that is what the read asks under.
     // The dataset stays one row per brand — its spend + outcome legs are brand-grained, so a row per
     // (org, brand) would count a multi-org brand's fleet spend once per claimant.
     const seenEconomicsOrgs: Array<string | undefined> = [];
+    const seenFunnelOrgs: Array<string | undefined> = [];
     let spendCalls = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
@@ -137,6 +142,10 @@ describe("internal brand-service config reads carry the org whose configuration 
           ],
         });
       }
+      if (url.includes("/internal/brands/") && url.includes("/sales-funnels")) {
+        seenFunnelOrgs.push(headers["x-org-id"]);
+        return json({ funnels: [{ funnelKey: "sales_meetings_from_conversation", name: "Reply", steps: [], rates: {}, lifetimeRevenueUsd: null }] });
+      }
       if (url.includes("/internal/brands/") && url.includes("/sales-economics")) {
         seenEconomicsOrgs.push(headers["x-org-id"]);
         return json({ salesEconomics: SAVED_ECONOMICS });
@@ -149,15 +158,17 @@ describe("internal brand-service config reads carry the org whose configuration 
       return json({});
     });
 
-    const dataset = await fetchGoalBucketDataset("sales-cold-email-outreach");
+    const dataset = await fetchFunnelBucketDataset("sales-cold-email-outreach");
 
-    // Asked under a REAL claimant — never org-less, never a stand-in.
+    // Asked under a REAL claimant — never org-less, never a stand-in. BOTH per-brand configuration
+    // reads (the economics and the declared funnels) name that same claiming org.
     expect(seenEconomicsOrgs).toEqual(["org-A"]);
+    expect(seenFunnelOrgs).toEqual(["org-A"]);
     // ...and the brand's fleet spend is read (and so counted) exactly ONCE.
     expect(spendCalls).toBe(1);
     expect(dataset).toHaveLength(1);
     expect(dataset[0].brandId).toBe("shared");
-    expect(dataset[0].goal).toBe("positiveReply");
+    expect(dataset[0].funnels).toEqual(["sales_meetings_from_conversation"]);
   });
 
   it("the org-scoped /orgs/* economics reads keep forwarding the caller's org (the in-repo precedent)", async () => {

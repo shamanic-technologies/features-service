@@ -110,8 +110,9 @@ const BENCHMARK_CPC_USD = 6000 / 100 / 13;
 /** The brand's OWN committed / actual spend on this feature (runs groupBy=costName). */
 let brandCommittedCents = 2874;
 let brandActualCents = 2874;
-/** The brand's declared optimization goal (brand-service INTERNAL saved economics). */
-let brandGoal: string | null = "positive_replies";
+/** The SALES FUNNELS the brand declared it sells through (brand-service INTERNAL declared set). An
+ * empty array means it declared nothing — the read fails loud there and the columns stay OBSERVED. */
+let brandFunnels: string[] = ["website_purchases"];
 /** The brand's leads snapshot — drives the observed click / positive-reply denominators. */
 let leads: Array<Record<string, unknown>> = [leadRow({ leadId: "l1", email: "quiet@x.com" })];
 /** Real attributed conversion counts (lead-service). */
@@ -132,8 +133,19 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     if (url.includes("email:3000/public/stats")) return json({ groups: FLEET_EMAIL });
 
     // ── Brand economics: effective (both surfaces) + INTERNAL saved (the declared goal) ────
+    if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
+      // What the brand DECLARED it sells through — the chain the spend columns are priced on. An empty
+      // list is brand-service's "this org never stated a set": the client throws on it, and the columns
+      // degrade to observed rather than being priced on a substituted chain.
+      return json({
+        funnels: brandFunnels.map((funnelKey) => ({
+          funnelKey, name: funnelKey, steps: [], rates: {}, lifetimeRevenueUsd: null,
+          destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-01T00:00:00.000Z",
+        })),
+      });
+    }
     if (url.includes("brand:3000/internal/brands/brand-1/sales-economics")) {
-      return json({ salesEconomics: brandGoal ? { ...ECONOMICS, optimizationGoal: brandGoal } : null });
+      return json({ salesEconomics: ECONOMICS });
     }
     if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) {
       return json({ economics: ECONOMICS, source: "user" });
@@ -211,7 +223,7 @@ describe("aggregate cost coherence: /revenue spend ↔ /workflow-projection", ()
     __resetPlatformRatesCache();
     brandCommittedCents = 2874;
     brandActualCents = 2874;
-    brandGoal = "positive_replies";
+    brandFunnels = ["website_purchases"];
     leads = [leadRow({ leadId: "l1", email: "quiet@x.com" })];
     conversionCounts = { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 };
     fetchSpy = mockFetch();
@@ -302,14 +314,14 @@ describe("aggregate cost coherence: /revenue spend ↔ /workflow-projection", ()
     // cost per signup = clickUsd / visitToSignupPct(20%) — the brand's own economics through the
     // winner's click cost, not a dollar total.
     expect(spend.cpsCents / 100).toBeCloseTo(BENCHMARK_CPC_USD / 0.2, 9);
-    // A funnel column whose rate the goal's projection does not resolve (cost per form submission is
-    // only projected for the form-submission goal) has NO expected cost — so it stays null rather than
+    // A funnel column whose rate this chain's projection does not resolve (cost per form submission is
+    // only projected for the form-magnet chain) has NO expected cost — so it stays null rather than
     // falling back to the raw dollar total, which would be the units error all over again.
     expect(spend.cpfsCents).toBeNull();
   });
 
   it("the form-submission column projects (and never reports the raw total) for a form-submission brand", async () => {
-    brandGoal = "form_submissions";
+    brandFunnels = ["form_magnet"];
 
     const spend = await revenueSpend();
 
@@ -318,10 +330,10 @@ describe("aggregate cost coherence: /revenue spend ↔ /workflow-projection", ()
     expect(spend.cpfsCents).not.toBe(spend.totalSpentCents);
   });
 
-  // NO DECLARED GOAL → no goal-specific benchmark exists, so the columns stay OBSERVED (null at 0
-  // outcomes). "We could not estimate this" — never an invented default, and never the raw spend total.
-  it("a brand with no declared optimization goal keeps the observed (null) behaviour", async () => {
-    brandGoal = null;
+  // NO DECLARED FUNNEL → there is no chain to be coherent with, so the columns stay OBSERVED (null at 0
+  // outcomes). "We could not estimate this" — never a substituted chain, and never the raw spend total.
+  it("a brand that has declared NO sales funnel keeps the observed (null) behaviour", async () => {
+    brandFunnels = [];
 
     const spend = await revenueSpend();
 
@@ -354,8 +366,16 @@ async function mockFetchOnce(url: string): Promise<Response> {
   const params = new URL(url, "http://x").searchParams;
   if (url.includes("runs:3000/v1/stats/public/costs")) return json({ groups: FLEET_COSTS });
   if (url.includes("email:3000/public/stats")) return json({ groups: FLEET_EMAIL });
+  if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
+    return json({
+      funnels: brandFunnels.map((funnelKey) => ({
+        funnelKey, name: funnelKey, steps: [], rates: {}, lifetimeRevenueUsd: null,
+        destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-01T00:00:00.000Z",
+      })),
+    });
+  }
   if (url.includes("brand:3000/internal/brands/brand-1/sales-economics")) {
-    return json({ salesEconomics: brandGoal ? { ...ECONOMICS, optimizationGoal: brandGoal } : null });
+    return json({ salesEconomics: ECONOMICS });
   }
   if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
   if (url.includes("runs:3000/v1/stats/costs")) {

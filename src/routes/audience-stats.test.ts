@@ -318,7 +318,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     fleetOverride = null;
   });
 
-  it("400 when brandId or goal is missing or limit is invalid", async () => {
+  it("400 when brandId or the funnel/goal pair is missing, or limit is invalid", async () => {
     let res = await request(app).get("/features/sales-cold-email-outreach/audience-stats?goal=signup").set(AUTH);
     expect(res.status).toBe(400);
 
@@ -327,6 +327,55 @@ describe("GET /features/:featureSlug/audience-stats", () => {
 
     res = await request(app).get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup&limit=1abc").set(AUTH);
     expect(res.status).toBe(400);
+  });
+
+  // THE MIGRATION INVARIANT. A caller moving from `?goal=` to `?funnel=` must not see its numbers move:
+  // the funnel is a FINER question, and for a brand whose funnel declares no terms of its own it has the
+  // same answer as the goal it echoes. (Where a funnel DOES declare its own terms, or where two funnels
+  // share one goal echo, the funnel-keyed answer legitimately differs — that is the whole point, and it
+  // is covered in routes/goal-arbitration's "?funnel= prices on the funnel's OWN declared terms" case.)
+  it("a funnel-keyed request returns what the goal-keyed one used to, for the same brand", async () => {
+    const withDeclaredFunnels = () => {
+      const inner = mockFetch().getMockImplementation()!;
+      return vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes("/sales-funnels")) {
+          // Declared, with NO per-funnel terms of its own → it prices on the brand's effective economics,
+          // exactly as the goal it echoes did.
+          return new Response(
+            JSON.stringify({
+              funnels: [{
+                funnelKey: "website_purchases", name: "Website Purchase", steps: [], rates: {},
+                lifetimeRevenueUsd: null, destinationUrl: null, bookingUrl: null,
+                updatedAt: "2026-08-01T00:00:00.000Z",
+              }],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return inner(input, init);
+      });
+    };
+
+    fetchSpy = withDeclaredFunnels();
+    const byGoal = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup")
+      .set(AUTH);
+
+    fetchSpy.mockRestore();
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(FEATURE as any);
+    fetchSpy = withDeclaredFunnels();
+    const byFunnel = await request(app)
+      .get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&funnel=website_purchases")
+      .set(AUTH);
+
+    expect(byGoal.status).toBe(200);
+    expect(byFunnel.status).toBe(200);
+    // The goal echo is DERIVED from the funnel, so the caller never had to send one...
+    expect(byFunnel.body.goal).toBe(byGoal.body.goal);
+    // ...and every ranked row — order, evidence and money alike — is the same number.
+    expect(byFunnel.body.sortMetric).toBe(byGoal.body.sortMetric);
+    expect(JSON.stringify(byFunnel.body.audiences)).toBe(JSON.stringify(byGoal.body.audiences));
   });
 
   it("returns rows under `audiences` with each block under `audience` and no persona keys", async () => {

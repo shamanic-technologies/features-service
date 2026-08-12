@@ -142,9 +142,11 @@ function json(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
-const URL_BASE = "/features/sales-cold-email-outreach/goal-arbitration";
+const URL_BASE = "/features/sales-cold-email-outreach/funnel-ranking";
+/** The pre-retirement path, still mounted while callers migrate. */
+const LEGACY_URL_BASE = "/features/sales-cold-email-outreach/goal-arbitration";
 
-describe("GET /features/:featureSlug/goal-arbitration", () => {
+describe("GET /features/:featureSlug/funnel-ranking", () => {
   beforeEach(() => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
   });
@@ -156,7 +158,35 @@ describe("GET /features/:featureSlug/goal-arbitration", () => {
     expect((await request(app).get(`${URL_BASE}?brandId=b1&pricing=bogus`).set(AUTH)).status).toBe(400);
 
     vi.mocked(db.query.features.findFirst).mockResolvedValue(undefined as any);
-    expect((await request(app).get(`/features/nope/goal-arbitration?brandId=b1`).set(AUTH)).status).toBe(404);
+    expect((await request(app).get(`/features/nope/funnel-ranking?brandId=b1`).set(AUTH)).status).toBe(404);
+  });
+
+  // The rename is a rename, not a re-scoring: the deprecated path must keep answering, and answering
+  // the SAME thing, for as long as a caller is still on it (campaign-service reads `arbitration` /
+  // `workflow` / `rows` off it in production to pace a brand with no per-funnel funding).
+  it("the deprecated /goal-arbitration path serves a BYTE-IDENTICAL body — the rename changes no number", async () => {
+    mockFetch({
+      funnels: [declaredFunnel("website_purchases"), declaredFunnel("sales_meetings_from_conversation")],
+      audiences: [{ id: "aud-1" }],
+    });
+    const canonical = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
+
+    vi.restoreAllMocks();
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
+    mockFetch({
+      funnels: [declaredFunnel("website_purchases"), declaredFunnel("sales_meetings_from_conversation")],
+      audiences: [{ id: "aud-1" }],
+    });
+    const legacy = await request(app).get(`${LEGACY_URL_BASE}?brandId=b1`).set(AUTH);
+
+    expect(canonical.status).toBe(200);
+    expect(legacy.status).toBe(200);
+    expect(JSON.stringify(legacy.body)).toBe(JSON.stringify(canonical.body));
+    // ...including the legacy fields campaign-service actually reads.
+    expect(legacy.body.arbitration.status).toBe("resolved");
+    expect(legacy.body.arbitration.goal).toBeTruthy();
+    expect(legacy.body.workflow.workflowDynastySlug).toBeTruthy();
+    expect(Array.isArray(legacy.body.rows)).toBe(true);
   });
 
   it("asks brand-service for the CALLER'S org's declared set — a brand id alone cannot name whose funnels", async () => {

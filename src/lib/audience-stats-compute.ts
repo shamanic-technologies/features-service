@@ -9,7 +9,7 @@ import { flooredCostPerOutcome, derivedCostPerOutcome } from "./cost-engine.js";
 import { fetchBrandProjectedParents } from "./audience-stats-brand-projection.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
-import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
+import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "./sales-funnels.js";
 import { fetchDeclaredSalesFunnels } from "./sales-funnels-client.js";
 import { declaredEconomicsForFunnel } from "./declared-funnels.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
@@ -502,25 +502,10 @@ export function validateAudienceStatsQuery(req: Request):
   if (!brandId) {
     return { ok: false, status: 400, error: "brandId query parameter is required" };
   }
-  // Normalise the single-step + form-submission + whatsapp goal fleet spellings (snake/kebab/display →
-  // canonical camel) before validating.
-  const normalizedGoal = goalParam
-    ? (matchSingleStepGoal(goalParam) ??
-       matchFormSubmissionGoal(goalParam) ??
-       matchWhatsappGoal(goalParam) ??
-       matchCombinedSalesGoal(goalParam) ??
-       matchWebsitePurchaseGoal(goalParam) ??
-       goalParam)
-    : undefined;
-  if (!isGoal(normalizedGoal)) {
-    return { ok: false, status: 400, error: "goal query parameter is required and must be one of: signup, meetingBooked, websitePurchase, sales, websiteVisit, positiveReply, formSubmission, whatsappConversation" };
-  }
-
-  // `?funnel=` names the SALES FUNNEL to price on — the vocabulary brand-service now emits, and the only
-  // one that separates a meeting bought with a reply from one bought with a click. `goal` stays REQUIRED
-  // (it still selects which conversion columns are attributed, and every live caller sends it), but when
-  // a funnel is named it decides the cost basis. Unknown value → 400; never a silent fall back to the
-  // goal, which would answer a finer question with a coarser number and look right.
+  // `?funnel=` names the SALES FUNNEL to price on — the vocabulary a brand actually declares, and the
+  // only one that separates a meeting bought with a reply from one bought with a click. It is the
+  // CANONICAL parameter: a caller should send it and nothing else. Unknown value → 400; never a silent
+  // fall back to the goal, which would answer a finer question with a coarser number and look right.
   let funnelKey: SalesFunnelKey | undefined;
   if (funnelParam != null && funnelParam !== "") {
     const matched = matchSalesFunnelKey(funnelParam);
@@ -528,6 +513,28 @@ export function validateAudienceStatsQuery(req: Request):
       return { ok: false, status: 400, error: `funnel query parameter must be one of: ${SALES_FUNNEL_KEYS.join(", ")}` };
     }
     funnelKey = matched;
+  }
+
+  // `?goal=` is DEPRECATED and kept only until the dashboard migrates to `?funnel=`. It is accepted in
+  // every fleet spelling (snake/kebab/display → canonical camel), and a named funnel WINS over it.
+  // When only a funnel is named the goal is DERIVED from it (`SALES_FUNNEL_GOAL_ECHO`) — an echo the
+  // internal column routing still speaks, never a goal→funnel translation in the other direction.
+  const normalizedGoal = goalParam
+    ? (matchSingleStepGoal(goalParam) ??
+       matchFormSubmissionGoal(goalParam) ??
+       matchWhatsappGoal(goalParam) ??
+       matchCombinedSalesGoal(goalParam) ??
+       matchWebsitePurchaseGoal(goalParam) ??
+       goalParam)
+    : funnelKey
+      ? SALES_FUNNEL_GOAL_ECHO[funnelKey]
+      : undefined;
+  if (!isGoal(normalizedGoal)) {
+    return {
+      ok: false,
+      status: 400,
+      error: `funnel query parameter is required and must be one of: ${SALES_FUNNEL_KEYS.join(", ")} (the deprecated goal parameter is still accepted: signup, meetingBooked, websitePurchase, sales, websiteVisit, positiveReply, formSubmission, whatsappConversation)`,
+    };
   }
 
   const parsedStatuses = parseStatuses(statusesParam);
