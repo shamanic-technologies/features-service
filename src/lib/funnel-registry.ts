@@ -318,23 +318,13 @@ export function formSubmissionRatesDecimal(economics: SalesEconomics): { v2fs: n
   return { v2fs: read("visitToFormSubmissionPct"), fs2pc: read("formSubmissionToPaidClientPct") };
 }
 
-// Global decay windows (not per-brand): a lead that reaches a stage and sits there past this
-// window with no advance to the next stage is considered DEAD (stalled → no expected revenue).
-// Phase 1 covers the pre-engagement stages (next stage observable from the email funnel). Phase 2
-// extends decay PAST engagement using per-lead manual-qualification timestamps:
-//   Positive Reply → Meeting Booked within 2 weeks, else dead
-//   Meeting Booked → Close Win       within 1 month, else dead
-//   Close Win                        = realized revenue (full LTR), never decays (terminal)
-// A click (visit) has NO onward window — it stays a terminal, no decay.
-const DAY_MS = 24 * 60 * 60 * 1000;
-const STALE = {
-  contacted: 7 * DAY_MS,   // Contacted → Sent within 1 week
-  sent: 3 * DAY_MS,        // Sent → Delivered within 3 days
-  delivered: 14 * DAY_MS,  // Delivered → Open within 2 weeks
-  open: 14 * DAY_MS,       // Open → Click / Positive Reply within 2 weeks
-  reply: 14 * DAY_MS,      // Positive Reply → Meeting Booked within 2 weeks
-  meeting: 30 * DAY_MS,    // Meeting Booked → Close Win within 1 month
-} as const;
+// NO DECAY. A stage a lead reached is a thing that HAPPENED, and it stays counted however long ago
+// it happened. This funnel used to carry per-stage staleness windows (contacted→sent 7d,
+// reply→meeting 14d, meeting→close 30d …) that zeroed a lead's expected value once its furthest
+// stage sat past its window. That made the pipeline a trailing-window numerator while the spend it
+// is divided by stayed lifetime, so ROI fell below 1 purely by ageing — a brand with 15 positive
+// replies read 13 of them at $0. Do NOT reintroduce it under another name: no freshness weight, no
+// half-life, no recency multiplier.
 
 /**
  * Sales funnel — expected pipeline revenue from the lead's furthest reached stage.
@@ -373,25 +363,24 @@ const salesFunnel: FunnelDefinition = {
     const pCloseContact = r.sentPerContacted * pCloseSent;
     // `open` is a delivery milestone between delivered and click/reply: it carries the same
     // close probability as delivered (no platform open→close rate exists yet), so it adds no EV
-    // — its role is the decay checkpoint (resets the stale clock to the open date) + the tag.
+    // — its role is purely the tag.
     //
-    // Phase 2 post-engagement stages (per-lead manual-qualification timestamps drive the dates):
-    //   reply    now carries a 14d onward window (reply → meeting booked).
-    //   meeting  EV = LTR × P(close|meeting); 30d onward window (meeting → close win).
-    //   closeWin = realized revenue (full LTR), no window → terminal, immune to decay.
+    // Post-engagement stages (per-lead manual-qualification timestamps drive the dates):
+    //   meeting  EV = LTR × P(close|meeting).
+    //   closeWin = realized revenue (full LTR) — the terminal.
     // All are `engagement` kind (multi-tag, monotonic EV: reply < meeting < closeWin).
     return [
-      { tag: "contacted", signal: "contacted", expectedRevenueUsd: ltr * pCloseContact, kind: "delivery", staleAfterMs: STALE.contacted },
-      { tag: "sent", signal: "sent", expectedRevenueUsd: ltr * pCloseSent, kind: "delivery", staleAfterMs: STALE.sent },
-      { tag: "delivered", signal: "delivered", expectedRevenueUsd: ltr * pCloseDeliv, kind: "delivery", staleAfterMs: STALE.delivered },
-      { tag: "opened", signal: "open", expectedRevenueUsd: ltr * pCloseDeliv, kind: "delivery", staleAfterMs: STALE.open },
+      { tag: "contacted", signal: "contacted", expectedRevenueUsd: ltr * pCloseContact, kind: "delivery" },
+      { tag: "sent", signal: "sent", expectedRevenueUsd: ltr * pCloseSent, kind: "delivery" },
+      { tag: "delivered", signal: "delivered", expectedRevenueUsd: ltr * pCloseDeliv, kind: "delivery" },
+      { tag: "opened", signal: "open", expectedRevenueUsd: ltr * pCloseDeliv, kind: "delivery" },
       // click + reply are INDEPENDENT engagement routes to the same close (a lead can do both, and
       // at pre-engagement stages we don't yet know which fires) → `engagementRoute` so the engine
       // COMBINES them as independent probabilities bounded by 1 LTR, instead of MAX'ing. meeting and
       // closeWin below are convergence/terminal positions (mutually exclusive) → left to MAX.
       { tag: "visit", signal: "clicked", expectedRevenueUsd: ltr * pCloseClick, kind: "engagement", engagementRoute: true },
-      { tag: "reply", signal: "positiveReply", expectedRevenueUsd: ltr * pCloseReply, kind: "engagement", engagementRoute: true, staleAfterMs: STALE.reply },
-      { tag: "meeting", signal: "meeting", expectedRevenueUsd: ltr * pCloseMeeting, kind: "engagement", staleAfterMs: STALE.meeting },
+      { tag: "reply", signal: "positiveReply", expectedRevenueUsd: ltr * pCloseReply, kind: "engagement", engagementRoute: true },
+      { tag: "meeting", signal: "meeting", expectedRevenueUsd: ltr * pCloseMeeting, kind: "engagement" },
       { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: ltr, kind: "engagement" },
     ];
   },

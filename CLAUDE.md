@@ -1722,18 +1722,61 @@ extraction-quality prompt**, not just UI help text — it's what brand-service's
 the value. Pick a clear `extractKey`; org name/url/logo are already known by construction (don't
 ask), prefer extraction over user-entry for anything scrapeable.
 
-## Revenue engine is time-dependent — decay tests need RELATIVE dates
+## THE REVENUE ENGINE HAS NO DECAY, AND IS NOT TIME-DEPENDENT — an outcome that happened stays counted, and the pipeline is priced on the brand's DECLARED FUNNEL
 
-`computeRevenue` defaults `now = Date.now()` and the `/features/:slug/revenue` route calls it
-with no `now`. So any stage that carries a `staleAfterMs` decay window (sales funnel:
-contacted/sent/delivered/open, and Phase 2 reply→meeting 14d / meeting→close 30d) is evaluated
-against wall-clock. **Test fixtures for a windowed stage MUST use relative dates** (`daysAgo(n)`),
-never fixed ISO strings — a fixed past date silently crosses its window as real time advances and
-the test rots. This bit Phase 2 (#214): Phase 1's route happy-path fixture pinned a reply at
-`2026-02-01`; once reply gained a 14d window that 4-month-old reply decayed and the assertion
-flipped 140→20. Engine unit tests sidestep this by passing an explicit `NOW` constant +
-`ago(days)` helper — mirror that. Terminals with no window (click `visit`, `closeWin`) are
-date-safe. Close-win books **full LTR** (realized revenue) and is immune to decay.
+Two independent bugs made a customer's Campaigns page report **0.7x ROI against 15 positive replies**.
+Both are gone; neither may come back.
+
+**1. Decay is DELETED (supersedes #212 / #214, which introduced it).** Every stage used to carry a
+staleness window — contacted→sent 7d, sent→delivered 3d, delivered/open 14d, reply→meeting 14d,
+meeting→close 30d — and a lead whose FURTHEST reached stage sat past its window was zeroed, tagged
+`stale`, dropped from the events ledger and stepped back DOWN out of the cumulative series at a
+computed "death date". On brand `75d7e3e8…` that zeroed **6,678 of 7,188 leads, including 13 of the
+15 positive replies and all 3 booked meetings**. The cost side of ROI is LIFETIME spend, so the ratio
+compared a 14-day numerator against an all-time denominator and fell under 1 purely by ageing.
+
+- `ResolvedPath` no longer HAS a window field, `computeRevenue` no longer takes `now`, and there is no
+  `dead` / `deathDate` / `evRaw` / `stale` tag. Guards: the "no decay" suite in
+  `revenue-engine.test.ts` (an outcome from 200/400 days ago counts identically to yesterday's) and
+  the "NO path carries a staleness window" case in `funnel-registry.test.ts`.
+- **The cumulative time series is MONOTONE NON-DECREASING** — every delta is an org's positive EV at
+  its event date; nothing steps it back down. Its final point equals the headline total.
+- **Do NOT reintroduce it under another name: no freshness weight, no half-life, no recency
+  multiplier, no "confidence" that falls with age.** If ageing should cost something, it belongs on
+  the COST side or on a separate, labelled surface — not silently inside the pipeline total.
+- Consequence to expect: the delivery-stage leads that decay used to suppress are pipeline again, so a
+  brand's headline is materially larger than its engaged-lead contribution alone. That is the funnel
+  behaving as documented (a delivered lead carries `LTR × pClose_delivered`), not an inflation.
+- Test fixtures no longer rot with wall-clock, so the old "windowed stages need RELATIVE dates" rule is
+  moot. Relative `daysAgo(n)` fixtures are still used, now purely to express "old" readably.
+
+**2. The pipeline EV prices on the brand's DECLARED SALES FUNNEL** (`fetchFunnelPricedEconomics`,
+`routes/revenue.ts`). Brand-level conversion rates no longer carry meaning — rates exist PER FUNNEL,
+and the brand-wide record survives only as the legacy fallthrough + prefill for a brand that declared
+none. The spend block's cost-per-outcome columns and both sibling surfaces (`/workflow-projection?funnel=`
+and the `/audience-stats` floor parent) already priced this way; the EV did not, so one brand + one
+funnel + one moment printed two prices. Prod on that same brand: the declared conversation funnel states
+70% reply→meeting × 50% attended→paid = **35% reply→paid**, while the EV priced each reply off the
+brand-wide 50% × 25% = **12.5%** — $312.50 a reply where the brand had stated **$875**.
+
+- **SAME precedence, SAME merge helpers as the siblings, deliberately** (`declaredEconomicsForFunnel`
+  + `mergeFunnelEconomics`): the caller's `?funnel=` when it named one the brand actually declared,
+  else the brand's FIRST DECLARED funnel in catalogue order. Do NOT write a second resolution here —
+  two implementations is exactly how the two prices appeared.
+- A term the funnel does not state falls through to the brand-wide value, never to 0 (which would
+  zero-collapse the chain). The meeting chain COMPOSES (`meetingChainCloseRate`): booked→paid =
+  attended% × show-up%, so a declared show-up rate is never a free 100%.
+- **NO declared funnel ⇒ byte-identical to before** — the brand-wide economics apply unchanged.
+- Resolved ONCE in the route and threaded down as `economicsOverride`, so it costs one brand-service
+  read and the funnel's own rates ride the `economicsFingerprint` in the Gold `scope_key` — a
+  re-declared funnel lands on a new cell instead of replaying a price the brand no longer states.
+- **Fail-SOFT with a loud log**, like the spend cost-parents read on this same path: an unreadable
+  declaration degrades to the brand-wide economics (a real, if poorer, answer) rather than 502-ing the
+  Overview. Note an EMPTY declaration THROWS at the client (a producer gap, not "sells through
+  nothing") and lands here as that same degrade — which IS the required no-declared-funnel behaviour.
+- Guards: the declared-funnel pricing block in `routes/revenue.test.ts` (own terms win, unstated terms
+  fall through, the show-up rate composes, the funnel's own LTR is used, `?funnel=` selects the chain,
+  no declaration is unchanged). (Set 2026-08-13.)
 
 ## Public cost-per-outcome is PROJECTED (EV math), NOT the real tracked meeting/closed counts
 
@@ -2360,7 +2403,7 @@ Near-identical inputs/outputs/charts. Confirm the exact slug before editing — 
 
 `GET /public/stats/revenue?groupBy=brand` exposes the SAME expected-pipeline number as the
 authenticated dashboard (`/features/:slug/revenue`), cross-org. The pattern (don't rebuild it as a
-counts × per-stage-EV approximation — that loses company-dedup + decay and reads "lower quality"):
+counts × per-stage-EV approximation — that loses company-dedup and reads "lower quality"):
 
 - **Forward the owning org's identity.** lead-service `/orgs/leads` and brand-service
   `/orgs/.../sales-economics` (and email-gateway `/orgs/status`, instantly `/orgs/manual-qualifications`)

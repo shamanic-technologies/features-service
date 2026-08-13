@@ -274,210 +274,104 @@ describe("computeRevenue — dates, time series, events", () => {
   });
 });
 
-// ── Decay (stage staleness) ───────────────────────────────────────────────────
+// ── NO DECAY — an outcome that happened stays counted ─────────────────────────
+// The engine used to zero a lead whose FURTHEST reached stage sat past a per-stage window
+// (contacted 7d, sent 3d, reply 14d, meeting 30d …): it tagged the row `stale`, dropped its events
+// from the ledger and stepped the cumulative series back DOWN at the lead's "death". All of that is
+// gone. The pipeline is a lifetime figure, exactly like the spend it is divided by — measuring a
+// 14-day numerator against an all-time denominator drove ROI under 1 purely by ageing. These cases
+// pin the removal; `ResolvedPath` no longer even has a window field, so a freshness weight /
+// half-life / recency multiplier cannot come back without failing to compile here.
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse("2026-06-01T00:00:00Z");
 const ago = (days: number): string => new Date(NOW - days * DAY).toISOString();
 
-// Mirrors the sales funnel: pre-engagement delivery stages carry a decay window; click/reply don't.
-const DECAY_PATHS: ResolvedPath[] = [
-  { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery", staleAfterMs: 7 * DAY },
-  { tag: "sent", signal: "sent", expectedRevenueUsd: 6, kind: "delivery", staleAfterMs: 3 * DAY },
-  { tag: "delivered", signal: "delivered", expectedRevenueUsd: 12, kind: "delivery", staleAfterMs: 14 * DAY },
-  { tag: "opened", signal: "open", expectedRevenueUsd: 12, kind: "delivery", staleAfterMs: 14 * DAY },
+// The live sales funnel's shape: delivery milestones, the two engagement routes, then the
+// post-engagement positions. Not one of them expires.
+const AGE_PATHS: ResolvedPath[] = [
+  { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery" },
+  { tag: "sent", signal: "sent", expectedRevenueUsd: 6, kind: "delivery" },
+  { tag: "delivered", signal: "delivered", expectedRevenueUsd: 12, kind: "delivery" },
+  { tag: "opened", signal: "open", expectedRevenueUsd: 12, kind: "delivery" },
   { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement" },
   { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, kind: "engagement" },
-];
-
-describe("computeRevenue — decay (stall phase-out)", () => {
-  it("contacted but no sent past the 1-week window → dead (0 EV, stale tag, off the total)", () => {
-    const r = computeRevenue(DECAY_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { contacted: true }, signalDates: { contacted: ago(8) } }),
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(0);
-    expect(r.organizations).toEqual([]);
-    expect(r.leads).toHaveLength(1); // still shown
-    expect(r.leads[0].expectedRevenueUsd).toBe(0);
-    expect(r.leads[0].tags).toEqual(["contacted", "stale"]);
-    expect(r.events).toEqual([]);
-  });
-
-  it("contacted within the window → alive", () => {
-    const r = computeRevenue(DECAY_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { contacted: true }, signalDates: { contacted: ago(5) } }),
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(3);
-    expect(r.leads[0].tags).toEqual(["contacted"]);
-  });
-
-  it("sent stalls on the tighter 3-day window (furthest stage drives decay)", () => {
-    const r = computeRevenue(DECAY_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: true }, signalDates: { contacted: ago(6), sent: ago(4) } }),
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(0); // sent 4d ago > 3d window
-    expect(r.leads[0].tags).toEqual(["sent", "stale"]);
-  });
-
-  it("delivered: alive at 10d, dead at 15d", () => {
-    const alive = computeRevenue(DECAY_PATHS, [person({ leadId: "l1", signals: { delivered: true }, signalDates: { delivered: ago(10) } })], NOW);
-    expect(alive.headline.totalPipelineUsd).toBe(12);
-    const dead = computeRevenue(DECAY_PATHS, [person({ leadId: "l1", signals: { delivered: true }, signalDates: { delivered: ago(15) } })], NOW);
-    expect(dead.headline.totalPipelineUsd).toBe(0);
-  });
-
-  it("open resets the clock: opened 10d ago is alive (tag opened) even though delivered is old", () => {
-    const r = computeRevenue(DECAY_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { delivered: true, open: true }, signalDates: { delivered: ago(40), open: ago(10) } }),
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(12);
-    expect(r.leads[0].tags).toEqual(["opened"]);
-  });
-
-  it("opened but stalled past 2 weeks → dead", () => {
-    const r = computeRevenue(DECAY_PATHS, [
-      person({ leadId: "l1", signals: { delivered: true, open: true }, signalDates: { delivered: ago(40), open: ago(20) } }),
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(0);
-  });
-
-  it("engagement never decays in Phase 1: a 60-day-old click stays alive", () => {
-    const r = computeRevenue(DECAY_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { delivered: true, clicked: true }, signalDates: { delivered: ago(90), clicked: ago(60) } }),
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(20);
-    expect(r.leads[0].tags).toEqual(["visit"]);
-  });
-
-  it("fail-open: a delivery stage with no known date never decays", () => {
-    const r = computeRevenue(DECAY_PATHS, [
-      person({ leadId: "l1", signals: { delivered: true } }), // no signalDates
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(12);
-  });
-
-  it("time series steps UP at engagement and DOWN at a stalled org's death; final = alive total", () => {
-    const r = computeRevenue(DECAY_PATHS, [
-      person({ leadId: "l1", orgId: "alive", signals: { clicked: true }, signalDates: { clicked: "2026-01-01T00:00:00Z" } }), // +20, stays
-      person({ leadId: "l2", orgId: "dead", signals: { delivered: true }, signalDates: { delivered: ago(20) } }),             // +12 then -12 (death = 20d-14d = 6d ago)
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(20); // only the alive org
-    expect(r.timeSeries).toEqual([
-      { date: "2026-01-01T00:00:00Z", cumulativePipelineUsd: 20 },
-      { date: ago(20), cumulativePipelineUsd: 32 },
-      { date: ago(6), cumulativePipelineUsd: 20 }, // stalled org phased out
-    ]);
-  });
-
-  it("org with one alive + one stalled member stays alive at the live member's EV", () => {
-    const r = computeRevenue(DECAY_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { clicked: true }, signalDates: { clicked: ago(2) } }),     // alive 20
-      person({ leadId: "l2", orgId: "o1", signals: { contacted: true }, signalDates: { contacted: ago(30) } }), // stale
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(20);
-    expect(r.organizations).toHaveLength(1);
-    expect(r.leads).toHaveLength(2); // both rows shown
-  });
-});
-
-// ── Phase 2 decay: post-engagement (reply → meeting → close-win) ──────────────────
-// Mirrors the live sales funnel: reply carries a 14d onward window, meeting a 30d window,
-// click & closeWin are terminals with no window. closeWin EV = full LTR (realized).
-const PHASE2_PATHS: ResolvedPath[] = [
-  { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery", staleAfterMs: 7 * DAY },
-  { tag: "sent", signal: "sent", expectedRevenueUsd: 6, kind: "delivery", staleAfterMs: 3 * DAY },
-  { tag: "delivered", signal: "delivered", expectedRevenueUsd: 12, kind: "delivery", staleAfterMs: 14 * DAY },
-  { tag: "opened", signal: "open", expectedRevenueUsd: 12, kind: "delivery", staleAfterMs: 14 * DAY },
-  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement" },
-  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, kind: "engagement", staleAfterMs: 14 * DAY },
-  { tag: "meeting", signal: "meeting", expectedRevenueUsd: 300, kind: "engagement", staleAfterMs: 30 * DAY },
+  { tag: "meeting", signal: "meeting", expectedRevenueUsd: 300, kind: "engagement" },
   { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 1000, kind: "engagement" },
 ];
 
-describe("computeRevenue — Phase 2 decay (post-engagement)", () => {
-  it("reply within 14d, no meeting → alive at reply EV, tag [reply]", () => {
-    const r = computeRevenue(PHASE2_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true }, signalDates: { positiveReply: ago(10) } }),
-    ], NOW);
+describe("computeRevenue — no decay: age never reduces a lead", () => {
+  it("a lead contacted a year ago counts exactly as much as one contacted yesterday", () => {
+    const old = computeRevenue(AGE_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { contacted: true }, signalDates: { contacted: ago(365) } }),
+    ]);
+    const fresh = computeRevenue(AGE_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { contacted: true }, signalDates: { contacted: ago(1) } }),
+    ]);
+    expect(old.headline.totalPipelineUsd).toBe(3);
+    expect(old.headline.totalPipelineUsd).toBe(fresh.headline.totalPipelineUsd);
+    expect(old.leads[0].tags).toEqual(["contacted"]); // no `stale` tag exists any more
+    expect(old.organizations).toHaveLength(1);
+  });
+
+  it("a positive reply from months ago still counts, and its event stays on the ledger", () => {
+    const r = computeRevenue(AGE_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true }, signalDates: { positiveReply: ago(200) } }),
+    ]);
     expect(r.headline.totalPipelineUsd).toBe(120);
+    expect(r.leads[0].expectedRevenueUsd).toBe(120);
     expect(r.leads[0].tags).toEqual(["reply"]);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].eventType).toBe("reply");
   });
 
-  it("reply 20d ago, no meeting → dead (0 EV, [reply, stale], off total, kept in leads)", () => {
-    const r = computeRevenue(PHASE2_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true }, signalDates: { positiveReply: ago(20) } }),
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(0);
-    expect(r.organizations).toEqual([]);
-    expect(r.leads).toHaveLength(1);
-    expect(r.leads[0].expectedRevenueUsd).toBe(0);
-    expect(r.leads[0].tags).toEqual(["reply", "stale"]);
-    expect(r.events).toEqual([]);
-  });
-
-  it("meeting booked within 30d → alive at meeting EV, tag includes meeting", () => {
-    const r = computeRevenue(PHASE2_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true, meeting: true }, signalDates: { positiveReply: ago(20), meeting: ago(10) } }),
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(300); // meeting EV (reply alone would be dead at 20d, but meeting reset the clock)
+  it("a meeting booked long ago still counts at the meeting EV", () => {
+    const r = computeRevenue(AGE_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true, meeting: true }, signalDates: { positiveReply: ago(300), meeting: ago(250) } }),
+    ]);
+    expect(r.headline.totalPipelineUsd).toBe(300);
     expect(r.leads[0].tags.sort()).toEqual(["meeting", "reply"]);
   });
 
-  it("meeting 40d ago, no close → dead ([reply, meeting, stale], off total)", () => {
-    const r = computeRevenue(PHASE2_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true, meeting: true }, signalDates: { positiveReply: ago(60), meeting: ago(40) } }),
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(0);
-    expect(r.leads[0].expectedRevenueUsd).toBe(0);
-    expect(r.leads[0].tags).toContain("stale");
-    expect(r.leads[0].tags).toContain("meeting");
-  });
-
-  it("closed-won books full LTR and never decays, even 400 days old", () => {
-    const r = computeRevenue(PHASE2_PATHS, [
+  it("closed-won books full LTR however old it is", () => {
+    const r = computeRevenue(AGE_PATHS, [
       person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true, meeting: true, closeWin: true }, signalDates: { positiveReply: ago(420), meeting: ago(410), closeWin: ago(400) } }),
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(1000); // full LTR (MAX over fired paths)
-    expect(r.leads[0].expectedRevenueUsd).toBe(1000);
-    expect(r.leads[0].tags).toContain("closeWin");
-    expect(r.leads[0].tags).not.toContain("stale");
-  });
-
-  it("closeWin with no prior reply/meeting → tag [closeWin] alone (delivery suppressed), EV = LTR", () => {
-    const r = computeRevenue(PHASE2_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { delivered: true, closeWin: true }, signalDates: { delivered: ago(300), closeWin: ago(250) } }),
-    ], NOW);
+    ]);
     expect(r.headline.totalPipelineUsd).toBe(1000);
-    expect(r.leads[0].tags).toEqual(["closeWin"]);
+    expect(r.leads[0].tags).toContain("closeWin");
   });
 
-  it("fail-open: replied but reply date unknown → alive even if an earlier delivery is old & stale", () => {
-    const r = computeRevenue(PHASE2_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { delivered: true, positiveReply: true }, signalDates: { delivered: ago(90) } }), // no reply date
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(120); // furthest stage = reply (undated) → fail-open
-    expect(r.leads[0].tags).toEqual(["reply"]);
+  it("every org contributes: an old stalled lead is NOT dropped from the total or the table", () => {
+    const r = computeRevenue(AGE_PATHS, [
+      person({ leadId: "l1", orgId: "recent", signals: { clicked: true }, signalDates: { clicked: ago(2) } }),
+      person({ leadId: "l2", orgId: "ancient", signals: { delivered: true }, signalDates: { delivered: ago(400) } }),
+    ]);
+    expect(r.headline.totalPipelineUsd).toBe(32); // 20 + 12 — the old org is still pipeline
+    expect(r.organizations).toHaveLength(2);
   });
 
-  it("a click (visit) still never decays in Phase 2: a 60-day-old click stays alive", () => {
-    const r = computeRevenue(PHASE2_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { delivered: true, clicked: true }, signalDates: { delivered: ago(90), clicked: ago(60) } }),
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(20);
-    expect(r.leads[0].tags).toEqual(["visit"]);
+  it("the cumulative time series is MONOTONE NON-DECREASING and ends at the headline total", () => {
+    const r = computeRevenue(AGE_PATHS, [
+      person({ leadId: "l1", orgId: "a", signals: { delivered: true }, signalDates: { delivered: ago(400) } }),
+      person({ leadId: "l2", orgId: "b", signals: { positiveReply: true }, signalDates: { positiveReply: ago(200) } }),
+      person({ leadId: "l3", orgId: "c", signals: { clicked: true }, signalDates: { clicked: ago(2) } }),
+    ]);
+    const series = r.timeSeries.map((p) => p.cumulativePipelineUsd);
+    expect(series).toEqual([...series].sort((x, y) => x - y));
+    for (let i = 1; i < series.length; i += 1) expect(series[i]).toBeGreaterThanOrEqual(series[i - 1]);
+    expect(series[series.length - 1]).toBe(r.headline.totalPipelineUsd);
+    expect(r.headline.totalPipelineUsd).toBe(152); // 12 + 120 + 20, nothing phased out
   });
 
-  it("closeWin steps the time series UP and stays (realized revenue never reverses)", () => {
-    const r = computeRevenue(PHASE2_PATHS, [
-      person({ leadId: "l1", orgId: "won", signals: { closeWin: true }, signalDates: { closeWin: "2026-01-01T00:00:00Z" } }),
-      person({ leadId: "l2", orgId: "dead", signals: { positiveReply: true }, signalDates: { positiveReply: ago(20) } }), // reply 20d → dead
-    ], NOW);
-    expect(r.headline.totalPipelineUsd).toBe(1000); // only the closed org
-    expect(r.timeSeries[0]).toEqual({ date: "2026-01-01T00:00:00Z", cumulativePipelineUsd: 1000 });
+  it("a lead with no known date is unaffected (it simply cannot be placed on the timeline)", () => {
+    const r = computeRevenue(AGE_PATHS, [
+      person({ leadId: "l1", orgId: "o1", signals: { delivered: true } }), // no signalDates
+    ]);
+    expect(r.headline.totalPipelineUsd).toBe(12);
+    expect(r.timeSeries).toEqual([]);
   });
 });
 
 // ── Engagement-route combine (click + reply summed as independent probabilities, bounded 1 LTR) ──
-// No decay windows on these fixtures → date-independent (terminals/engagement routes never decay).
 const LTR = 1000;
 const ROUTE_PATHS: ResolvedPath[] = [
   { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement", engagementRoute: true },
@@ -494,17 +388,17 @@ const FULL_PATHS: ResolvedPath[] = [
 
 describe("computeRevenue — engagement-route combine (independent-probability SUM)", () => {
   it("click only → unchanged route EV", () => {
-    const r = computeRevenue(ROUTE_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: false } })], undefined, LTR);
+    const r = computeRevenue(ROUTE_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: false } })], LTR);
     expect(r.leads[0].expectedRevenueUsd).toBe(20);
   });
 
   it("reply only → unchanged route EV", () => {
-    const r = computeRevenue(ROUTE_PATHS, [person({ leadId: "l1", signals: { clicked: false, positiveReply: true } })], undefined, LTR);
+    const r = computeRevenue(ROUTE_PATHS, [person({ leadId: "l1", signals: { clicked: false, positiveReply: true } })], LTR);
     expect(r.leads[0].expectedRevenueUsd).toBe(120);
   });
 
   it("BOTH routes → combined a+b−a·b/LTR, strictly > max(either) and < plain sum", () => {
-    const r = computeRevenue(ROUTE_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true } })], undefined, LTR);
+    const r = computeRevenue(ROUTE_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true } })], LTR);
     const ev = r.leads[0].expectedRevenueUsd;
     expect(ev).toBeCloseTo(137.6, 6); // 20 + 120 − 20·120/1000
     expect(ev).toBeGreaterThan(120);  // > MAX of either route alone
@@ -517,7 +411,7 @@ describe("computeRevenue — engagement-route combine (independent-probability S
       { tag: "visit", signal: "clicked", expectedRevenueUsd: 600, kind: "engagement", engagementRoute: true },
       { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 800, kind: "engagement", engagementRoute: true },
     ];
-    const r = computeRevenue(HOT, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true } })], undefined, LTR);
+    const r = computeRevenue(HOT, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true } })], LTR);
     expect(r.leads[0].expectedRevenueUsd).toBeCloseTo(920, 6); // 600 + 800 − 480
     expect(r.leads[0].expectedRevenueUsd).toBeLessThanOrEqual(LTR);
   });
@@ -528,18 +422,18 @@ describe("computeRevenue — engagement-route combine (independent-probability S
   });
 
   it("delivery-furthest only (no engagement) → unchanged MAX", () => {
-    const r = computeRevenue(FULL_PATHS, [person({ leadId: "l1", signals: { delivered: true } })], undefined, LTR);
+    const r = computeRevenue(FULL_PATHS, [person({ leadId: "l1", signals: { delivered: true } })], LTR);
     expect(r.leads[0].expectedRevenueUsd).toBe(12);
     expect(r.leads[0].tags).toEqual(["delivered"]);
   });
 
   it("routes + meeting → MAX(combined, meeting) — convergence not double-counted", () => {
-    const r = computeRevenue(FULL_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true, meeting: true } })], undefined, LTR);
+    const r = computeRevenue(FULL_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true, meeting: true } })], LTR);
     expect(r.leads[0].expectedRevenueUsd).toBe(300); // combined(137.6) < meeting(300) → meeting dominates
   });
 
   it("closeWin → full LTR dominates the combine (realized revenue)", () => {
-    const r = computeRevenue(FULL_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true, closeWin: true } })], undefined, LTR);
+    const r = computeRevenue(FULL_PATHS, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true, closeWin: true } })], LTR);
     expect(r.leads[0].expectedRevenueUsd).toBe(1000);
   });
 });
