@@ -1508,6 +1508,17 @@ caller has to be TOLD WHICH INPUT — not handed a gateway-shaped error that rea
   control-plane that reports a deploy as green while the old build is still serving. Note the served
   document does NOT match the committed `openapi.json` byte for byte (different size); compare CONTENT,
   never length. (Set 2026-08-08.)
+- **A code deploy does NOT change what a read returns — the Gold layer serves the PREVIOUS body first.
+  Read a value TWICE before believing it, and never compare two endpoints' bodies from a single read
+  each.** Past its fresh window a cell is served instantly from the snapshot and refreshed BEHIND the
+  response, so the first read after a deploy legitimately returns the pre-deploy number and only the
+  next one shows the new code's answer. Two endpoints hold SEPARATE cells that refresh independently,
+  so a one-shot comparison can catch one cell before its refresh and the other after — which reads
+  exactly like the incoherence you shipped a fix for. Poll until the value settles, then compare.
+  Cost 2026-08-13 (#749 prod verification): the first post-deploy read showed the identity still
+  over-reporting, and a fleet sweep flagged three "violations" — all were stale cells, and every one
+  cleared on re-read (one brand's figure was even seen mid-flight at 7,177 vs 7,180 while the brand
+  kept contacting people). Nothing was wrong; the reads were.
 
 ## `pipeline-activity` accepts `?pricing=gross|net` — a COUNT can be money-derived, and this one is
 
