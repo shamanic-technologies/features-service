@@ -7,7 +7,7 @@ const mockFetchTs = vi.fn();
 vi.mock("./leads-client.js", () => ({ fetchLeadsForRevenue: (...a: unknown[]) => mockFetchLeads(...a) }));
 vi.mock("./email-status-client.js", () => ({ fetchEventTimestamps: (...a: unknown[]) => mockFetchTs(...a) }));
 
-import { fetchEngagementSnapshotCounts } from "./engagement-snapshot.js";
+import { fetchEngagementSnapshotCounts, fetchEngagementSnapshotByIdentity } from "./engagement-snapshot.js";
 import { computeRevenue, buildSignalSeries, type ResolvedPath, type EnginePerson } from "./revenue-engine.js";
 
 const H = { orgId: "o1" };
@@ -66,6 +66,83 @@ describe("fetchEngagementSnapshotCounts — dedup + bounce (the #388 +1 drift)",
     expect(counts.recipientsDelivered).toBe(2);
     expect(counts.recipientsRepliesPositive).toBe(1); // L3
     expect(counts.recipientsOpened).toBe(0); // no open timestamps
+  });
+});
+
+describe("fetchEngagementSnapshotByIdentity — an identity's people are counted the way its brand's are", () => {
+  /** Two members of ONE identity, plus an unrelated campaign on its own. */
+  const IDENTITY_OF = (cid: string): string => (cid === "stopped" || cid === "live" ? "family" : `campaign:${cid}`);
+
+  it("counts a person served under SEVERAL members of one identity ONCE — the case that produced the over-count", async () => {
+    mockFetchLeads.mockResolvedValue([
+      // The same lead, re-served under the live campaign after its ancestor stopped. Adding the two
+      // members' per-campaign rows would report 2 people contacted; there is only one person.
+      person({ leadId: "shared", email: "a@x.com", campaignId: "stopped", signals: sig({ contacted: true, sent: true, delivered: true }) }),
+      person({ leadId: "shared", email: "a@x.com", campaignId: "live", signals: sig({ contacted: true, sent: true, delivered: true, clicked: true }) }),
+      person({ leadId: "only-live", email: "b@x.com", campaignId: "live", signals: sig({ contacted: true, sent: true, delivered: true, positiveReply: true }) }),
+    ]);
+
+    const byIdentity = await fetchEngagementSnapshotByIdentity("brand1", IDENTITY_OF, H);
+
+    expect(byIdentity.get("family")).toMatchObject({
+      recipientsContacted: 2, // shared + only-live, NOT 3
+      recipientsSent: 2,
+      recipientsDelivered: 2,
+      recipientsClicked: 1, // the shared lead's click, counted once
+      recipientsRepliesPositive: 1,
+    });
+  });
+
+  it("never reports more people than the brand — every signal, for every identity", async () => {
+    mockFetchLeads.mockResolvedValue([
+      person({ leadId: "shared", email: "a@x.com", campaignId: "stopped", signals: sig({ contacted: true, sent: true, delivered: true, clicked: true }) }),
+      person({ leadId: "shared", email: "a@x.com", campaignId: "live", signals: sig({ contacted: true, sent: true, delivered: true, positiveReply: true }) }),
+      person({ leadId: "other", email: "b@x.com", campaignId: "unrelated", signals: sig({ contacted: true, sent: true, delivered: true, bounced: true }) }),
+    ]);
+    mockFetchTs.mockResolvedValue(new Map([["a@x.com", { open: "2026-06-20T00:00:00Z" }]]));
+
+    const brand = await fetchEngagementSnapshotCounts("brand1", undefined, H);
+    const byIdentity = await fetchEngagementSnapshotByIdentity("brand1", IDENTITY_OF, H);
+
+    expect(byIdentity.size).toBe(2);
+    for (const counts of byIdentity.values()) {
+      for (const [key, value] of Object.entries(counts)) {
+        expect(value).toBeLessThanOrEqual(brand[key as keyof typeof brand]);
+      }
+    }
+  });
+
+  it("splits the brand's leads by identity — an identity reports only the people its own campaigns reached", async () => {
+    mockFetchLeads.mockResolvedValue([
+      person({ leadId: "l1", email: "a@x.com", campaignId: "stopped", signals: sig({ contacted: true }) }),
+      person({ leadId: "l2", email: "b@x.com", campaignId: "unrelated", signals: sig({ contacted: true }) }),
+      // A row whose producer states no campaign belongs to no identity — counted for neither.
+      person({ leadId: "l3", email: "c@x.com", campaignId: null, signals: sig({ contacted: true }) }),
+    ]);
+
+    const byIdentity = await fetchEngagementSnapshotByIdentity("brand1", IDENTITY_OF, H);
+
+    expect(byIdentity.get("family")?.recipientsContacted).toBe(1);
+    expect(byIdentity.get("campaign:unrelated")?.recipientsContacted).toBe(1);
+    expect([...byIdentity.keys()].sort()).toEqual(["campaign:unrelated", "family"]);
+  });
+
+  it("reads the brand ONCE — never one lead fetch per identity", async () => {
+    mockFetchLeads.mockResolvedValue([
+      person({ leadId: "l1", email: "a@x.com", campaignId: "stopped", signals: sig({ contacted: true }) }),
+      person({ leadId: "l2", email: "b@x.com", campaignId: "unrelated", signals: sig({ contacted: true }) }),
+    ]);
+
+    await fetchEngagementSnapshotByIdentity("brand1", IDENTITY_OF, H);
+
+    expect(mockFetchLeads).toHaveBeenCalledTimes(1);
+    expect(mockFetchLeads).toHaveBeenCalledWith("brand1", undefined, H);
+    expect(mockFetchTs).toHaveBeenCalledTimes(1);
+  });
+
+  it("lead fetch stays fail-loud (no silently under-reported identity)", async () => {
+    mockFetchLeads.mockRejectedValue(new Error("lead-service 502"));
+    await expect(fetchEngagementSnapshotByIdentity("brand1", IDENTITY_OF, H)).rejects.toThrow("lead-service 502");
   });
 });
 

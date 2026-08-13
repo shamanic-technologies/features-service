@@ -8,7 +8,13 @@ import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, selectCostCents, type Pricing } from "../lib/pricing.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
-import { fetchEngagementSnapshotCounts, SNAPSHOT_ENGAGEMENT_KEYS } from "../lib/engagement-snapshot.js";
+import {
+  fetchEngagementSnapshotCounts,
+  fetchEngagementSnapshotByIdentity,
+  SNAPSHOT_ENGAGEMENT_KEYS,
+  UNOWNED_ENGAGEMENT_KEY,
+  ZERO_ENGAGEMENT_COUNTS,
+} from "../lib/engagement-snapshot.js";
 import { observedCostPerOutcome } from "../lib/cost-engine.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { describeIdentity, EMPTY_CAMPAIGN_FAMILIES, type CampaignIdentityView } from "../lib/campaign-identity.js";
@@ -1184,16 +1190,18 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     const EMPTY_STATS: Map<string, Record<string, number>> = new Map();
     const skip = (): Promise<Map<string, Record<string, number>>> => Promise.resolve(EMPTY_STATS);
 
-    // The recipient-engagement counts (contacted/sent/delivered/opened/clicked/repliesPositive)
-    // are reconciled onto the SAME deduped lead snapshot /revenue uses, so the brand stat card and
-    // the Overview can never disagree (features-service#388). Gated to the brand-scoped, non-grouped
-    // read the dashboard renders — the grouped (per-campaign) breakdown keeps the email-gateway
-    // aggregate. email-gateway is still fetched for the keys the snapshot can't produce (bounced,
-    // replies negative/neutral/auto-reply); the snapshot just OVERRIDES the six it owns.
-    const wantEngagementSnapshot =
-      !groupBy && Boolean(filters.brandId) && SNAPSHOT_ENGAGEMENT_KEYS.some((k) => declaredKeys.has(k));
+    // The recipient-engagement counts are reconciled onto the SAME deduped lead snapshot /revenue
+    // uses, so the brand stat card and the Overview can never disagree (features-service#388) — and,
+    // since #749, so a campaign IDENTITY is counted the way its brand is counted. Both reads are
+    // person-grain: a DISTINCT lead, never a per-send recipient row. email-gateway is still fetched
+    // for the one key no lead evidence can produce (auto-replies); the snapshot OVERRIDES the nine
+    // it owns. Both need the brand — a campaign-scoped read resolves it from campaign-service.
+    const snapshotBrandId = filters.brandId ?? identityBrandId ?? null;
+    const wantsSnapshotKeys = SNAPSHOT_ENGAGEMENT_KEYS.some((k) => declaredKeys.has(k));
+    const wantEngagementSnapshot = !groupBy && Boolean(snapshotBrandId) && wantsSnapshotKeys;
+    const wantIdentityEngagement = groupBy === "campaignId" && Boolean(snapshotBrandId) && wantsSnapshotKeys;
 
-    const [rawEmailStatsMap, rawRunsStatsMap, rawOutletsStatsMap, rawJournalistsStatsMap, rawLeadsStatsMap, rawPipelineStatsMap, rawPressKitsStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns, engagementSnapshot] = await Promise.all([
+    const [rawEmailStatsMap, rawRunsStatsMap, rawOutletsStatsMap, rawJournalistsStatsMap, rawLeadsStatsMap, rawPipelineStatsMap, rawPressKitsStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns, engagementSnapshot, engagementByIdentity] = await Promise.all([
       neededSources.has("email-gateway") ? fetchEmailStats(orgId, fanOutGroupBy, fanOutFilters, identity) : skip(),
       fetchRunsStats(orgId, fanOutGroupBy, fanOutFilters, [featureSlug], identity, pricing),
       neededSources.has("outlets") ? fetchOutletsStats(orgId, fanOutGroupBy, fanOutFilters, identity) : skip(),
@@ -1205,7 +1213,10 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       neededSources.has("ai-visibility") ? fetchAiVisibilityStats(orgId, filters, identity) : skip(),
       fetchActiveCampaigns(orgId, filters, identity),
       wantEngagementSnapshot
-        ? fetchEngagementSnapshotCounts(filters.brandId, requestedIdentity?.campaignIds ?? filters.campaignId, { orgId, userId, runId, featureSlug })
+        ? fetchEngagementSnapshotCounts(snapshotBrandId!, requestedIdentity?.campaignIds ?? filters.campaignId, { orgId, userId, runId, featureSlug })
+        : Promise.resolve(null),
+      wantIdentityEngagement
+        ? fetchEngagementSnapshotByIdentity(snapshotBrandId!, identityKeyOfCampaign, { orgId, userId, runId, featureSlug })
         : Promise.resolve(null),
     ]);
 
@@ -1238,7 +1249,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         ...(pressKitsStatsMap.get("__total__") ?? {}),
         ...(journalistsQuotesStatsMap.get("__total__") ?? {}),
         ...(aiVisibilityStatsMap.get("__total__") ?? {}),
-        // Snapshot-derived engagement counts OVERRIDE the email-gateway aggregate for the six keys
+        // Snapshot-derived engagement counts OVERRIDE the email-gateway aggregate for the nine keys
         // it owns (must come AFTER the emailStatsMap spread). Null when not applicable (grouped /
         // no brandId / feature renders none of them) → email-gateway aggregate stands. (#388)
         ...(engagementSnapshot ?? {}),
@@ -1246,6 +1257,11 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         actualCostInUsdCents: runsStatsMap.get("__total__")?.actualCostInUsdCents ?? 0,
         completedRuns: runsStatsMap.get("__total__")?.completedRuns ?? 0,
       };
+
+      // A single-campaign read of a MULTI-MEMBER identity is the same fold as a group, flattened:
+      // the members' auto-reply aggregates would be added, counting a person once per member. Say
+      // "could not count" instead. (The nine snapshot keys above are already identity-deduped.)
+      if (engagementSnapshot && foldSingleIntoTotal) delete rawStats[UNOWNED_ENGAGEMENT_KEY];
 
       return {
         featureSlug,
@@ -1287,6 +1303,18 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         actualCostInUsdCents: (runsStatsMap.get(groupKey) as RunsStatsEntry | undefined)?.actualCostInUsdCents ?? 0,
         completedRuns: (runsStatsMap.get(groupKey) as RunsStatsEntry | undefined)?.completedRuns ?? 0,
       };
+
+      // A campaign identity's PEOPLE are counted the way its brand's people are counted: distinct
+      // leads over the identity's member campaigns, not the members' per-campaign recipient rows
+      // added together. That fold counts a person once per member they were served under, which is
+      // how an identity came to report more people contacted than the brand containing it. An
+      // identity whose members reached no lead reads 0 on this basis, not the email-gateway sum.
+      // The one key no lead evidence can produce is DROPPED for a multi-member identity (→ null,
+      // "we could not count this") rather than summed into that same over-count.
+      if (engagementByIdentity) {
+        Object.assign(rawStats, engagementByIdentity.get(groupKey) ?? ZERO_ENGAGEMENT_COUNTS);
+        if ((identityMembers.get(groupKey) ?? [groupKey]).length > 1) delete rawStats[UNOWNED_ENGAGEMENT_KEY];
+      }
 
       const group: StatsGroup = {
         systemStats: buildSystemStats(runsStatsMap.get(groupKey) as RunsStatsEntry | undefined, activeCampaigns),

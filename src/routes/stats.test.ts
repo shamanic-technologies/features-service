@@ -250,11 +250,15 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
     expect(res.body.stats.recipientsContacted).toBe(2);
     expect(res.body.stats.recipientsSent).toBe(2);
     expect(res.body.stats.recipientsDelivered).toBe(2);
-    // bounced is NOT snapshot-owned → the email-gateway aggregate still stands.
-    expect(res.body.stats.recipientsBounced).toBe(5);
+    // bounced is snapshot-owned too (#749) — none of these lead rows bounced, so 0 distinct leads
+    // bounced, NOT the email-gateway aggregate's 5. A bounce is a fact about a person, and every
+    // person-grain figure on this response is a count of distinct leads.
+    expect(res.body.stats.recipientsBounced).toBe(0);
+    // The only person-grain key no lead evidence can produce keeps the email-gateway aggregate.
+    expect(res.body.stats.recipientsRepliesAutoReply).toBe(0);
   });
 
-  it("grouped (groupBy=campaignId): no reconciliation — the snapshot lead fetch is NOT triggered", async () => {
+  it("grouped (groupBy=campaignId): reads the brand's leads ONCE — a campaign identity is counted on the brand's own basis", async () => {
     const paths: string[] = [];
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
@@ -262,13 +266,16 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
       if (url.includes("runs:3000")) {
         return new Response(JSON.stringify({ groups: [] }), { status: 200 });
       }
+      if (url.includes("leads:3000/orgs/leads")) {
+        return new Response(JSON.stringify({ leads: [] }), { status: 200 });
+      }
       return new Response(JSON.stringify({}), { status: 200 });
     });
 
     const res = await request(app).get("/features/sales-cold-email-outreach/stats?brandId=brand-1&groupBy=campaignId").set(AUTH_HEADERS);
     expect(res.status).toBe(200);
-    // The engagement snapshot (/orgs/leads) is gated to the non-grouped path.
-    expect(paths.some((u) => u.includes("leads:3000/orgs/leads"))).toBe(false);
+    // One brand-wide read serves every identity — never one lead fetch per campaign.
+    expect(paths.filter((u) => u.includes("leads:3000/orgs/leads"))).toHaveLength(1);
   });
 });
 
