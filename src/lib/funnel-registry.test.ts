@@ -72,22 +72,17 @@ describe("sales funnel — resolvePaths", () => {
     expect(tagOrder.indexOf("visit")).toBeLessThan(tagOrder.indexOf("reply"));
   });
 
-  it("opened carries the delivered close-probability (decay checkpoint, no extra EV)", () => {
+  it("opened carries the delivered close-probability (a tag, no extra EV)", () => {
     expect(byTag.opened.expectedRevenueUsd).toBeCloseTo(byTag.delivered.expectedRevenueUsd);
   });
 
-  it("decay windows: pre-engagement + reply(14d)/meeting(30d) carry one; click & closeWin terminal (none)", () => {
-    const DAY = 24 * 60 * 60 * 1000;
-    expect(byTag.contacted.staleAfterMs).toBe(7 * DAY);
-    expect(byTag.sent.staleAfterMs).toBe(3 * DAY);
-    expect(byTag.delivered.staleAfterMs).toBe(14 * DAY);
-    expect(byTag.opened.staleAfterMs).toBe(14 * DAY);
-    // Phase 2: reply → meeting (14d), meeting → close (30d).
-    expect(byTag.reply.staleAfterMs).toBe(14 * DAY);
-    expect(byTag.meeting.staleAfterMs).toBe(30 * DAY);
-    // Terminals never decay: a click has no onward window; close-win is realized revenue (immune).
-    expect(byTag.visit.staleAfterMs).toBeUndefined();
-    expect(byTag.closeWin.staleAfterMs).toBeUndefined();
+  it("NO path carries a staleness window — nothing in this funnel expires", () => {
+    // The windows (contacted 7d, sent 3d, delivered/open/reply 14d, meeting 30d) are gone, and so is
+    // the field that carried them. Reading it back on every path proves no stage smuggles one in.
+    for (const path of paths) {
+      expect(path).not.toHaveProperty("staleAfterMs");
+      expect(Object.keys(path).some((k) => /stale|decay|halflife|half_life|recency|freshness/i.test(k))).toBe(false);
+    }
   });
 
   it("every path is itemised in the events ledger", () => {

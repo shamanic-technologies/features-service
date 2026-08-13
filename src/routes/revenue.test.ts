@@ -104,7 +104,7 @@ function qualRows(quals: Qualifications): unknown[] {
 }
 
 /** Route fetch mock keyed by URL substring. effective economics (saved set + cross-brand average) + leads + status timestamps + manual quals + platform stats + cost overridable. */
-function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; sale: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean } = {}): void {
+function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; sale: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean; salesFunnels?: unknown[] } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     // lead-service GET /internal/brands/:brandId/converted-lead-emails?event=<type> — per-lead SIGNUP /
@@ -142,6 +142,16 @@ function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; lead
     }
     if (url.includes("/stats/costs")) {
       return new Response(costGroups(opts.costCents ?? 0), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    // brand-service GET /internal/brands/:brandId/sales-funnels — what the brand DECLARED it sells
+    // through, each funnel carrying the terms ITS chain is priced on. Absent option → a 404, the
+    // shape a brand that has declared nothing produces, so the pipeline EV falls through to the
+    // brand-wide economics (the legacy behaviour every other case in this file asserts).
+    if (url.includes("/sales-funnels")) {
+      if (!opts.salesFunnels) {
+        return new Response("no declaration", { status: 404, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ funnels: opts.salesFunnels }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     // brand-service /orgs/brands/:brandId/sales-economics-effective — ONE call returning
     // { economics, source }. Synthesize from fixtures: a saved set → "user"; else the cross-brand
@@ -822,9 +832,9 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.status).toBe(502);
   });
 
-  // ── decay (stall phase-out) ───────────────────────────────────────────────
+  // ── no decay: age never reduces a lead ────────────────────────────────────
 
-  it("maps firstOpenedAt → opened stage (alive, tag opened)", async () => {
+  it("maps firstOpenedAt → opened stage (tag opened)", async () => {
     mockFetch({
       economics: ECONOMICS,
       leads: [leadRow({ leadId: "lo", email: "open@x.com", lead: { firstName: "Op", lastName: "En", photoUrl: null, organization: { id: "o1", name: "Org1", logoUrl: null } } })],
@@ -836,42 +846,147 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.leads[0].tags).toContain("opened");
   });
 
-  it("stalled lead drops off the total but stays in the leads table with a stale tag", async () => {
+  it("a long-stalled contacted lead still counts — no `stale` tag, still an organization", async () => {
     mockFetch({
       economics: ECONOMICS,
       leads: [leadRow({ leadId: "lc", email: "cold@x.com", sent: false, delivered: false, lead: { firstName: "Co", lastName: "Ld", photoUrl: null, organization: { id: "o9", name: "Org9", logoUrl: null } } })],
-      timestamps: { "cold@x.com": { firstContactedAt: daysAgo(20) } }, // contacted 20d ago, window 7d
+      timestamps: { "cold@x.com": { firstContactedAt: daysAgo(200) } }, // contacted 200d ago — used to be zeroed
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(0);
-    expect(res.body.organizations).toEqual([]);
+    expect(res.body.headline.totalPipelineUsd).toBeGreaterThan(0);
+    expect(res.body.organizations).toHaveLength(1);
     expect(res.body.leads).toHaveLength(1);
-    expect(res.body.leads[0].expectedRevenueUsd).toBe(0);
-    expect(res.body.leads[0].tags).toContain("stale");
+    expect(res.body.leads[0].expectedRevenueUsd).toBe(res.body.headline.totalPipelineUsd);
+    expect(res.body.leads[0].tags).toEqual(["contacted"]);
   });
 
-  // ── Phase 2: post-engagement decay + close-win (manual-qualification enrichment) ───
+  // ── the pipeline EV prices on the brand's DECLARED sales funnel ───────────
+  //
+  // A brand-level conversion rate no longer carries meaning — rates exist PER FUNNEL, and the
+  // brand-wide record survives only as the fallthrough for a brand that declared none. The spend
+  // block's cost columns and both sibling surfaces already price this way; the EV did not, so one
+  // brand + one funnel + one moment printed two prices. Same precedence, same merge, one price.
+  //
+  // Brand-wide ECONOMICS: replyToMeeting 40% × meetingToClose 30% = 12% → a reply is worth $120.
+
+  const declaredFunnel = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    funnelKey: "sales_meetings_from_conversation",
+    active: true,
+    name: "Meetings from conversations",
+    steps: ["Positive reply", "Meeting booked", "Meeting attended", "Paid client"],
+    rates: {},
+    lifetimeRevenueUsd: null,
+    destinationUrl: null,
+    bookingUrl: null,
+    updatedAt: "2026-08-01T00:00:00Z",
+    ...over,
+  });
+
+  const REPLY_ONLY = () =>
+    leadRow({ leadId: "lr", email: "reply@x.com", replied: true, replyClassification: "positive", lead: { firstName: "Re", lastName: "Ply", photoUrl: null, organization: { id: "or", name: "OrgR", logoUrl: null } } });
+
+  it("prices each reply on the DECLARED funnel's own terms, not the brand-wide row", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [REPLY_ONLY()],
+      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(30) } },
+      // The declared chain: 50% reply→meeting × 70% attended→paid = 35% reply→paid.
+      salesFunnels: [declaredFunnel({ rates: { replyToMeetingPct: 50, meetingToClosePct: 70 } })],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(350); // 1000 × 0.35 — NOT the brand-wide $120
+  });
+
+  it("falls through to the brand-wide record for a term the funnel does not state", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [REPLY_ONLY()],
+      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(30) } },
+      // Only the reply→meeting leg is declared; meeting→close falls through to the brand-wide 30%.
+      salesFunnels: [declaredFunnel({ rates: { replyToMeetingPct: 50 } })],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(150); // 1000 × 0.50 × 0.30 — never 0, never half a chain
+  });
+
+  it("composes the meeting chain: a declared show-up rate is NOT a free 100%", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [REPLY_ONLY()],
+      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(30) } },
+      // booked→paid = attended→paid 70% × show-up 50% = 35% ⇒ reply→paid = 50% × 35% = 17.5%.
+      salesFunnels: [declaredFunnel({ rates: { replyToMeetingPct: 50, meetingToClosePct: 70, meetingBookedToAttendedPct: 50 } })],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(175);
+  });
+
+  it("prices on the funnel's own lifetime revenue when the funnel states one", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [REPLY_ONLY()],
+      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(30) } },
+      salesFunnels: [declaredFunnel({ rates: { replyToMeetingPct: 50, meetingToClosePct: 70 }, lifetimeRevenueUsd: 2500 })],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(875); // 2500 × 0.35 — the brief's per-reply figure
+  });
+
+  it("`?funnel=` names which declared chain to price on", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [REPLY_ONLY()],
+      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(30) } },
+      salesFunnels: [
+        declaredFunnel({ rates: { replyToMeetingPct: 50, meetingToClosePct: 70 } }),
+        declaredFunnel({ funnelKey: "sales_meetings_from_website", name: "Meetings from the website", rates: { replyToMeetingPct: 10, meetingToClosePct: 10 } }),
+      ],
+    });
+    // Unqualified → the FIRST declared funnel in catalogue order (the conversation chain).
+    const first = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(first.body.headline.totalPipelineUsd).toBe(350);
+    // Named → that chain's own terms: 10% × 10% = 1%.
+    const named = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&funnel=sales_meetings_from_website").set(AUTH);
+    expect(named.body.headline.totalPipelineUsd).toBeCloseTo(10, 6);
+  });
+
+  it("a brand that declared NO funnel is priced exactly as before (brand-wide record)", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [REPLY_ONLY()],
+      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(30) } },
+      // no salesFunnels → brand-service 404s, the shape a brand with no declaration produces
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(120); // the brand-wide 12%
+  });
+
+  // ── post-engagement stages + close-win (manual-qualification enrichment) ───
 
   const REPLY_LEAD = (over: Record<string, unknown> = {}) =>
     leadRow({ leadId: "lr", email: "reply@x.com", replied: true, replyClassification: "positive", lead: { firstName: "Re", lastName: "Ply", photoUrl: null, organization: { id: "or", name: "OrgR", logoUrl: null } }, ...over });
 
-  it("meeting-booked enrichment → meeting stage EV (300), tag meeting, alive (resets the reply clock)", async () => {
+  it("meeting-booked enrichment → meeting stage EV (300), tag meeting", async () => {
     mockFetch({
       economics: ECONOMICS,
       leads: [REPLY_LEAD()],
-      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(20) } }, // reply 20d ago alone would decay (14d window)
-      quals: { "reply@x.com": { meetingBookedAt: daysAgo(5) } },      // …but a meeting 5d ago resets the clock
+      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(20) } },
+      quals: { "reply@x.com": { meetingBookedAt: daysAgo(5) } },
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(300); // meeting EV bump over reply's 120
     expect(res.body.leads[0].expectedRevenueUsd).toBe(300);
     expect(res.body.leads[0].tags).toContain("meeting");
-    expect(res.body.leads[0].tags).not.toContain("stale");
   });
 
-  it("closed-won enrichment → books full LTR (1000), tag closeWin, never decays even if old", async () => {
+  it("closed-won enrichment → books full LTR (1000), tag closeWin, however old", async () => {
     mockFetch({
       economics: ECONOMICS,
       leads: [REPLY_LEAD()],
@@ -883,26 +998,31 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.headline.totalPipelineUsd).toBe(1000); // full LTR realized
     expect(res.body.leads[0].expectedRevenueUsd).toBe(1000);
     expect(res.body.leads[0].tags).toContain("closeWin");
-    expect(res.body.leads[0].tags).not.toContain("stale");
   });
 
-  it("positive-reply lead with no meeting within 14d decays out (stale), no qualification data", async () => {
+  it("an old positive reply with no meeting still counts in full — this is the reported bug", async () => {
+    // The customer's 15 positive replies: 13 of them sat past the retired 14-day reply window and
+    // contributed $0, so the pipeline was a 14-day figure divided by lifetime spend.
     mockFetch({
       economics: ECONOMICS,
       leads: [REPLY_LEAD()],
-      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(20) } }, // reply 20d ago, window 14d, no meeting
+      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(200) } },
       quals: {},
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(0);
-    expect(res.body.organizations).toEqual([]);
+    expect(res.body.headline.totalPipelineUsd).toBe(120); // the reply-stage EV, undiminished by age
+    expect(res.body.organizations).toHaveLength(1);
     expect(res.body.leads).toHaveLength(1);
-    expect(res.body.leads[0].expectedRevenueUsd).toBe(0);
-    expect(res.body.leads[0].tags).toEqual(["reply", "stale"]);
+    expect(res.body.leads[0].expectedRevenueUsd).toBe(120);
+    expect(res.body.leads[0].tags).toEqual(["reply"]);
+    expect(res.body.events).toHaveLength(1); // the reply event stays on the ledger
+    // …and the cumulative series only ever rises.
+    const series = res.body.timeSeries.map((p: { cumulativePipelineUsd: number }) => p.cumulativePipelineUsd);
+    expect(series).toEqual([...series].sort((a: number, b: number) => a - b));
   });
 
-  it("degrades (still 200, Phase 1 pipeline correct) when /orgs/manual-qualifications fails", async () => {
+  it("degrades (still 200, pipeline correct) when /orgs/manual-qualifications fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
