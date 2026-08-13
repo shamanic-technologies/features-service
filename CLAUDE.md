@@ -127,6 +127,21 @@ IDENTITY — campaign-service's own key (its `uniq_campaigns_org_brand_funnel_ch
 - **`EnginePerson.campaignId`** is carried through `leads-client` purely so this grouping can happen
   BEFORE the dedup. The engine ignores it, and `dedupPersonsByLead` keeps the first row's value (a
   deduped person no longer belongs to one campaign).
+- **The lead page is read ONCE per in-flight request — `sharedLeadPage` (`leads-client.ts`), and it
+  is NOT a cache.** This process runs with **`--max-old-space-size=384`** (set in
+  `/root/distribute/env/features-service.env`, not the Dockerfile) and a big brand's `/orgs/leads`
+  page is the largest body it parses. Making the grouped read fetch leads gave the dashboard TWO
+  surfaces wanting the SAME page at the same moment — the brand stat card and the campaign
+  breakdown both revalidate in the background when a brand page opens — and two simultaneous parses
+  of one page do not fit: prod `f4d73dab…` (7,683 leads) drove RSS to ~777 MB and the process was
+  OOM-killed and restarted, reproducibly. Concurrent readers of the identical request now share one
+  fetch + one parse and each maps its OWN persons (callers mutate signals, so the rows are shared
+  read-only). The entry is dropped the moment the fetch settles, so no read is ever served a stale
+  page and a failure fails every waiting reader loudly. **Do NOT turn this into a TTL cache** — the
+  freshness rules live in the Gold snapshot layer, and a second cache under them would serve a
+  number nobody can reason about. Guards: the four `one page, one parse` cases in
+  `leads-client.test.ts`. If a brand ever outgrows a single 384 MB parse, the answer is the heap
+  setting or a producer-side page, not a silently narrower read.
 - **The cache key carries the IDENTITY, not the campaign**, so the dashboard's one call per rendered
   row lands on ONE cell instead of paying for N identical fan-outs.
 - **Fail-SOFT with a loud log.** With campaign-service unreachable every campaign is its own family —
