@@ -55,16 +55,6 @@ export interface ResolvedPath {
   engagementRoute?: boolean;
   /** Whether a fired event of this path is itemised in the events ledger. Defaults to true. */
   ledger?: boolean;
-  /**
-   * Decay window in ms. When this is the FURTHEST reached stage and `now − eventDate >
-   * staleAfterMs`, the lead is considered DEAD — it stalled before advancing to the next stage.
-   * Applies to ANY kind: pre-engagement delivery milestones (contacted/sent/delivered/open) and
-   * post-engagement stages (reply → meeting, meeting → close). Omitted → the stage never decays
-   * (terminals: click stays alive, closeWin is realized revenue immune to decay). Decay also
-   * no-ops when the furthest stage has no known date (fail-open: never kill a lead whose
-   * progress we can't see).
-   */
-  staleAfterMs?: number;
 }
 
 export interface EnginePerson {
@@ -332,14 +322,8 @@ interface FiredEvent {
 
 interface PersonEv {
   person: EnginePerson;
-  /** Live EV — 0 when the lead has decayed (stalled past its stage window). Drives the total. */
+  /** The lead's expected value. An outcome that happened stays counted — it never expires. */
   ev: number;
-  /** Pre-decay EV — the EV the lead would have if alive. > 0 means it entered the pipeline. */
-  evRaw: number;
-  /** True when the lead stalled at a delivery stage past its decay window with no engagement. */
-  dead: boolean;
-  /** ISO timestamp the lead decayed (furthest-stage date + staleAfterMs); null when alive. */
-  deathDate: string | null;
   tags: string[];
   /** Most-advanced (max) date among fired events; null if none dated. */
   date: string | null;
@@ -439,19 +423,13 @@ function combineIndependent(evs: number[], closeValueUsd: number): number {
  * to the FURTHEST reached one and suppress it once an engagement fired — so a row shows its single
  * funnel position, or its terminal conversions (visit/reply), not every milestone it passed.
  */
-function evForPerson(person: EnginePerson, paths: ResolvedPath[], now: number, closeValueUsd: number): PersonEv {
+function evForPerson(person: EnginePerson, paths: ResolvedPath[], closeValueUsd: number): PersonEv {
   let maxSingleEv = 0;
   const routeEvs: number[] = [];
   const firedEvents: FiredEvent[] = [];
   let date: string | null = null;
   const engagementTags: string[] = [];
   let furthestDeliveryTag: string | null = null;
-  // Furthest reached stage = the LAST fired path (paths are in ascending funnel order), across
-  // ALL kinds. Its window + date drive decay: a lead's status is its most-advanced stage, and a
-  // stage that should have advanced (reply→meeting, meeting→close, delivered→open) but didn't
-  // within its window is dead. Stages with no window (click, closeWin) are terminal-alive.
-  let furthestStaleAfterMs: number | null = null;
-  let furthestDate: string | null = null;
   for (const path of paths) {
     if (!person.signals[path.signal]) continue;
     if (path.expectedRevenueUsd > maxSingleEv) maxSingleEv = path.expectedRevenueUsd;
@@ -459,9 +437,6 @@ function evForPerson(person: EnginePerson, paths: ResolvedPath[], now: number, c
     const eventDate = person.signalDates?.[path.signal] ?? null;
     firedEvents.push({ tag: path.tag, eventDate, contributionUsd: path.expectedRevenueUsd, ledger: path.ledger !== false });
     date = maxDate(date, eventDate);
-    // Last fired in iteration order = furthest reached stage (drives decay, any kind).
-    furthestStaleAfterMs = path.staleAfterMs ?? null;
-    furthestDate = eventDate;
     if (path.kind === "delivery") {
       furthestDeliveryTag = path.tag; // last delivery = furthest delivery (tag display when no engagement)
     } else if (!engagementTags.includes(path.tag)) {
@@ -474,28 +449,13 @@ function evForPerson(person: EnginePerson, paths: ResolvedPath[], now: number, c
   // (click + reply) combine as independent probabilities of the SAME single close, bounded by one
   // close value — firing BOTH earns strictly more than either alone yet never exceeds one close.
   // closeWin's full-LTR single path still dominates via the MAX (realized revenue).
-  const evRaw = Math.max(maxSingleEv, combineIndependent(routeEvs, closeValueUsd));
+  const ev = Math.max(maxSingleEv, combineIndependent(routeEvs, closeValueUsd));
 
-  // Decay: the lead's FURTHEST reached stage carries a window it failed to advance past → DEAD.
-  // Pre-engagement (contacted/sent/delivered/open) AND post-engagement (reply/meeting) decay the
-  // same way; terminal stages (click/closeWin) have no window → never decay (closeWin = realized,
-  // immune even when old). Fail-open: no known date for the furthest stage → can't time it → alive.
-  let dead = false;
-  let deathDate: string | null = null;
-  if (furthestStaleAfterMs !== null && furthestDate !== null) {
-    const deathMs = Date.parse(furthestDate) + furthestStaleAfterMs;
-    if (now > deathMs) {
-      dead = true;
-      deathDate = new Date(deathMs).toISOString();
-    }
-  }
-
-  const baseTags = engagementTags.length > 0 ? engagementTags : furthestDeliveryTag ? [furthestDeliveryTag] : [];
-  const tags = dead ? [...baseTags, "stale"] : baseTags;
-  return { person, ev: dead ? 0 : evRaw, evRaw, dead, deathDate, tags, date, firedEvents };
+  const tags = engagementTags.length > 0 ? engagementTags : furthestDeliveryTag ? [furthestDeliveryTag] : [];
+  return { person, ev, tags, date, firedEvents };
 }
 
-export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[], now: number = Date.now(), closeValueUsd = 0): RevenueResult {
+export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[], closeValueUsd = 0): RevenueResult {
   const persons = dedupPersonsByLead(rawPersons);
 
   // Funnel stage ordinal: index in `paths` (ascending funnel order) → higher = more advanced.
@@ -504,13 +464,12 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
   const rankOfTags = (tags: string[]): number =>
     tags.reduce((max, t) => Math.max(max, stageRank.get(t) ?? -1), -1);
 
-  // Score every person; keep those that entered the pipeline (raw EV > 0) — including the
-  // ones that have since decayed (they still show in the leads table, tagged `stale`).
+  // Score every person; keep those that entered the pipeline (EV > 0).
   const scored = persons
-    .map((person) => evForPerson(person, paths, now, closeValueUsd))
-    .filter((p) => p.evRaw > 0);
+    .map((person) => evForPerson(person, paths, closeValueUsd))
+    .filter((p) => p.ev > 0);
 
-  // Leads table — one row per engaged person. Live EV (0 for decayed leads), `stale` tag carried.
+  // Leads table — one row per engaged person.
   const leads: LeadRow[] = scored.map(({ person, ev, tags, date }) => ({
     leadId: person.leadId,
     firstName: person.firstName,
@@ -556,10 +515,10 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     return b.expectedRevenueUsd - a.expectedRevenueUsd;
   });
 
-  // Events table — one row per fired, dated event. Decayed leads contribute no events.
+  // Events table — one row per fired, dated event. Every fired event is itemised; an event that
+  // happened is never suppressed by how long ago it happened.
   const events: EventRow[] = [];
   for (const entry of scored) {
-    if (entry.dead) continue;
     for (const ev of entry.firedEvents) {
       if (!ev.ledger) continue; // delivery-stage events drive EV/dates but aren't itemised
       if (!ev.eventDate) continue; // can't place an undated event on the ledger
@@ -582,9 +541,8 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     return b.contributionUsd - a.contributionUsd;
   });
 
-  // Organizations — dedup on org id (no org → singleton keyed by leadId). An org's live EV is
-  // the MAX over its ALIVE members; an org all of whose members decayed is dead (excluded from
-  // the table + total). topPerson/tags taken from the alive members when any, else the decayed.
+  // Organizations — dedup on org id (no org → singleton keyed by leadId). An org's EV is the MAX
+  // over its members (1 org = 1 client = 1 LTR).
   const byOrg = new Map<string, PersonEv[]>();
   for (const entry of scored) {
     const key = entry.person.orgId ?? `lead:${entry.person.leadId}`;
@@ -593,28 +551,22 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     else byOrg.set(key, [entry]);
   }
 
-  interface OrgAgg { row: OrganizationRow; aliveEv: number; rawEv: number; birthDate: string | null; deathDate: string | null; }
+  interface OrgAgg { row: OrganizationRow; ev: number; birthDate: string | null; }
   const orgAggs: OrgAgg[] = [];
   for (const bucket of byOrg.values()) {
     let top = bucket[0];
     const tags: string[] = [];
     let orgDate: string | null = null;
     let orgDomain: string | null = null; // first non-null domain across the org's leads
-    let aliveEv = 0;
-    let rawEv = 0;
-    let orgDeathDate: string | null = null; // latest member death — when the org fully phased out
+    let orgEv = 0;
     for (const entry of bucket) {
-      // Pick the most valuable member for identity: prefer alive over dead, then higher EV.
-      const better = (entry.ev > top.ev) || (entry.ev === top.ev && !entry.dead && top.dead);
-      if (better) top = entry;
+      // Pick the most valuable member for identity.
+      if (entry.ev > top.ev) top = entry;
       for (const tag of entry.tags) if (!tags.includes(tag)) tags.push(tag);
       orgDate = maxDate(orgDate, entry.date);
       if (!orgDomain && entry.person.orgDomain) orgDomain = entry.person.orgDomain;
-      if (entry.ev > aliveEv) aliveEv = entry.ev;      // MAX over alive members
-      if (entry.evRaw > rawEv) rawEv = entry.evRaw;     // MAX raw (pre-decay)
-      orgDeathDate = maxDate(orgDeathDate, entry.deathDate);
+      if (entry.ev > orgEv) orgEv = entry.ev; // MAX over the org's members
     }
-    const orgDead = aliveEv === 0;
     orgAggs.push({
       row: {
         orgId: top.person.orgId,
@@ -623,21 +575,18 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
         orgDomain,
         topPerson: { firstName: top.person.firstName, lastName: top.person.lastName, photoUrl: top.person.photoUrl },
         tags,
-        expectedRevenueUsd: aliveEv,
+        expectedRevenueUsd: orgEv,
         mostAdvancedDate: orgDate,
       },
-      aliveEv,
-      rawEv,
+      ev: orgEv,
       birthDate: orgDate,
-      deathDate: orgDead ? orgDeathDate : null,
     });
   }
-  // Total + table: alive orgs only (decayed orgs phase out of the pipeline).
   let totalPipelineUsd = 0;
   const organizations: OrganizationRow[] = [];
   for (const agg of orgAggs) {
-    if (agg.aliveEv <= 0) continue;
-    totalPipelineUsd += agg.aliveEv; // SUM between distinct alive orgs
+    if (agg.ev <= 0) continue;
+    totalPipelineUsd += agg.ev; // SUM between distinct orgs
     organizations.push(agg.row);
   }
   // Default sort: most-advanced status first, then most-recent conversion date, then EV (deterministic).
@@ -649,18 +598,13 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
     return b.expectedRevenueUsd - a.expectedRevenueUsd;
   });
 
-  // Time series — each org steps the cumulative pipeline UP at its event date, and a decayed
-  // org steps it back DOWN at its death date. So the curve rises as leads engage and falls as
-  // stalled ones phase out; its final value equals the alive headline total. Undated orgs are
+  // Time series — each org steps the cumulative pipeline UP at its event date. Every delta is
+  // positive, so the curve is MONOTONE NON-DECREASING: an outcome that happened stays counted, and
+  // nothing ever steps it back down. Its final value equals the headline total. Undated orgs are
   // absent from the timeline (still counted in the headline — no silent inflation).
   const deltas: { date: string; delta: number }[] = [];
   for (const agg of orgAggs) {
-    if (agg.aliveEv > 0) {
-      if (agg.birthDate) deltas.push({ date: agg.birthDate, delta: agg.aliveEv });
-    } else if (agg.birthDate && agg.deathDate) {
-      deltas.push({ date: agg.birthDate, delta: agg.rawEv });
-      deltas.push({ date: agg.deathDate, delta: -agg.rawEv });
-    }
+    if (agg.ev > 0 && agg.birthDate) deltas.push({ date: agg.birthDate, delta: agg.ev });
   }
   deltas.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
