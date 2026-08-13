@@ -325,8 +325,22 @@ const revenueCostEconomicsSchema = z.object({
   actualCostUsd: z.number().describe("ACTUAL (billed) run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). ROI/CAC ride REALIZED spend, so this is the billed amount ONLY — it EXCLUDES the provisioned holds that the `spend` block's committed total… figures include. Named `actualCostUsd` (renamed from the ambiguous `totalCostUsd`) to be unambiguously distinct from those committed total… figures. Same source as /stats systemStats.actualCostInUsdCents and spend.actualSpentCents. (features-service#396, naming features-service#402)"),
   costOfAcquisitionPct: z.number().nullable().describe("(actualCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."),
   roiMultiple: z.number().nullable().describe("totalPipelineUsd / actualCostUsd. Null when actualCostUsd is 0 or totalPipelineUsd is null."),
+  costPerAcquisitionUsd: z.number().nullable().describe("REALIZED cost of winning ONE customer, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = actualCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same realized spend by the same expected-client count). Uses the brand\'s own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means \'we could not measure this\', a 0 would mean \'a customer costs nothing\'."),
   expectedConversions: z.number().optional().describe("LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
   costPerConversionUsd: z.number().nullable().optional().describe("LENS ONLY — actualCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
+});
+
+const roiHistoryPointSchema = z.object({
+  date: z.string().describe("UTC calendar day (YYYY-MM-DD) this point describes."),
+  cumulativeSpendUsd: z.number().describe("REALIZED — every dollar of ACTUAL (billed) spend from the brand's first spend up to and including this day. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."),
+  cumulativePipelineUsd: z.number().describe("REALIZED — every dollar of expected pipeline earned by a DATED outcome up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."),
+  roiMultiple: z.number().nullable().describe("cumulativePipelineUsd / cumulativeSpendUsd. NULL — never 0 — on a day whose cumulative spend is still 0 (a dated outcome before a dollar was ever spent divides by nothing): null means 'could not be measured', 0 would mean 'returned nothing'."),
+});
+
+const roiHistorySchema = z.object({
+  daily: z.array(roiHistoryPointSchema).describe("One point per UTC day that has spend or a dated outcome, ascending, spanning the brand's whole life. Days with neither are absent (never fabricated). Empty when the brand has neither spend nor a dated outcome."),
+  datedPipelineUsd: z.number().describe("The curve's final cumulative pipeline — the part of headline.totalPipelineUsd this curve can describe."),
+  undatedPipelineUsd: z.number().describe("Pipeline counted in headline.totalPipelineUsd whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === headline.totalPipelineUsd."),
 });
 
 // Server-computed "contacted" aggregates for the Overview's Outreach surfaces (stat card + 7-day
@@ -408,7 +422,8 @@ const featureRevenueResponseSchema = z.object({
     economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no funnel wired or no economics applied)."),
   }),
   costEconomics: revenueCostEconomicsSchema.describe("Derived cost economics. Always present; ratios are null per the documented null semantics."),
-  timeSeries: z.array(revenueTimeSeriesPointSchema).describe("Cumulative pipeline ordered by event date. Empty until per-event timestamps exist (email-gateway)."),
+  timeSeries: z.array(revenueTimeSeriesPointSchema).describe("Cumulative pipeline ordered by event date, from the per-lead event timestamps (email-gateway + instantly manual qualifications). An org with no dated event is counted in the headline but absent here."),
+  roiHistory: roiHistorySchema.nullable().describe("RETURN ON SPEND ACROSS THE BRAND'S WHOLE LIFE — one line a consumer charts instead of a raw cumulative signal count. BOTH legs are CUMULATIVE SINCE INCEPTION, not per-period: spend on a day buys outcomes that land days or weeks later, so a period-grain ratio oscillates and describes nothing actionable, while the cumulative form converges and its LAST roiMultiple IS costEconomics.roiMultiple for the same read (coherent by construction, not corrected). REALIZED on both legs — spend dated by runs-service cost buckets, pipeline dated by the same per-lead event timestamps as timeSeries; nothing is modelled, spread or amortised. OVERVIEW ONLY (same gate as spend): null on the lensed (?lens=) response, absent on grouped (?groupBy=campaignId) groups. Fail-SOFT: null when the dated-spend read fails — null means 'could not be measured', never 'the return was zero'."),
   organizations: z.array(revenueOrganizationSchema),
   leads: z.array(revenueLeadSchema),
   events: z.array(revenueEventSchema).describe("One row per event. Empty until per-event timestamps exist (email-gateway)."),
@@ -450,10 +465,11 @@ registry.registerPath({
     "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). " +
     "Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. " +
     "Rates + terminal LTR come from the brand's sales economics. " +
-    "timeSeries, events, and the date columns are deferred until email-gateway exposes per-event timestamps. " +
+    "timeSeries, events and the date columns are dated from the per-lead event timestamps (email-gateway + instantly manual qualifications); an outcome with no timestamp is counted in the headline but placed on no day. " +
+    "roiHistory charts return on spend across the brand's whole life (cumulative on both legs, realized on both legs, terminating on costEconomics.roiMultiple). " +
     "totalPipelineUsd is null when no funnel is wired for the feature, or the brand has no saved economics AND no cross-brand average exists (cold start). " +
     "When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. " +
-    "costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition % and ROI multiple. " +
+    "costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition %, ROI multiple, and costPerAcquisitionUsd — the dollar cost of winning one customer, now answered on this default un-lensed brand read and equal to the lensed costPerConversionUsd for the same scope. " +
     "With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature " +
     "(campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call.",
   tags: ["Stats"],
@@ -806,6 +822,10 @@ const audienceStatsRowSchema = z.object({
     cpsCents: z.number().nullable().describe("REAL cost per signup (OBSERVED) = totalCostInUsdCents / signups. Null when signups is 0/absent (not the signup goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (signup sorts on cpc)."),
     cpsaleCents: z.number().nullable().describe("REAL cost per sale (OBSERVED) = totalCostInUsdCents / sales. Null when sales is 0/absent (not the website-purchase / combined-sales goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (both goals sort on cppr)."),
   }),
+  projection: z.object({
+    costPerPaidClientUsd: z.number().nullable().describe("PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's chain on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the chain has no path to a paying client or at cold start."),
+    returnPerDollar: z.number().nullable().describe("PROJECTED — dollars of lifetime revenue per dollar spent on this audience = brandProjection.lifetimeRevenueUsd / costPerPaidClientUsd. Rank a brand's audiences on THIS, not on cost per outcome: cost per outcome ranks by cheapness, so an audience that converts to nothing outranks an expensive one that pays. It is the IDENTICAL definition /features/{slug}/funnel-ranking ranks a brand's declared funnels on, so an audience's return and the brand's return are one statistic at two grains. Not the REALIZED /revenue costEconomics.roiMultiple (that divides measured pipeline by measured spend) — this is what the evidence PROJECTS. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns take). Null (never 0) when unmeasurable."),
+  }).describe("PROJECTED return for this audience, on the brand's own economics. See returnPerDollar."),
 });
 
 const audienceStatsResponseSchema = z.object({
@@ -814,7 +834,12 @@ const audienceStatsResponseSchema = z.object({
   goal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]),
   brandProfileId: z.string().nullable(),
   sortMetric: z.enum(["cpc", "cppr"]).describe("signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR."),
-  audiences: z.array(audienceStatsRowSchema).describe("Audience rows sorted ascending by sortMetric, with null metric values last."),
+  audiences: z.array(audienceStatsRowSchema).describe("Audience rows sorted ascending by sortMetric, with null metric values last. Rank by projection.returnPerDollar when the question is where the money should go."),
+  brandProjection: z.object({
+    lifetimeRevenueUsd: z.number().nullable().describe("The brand's lifetime revenue per paying client, from the resolved (declared-funnel-priced) economics this whole payload was projected on — the numerator behind every returnPerDollar here. Surfaced so a consumer can never pair a return with an LTR this projection did not use. Null at cold start."),
+    costPerPaidClientUsd: z.number().nullable().describe("PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the chain has no path to a paying client."),
+    returnPerDollar: z.number().nullable().describe("PROJECTED brand-level return per dollar = lifetimeRevenueUsd / costPerPaidClientUsd — the same definition as each row's, one grain coarser. Read a row's return against this ('this audience beats the brand'). Null (never 0) when unmeasurable."),
+  }).describe("The BRAND-level twin of every row's projection, on the same economics and the same formula."),
 });
 
 registry.register("AudienceStatsResponse", audienceStatsResponseSchema);

@@ -252,8 +252,13 @@ function resolveGoalInputs(raw: string | undefined): ({ ok: true } & GoalInputs)
  * single-step goal this is the ONE-rate cost (visit→paid / reply→paid); for form_submissions it is the
  * two-step form route (visit→form→paid); otherwise the multi-step purchase funnel. Drives ROI + the
  * recommended budget (never the zero-collapsing multi-step chain when a single-step goal is active).
+ *
+ * EXPORTED for the SAME reason `outcomeCostForGoal` is: /audience-stats now reports each audience's
+ * RETURN PER DOLLAR (`lifetimeRevenueUsd / costPerPaidClientUsd`), which is the identical quantity
+ * `/funnel-ranking` ranks a brand's declared funnels on. Routing both through this one function is
+ * what stops one brand reading two different returns on two pages.
  */
-function paidClientCostForGoal(
+export function paidClientCostForGoal(
   econ: ProjectionEconomics,
   unitCosts: { clickUsd: number | null; replyUsd: number | null },
   objective: Objective,

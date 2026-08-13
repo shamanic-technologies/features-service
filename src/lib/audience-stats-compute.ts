@@ -6,7 +6,7 @@ import { AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, type AudienceFilters, type AudienceStatus } from "./human-client.js";
 import { flooredCostPerOutcome, derivedCostPerOutcome } from "./cost-engine.js";
-import { fetchBrandProjectedParents } from "./audience-stats-brand-projection.js";
+import { fetchBrandProjectedParents, returnPerDollar } from "./audience-stats-brand-projection.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
 import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "./sales-funnels.js";
@@ -98,6 +98,32 @@ export interface AudienceStatsRow {
     // conversion emails weren't served. Not part of the ranking (both goals rank on cppr).
     cpsaleCents: number | null;
   };
+  /**
+   * WHAT THIS AUDIENCE RETURNS PER DOLLAR — the figure the brand Overview's Top-audiences card leads
+   * with, because cost per outcome alone ranks audiences by CHEAPNESS: an audience that converts to
+   * nothing outranks an expensive one that pays.
+   *
+   * PROJECTED, not realized, and the field names say so. It prices THIS audience's own observed unit
+   * costs (its send-tag spend against its send-tag clicks/replies, on the workflow the Strategy page
+   * renders it under) through the brand's OWN declared economics — the same economics behind the
+   * brand-level figure, resolved once for the whole payload. `returnPerDollar = lifetimeRevenueUsd /
+   * costPerPaidClientUsd`, the identical definition `/funnel-ranking` ranks a brand's declared
+   * funnels on, so an audience's return and the brand's return are one statistic at two grains.
+   *
+   * COHERENT WITH THE BRAND BY CONSTRUCTION: an audience with no MEASURED grain of its own carries no
+   * evidence to price and inherits `envelope.brandProjection` verbatim — the same brand-level
+   * fallback every derived cost column already takes — rather than being blanked or invented.
+   *
+   * Both fields are null (never 0) when the brand states no lifetime revenue, when the chain has no
+   * path to a paying client, or at cold start. A consumer renders a dash and says it could not be
+   * measured; a 0 would read as "this audience returns nothing", which is a different claim.
+   */
+  projection: {
+    /** Projected cost to win ONE paying client from this audience. Denominator of the return. */
+    costPerPaidClientUsd: number | null;
+    /** Dollars of lifetime revenue per dollar spent. Higher is better; > 1 means it pays for itself. */
+    returnPerDollar: number | null;
+  };
 }
 
 export interface AudienceStatsEnvelope {
@@ -107,6 +133,21 @@ export interface AudienceStatsEnvelope {
   brandProfileId: string | null;
   sortMetric: SortMetric;
   audiences: AudienceStatsRow[];
+  /**
+   * The BRAND-level twin of every row's `projection`, on the goal's winning workflow — the same
+   * `returnPerDollar` definition, one grain coarser. Serves two purposes: it is the number an
+   * audience with no measured grain inherits (so a consumer can see the inheritance rather than
+   * guess at it), and it is what a rows' return is read AGAINST ("this audience beats the brand").
+   *
+   * `lifetimeRevenueUsd` is the numerator behind every return on this payload, surfaced so a
+   * consumer can never pair a return with an LTR this projection did not use. All three null at cold
+   * start / no economics — never 0.
+   */
+  brandProjection: {
+    lifetimeRevenueUsd: number | null;
+    costPerPaidClientUsd: number | null;
+    returnPerDollar: number | null;
+  };
 }
 
 export type ComputeResult =
@@ -729,6 +770,16 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
               )
             : null,
       },
+      // This audience's own measured grain when it has one, else the brand-level projection — the
+      // SAME inheritance the derived cost columns take, so the two families can never disagree about
+      // which evidence priced the row.
+      projection: {
+        costPerPaidClientUsd: audienceProjected?.costPerPaidClientUsd ?? brandProjected.costPerPaidClientUsd,
+        returnPerDollar: returnPerDollar(
+          brandProjected.lifetimeRevenueUsd,
+          audienceProjected?.costPerPaidClientUsd ?? brandProjected.costPerPaidClientUsd,
+        ),
+      },
     });
   }
 
@@ -745,6 +796,14 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
       brandProfileId,
       sortMetric,
       audiences: audiencesOut,
+      brandProjection: {
+        lifetimeRevenueUsd: brandProjected.lifetimeRevenueUsd,
+        costPerPaidClientUsd: brandProjected.costPerPaidClientUsd,
+        returnPerDollar: returnPerDollar(
+          brandProjected.lifetimeRevenueUsd,
+          brandProjected.costPerPaidClientUsd,
+        ),
+      },
     },
   };
 }
