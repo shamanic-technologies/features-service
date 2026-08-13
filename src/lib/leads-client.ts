@@ -124,17 +124,26 @@ export async function fetchLeadsForRevenue(
     const org = row.lead?.organization ?? null;
     // Bounced / unsubscribed leads are dead — no forward expected revenue at any stage.
     const dead = Boolean(row.bounced) || Boolean(row.unsubscribed);
-    const signals = dead
-      ? { contacted: false, sent: false, delivered: false, clicked: false, positiveReply: false }
+    const signals: Record<string, boolean> = dead
+      ? { contacted: false, sent: false, delivered: false, clicked: false, positiveReply: false, negativeReply: false, neutralReply: false }
       : {
           contacted: Boolean(row.contacted),
           sent: Boolean(row.sent),
           delivered: Boolean(row.delivered),
           clicked: Boolean(row.clicked),
           positiveReply: Boolean(row.replied) && row.replyClassification === "positive",
+          // The other two reply classes, on the SAME terms as the positive one — they are person-grain
+          // counts the stats surfaces report, and only a per-lead basis can bound a campaign identity's
+          // total by its brand's. No funnel path reads them, so the engine's EV is untouched.
+          negativeReply: Boolean(row.replied) && row.replyClassification === "negative",
+          neutralReply: Boolean(row.replied) && row.replyClassification === "neutral",
         };
+    // A bounce is a fact about the recipient, not a funnel stage — it stands whether or not the lead is
+    // dead (it is one of the two things that MAKES it dead), so it sits outside the branch above.
+    signals.bounced = Boolean(row.bounced);
     return {
       leadId: row.leadId,
+      campaignId: row.campaignId ?? null,
       email: row.email ?? null,
       firstName: row.lead?.firstName ?? null,
       lastName: row.lead?.lastName ?? null,
