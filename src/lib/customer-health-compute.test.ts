@@ -491,9 +491,9 @@ describe("buildCustomerHealthBoard", () => {
     // transient retries exhausted, or a downstream 5xx. Must NOT reject the whole board.
     const wrapped: CustomerHealthDeps = {
       ...deps,
-      brandRevenue: async (f, brandId, orgId, e) => {
+      brandRevenue: async (f, brandId, orgId, e, funnels) => {
         if (brandId === "bm") throw new Error("downstream revenue 503");
-        return deps.brandRevenue(f, brandId, orgId, e);
+        return deps.brandRevenue(f, brandId, orgId, e, funnels);
       },
     };
     const board = await buildCustomerHealthBoard(COLD_CSV, NOW, wrapped);
