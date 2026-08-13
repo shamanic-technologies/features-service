@@ -8,7 +8,7 @@ vi.mock("./leads-client.js", () => ({ fetchLeadsForRevenue: (...a: unknown[]) =>
 vi.mock("./email-status-client.js", () => ({ fetchEventTimestamps: (...a: unknown[]) => mockFetchTs(...a) }));
 
 import { fetchEngagementSnapshotCounts, fetchEngagementSnapshotByIdentity } from "./engagement-snapshot.js";
-import { computeRevenue, buildSignalSeries, type ResolvedPath, type EnginePerson } from "./revenue-engine.js";
+import { computeRevenue, buildSignalSeries, type ResolvedPath, type FunnelMilestone, type EnginePerson } from "./revenue-engine.js";
 
 const H = { orgId: "o1" };
 
@@ -179,14 +179,17 @@ describe("fetchEngagementSnapshotCounts — failure modes mirror /revenue", () =
 });
 
 describe("fetchEngagementSnapshotCounts — INVARIANT: equals /revenue's deduped lead counts", () => {
-  // The exact paths /revenue resolves (delivery stages + engagement) so every engaged lead has
-  // evRaw>0 and survives into result.leads — same population the snapshot counts.
+  // The exact shape /revenue resolves — the delivery MILESTONES plus the funnel legs — so every
+  // contacted lead survives into result.leads (a milestone is worth nothing but keeps the lead
+  // present), which is the same population the snapshot counts.
+  const STAGE_MILESTONES: FunnelMilestone[] = [
+    { tag: "contacted", signal: "contacted" },
+    { tag: "sent", signal: "sent" },
+    { tag: "delivered", signal: "delivered" },
+  ];
   const STAGE_PATHS: ResolvedPath[] = [
-    { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery" },
-    { tag: "sent", signal: "sent", expectedRevenueUsd: 6, kind: "delivery" },
-    { tag: "delivered", signal: "delivered", expectedRevenueUsd: 12, kind: "delivery" },
-    { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement" },
-    { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, kind: "engagement" },
+    { tag: "visit", signal: "clicked", expectedRevenueUsd: 20 },
+    { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120 },
   ];
 
   it("recipientsContacted/Opened/Clicked === clicked.total/opened.total/contacted.total from computeRevenue", async () => {
@@ -197,7 +200,7 @@ describe("fetchEngagementSnapshotCounts — INVARIANT: equals /revenue's deduped
       person({ leadId: "l2", email: "b@x.com", signals: withOpen({ clicked: false, open: true }) }),
       person({ leadId: "l3", email: "c@x.com", signals: withOpen({ clicked: false, open: false }) }),
     ];
-    const r = computeRevenue(STAGE_PATHS, revenuePersons.map((p) => ({ ...p, signals: { ...p.signals } })));
+    const r = computeRevenue(STAGE_PATHS, revenuePersons.map((p) => ({ ...p, signals: { ...p.signals } })), 0, STAGE_MILESTONES);
     const revClicked = buildSignalSeries(r.leads, (l) => l.clicked, (l) => l.clickedAt).total;
     const revOpened = buildSignalSeries(r.leads, (l) => l.opened, (l) => l.openedAt).total;
     const revContacted = buildSignalSeries(r.leads, (l) => l.contacted, (l) => l.contactedAt).total;

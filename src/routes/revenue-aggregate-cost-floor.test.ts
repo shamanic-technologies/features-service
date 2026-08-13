@@ -45,7 +45,6 @@ process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
 const { db } = await import("../db/index.js");
-const { __resetPlatformRatesCache } = await import("../lib/platform-rates-client.js");
 const app = (await import("../index.js")).default;
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
@@ -220,7 +219,6 @@ describe("aggregate cost coherence: /revenue spend ↔ /workflow-projection", ()
 
   beforeEach(() => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(FEATURE as any);
-    __resetPlatformRatesCache();
     brandCommittedCents = 2874;
     brandActualCents = 2874;
     brandFunnels = ["website_purchases"];
@@ -232,7 +230,6 @@ describe("aggregate cost coherence: /revenue spend ↔ /workflow-projection", ()
   afterEach(() => {
     fetchSpy?.mockRestore();
     vi.restoreAllMocks();
-    __resetPlatformRatesCache();
   });
 
   // THE REPORTED BUG. 0 positive replies + $28.74 committed spend → cpprCents used to be null, and the

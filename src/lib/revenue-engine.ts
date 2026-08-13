@@ -14,14 +14,22 @@
  *     an org's EV = max person EV across the org.
  *   - SUM between entities   — total pipeline = sum of org EV over DISTINCT orgs.
  *
+ * PATHS ARE FUNNEL LEGS; MILESTONES ARE NOT PATHS. The caller passes the legs of the funnels the brand
+ * DECLARED it sells through as `paths`, and the pre-funnel delivery milestones (contacted / sent /
+ * delivered / opened) separately as `milestones`. A milestone carries no revenue field, so it can
+ * never contribute a cent — it only tags a lead's position and keeps it present in `leads[]` for the
+ * count series. An outreach that produced no conversion is therefore not pipeline anywhere.
+ *
  * Dedup keys (see global identity-keying note):
  *   - persons dedup on the ATOMIC member (leadId) — one lead surfacing under several
  *     campaign rows is ONE person; their signals are OR'd across rows, signal dates
  *     keep the earliest (MIN) across rows.
  *   - orgs dedup on organization id; a person with no org is their own singleton org.
  *
- * Only persons with EV > 0 (at least one signal fired) enter the tables and the total
- * — an un-engaged served lead is not pipeline.
+ * Only persons with EV > 0 enter the ORGANIZATIONS table, the time series and the total — an
+ * outreach that produced no conversion is not pipeline. A person who reached only a delivery
+ * milestone stays in `leads[]` at `expectedRevenueUsd: 0` (the count series are built from that same
+ * array), but claims no expected revenue anywhere.
  *
  * Dates (optional — populated once per-event timestamps are available from email-gateway):
  *   - each fired signal carries an event date (`signalDates[signal]`);
@@ -39,13 +47,6 @@ export interface ResolvedPath {
   /** LTR × rate-chain — the expected revenue this path contributes when its signal fired. */
   expectedRevenueUsd: number;
   /**
-   * "delivery" = a cumulative funnel milestone (contacted/sent/delivered); only the FURTHEST
-   * reached one is shown as the entity's tag, and it is suppressed once an engagement fired.
-   * "engagement" (default) = a terminal conversion (visit/reply); shown multi-tag.
-   * Delivery paths must be listed in ascending funnel order so the last fired = furthest.
-   */
-  kind?: "delivery" | "engagement";
-  /**
    * Marks an INDEPENDENT engagement route (e.g. click, reply) — a non-mutually-exclusive shot at
    * the same single close. Paths sharing this flag are COMBINED as independent probabilities
    * (bounded by `closeValueUsd`), not MAX'd: a lead that fired several routes earns strictly more
@@ -55,6 +56,29 @@ export interface ResolvedPath {
   engagementRoute?: boolean;
   /** Whether a fired event of this path is itemised in the events ledger. Defaults to true. */
   ledger?: boolean;
+}
+
+/**
+ * A DELIVERY MILESTONE — a thing that happened on the way to the funnel, and NOT a leg of one.
+ *
+ * Contacted / sent / delivered / opened are steps of NO funnel in brand-service's catalogue: every
+ * chain a brand can declare starts at a positive reply or a website visit. So a milestone has NO
+ * revenue field at all — it cannot be priced, weighted down or zeroed, because there is nothing on it
+ * to price. It exists for exactly two jobs:
+ *
+ *   - it gives a lead its POSITION tag when the lead reached no funnel leg ("delivered"), and
+ *   - it keeps that lead PRESENT in `leads[]`, which is the snapshot every Overview count series is
+ *     built from (contacted / opened / clicked / replied). Dropping the lead would silently gut those
+ *     counts — a brand with 7,181 contacted leads would report a handful.
+ *
+ * A milestone contributes ZERO to a lead's expected value, to an organisation's, and to the pipeline
+ * total. Milestones are listed in ascending funnel order so the LAST fired one is the furthest reached.
+ */
+export interface FunnelMilestone {
+  /** Tag surfaced to the UI as the lead's position when it reached no priced leg. */
+  tag: string;
+  /** Key into a person's `signals` map. */
+  signal: string;
 }
 
 export interface EnginePerson {
@@ -328,6 +352,8 @@ interface PersonEv {
   /** Most-advanced (max) date among fired events; null if none dated. */
   date: string | null;
   firedEvents: FiredEvent[];
+  /** True when the lead reached a delivery milestone (which is worth nothing, but is not nothing). */
+  reachedMilestone: boolean;
 }
 
 /** Latest (max) of two ISO timestamps; nulls ignored. ISO-8601 sorts lexicographically. */
@@ -416,20 +442,35 @@ function combineIndependent(evs: number[], closeValueUsd: number): number {
 }
 
 /**
- * Per-person EV — mutually-exclusive positions (delivery milestones, meeting, closeWin) contribute
- * via MAX; paths flagged `engagementRoute` (click + reply) are combined as independent probabilities
- * bounded by `closeValueUsd`. evRaw = MAX(best single fired path, combined routes). date = max
- * fired-event date; firedEvents = every fired path (for the ledger). Tags collapse delivery stages
- * to the FURTHEST reached one and suppress it once an engagement fired — so a row shows its single
- * funnel position, or its terminal conversions (visit/reply), not every milestone it passed.
+ * Per-person EV — mutually-exclusive positions (meeting, closeWin) contribute via MAX; paths flagged
+ * `engagementRoute` (click + reply) are combined as independent probabilities bounded by
+ * `closeValueUsd`. ev = MAX(best single fired path, combined routes). date = max fired-event date;
+ * firedEvents = every fired PATH (for the ledger). Tags show the lead's terminal conversions, falling
+ * back to the FURTHEST delivery milestone reached when the lead reached no funnel leg at all.
+ *
+ * Milestones contribute no EV and no ledger row — they are not paths. They only supply the fallback
+ * tag, a date, and the fact that this lead exists at all.
  */
-function evForPerson(person: EnginePerson, paths: ResolvedPath[], closeValueUsd: number): PersonEv {
+function evForPerson(
+  person: EnginePerson,
+  paths: ResolvedPath[],
+  milestones: readonly FunnelMilestone[],
+  closeValueUsd: number,
+): PersonEv {
   let maxSingleEv = 0;
   const routeEvs: number[] = [];
   const firedEvents: FiredEvent[] = [];
   let date: string | null = null;
-  const engagementTags: string[] = [];
-  let furthestDeliveryTag: string | null = null;
+  const legTags: string[] = [];
+  let furthestMilestoneTag: string | null = null;
+
+  // Milestones first — listed in ascending funnel order, so the last fired is the furthest reached.
+  for (const milestone of milestones) {
+    if (!person.signals[milestone.signal]) continue;
+    furthestMilestoneTag = milestone.tag;
+    date = maxDate(date, person.signalDates?.[milestone.signal] ?? null);
+  }
+
   for (const path of paths) {
     if (!person.signals[path.signal]) continue;
     if (path.expectedRevenueUsd > maxSingleEv) maxSingleEv = path.expectedRevenueUsd;
@@ -437,37 +478,42 @@ function evForPerson(person: EnginePerson, paths: ResolvedPath[], closeValueUsd:
     const eventDate = person.signalDates?.[path.signal] ?? null;
     firedEvents.push({ tag: path.tag, eventDate, contributionUsd: path.expectedRevenueUsd, ledger: path.ledger !== false });
     date = maxDate(date, eventDate);
-    if (path.kind === "delivery") {
-      furthestDeliveryTag = path.tag; // last delivery = furthest delivery (tag display when no engagement)
-    } else if (!engagementTags.includes(path.tag)) {
-      engagementTags.push(path.tag);
-    }
+    if (!legTags.includes(path.tag)) legTags.push(path.tag);
   }
 
   // EV = MAX(best single fired path, combined engagement routes). Mutually-exclusive positions
-  // (delivery milestones, meeting, closeWin) only ever raise maxSingleEv; the independent routes
-  // (click + reply) combine as independent probabilities of the SAME single close, bounded by one
-  // close value — firing BOTH earns strictly more than either alone yet never exceeds one close.
-  // closeWin's full-LTR single path still dominates via the MAX (realized revenue).
+  // (meeting, closeWin) only ever raise maxSingleEv; the independent routes (click + reply) combine
+  // as independent probabilities of the SAME single close, bounded by one close value — firing BOTH
+  // earns strictly more than either alone yet never exceeds one close. closeWin's full-LTR single
+  // path still dominates via the MAX (realized revenue).
   const ev = Math.max(maxSingleEv, combineIndependent(routeEvs, closeValueUsd));
 
-  const tags = engagementTags.length > 0 ? engagementTags : furthestDeliveryTag ? [furthestDeliveryTag] : [];
-  return { person, ev, tags, date, firedEvents };
+  const tags = legTags.length > 0 ? legTags : furthestMilestoneTag ? [furthestMilestoneTag] : [];
+  return { person, ev, tags, date, firedEvents, reachedMilestone: furthestMilestoneTag !== null };
 }
 
-export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[], closeValueUsd = 0): RevenueResult {
+export function computeRevenue(
+  paths: ResolvedPath[],
+  rawPersons: EnginePerson[],
+  closeValueUsd = 0,
+  milestones: readonly FunnelMilestone[] = [],
+): RevenueResult {
   const persons = dedupPersonsByLead(rawPersons);
 
-  // Funnel stage ordinal: index in `paths` (ascending funnel order) → higher = more advanced.
-  // An entity's status = the FURTHEST stage it reached = max rank over its tags.
-  const stageRank = new Map(paths.map((p, i) => [p.tag, i] as const));
+  // Funnel stage ordinal: milestones first (they precede every leg), then the legs in ascending funnel
+  // order → higher = more advanced. An entity's status = the FURTHEST stage it reached = max rank.
+  const stageRank = new Map(
+    [...milestones.map((m) => m.tag), ...paths.map((p) => p.tag)].map((tag, i) => [tag, i] as const),
+  );
   const rankOfTags = (tags: string[]): number =>
     tags.reduce((max, t) => Math.max(max, stageRank.get(t) ?? -1), -1);
 
-  // Score every person; keep those that entered the pipeline (EV > 0).
+  // Score every person. A lead enters the tables when it reached a funnel leg worth something OR a
+  // delivery milestone — the milestone-only lead carries 0 and is filtered out of the organizations,
+  // the time series and the total below, but stays in `leads[]` so the count series stay whole.
   const scored = persons
-    .map((person) => evForPerson(person, paths, closeValueUsd))
-    .filter((p) => p.ev > 0);
+    .map((person) => evForPerson(person, paths, milestones, closeValueUsd))
+    .filter((p) => p.ev > 0 || p.reachedMilestone);
 
   // Leads table — one row per engaged person.
   const leads: LeadRow[] = scored.map(({ person, ev, tags, date }) => ({
@@ -520,7 +566,7 @@ export function computeRevenue(paths: ResolvedPath[], rawPersons: EnginePerson[]
   const events: EventRow[] = [];
   for (const entry of scored) {
     for (const ev of entry.firedEvents) {
-      if (!ev.ledger) continue; // delivery-stage events drive EV/dates but aren't itemised
+      if (!ev.ledger) continue; // a path can opt out of itemisation; milestones never reach here at all
       if (!ev.eventDate) continue; // can't place an undated event on the ledger
       events.push({
         leadId: entry.person.leadId,
