@@ -139,3 +139,82 @@ describe("fetchLeadsForRevenue — firmographic passthrough", () => {
     });
   });
 });
+
+describe("fetchLeadsForRevenue — one page, one parse", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("two simultaneous readers of the SAME page share ONE fetch, and each gets its own persons", async () => {
+    // This process runs with a 384 MB heap and a big brand's lead page is the largest body it
+    // parses; two simultaneous parses of one page do not fit. Identical inputs cannot have
+    // different answers, so both callers are served from one read.
+    let calls = 0;
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => { release = r; });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      calls += 1;
+      await gate;
+      return new Response(JSON.stringify({ leads: [basicRow()] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const both = Promise.all([
+      fetchLeadsForRevenue("brand-1", undefined, HEADERS),
+      fetchLeadsForRevenue("brand-1", undefined, HEADERS),
+    ]);
+    release!();
+    const [a, b] = await both;
+
+    expect(calls).toBe(1);
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(1);
+    // Each caller maps its own persons — one mutating its signals must not move the other's.
+    expect(a[0]).not.toBe(b[0]);
+    a[0].signals.open = true;
+    expect(b[0].signals.open).toBeUndefined();
+  });
+
+  it("a DIFFERENT scope is a different page — a campaign-scoped read is never served the brand's", async () => {
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      urls.push(typeof input === "string" ? input : (input as any).url);
+      return new Response(JSON.stringify({ leads: [basicRow()] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await Promise.all([
+      fetchLeadsForRevenue("brand-1", undefined, HEADERS),
+      fetchLeadsForRevenue("brand-1", "camp-1", HEADERS),
+      fetchLeadsForRevenue("brand-1", undefined, { ...HEADERS, orgId: "org-2" }),
+    ]);
+
+    expect(urls).toHaveLength(3);
+  });
+
+  it("is in-flight only — a later read goes back to lead-service, never to a stale page", async () => {
+    let calls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ leads: [basicRow()] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    expect(calls).toBe(2);
+  });
+
+  it("a failed page fails BOTH readers loudly, and the next read retries", async () => {
+    let calls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      calls += 1;
+      return new Response("boom", { status: 500 });
+    });
+
+    const results = await Promise.allSettled([
+      fetchLeadsForRevenue("brand-1", undefined, HEADERS),
+      fetchLeadsForRevenue("brand-1", undefined, HEADERS),
+    ]);
+    expect(results.every((r) => r.status === "rejected")).toBe(true);
+
+    const before = calls;
+    await expect(fetchLeadsForRevenue("brand-1", undefined, HEADERS)).rejects.toThrow();
+    expect(calls).toBeGreaterThan(before);
+  });
+});
