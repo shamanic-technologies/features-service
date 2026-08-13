@@ -44,7 +44,19 @@ const { __resetPlatformRatesCache } = await import("../lib/platform-rates-client
 const app = (await import("../index.js")).default;
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
-const SALES_FEATURE = { id: "feat-1", slug: "sales-cold-email-outreach", name: "Sales", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
+// The feature must DECLARE the recipient keys — /stats scopes its fan-out to a feature's declared
+// outputs, so a mock without them skips email-gateway AND the engagement snapshot entirely.
+const RECIPIENT_KEYS = [
+  "recipientsContacted", "recipientsSent", "recipientsDelivered", "recipientsOpened", "recipientsClicked",
+  "recipientsBounced", "recipientsRepliesPositive", "recipientsRepliesNegative", "recipientsRepliesNeutral",
+  "recipientsRepliesAutoReply",
+];
+const SALES_FEATURE = {
+  id: "feat-1", slug: "sales-cold-email-outreach", name: "Sales", description: "x", status: "active",
+  outputs: RECIPIENT_KEYS.map((key) => ({ key })),
+  charts: [],
+  createdAt: new Date(), updatedAt: new Date(),
+};
 const ECONOMICS = {
   lifetimeRevenueUsd: 1000,
   replyToMeetingPct: 40,
@@ -83,6 +95,36 @@ interface Fixture {
   costByCampaign: Record<string, number>;
   /** Every lead row the brand has, each carrying its own campaignId. */
   leads: Array<Record<string, unknown>>;
+  /**
+   * What email-gateway answers per campaign — one recipient row per send, so a person served under
+   * two campaigns is in BOTH answers. Present only on the suites that assert the person-grain
+   * counts; absent leaves `/orgs/stats` empty, as the older cases expect.
+   */
+  emailByCampaign?: Record<string, number>;
+  /** What email-gateway answers for the whole brand — its own distinct count at that grain. */
+  emailBrandTotal?: number;
+  /** Auto-replies per campaign — the one person-grain key no lead evidence can produce. */
+  emailAutoReplyByCampaign?: Record<string, number>;
+}
+
+/** email-gateway's `/orgs/stats` shape for a given recipient count. */
+function recipientStats(contacted: number, autoReply = 0): Record<string, unknown> {
+  return {
+    broadcast: {
+      recipientStats: {
+        contacted,
+        sent: contacted,
+        delivered: contacted,
+        opened: 0,
+        clicked: 0,
+        bounced: 0,
+        repliesPositive: contacted,
+        repliesNegative: 0,
+        repliesNeutral: 0,
+        repliesAutoReply: autoReply,
+      },
+    },
+  };
 }
 
 function mockFetch(fixture: Fixture): void {
@@ -112,6 +154,19 @@ function mockFetch(fixture: Fixture): void {
     if (url.includes("/orgs/leads")) {
       // lead-service scopes by campaign when asked, else serves the brand's whole page.
       return json({ leads: cid ? fixture.leads.filter((l) => l.campaignId === cid) : fixture.leads });
+    }
+    if (url.includes("/orgs/stats") && fixture.emailByCampaign) {
+      if (url.includes("groupBy=campaignId")) {
+        return json({
+          groups: Object.entries(fixture.emailByCampaign).map(([id, n]) => ({
+            key: id,
+            ...recipientStats(n, fixture.emailAutoReplyByCampaign?.[id] ?? 0),
+          })),
+        });
+      }
+      const single = cid ?? (new URL(url).searchParams.get("campaignId") ?? undefined);
+      const n = single ? (fixture.emailByCampaign[single] ?? 0) : (fixture.emailBrandTotal ?? 0);
+      return json(recipientStats(n));
     }
     if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
     if (url.includes("/orgs/status")) return json({ results: [] });
@@ -238,6 +293,77 @@ describe("campaign figures are the campaign IDENTITY's figures", () => {
       .set(AUTH);
     expect(single.status).toBe(200);
     expect(single.body.systemStats.actualCostInUsdCents).toBe(10000);
+  });
+
+  it("a campaign identity never reports more PEOPLE than its brand — the members' recipient rows are not added", async () => {
+    // The prod shape (features-service#749): several member campaigns of one identity contacted the
+    // SAME people. email-gateway answers each campaign separately, so folding those answers counted
+    // `shared` three times — the identity read 4 contacted where the brand reads 2.
+    mockFetch({
+      campaigns: FAMILY,
+      costByCampaign: { "stopped-1": 3000, "stopped-2": 2000, live: 5000 },
+      leads: [
+        replyLead("stopped-1", "shared"),
+        replyLead("stopped-2", "shared"),
+        replyLead("live", "shared"),
+        replyLead("live", "only-live"),
+      ],
+      // What email-gateway serves per campaign: one recipient row per send, so `shared` is in all three.
+      emailByCampaign: { "stopped-1": 1, "stopped-2": 1, live: 2 },
+      emailBrandTotal: 2,
+    });
+
+    const brand = await request(app).get("/features/sales-cold-email-outreach/stats?brandId=b1").set(AUTH);
+    const grouped = await request(app)
+      .get("/features/sales-cold-email-outreach/stats?brandId=b1&groupBy=campaignId")
+      .set(AUTH);
+    expect(brand.status).toBe(200);
+    expect(grouped.status).toBe(200);
+
+    // Two distinct people for the brand, and the identity holds every one of them — not one more.
+    expect(brand.body.stats.recipientsContacted).toBe(2);
+    expect(brand.body.stats.recipientsRepliesPositive).toBe(2);
+    const byId = Object.fromEntries(grouped.body.groups.map((g: { campaignId: string }) => [g.campaignId, g]));
+    for (const id of ["live", "stopped-1", "stopped-2"]) {
+      expect(byId[id].stats.recipientsContacted).toBe(2);
+      expect(byId[id].stats.recipientsSent).toBe(2);
+      expect(byId[id].stats.recipientsRepliesPositive).toBe(2);
+      // The one person-grain figure no lead evidence can produce is not summed into the same
+      // over-count — a multi-member identity says "could not count" instead.
+      expect(byId[id].stats.recipientsRepliesAutoReply).toBeNull();
+    }
+
+    // The single-campaign read of a member is the same campaign, so it agrees with the group.
+    const single = await request(app)
+      .get("/features/sales-cold-email-outreach/stats?brandId=b1&campaignId=stopped-1")
+      .set(AUTH);
+    expect(single.status).toBe(200);
+    expect(single.body.stats.recipientsContacted).toBe(2);
+    expect(single.body.stats.recipientsRepliesPositive).toBe(2);
+    expect(single.body.stats.recipientsRepliesAutoReply).toBeNull();
+  });
+
+  it("a brand with ONE campaign per identity still reports each campaign's own people", async () => {
+    mockFetch({
+      campaigns: [
+        { id: "cold", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z" },
+        { id: "crm", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "crm_email", status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z" },
+      ],
+      costByCampaign: { cold: 3000, crm: 5000 },
+      leads: [replyLead("cold", "l1"), replyLead("cold", "l2"), replyLead("crm", "l3")],
+      emailByCampaign: { cold: 2, crm: 1 },
+      emailBrandTotal: 3,
+      // A single-member identity has nothing to double-count, so this key still answers.
+      emailAutoReplyByCampaign: { cold: 1, crm: 0 },
+    });
+
+    const grouped = await request(app)
+      .get("/features/sales-cold-email-outreach/stats?brandId=b1&groupBy=campaignId")
+      .set(AUTH);
+    const byId = Object.fromEntries(grouped.body.groups.map((g: { campaignId: string }) => [g.campaignId, g]));
+    expect(byId.cold.stats.recipientsContacted).toBe(2);
+    expect(byId.crm.stats.recipientsContacted).toBe(1);
+    expect(byId.cold.stats.recipientsRepliesAutoReply).toBe(1);
   });
 
   it("degrades to per-campaign figures, never to a wrong number, when campaign-service is unreachable", async () => {

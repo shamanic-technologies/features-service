@@ -99,15 +99,47 @@ IDENTITY — campaign-service's own key (its `uniq_campaigns_org_brand_funnel_ch
   brand Overview's. Costs sum exactly (a cost row belongs to one campaign). Prod before: Σ
   per-campaign $218.36 pipeline / $1,122.43 spend vs the brand Overview's $217.84 / $1,122.41 — the
   $0.52 gap is exactly the leads the old per-row view counted twice.
+- **PEOPLE ARE NOT ADDED — an identity's person-grain figures are COUNTED, on the brand's own basis.**
+  Money and run counts are additive (a cost row belongs to exactly one campaign), so folding the
+  members' rows is exact. PEOPLE are not: a person contacted under two members is ONE person, and
+  email-gateway answers each campaign separately, so summing those answers counted them twice. That
+  is how brand `75d7e3e8…` came to report **7,181 contacted / 15 positive replies** while its single
+  46-member identity reported **9,695 / 16** — a campaign larger than the brand containing it. The
+  error scales with how much history campaign-service consolidates onto an identity, so it was
+  invisible while identities had one member. **`/stats` `groupBy=campaignId` (and the flattened
+  `?campaignId=` read of a multi-member identity) now take every recipient count from
+  `fetchEngagementSnapshotByIdentity`** (`engagement-snapshot.ts`): ONE brand-wide lead read, grouped
+  by the identity each row's campaign belongs to, deduped WITHIN each identity. Both properties fall
+  out by construction — a lead re-served under two members counts once, and an identity's distinct
+  leads are a SUBSET of the brand's, for every signal. So the bound holds by definition, not by a
+  correction applied afterwards. An identity whose members reached no lead reads **0** on this basis
+  (not the email-gateway sum); a row stating no campaign belongs to no identity.
+- **The snapshot now owns NINE keys, not six** — `recipientsBounced` / `RepliesNegative` /
+  `RepliesNeutral` joined the original six, on BOTH the brand read and the per-identity read, because
+  email-gateway's aggregate is a distinct count *at the grain it was asked for* and therefore
+  over-counts the moment several campaigns are folded (prod: identity bounced 506 vs brand 495).
+  Verified against prod before shipping: brand-grain lead-snapshot bounced is **495** — byte-equal to
+  the number this replaced. **`recipientsRepliesAutoReply` is the ONE person-grain key that cannot
+  join** (lead-service classifies a reply `positive|negative|neutral` and has no auto-reply class —
+  verified on the deployed contract), so for a MULTI-MEMBER identity it is DROPPED → `null`, "we
+  could not count this". A single-member identity is unaffected. Do NOT "fix" that null by summing
+  it, and do NOT invent an auto-reply lead field — the producer owns that vocabulary.
+- **`EnginePerson.campaignId`** is carried through `leads-client` purely so this grouping can happen
+  BEFORE the dedup. The engine ignores it, and `dedupPersonsByLead` keeps the first row's value (a
+  deduped person no longer belongs to one campaign).
 - **The cache key carries the IDENTITY, not the campaign**, so the dashboard's one call per rendered
   row lands on ONE cell instead of paying for N identical fan-outs.
 - **Fail-SOFT with a loud log.** With campaign-service unreachable every campaign is its own family —
   the grouping degrades to what it was before this feature, and no number is ever fabricated.
 - Guards: `src/lib/campaign-identity.test.ts` (the pooling rules, both meeting funnels apart, the
-  unstated funnel distinguishable, an unplaceable row alone) + `src/routes/campaign-identity-aggregation.test.ts`
+  unstated funnel distinguishable, an unplaceable row alone) + `src/lib/engagement-snapshot.test.ts`
+  (several member campaigns having contacted the SAME person; no identity's figure exceeds the
+  brand's, for every signal; ONE brand-wide read, never one per identity) +
+  `src/routes/campaign-identity-aggregation.test.ts`
   (drives `/revenue` + `/stats` from ONE fixture: every member reports the whole campaign, a shared
-  lead counts once, one-campaign-per-identity is unchanged, campaign-service down degrades).
-  (Set 2026-08-02.)
+  lead counts once, the brand and campaign views agree on contacted / sent / positive replies,
+  one-campaign-per-identity is unchanged, campaign-service down degrades).
+  (Set 2026-08-02; people-are-counted-not-added 2026-08-13, features-service#749.)
 
 ## Per-brand CONFIGURATION is (org, brand) data — every brand-service read of it names the org whose answer it wants, and a caller with NO org FAILS LOUD
 

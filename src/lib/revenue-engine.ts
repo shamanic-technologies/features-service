@@ -94,6 +94,14 @@ export interface EnginePerson {
   orgCountry: string | null;
   /** Recipient email — used by the route to join per-event timestamps; ignored by the engine. */
   email?: string | null;
+  /**
+   * The campaign the row was served under. Carried so a person-grain count can be grouped by the
+   * campaign IDENTITY before it is deduped — the ONLY way an identity's distinct-lead figure can be
+   * counted on the same basis as the brand's. Null when the producer states none. The engine ignores
+   * it (it never affects EV); pure passthrough, and `dedupPersonsByLead` keeps the first row's value
+   * because a deduped person no longer belongs to a single campaign.
+   */
+  campaignId?: string | null;
   /** Which funnel signals fired for this person (e.g. { clicked: true, positiveReply: false }). */
   signals: Record<string, boolean>;
   /** ISO timestamp of each signal's first occurrence, when known (null otherwise). */
