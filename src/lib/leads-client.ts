@@ -67,6 +67,43 @@ interface LeadRow {
 }
 
 /**
+ * IN-FLIGHT reads of the SAME lead page, keyed by its exact request. NOT a cache — the entry is
+ * dropped the moment the fetch settles, so nobody is ever served a stale page and the next read
+ * goes to lead-service as before.
+ *
+ * It exists because this process runs with a 384 MB heap and a big brand's page is the largest
+ * body it parses. Two surfaces legitimately want that same page at the same moment (the brand stat
+ * card and the campaign breakdown both refresh in the background when the dashboard opens), and
+ * two simultaneous parses of one page do not fit — the process was OOM-killed and restarted. One
+ * fetch, one parse, both callers served: identical inputs cannot have different answers, so this
+ * changes no number. Callers only READ these rows (each maps its own persons), so sharing is safe.
+ */
+const inFlightLeadPages = new Map<string, Promise<{ leads: LeadRow[] }>>();
+
+async function sharedLeadPage(url: string, reqHeaders: Record<string, string>): Promise<{ leads: LeadRow[] }> {
+  // The org is what scopes the answer; the rest of the identity headers are context, not filters.
+  const key = `${reqHeaders["x-org-id"]}|${url}`;
+  const existing = inFlightLeadPages.get(key);
+  if (existing) return existing;
+
+  const pending = (async () => {
+    const response = await fetchWithRetry(url, { headers: reqHeaders });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`lead-service /orgs/leads failed (${response.status}): ${text}`);
+    }
+    return (await response.json()) as { leads: LeadRow[] };
+  })();
+
+  inFlightLeadPages.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    inFlightLeadPages.delete(key);
+  }
+}
+
+/**
  * Fetch all leads for a brand (optionally one campaign) with delivery-status overlay,
  * mapped into engine persons. Fails loud on any transport / non-OK error — a swallowed
  * error would silently under-report pipeline.
@@ -111,14 +148,7 @@ export async function fetchLeadsForRevenue(
   if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const response = await fetchWithRetry(`${url}/orgs/leads?${params}`, { headers: reqHeaders });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`lead-service /orgs/leads failed (${response.status}): ${text}`);
-  }
-
-  const data = (await response.json()) as { leads: LeadRow[] };
+  const data = await sharedLeadPage(`${url}/orgs/leads?${params}`, reqHeaders);
   const rows = family ? data.leads.filter((row) => row.campaignId && family.has(row.campaignId)) : data.leads;
   return rows.map((row) => {
     const org = row.lead?.organization ?? null;
