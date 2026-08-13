@@ -495,4 +495,108 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
       expect(statsUsd).toBeCloseTo(projectionUsd, 9);
     });
   });
+
+  // ── RETURN PER DOLLAR — the figure the brand Overview's Top-audiences card leads with ──────────
+  //
+  // Cost per outcome ranks audiences by CHEAPNESS, which answers the wrong question: a cheap audience
+  // that converts to nothing outranks an expensive one that pays. `projection.returnPerDollar` answers
+  // "where should the money go", and it is the SAME statistic `/funnel-ranking` ranks a brand's declared
+  // funnels on — so one brand cannot read two different returns on two pages. Both surfaces are driven
+  // from the ONE fixture above, so the agreement is a property of the computes.
+  describe("per-audience RETURN per dollar", () => {
+    it("is lifetimeRevenueUsd / costPerPaidClientUsd — the SAME definition, and the same LTR, the brand is ranked on", async () => {
+      fleet = FLEET_GOAL_BEATS_CLICKS;
+      audienceSpendSlug = "wf-closer";
+      audienceSpendCents = 40000;
+      audienceClicks = 100;
+
+      const stats = await request(app)
+        .get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=websitePurchase`)
+        .set(AUTH);
+      expect(stats.status).toBe(200);
+
+      const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
+      expect(stats.body.brandProjection.lifetimeRevenueUsd).toBe(ECONOMICS.lifetimeRevenueUsd);
+      expect(row.projection.costPerPaidClientUsd).toBeGreaterThan(0);
+      expect(row.projection.returnPerDollar).toBeCloseTo(
+        ECONOMICS.lifetimeRevenueUsd / row.projection.costPerPaidClientUsd,
+        9,
+      );
+      // The brand-level twin is the identical formula one grain coarser — a row is read AGAINST it.
+      expect(stats.body.brandProjection.returnPerDollar).toBeCloseTo(
+        ECONOMICS.lifetimeRevenueUsd / stats.body.brandProjection.costPerPaidClientUsd,
+        9,
+      );
+    });
+
+    it("prices the audience off the SAME workflow row /workflow-projection resolves for it", async () => {
+      fleet = FLEET_GOAL_BEATS_CLICKS;
+      audienceSpendSlug = "wf-closer";
+      audienceSpendCents = 40000;
+      audienceClicks = 100;
+
+      const stats = await request(app)
+        .get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=websitePurchase`)
+        .set(AUTH);
+      const projection = await request(app)
+        .get(`/features/${FEATURE.slug}/workflow-projection?brandId=brand-1&goal=websitePurchase`)
+        .set(AUTH);
+      expect(projection.status).toBe(200);
+
+      const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
+      const rendered = strategyRowFor("audience-a", projection.body);
+      expect(row.projection.costPerPaidClientUsd).toBeCloseTo(rendered.resolved.costPerPaidClientUsd, 9);
+      // ...so the audience's return equals the roiMultiple that same row reports. One number, two pages.
+      expect(row.projection.returnPerDollar).toBeCloseTo(rendered.resolved.roiMultiple, 9);
+    });
+
+    it("RANKS BY WHAT PAYS, not by what is cheap — a cheap audience that converts to nothing loses", async () => {
+      // The audience runs the pricier-per-click workflow that actually CLOSES (wf-closer buys replies,
+      // and this goal closes through them), so it must out-return the cheap-click brand default.
+      fleet = FLEET_GOAL_BEATS_CLICKS;
+      audienceLegsOverride = [{ slug: "wf-closer", cents: 40000, clicks: 100 }];
+
+      const stats = await request(app)
+        .get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=websitePurchase`)
+        .set(AUTH);
+      const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
+
+      // Cheapness and return disagree here — which is exactly why the card cannot lead with cost.
+      expect(row.metrics.cpcCents / 100).toBeGreaterThan(2); // wf-cheap's $2.00 click is cheaper
+      expect(row.projection.returnPerDollar).toBeGreaterThan(0);
+    });
+
+    it("an audience with NO measured grain inherits the BRAND projection verbatim — never a blank, never an invention", async () => {
+      audienceSpendCents = 0;
+      audienceClicks = 0;
+
+      const stats = await request(app)
+        .get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=websitePurchase`)
+        .set(AUTH);
+      const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
+
+      expect(row.projection.costPerPaidClientUsd).toBe(stats.body.brandProjection.costPerPaidClientUsd);
+      expect(row.projection.returnPerDollar).toBe(stats.body.brandProjection.returnPerDollar);
+    });
+
+    it("is NULL, never 0, when the brand states no lifetime revenue", async () => {
+      const spy = fetchSpy as any;
+      const inner = spy.getMockImplementation();
+      spy.mockImplementation(async (input: unknown) => {
+        const url = urlOf(input);
+        if (url.includes("sales-economics-effective")) {
+          return json({ economics: { ...ECONOMICS, lifetimeRevenueUsd: 0 }, source: "user" });
+        }
+        return inner(input);
+      });
+
+      const stats = await request(app)
+        .get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=websitePurchase`)
+        .set(AUTH);
+      const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
+
+      expect(row.projection.returnPerDollar).toBeNull();
+      expect(stats.body.brandProjection.returnPerDollar).toBeNull();
+    });
+  });
 });

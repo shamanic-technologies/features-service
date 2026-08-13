@@ -46,6 +46,8 @@ import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_
 import { singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
+import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
+import { fetchBrandActualSpendByDay } from "../lib/brand-spend-by-day-client.js";
 
 const router = Router();
 
@@ -61,26 +63,60 @@ const router = Router();
  *   - actualCostUsd:         ACTUAL (billed) run cost in dollars (excludes provisioned holds), >= 0.
  *   - costOfAcquisitionPct:  (actualCostUsd / totalPipelineUsd) * 100; null when pipeline is null OR 0.
  *   - roiMultiple:           totalPipelineUsd / actualCostUsd; null when cost is 0 OR pipeline is null.
+ *   - costPerAcquisitionUsd: what it cost to win ONE customer, for whatever scope this body describes.
+ *                            Present on EVERY body, the un-lensed brand read included — see below.
  *   - expectedConversions:   LENS ONLY — sum of per-lead conversion probability (decimal) across the
  *                            lensed leads (totalPipelineUsd = expectedConversions × LTR). Absent off-lens.
  *   - costPerConversionUsd:  LENS ONLY — actualCostUsd / expectedConversions; null when expectedConversions
  *                            is 0. Absent off-lens.
+ *
+ * COST PER ACQUISITION IS NOT A NEW COMPUTATION — it was already implied by two fields sitting side by
+ * side. A brand's pipeline is `expected paying clients × lifetime revenue`, so the expected client
+ * COUNT is `totalPipelineUsd / lifetimeRevenueUsd` and the dollar cost of one of them is
+ * `actualCostUsd ÷ that count` = `(costOfAcquisitionPct / 100) × lifetimeRevenueUsd` = `LTR ÷
+ * roiMultiple`. The three are one statement in three units, which is exactly why the Overview can show
+ * Pipeline / ROI / %CAC and then render a dash for $CAC and look broken rather than scoped.
+ *
+ * It was previously reachable only on a `?lens=` read (as `costPerConversionUsd`), and the brand
+ * Overview is not lensed — it is the whole brand, every funnel. The identity above is why the un-lensed
+ * figure MATCHES the lensed one for the same scope instead of being a second opinion: the lens divides
+ * the same realized spend by `Σ per-lead probability`, and that sum IS `lensPipeline / LTR`. Same
+ * economics in, same dollars out, and `revenue.test.ts` drives both from one fixture to keep it so.
+ *
+ * NULL, never 0, when the brand states no lifetime revenue, when it is 0, or when the pipeline is
+ * null/0 — "we could not measure this" and "a customer costs nothing" are different statements.
  */
 export interface CostEconomics {
   actualCostUsd: number;
   costOfAcquisitionPct: number | null;
   roiMultiple: number | null;
+  /** REALIZED — actual spend ÷ expected paying clients. null when unmeasurable; never 0 as a stand-in. */
+  costPerAcquisitionUsd: number | null;
   expectedConversions?: number;
   costPerConversionUsd?: number | null;
 }
 
-export function buildCostEconomics(actualCostInUsdCents: number, totalPipelineUsd: number | null): CostEconomics {
+export function buildCostEconomics(
+  actualCostInUsdCents: number,
+  totalPipelineUsd: number | null,
+  // The brand's lifetime revenue per paying client, from the SAME resolved (declared-funnel-priced)
+  // economics that produced `totalPipelineUsd`. Omitted on the paths that have no economics at all
+  // (no funnel wired / cold start) → costPerAcquisitionUsd is null, which is the honest answer there.
+  lifetimeRevenueUsd?: number | null,
+): CostEconomics {
   const actualCostUsd = actualCostInUsdCents / 100;
   const costOfAcquisitionPct =
     totalPipelineUsd === null || totalPipelineUsd === 0 ? null : (actualCostUsd / totalPipelineUsd) * 100;
   const roiMultiple =
     actualCostUsd === 0 || totalPipelineUsd === null ? null : totalPipelineUsd / actualCostUsd;
-  return { actualCostUsd, costOfAcquisitionPct, roiMultiple };
+  // expected paying clients = pipeline / LTR; a 0 or absent LTR leaves the count undefined, not zero.
+  const expectedPaidClients =
+    totalPipelineUsd === null || lifetimeRevenueUsd == null || !(lifetimeRevenueUsd > 0)
+      ? null
+      : totalPipelineUsd / lifetimeRevenueUsd;
+  const costPerAcquisitionUsd =
+    expectedPaidClients === null || expectedPaidClients === 0 ? null : actualCostUsd / expectedPaidClients;
+  return { actualCostUsd, costOfAcquisitionPct, roiMultiple, costPerAcquisitionUsd };
 }
 
 /**
@@ -405,6 +441,25 @@ interface RevenueResponse {
   headline: { totalPipelineUsd: number | null; economicsSource: EconomicsSource | null };
   costEconomics: CostEconomics;
   timeSeries: TimeSeriesPoint[];
+  /**
+   * RETURN ON SPEND ACROSS THE BRAND'S WHOLE LIFE — a single line a consumer charts instead of a raw
+   * cumulative signal count. One point per UTC day, ascending, from the brand's first spend to its
+   * last dated day; BOTH legs are CUMULATIVE SINCE INCEPTION (see {@link buildRoiHistory} for why a
+   * period-grain ratio would describe nothing — spend on a day buys outcomes that land weeks later).
+   *
+   * REALIZED on both legs, nothing modelled: spend is dated by runs-service's own cost buckets and
+   * pipeline by the per-lead event timestamps the engine already holds. Its LAST `roiMultiple` is the
+   * headline `costEconomics.roiMultiple` for the same read — coherent by construction, not corrected.
+   * Pipeline whose outcome carries no timestamp cannot sit on a day and is reported separately as
+   * `undatedPipelineUsd` rather than dropped or dated (`datedPipelineUsd + undatedPipelineUsd ===
+   * headline.totalPipelineUsd`).
+   *
+   * OVERVIEW ONLY (same gate as `spend`): null on the lensed `?lens=` response and absent on the
+   * grouped `?groupBy=campaignId` groups. Fail-SOFT — null when the dated-spend read fails, exactly
+   * like `sequences`: the curve is display enrichment and must never 502 an Overview whose every
+   * other number is correct. Null means "we could not measure this", never "the return was zero".
+   */
+  roiHistory: RoiHistory | null;
   organizations: OrganizationRow[];
   leads: LeadRow[];
   events: EventRow[];
@@ -498,11 +553,14 @@ function emptyBody(
   actualCostInUsdCents: number,
   spend: Spend | null,
   sequences: SignalSeries | null = null,
+  roiHistory: RoiHistory | null = null,
 ): RevenueBody {
   return {
     headline: { totalPipelineUsd, economicsSource: null },
+    // No economics on this path (no funnel wired, or cold start) → no LTR, so no cost per acquisition.
     costEconomics: buildCostEconomics(actualCostInUsdCents, totalPipelineUsd),
     timeSeries: [],
+    roiHistory,
     organizations: [],
     leads: [],
     events: [],
@@ -541,6 +599,27 @@ function fetchSequencesSoft(
  * carries "unknown". Loud log, never a silent swallow. On the pre-rollout window (lead-service's
  * endpoint not yet deployed) this degrades cleanly to absent instead of blocking the Overview.
  */
+/**
+ * The brand's ACTUAL spend per UTC day, for the dated return-on-spend curve. Fail-SOFT: a failure
+ * degrades `roiHistory` to null (the chart renders "could not be measured") rather than 502-ing the
+ * whole Overview — the same display-enrichment rule as `sequences` and the spend cost parents. Loud
+ * log, never a silent swallow, and never a fabricated flat curve.
+ */
+function fetchSpendByDaySoft(
+  brandId: string,
+  campaignScope: CampaignFilter,
+  featureSlug: string,
+  headers: DownstreamHeaders,
+  pricing: Pricing,
+): Promise<Map<string, number> | null> {
+  return fetchBrandActualSpendByDay(brandId, campaignScope, featureSlug, headers, pricing).catch((err) => {
+    console.warn(
+      `[features-service] dated-spend enrichment failed (degrading roiHistory to null): ${(err as Error).message}`,
+    );
+    return null;
+  });
+}
+
 function fetchConversionCountsSoft(brandId: string): Promise<ConversionCounts | null> {
   return fetchConversionCounts(brandId).catch((err) => {
     console.warn(
@@ -728,7 +807,9 @@ function buildLensBody(
   // LENS ONLY: expected conversion COUNT = sum of per-lead probability (decimal). totalPipelineUsd =
   // expectedConversions × LTR. costPerConversionUsd = actualCostUsd / expectedConversions (null at 0).
   const expectedConversions = leads.reduce((sum, l) => sum + (l.conversionProbabilityPct ?? 0) / 100, 0);
-  const costEconomics = buildCostEconomics(actualCostInUsdCents, totalPipelineUsd);
+  // `costPerAcquisitionUsd` derives from the SAME LTR the lens prices with, so it comes out equal to
+  // `costPerConversionUsd` below (expectedConversions === totalPipelineUsd / ltr, by construction).
+  const costEconomics = buildCostEconomics(actualCostInUsdCents, totalPipelineUsd, ltr);
   return {
     headline: { totalPipelineUsd, economicsSource },
     costEconomics: {
@@ -737,6 +818,9 @@ function buildLensBody(
       costPerConversionUsd: expectedConversions === 0 ? null : costEconomics.actualCostUsd / expectedConversions,
     },
     timeSeries: [],
+    // The lens describes a SUBSET of the brand's leads; its spend leg would be the brand's whole
+    // spend, so the curve belongs to the un-lensed Overview alone.
+    roiHistory: null,
     organizations: [],
     leads,
     events: [],
@@ -831,7 +915,7 @@ export async function computeFeatureRevenue(
   // All four are fail-loud (Promise.all rejects → the endpoint 502s): each is a core input to the
   // pipeline total / cost / ROI; a swallowed error would fake a number. The economics===null
   // cold-start path below over-fetches rates+leads — accepted for the common-path win.
-  const [costResult, { economics, source }, platformRates, persons, sequences, counts, conversionEmails, parents] = await Promise.all([
+  const [costResult, { economics, source }, platformRates, persons, sequences, counts, conversionEmails, parents, spendByDay] = await Promise.all([
     includeSpend
       ? fetchSpendBreakdown(brandId, campaignScope, featureSlug, headers, new Date(), pricing)
       : fetchRunsCostCents(brandId, campaignScope, featureSlug, headers, pricing),
@@ -861,6 +945,12 @@ export async function computeFeatureRevenue(
     includeSpend
       ? fetchSpendCostParentsSoft(brandId, featureSlug, headers, campaignId, pricing, requestedFunnel)
       : Promise.resolve<SpendCostParents>(null),
+    // Overview-only DATED spend (runs-service cost timeseries) — the spend leg of the return-on-spend
+    // curve. Pre-caught → null on failure (never rejects fail-loud Wave A; roiHistory then degrades to
+    // null). Off-overview null: the lens and the per-campaign groups do not carry the curve.
+    includeSpend
+      ? fetchSpendByDaySoft(brandId, campaignScope, featureSlug, headers, pricing)
+      : Promise.resolve<Map<string, number> | null>(null),
   ]);
   const breakdown: SpendBreakdown | null = typeof costResult === "number" ? null : costResult;
   // ROI/CAC + costEconomics ride ACTUAL (billed) spend; the `spend` block (buildSpend) carries the
@@ -957,8 +1047,17 @@ export async function computeFeatureRevenue(
 
   return {
     headline: { ...result.headline, economicsSource },
-    costEconomics: buildCostEconomics(actualCostInUsdCents, result.headline.totalPipelineUsd),
+    costEconomics: buildCostEconomics(
+      actualCostInUsdCents,
+      result.headline.totalPipelineUsd,
+      economics.lifetimeRevenueUsd,
+    ),
     timeSeries: result.timeSeries,
+    // Both legs realized: runs' dated buckets against the engine's own dated pipeline. Null when the
+    // dated-spend read degraded — a curve is never drawn from one leg.
+    roiHistory: spendByDay
+      ? buildRoiHistory(spendByDay, result.timeSeries, result.headline.totalPipelineUsd)
+      : null,
     organizations: result.organizations,
     leads: result.leads,
     events: result.events,

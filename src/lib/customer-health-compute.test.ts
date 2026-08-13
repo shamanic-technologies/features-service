@@ -88,11 +88,20 @@ function audienceRow(id: string, memberCount: number, contacted: number, cpcCent
       positiveReplies: 0,
     },
     metrics: { cpcCents, cpprCents: null, cpfsCents: null, cpsCents: null, cpsaleCents: null },
+    projection: { costPerPaidClientUsd: null, returnPerDollar: null },
   };
 }
 
 function audienceEnvelope(brandId: string, rows: AudienceStatsRow[]): AudienceStatsEnvelope {
-  return { featureSlug: COLD_CSV, brandId, goal: "signup", brandProfileId: null, sortMetric: "cpc", audiences: rows };
+  return {
+    featureSlug: COLD_CSV,
+    brandId,
+    goal: "signup",
+    brandProfileId: null,
+    sortMetric: "cpc",
+    audiences: rows,
+    brandProjection: { lifetimeRevenueUsd: null, costPerPaidClientUsd: null, returnPerDollar: null },
+  };
 }
 
 function workflowResponse(rows: WorkflowProjectionResponse["rows"]): WorkflowProjectionResponse {

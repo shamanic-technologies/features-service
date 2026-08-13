@@ -104,7 +104,7 @@ function qualRows(quals: Qualifications): unknown[] {
 }
 
 /** Route fetch mock keyed by URL substring. effective economics (saved set + cross-brand average) + leads + status timestamps + manual quals + platform stats + cost overridable. */
-function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; sale: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean; salesFunnels?: unknown[] } = {}): void {
+function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; sale: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean; salesFunnels?: unknown[]; spendByDay?: Array<{ period: string; actualCents: number }>; spendByDayFail?: boolean } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     // lead-service GET /internal/brands/:brandId/converted-lead-emails?event=<type> — per-lead SIGNUP /
@@ -139,6 +139,26 @@ function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; lead
         broadcast: { recipientStats: { contacted: g.contacted } },
       }));
       return new Response(JSON.stringify({ groups }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    // runs-service GET /v1/stats/public/costs/timeseries — the DATED spend leg of roiHistory. Distinct
+    // path from the untimed /v1/stats/costs below, so match it first. Absent option → a 500, so the
+    // fail-soft wrapper degrades roiHistory to null (the pre-existing expectation of every other case).
+    if (url.includes("/costs/timeseries")) {
+      if (!opts.spendByDay || opts.spendByDayFail) {
+        return new Response("boom", { status: 500, headers: { "Content-Type": "application/json" } });
+      }
+      const buckets = opts.spendByDay.map((b) => ({
+        period: b.period,
+        totalCostInUsdCents: String(b.actualCents),
+        actualCostInUsdCents: String(b.actualCents),
+        provisionedCostInUsdCents: "0",
+        cancelledCostInUsdCents: "0",
+        netTotalCostInUsdCents: String(b.actualCents),
+        netActualCostInUsdCents: String(b.actualCents),
+        netProvisionedCostInUsdCents: "0",
+        runCount: 1,
+      }));
+      return new Response(JSON.stringify({ interval: "day", timezone: "UTC", buckets }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("/stats/costs")) {
       return new Response(costGroups(opts.costCents ?? 0), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -1478,5 +1498,183 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
     expect(res.body).toHaveProperty("costEconomics");
     expect(res.body).not.toHaveProperty("groupBy");
     expect(res.body).not.toHaveProperty("groups");
+  });
+
+
+});
+
+describe("GET /features/:featureSlug/revenue — the brand Overview money row", () => {
+  beforeEach(() => {
+    __resetPlatformRatesCache();
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const replyLead = (org: string) => leadRow({ leadId: `lr-${org}`, email: `reply-${org}@x.com`, replied: true, replyClassification: "positive", lead: { firstName: "Re", lastName: "Ply", photoUrl: null, organization: { id: org, name: org, logoUrl: null } } });
+
+  // ── THE BRAND OVERVIEW's MONEY ROW ────────────────────────────────────────────
+  //
+  // A customer asks one question on the Overview: is this working? At brand level — several channels,
+  // several funnels running at once — the honest answer is money: what the pipeline is worth, what it
+  // cost, and what the two divide into. These two surfaces are the parts that were unanswerable.
+  describe("cost per acquisition on the DEFAULT (un-lensed) brand read", () => {
+    const LEADS = [
+      leadRow({ leadId: "l1", email: "click@x.com", clicked: true, lead: { firstName: "C", lastName: "X", photoUrl: null, organization: { id: "o1", name: "Org1", logoUrl: null } } }),
+      leadRow({ leadId: "l2", email: "reply@y.com", replied: true, replyClassification: "positive", lead: { firstName: "R", lastName: "Y", photoUrl: null, organization: { id: "o2", name: "Org2", logoUrl: null } } }),
+    ];
+
+    it("answers what it cost to win ONE customer, for the brand as a whole", async () => {
+      mockFetch({ economics: ECONOMICS, leads: LEADS, costCents: 50000 });
+      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+      expect(res.status).toBe(200);
+
+      const { actualCostUsd, costOfAcquisitionPct, roiMultiple, costPerAcquisitionUsd } = res.body.costEconomics;
+      const pipeline = res.body.headline.totalPipelineUsd;
+      expect(pipeline).toBeGreaterThan(0);
+
+      // Expected paying clients = pipeline / LTR; the cost of one of them is spend ÷ that count.
+      const expectedPaidClients = pipeline / ECONOMICS.lifetimeRevenueUsd;
+      expect(costPerAcquisitionUsd).toBeCloseTo(actualCostUsd / expectedPaidClients, 9);
+      // ...which is the SAME statement as ROI and %CAC, in a third unit — the card's four numbers
+      // are one thing said four ways, which is why a dash beside three real figures reads as broken.
+      expect(costPerAcquisitionUsd).toBeCloseTo((costOfAcquisitionPct / 100) * ECONOMICS.lifetimeRevenueUsd, 9);
+      expect(costPerAcquisitionUsd).toBeCloseTo(ECONOMICS.lifetimeRevenueUsd / roiMultiple, 9);
+    });
+
+    // The figure was previously reachable only on a `?lens=` read. Driven from ONE fixture here so the
+    // agreement is a property of the two computes, not of two hand-written expectations.
+    it("MATCHES the lensed costPerConversionUsd for the same scope", async () => {
+      const onlyClickers = [LEADS[0]];
+
+      mockFetch({ economics: ECONOMICS, leads: onlyClickers, costCents: 50000 });
+      const lensed = await request(app)
+        .get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=signups")
+        .set(AUTH);
+      expect(lensed.status).toBe(200);
+
+      // The lens divides the same realized spend by Σ per-lead probability — and that sum IS
+      // lensPipeline / LTR, i.e. the same expected-client count the un-lensed read uses.
+      expect(lensed.body.costEconomics.costPerConversionUsd).toBeGreaterThan(0);
+      expect(lensed.body.costEconomics.costPerAcquisitionUsd).toBeCloseTo(
+        lensed.body.costEconomics.costPerConversionUsd,
+        9,
+      );
+    });
+
+    it("is NULL — never 0 — when the brand states no lifetime revenue", async () => {
+      mockFetch({ economics: { ...ECONOMICS, lifetimeRevenueUsd: 0 }, leads: LEADS, costCents: 50000 });
+      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+      expect(res.body.costEconomics.costPerAcquisitionUsd).toBeNull();
+    });
+
+    it("is NULL when no funnel is wired (no economics ⇒ no expected client count)", async () => {
+      vi.mocked(db.query.features.findFirst).mockResolvedValue({ ...SALES_FEATURE, slug: "pr-cold-email-outreach" } as any);
+      mockFetch();
+      const res = await request(app).get("/features/pr-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+      expect(res.body.costEconomics.costPerAcquisitionUsd).toBeNull();
+    });
+
+    it("rides each per-campaign group too (?groupBy=campaignId)", async () => {
+      mockFetchGrouped({
+        economics: ECONOMICS,
+        campaigns: { c1: { costCents: 7000, leads: [replyLead("o1")] } },
+      });
+      const res = await request(app)
+        .get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId")
+        .set(AUTH);
+      expect(res.status).toBe(200);
+      expect(res.body.groups).toHaveLength(1);
+      const { costEconomics, headline } = res.body.groups[0];
+      expect(costEconomics.costPerAcquisitionUsd).toBeCloseTo(
+        (costEconomics.costOfAcquisitionPct / 100) * ECONOMICS.lifetimeRevenueUsd,
+        9,
+      );
+      expect(headline.totalPipelineUsd).toBeGreaterThan(0);
+    });
+  });
+
+  describe("roiHistory — return on spend across the brand's whole life", () => {
+    const clickAt = "2026-01-02T10:00:00Z";
+    const replyAt = "2026-01-03T10:00:00Z";
+    const DATED_LEADS = [
+      leadRow({ leadId: "l1", email: "click@x.com", clicked: true, lead: { firstName: "C", lastName: "X", photoUrl: null, organization: { id: "o1", name: "Org1", logoUrl: null } } }),
+      leadRow({ leadId: "l2", email: "reply@y.com", replied: true, replyClassification: "positive", lead: { firstName: "R", lastName: "Y", photoUrl: null, organization: { id: "o2", name: "Org2", logoUrl: null } } }),
+    ];
+    const TIMESTAMPS = {
+      "click@x.com": { firstContactedAt: "2026-01-01T00:00:00Z", firstClickedAt: clickAt, firstRepliedAt: null },
+      "reply@y.com": { firstContactedAt: "2026-01-01T00:00:00Z", firstClickedAt: null, firstRepliedAt: replyAt },
+    };
+    const SPEND_BY_DAY = [
+      { period: "2026-01-01", actualCents: 20000 },
+      { period: "2026-01-02", actualCents: 10000 },
+      { period: "2026-01-03", actualCents: 20000 },
+    ];
+
+    it("charts BOTH legs cumulatively and terminates ON the headline ROI", async () => {
+      mockFetch({ economics: ECONOMICS, leads: DATED_LEADS, timestamps: TIMESTAMPS, costCents: 50000, spendByDay: SPEND_BY_DAY });
+      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+      expect(res.status).toBe(200);
+
+      const history = res.body.roiHistory;
+      expect(history.daily.map((d: any) => d.date)).toEqual(["2026-01-01", "2026-01-02", "2026-01-03"]);
+      // Spend accumulates; it never restarts per period.
+      expect(history.daily.map((d: any) => d.cumulativeSpendUsd)).toEqual([200, 300, 500]);
+      // ...and so does pipeline, from the SAME per-lead timestamps the leads table and signal series use.
+      const last = history.daily[history.daily.length - 1];
+      expect(last.cumulativePipelineUsd).toBe(res.body.timeSeries[res.body.timeSeries.length - 1].cumulativePipelineUsd);
+
+      // THE INVARIANT: the curve's last point IS the headline ROI. Same spend (runs guarantees the
+      // dated buckets sum to the untimed total), same pipeline — coherent by construction.
+      expect(last.cumulativeSpendUsd).toBe(res.body.costEconomics.actualCostUsd);
+      expect(last.roiMultiple).toBeCloseTo(res.body.costEconomics.roiMultiple, 9);
+    });
+
+    it("reports UNDATED pipeline separately rather than dropping it or dating it", async () => {
+      // Only one lead's events carry timestamps; the other's org sits on no day.
+      mockFetch({
+        economics: ECONOMICS,
+        leads: DATED_LEADS,
+        timestamps: { "click@x.com": TIMESTAMPS["click@x.com"] },
+        costCents: 50000,
+        spendByDay: SPEND_BY_DAY,
+      });
+      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+
+      const { datedPipelineUsd, undatedPipelineUsd } = res.body.roiHistory;
+      expect(undatedPipelineUsd).toBeGreaterThan(0);
+      expect(datedPipelineUsd + undatedPipelineUsd).toBeCloseTo(res.body.headline.totalPipelineUsd, 9);
+    });
+
+    it("degrades to NULL — not a fabricated flat curve — when the dated-spend read fails", async () => {
+      mockFetch({ economics: ECONOMICS, leads: DATED_LEADS, timestamps: TIMESTAMPS, costCents: 50000, spendByDayFail: true });
+      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+
+      expect(res.status).toBe(200); // never 502s the Overview — display enrichment
+      expect(res.body.roiHistory).toBeNull();
+      expect(res.body.headline.totalPipelineUsd).toBeGreaterThan(0); // every other number intact
+    });
+
+    it("is absent from the per-campaign groups and null on a lensed read (a brand-whole concept)", async () => {
+      mockFetch({ economics: ECONOMICS, leads: DATED_LEADS, timestamps: TIMESTAMPS, costCents: 50000, spendByDay: SPEND_BY_DAY });
+
+      const lensed = await request(app)
+        .get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=signups")
+        .set(AUTH);
+      expect(lensed.body.roiHistory).toBeNull();
+
+      vi.restoreAllMocks();
+      vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
+      mockFetchGrouped({
+        economics: ECONOMICS,
+        campaigns: { c1: { costCents: 7000, leads: [replyLead("o1")] } },
+      });
+      const grouped = await request(app)
+        .get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId")
+        .set(AUTH);
+      expect(grouped.body.groups).toHaveLength(1);
+      for (const group of grouped.body.groups) {
+        expect(group).not.toHaveProperty("roiHistory");
+      }
+    });
   });
 });

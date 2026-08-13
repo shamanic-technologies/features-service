@@ -1748,6 +1748,67 @@ extraction-quality prompt**, not just UI help text — it's what brand-service's
 the value. Pick a clear `extractKey`; org name/url/logo are already known by construction (don't
 ask), prefer extraction over user-entry for anything scrapeable.
 
+## THE BRAND OVERVIEW ANSWERS "IS THIS WORKING?" IN MONEY — $CAC on the DEFAULT read, ROI over the brand's LIFE, ROI per AUDIENCE
+
+A brand runs several acquisition channels and several sales funnels at once, so the honest answer at
+brand level is money, not funnel steps: what the pipeline is worth, what it cost, and what the two
+divide into. Three figures were unanswerable from what this service served, so the dashboard rendered
+a dash beside real numbers — which reads as a broken card, not a scoping decision.
+
+- **`costEconomics.costPerAcquisitionUsd` is on EVERY revenue body, the un-lensed brand read
+  included.** It was NOT a new computation: pipeline is `expected paying clients × LTR`, so the client
+  COUNT is `totalPipelineUsd / lifetimeRevenueUsd` and `$CAC = actualCostUsd ÷ that count =
+  (costOfAcquisitionPct/100) × LTR = LTR / roiMultiple`. Pipeline, ROI, %CAC and $CAC are ONE statement
+  in four units. It was previously reachable only via `?lens=` (`costPerConversionUsd`), and the brand
+  Overview is not lensed — it is the whole brand, every funnel. The two AGREE by construction (the
+  lens divides the same spend by `Σ per-lead probability`, which IS `lensPipeline / LTR`), guarded by a
+  one-fixture case in `revenue.test.ts`. It rides the `?groupBy=campaignId` groups for free. NULL,
+  never 0, with no LTR / no funnel / null pipeline. The CROSS-ORG public revenue read (`public.ts`)
+  passes no LTR on purpose — orgs sharing a brand have their OWN economics, so there is no single
+  correct answer to give.
+- **`roiHistory` charts return on spend across the brand's whole life** — the Outcome card's replacement
+  for a raw cumulative signal line. **BOTH LEGS ARE CUMULATIVE SINCE INCEPTION, and that is load-bearing:**
+  spend on a day buys outcomes that land days or weeks later, so a period-grain ratio oscillates
+  between 0 and absurd and describes nothing. The cumulative form converges, and its LAST `roiMultiple`
+  IS `costEconomics.roiMultiple` for the same read.
+  - **REALIZED on both legs, nothing modelled.** Spend is dated by runs-service
+    `/v1/stats/public/costs/timeseries` (`brand-spend-by-day-client.ts`, org+brand+feature filtered,
+    ACTUAL / frozen-`netActual` per `pricing`); runs guarantees Σ buckets == the untimed total for the
+    same filter, which is exactly why the curve terminates ON the headline instead of being corrected
+    onto it. Pipeline is the engine's OWN `timeSeries` (each org steps the total up at its
+    most-advanced event date). **Do NOT spread spend evenly over time** — that invents the shape of the
+    thing the chart claims to show.
+  - **The stale "dated columns are deferred until per-event timestamps exist" note is GONE from the
+    OpenAPI description** — the timestamps have been there since #377; only dated SPEND was missing.
+  - An org with no event timestamp sits on no day: reported as `undatedPipelineUsd`, never dropped and
+    never parked on a fabricated day (`datedPipelineUsd + undatedPipelineUsd === totalPipelineUsd`).
+  - `roiMultiple` is **null, never 0**, on a day whose cumulative spend is still 0.
+  - OVERVIEW ONLY (same gate as `spend`): null on `?lens=` (the lens is a lead SUBSET; its spend leg
+    would be the brand's whole spend), absent on `?groupBy=campaignId` groups. **Fail-SOFT** with a loud
+    log, like `sequences` — a curve must never 502 an Overview whose every other number is correct.
+  - Pure builder + guards: `src/lib/roi-history.ts` / `roi-history.test.ts`.
+- **`/audience-stats` rows carry `projection.{costPerPaidClientUsd,returnPerDollar}` and the envelope
+  carries `brandProjection`.** The Top-audiences card must lead with RETURN, not cost per outcome: cost
+  per outcome ranks by CHEAPNESS, so an audience that converts to nothing outranks an expensive one
+  that pays. `returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd` is the **IDENTICAL**
+  definition `/funnel-ranking` ranks a brand's declared funnels on — routed through the SAME
+  `paidClientCostForGoal` (now exported from `workflow-projection.ts`), so an audience's return and the
+  brand's return are one statistic at two grains and a brand cannot read two returns on two pages.
+  - **PROJECTED, and the field name says so.** It prices the audience's OWN observed unit costs (the
+    send-tag spend/clicks/replies on the workflow the Strategy page renders it under — the SAME
+    `byAudience` pick the derived cost columns take) through the brand's OWN declared economics. It is
+    NOT `/revenue`'s realized `roiMultiple`; do not rename either to look like the other.
+  - **An audience with no MEASURED grain inherits `brandProjection` verbatim** — the same brand-level
+    fallback every derived column already takes, so the two families can never disagree about which
+    evidence priced the row. `brandProjection.lifetimeRevenueUsd` is surfaced so a consumer can never
+    pair a return with an LTR this projection did not use.
+  - Zero new IO: `fetchBrandProjectedParents` already resolved the economics and both grains.
+  - Guards: the `per-audience RETURN per dollar` block in `routes/audience-cost-coherence.test.ts`
+    (same one fixture as the cost-coherence cases: the audience's `costPerPaidClientUsd` equals the
+    `resolved.costPerPaidClientUsd` of the row the Strategy page RENDERS, its `returnPerDollar` equals
+    that row's `roiMultiple`, the brand twin is the same formula, inheritance is verbatim, and a 0-LTR
+    brand reads null on both). (Set 2026-08-14.)
+
 ## THE REVENUE ENGINE HAS NO DECAY, AND IS NOT TIME-DEPENDENT — an outcome that happened stays counted, and the pipeline is priced on the brand's DECLARED FUNNEL
 
 Two independent bugs made a customer's Campaigns page report **0.7x ROI against 15 positive replies**.
