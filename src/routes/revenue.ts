@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { getFunnel, orP, singleStepRateDecimal, combinedSaleProbability, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
+import { getFunnel, orP, restrictPathsToDeclaredLegs, singleStepRateDecimal, combinedSaleProbability, type EconomicsSource, type SalesEconomics } from "../lib/funnel-registry.js";
 import { matchSingleStepGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal } from "../lib/goals.js";
 import {
   fetchEffectiveEconomics,
@@ -22,7 +22,6 @@ import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { fetchSequencesByDay } from "../lib/sequences-client.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
-import { fetchPlatformEmailRates } from "../lib/platform-rates-client.js";
 import { observedCostPerOutcome, flooredCostPerOutcome, derivedCostPerOutcome } from "../lib/cost-engine.js";
 import {
   computeRevenue,
@@ -39,7 +38,7 @@ import {
 import { traceEvent } from "../lib/trace-event.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
-import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
+import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError, type DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
 import { declaredEconomicsForFunnel, mergeFunnelEconomics } from "../lib/declared-funnels.js";
 import { primaryDeclaredFunnel } from "../lib/brand-funnels.js";
 import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "../lib/sales-funnels.js";
@@ -286,8 +285,24 @@ function fetchSpendCostParentsSoft(
 }
 
 /**
- * The economics the PIPELINE EV is priced on — the brand's DECLARED sales funnel's own terms, merged
- * OVER the brand-wide effective economics for every term the funnel does not state.
+ * WHAT THE PIPELINE IS PRICED ON — the brand's DECLARED sales funnels: which LEGS carry expected value
+ * at all, and whose TERMS those legs are priced on (merged OVER the brand-wide effective economics for
+ * every term the funnel does not state).
+ *
+ * THE LEGS. The paths that carry value are exactly the legs of the funnels being priced — a signal
+ * that is not a step of one contributes nothing (`restrictPathsToDeclaredLegs`). A brand that declared
+ * several funnels is priced on ALL of their legs. A read NARROWED to one funnel is priced on that
+ * chain's legs alone; two things narrow it, in this precedence:
+ *
+ *   - the caller's `?funnel=` when it named one the brand actually declared (the dashboard knows which
+ *     chain the customer is looking at), else
+ *   - the funnel the CAMPAIGN itself states, on a campaign-scoped read. A campaign sells one chain and
+ *     campaign-service stores which (`campaignIdentity.funnelKey`), so a campaign's figures are that
+ *     chain's figures — not the brand's first declared one.
+ *
+ * THE TERMS. The narrowed funnel when there is one, else the brand's FIRST DECLARED funnel in
+ * catalogue order — a deterministic pick over the brand's OWN declarations, not a default and not an
+ * inference.
  *
  * WHY: a brand-level conversion rate no longer carries meaning — rates exist PER FUNNEL, and the
  * brand-wide record survives only as the legacy fallthrough for a brand that declared none. The two
@@ -296,49 +311,81 @@ function fetchSpendCostParentsSoft(
  * did not: it priced every reply off the brand-wide row, so one brand + one funnel + one moment
  * printed two different prices — a declared conversation funnel worth 35% reply→paid was valued at
  * the brand-wide 12.5%, i.e. $312.50 a reply where the brand had stated $875. Same precedence, same
- * merge helper (`declaredEconomicsForFunnel` + `mergeFunnelEconomics`), so they cannot diverge again:
- *
- *   - the caller's `?funnel=` when it named one the brand actually declared, else
- *   - the brand's FIRST DECLARED funnel in catalogue order — a deterministic pick over the brand's
- *     OWN declarations, not a default and not an inference.
+ * merge helper (`declaredEconomicsForFunnel` + `mergeFunnelEconomics`) as the sibling surfaces, so
+ * they cannot diverge again.
  *
  * A term the funnel does not state falls through to the brand-wide value (never to 0, which would
- * zero-collapse the chain). NO DECLARED FUNNEL → the brand-wide economics apply unchanged, i.e.
- * byte-identical to before this existed.
- *
- * Fail-SOFT with a loud log, like the spend cost-parents read on this same path: an unreadable
- * declaration degrades to the brand-wide economics (the legacy fallthrough — a real, if poorer,
- * answer) rather than 502-ing the customer's Overview. Nothing is ever fabricated. Note an EMPTY
- * declaration THROWS at the client (a producer gap, not "sells through nothing"), and that lands
- * here as the same degrade — which is exactly the no-declared-funnel behaviour required.
+ * zero-collapse the chain). NO DECLARED FUNNEL → the brand-wide economics apply unchanged and every
+ * conversion leg is priced, i.e. byte-identical to before on everything except the delivery
+ * milestones, which are a step of no chain for anybody and are gone for everybody.
  */
-export async function fetchFunnelPricedEconomics(
-  brandId: string,
-  headers: DownstreamHeaders,
-  requestedFunnel: SalesFunnelKey | undefined,
-  effective: EffectiveEconomics,
-): Promise<EffectiveEconomics> {
-  if (!effective.economics) return effective; // cold start — nothing to merge onto
+export interface FunnelPricedEconomics {
+  /** The brand-wide economics with the priced funnel's own declared terms merged over them. */
+  economics: EffectiveEconomics;
+  /**
+   * The funnels whose LEGS carry expected value on this read. One key when a funnel was named (the
+   * caller's `?funnel=`, or the funnel a campaign itself states); the brand's WHOLE declared set
+   * otherwise; `[]` when the brand declared none / the declaration could not be read — in which case
+   * every conversion leg is priced, exactly as before (there is no chain to narrow against, and
+   * inventing one is the fiction this whole retirement removes).
+   */
+  pricedFunnelKeys: SalesFunnelKey[];
+}
+
+/**
+ * Read the brand's declaration for this org, SOFT: `[]` when there is none or it cannot be read.
+ *
+ * An unreadable declaration degrades the pipeline to the brand-wide economics and to every conversion
+ * leg — a real, if poorer, answer — rather than 502-ing the customer's Overview, the same
+ * display-enrichment posture the spend cost-parents read on this path takes. An EMPTY declaration
+ * THROWS at the client (a producer gap, not "sells through nothing") and lands here as that same
+ * degrade, which IS the required no-declared-funnel behaviour.
+ */
+async function fetchDeclaredFunnelsSoft(brandId: string, orgId: string): Promise<DeclaredSalesFunnel[]> {
   try {
     // The caller's own org names whose configuration we want: a brand id alone is shared across every
     // org claiming the same domain, so what it sells through is the (org, brand) pair's data.
-    const declared = await fetchDeclaredSalesFunnels(brandId, headers.orgId);
-    const declaredKeys = declared.map((f) => f.funnelKey).sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
-    const funnelKey =
-      requestedFunnel && declaredKeys.includes(requestedFunnel) ? requestedFunnel : primaryDeclaredFunnel(declaredKeys);
-    if (!funnelKey) return effective;
-    const merged = mergeFunnelEconomics(effective.economics, declaredEconomicsForFunnel(declared, funnelKey));
-    return merged ? { ...effective, economics: merged } : effective;
+    return await fetchDeclaredSalesFunnels(brandId, orgId);
   } catch (err) {
     const what =
       err instanceof SalesFunnelsUnavailableError
         ? "this brand has declared no sales funnel we could read"
         : (err as Error).message;
     console.warn(
-      `[features-service] declared-funnel pricing unavailable (pipeline EV falls through to the brand-wide economics): ${what}`,
+      `[features-service] declared-funnel pricing unavailable (pipeline EV falls through to the brand-wide economics and every conversion leg): ${what}`,
     );
-    return effective;
+    return [];
   }
+}
+
+/**
+ * PURE: pick the chain this read is priced on, and merge its own declared terms over the brand-wide
+ * economics. No IO — the declaration is read ONCE per request and every campaign group reuses it.
+ */
+export function priceOnDeclaredFunnel(
+  declared: DeclaredSalesFunnel[],
+  effective: EffectiveEconomics,
+  requestedFunnel: SalesFunnelKey | undefined,
+): FunnelPricedEconomics {
+  const declaredKeys = declared.map((f) => f.funnelKey).sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
+  // A funnel the brand never declared is ignored rather than honoured: pricing a brand on a chain it
+  // never said it sells through would be the same fiction the defaulted goal produced.
+  const named = requestedFunnel && declaredKeys.includes(requestedFunnel) ? requestedFunnel : null;
+  const pricedFunnelKeys = named ? [named] : declaredKeys;
+  const funnelKey = named ?? primaryDeclaredFunnel(declaredKeys);
+  if (!funnelKey || !effective.economics) return { economics: effective, pricedFunnelKeys };
+  const merged = mergeFunnelEconomics(effective.economics, declaredEconomicsForFunnel(declared, funnelKey));
+  return { economics: merged ? { ...effective, economics: merged } : effective, pricedFunnelKeys };
+}
+
+/** The request-path composition of the two above, for callers that hold no declaration of their own. */
+export async function fetchFunnelPricedEconomics(
+  brandId: string,
+  headers: DownstreamHeaders,
+  requestedFunnel: SalesFunnelKey | undefined,
+  effective: EffectiveEconomics,
+): Promise<FunnelPricedEconomics> {
+  return priceOnDeclaredFunnel(await fetchDeclaredFunnelsSoft(brandId, headers.orgId), effective, requestedFunnel);
 }
 
 function buildSpend(
@@ -857,10 +904,12 @@ export async function computeFeatureRevenue(
   funnel: ReturnType<typeof getFunnel>,
   headers: DownstreamHeaders,
   lens?: Lens,
-  // Brand-scoped economics are identical across a brand's campaigns (brand-service serves them
-  // per brand, not per campaign). The grouped path fetches them ONCE and passes the result here
-  // so N campaigns don't each re-hit brand-service. Omitted → fetched in Wave A as before.
-  economicsOverride?: EffectiveEconomics,
+  // The brand's DECLARED-funnel pricing — the merged economics AND which funnels' legs carry value.
+  // Both are brand-scoped (brand-service serves them per brand, not per campaign), so the route
+  // resolves them ONCE and passes the result here: N campaign groups don't each re-hit brand-service,
+  // and each group can still narrow to its OWN campaign's chain off that one read. Omitted → resolved
+  // in Wave A as before.
+  economicsOverride?: FunnelPricedEconomics,
   // When true (the unlensed Overview path), fetch the canonical spend breakdown (per-source actual +
   // today) and emit the `spend` block. The grouped per-campaign path and the lens path pass false:
   // groups discard spend, and lens omits it (a brand-total concept). When false we use the cheaper
@@ -904,18 +953,16 @@ export async function computeFeatureRevenue(
     return emptyBody(null, actualCostInUsdCents, null);
   }
 
-  // ── Wave A: the four downstream reads with NO data dependency on each other, in parallel.
+  // ── Wave A: the downstream reads with NO data dependency on each other, in parallel.
   //   - fetchRunsCostCents     (runs-service)   — total feature-scoped cost, on every body.
   //   - fetchEffectiveEconomics(brand-service)  — rates + terminal LTR; brand-service OWNS the
   //     null→cross-brand-average defaulting + provenance ("user" = saved "sales-economics";
   //     else "cross-brand-average", an ESTIMATE). economics is null only at cold start → null pipeline.
-  //   - fetchPlatformEmailRates(cached)         — platform-global funnel rates; lets a lead earn
-  //     from its furthest reached stage (Contacted onward), not only a click / positive reply.
   //   - fetchLeadsForRevenue   (lead-service)   — the per-lead overlay (persons).
-  // All four are fail-loud (Promise.all rejects → the endpoint 502s): each is a core input to the
-  // pipeline total / cost / ROI; a swallowed error would fake a number. The economics===null
-  // cold-start path below over-fetches rates+leads — accepted for the common-path win.
-  const [costResult, { economics, source }, platformRates, persons, sequences, counts, conversionEmails, parents, spendByDay] = await Promise.all([
+  // The cost / economics / leads reads are fail-loud (Promise.all rejects → the endpoint 502s): each
+  // is a core input to the pipeline total / cost / ROI; a swallowed error would fake a number. The
+  // economics===null cold-start path below over-fetches leads — accepted for the common-path win.
+  const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay] = await Promise.all([
     includeSpend
       ? fetchSpendBreakdown(brandId, campaignScope, featureSlug, headers, new Date(), pricing)
       : fetchRunsCostCents(brandId, campaignScope, featureSlug, headers, pricing),
@@ -925,7 +972,6 @@ export async function computeFeatureRevenue(
       fetchEffectiveEconomics(brandId, { ...headers, campaignId }).then((effective) =>
         fetchFunnelPricedEconomics(brandId, headers, requestedFunnel, effective),
       ),
-    fetchPlatformEmailRates(),
     fetchLeadsForRevenue(brandId, campaignScope, headers),
     // Overview-only sequences day series (email-gateway groupBy=day). Pre-caught → resolves to
     // null on failure, so it never rejects fail-loud Wave A. Off-overview it's null (not fetched).
@@ -952,6 +998,7 @@ export async function computeFeatureRevenue(
       ? fetchSpendByDaySoft(brandId, campaignScope, featureSlug, headers, pricing)
       : Promise.resolve<Map<string, number> | null>(null),
   ]);
+  const { economics, source } = priced.economics;
   const breakdown: SpendBreakdown | null = typeof costResult === "number" ? null : costResult;
   // ROI/CAC + costEconomics ride ACTUAL (billed) spend; the `spend` block (buildSpend) carries the
   // committed total + provisioned separately. fetchRunsCostCents already returns actual.
@@ -968,7 +1015,11 @@ export async function computeFeatureRevenue(
     return buildLensBody(lens, persons, economics, economicsSource, actualCostInUsdCents);
   }
 
-  const paths = funnel.resolvePaths({ economics, platformRates });
+  // ONLY THE LEGS OF THE FUNNELS BEING PRICED. A signal that is not a step of one of the brand's
+  // declared chains contributes nothing — it is not decayed and not discounted, it is simply not a
+  // priced path. The delivery milestones never enter here at all (they are a step of no chain, for
+  // anybody) and reach the engine as `funnel.milestones`, which carry no revenue field to price.
+  const paths = restrictPathsToDeclaredLegs(funnel.resolvePaths({ economics }), priced.pricedFunnelKeys);
 
   // ── Wave B: the two SECONDARY enrichment reads, in parallel — both need persons' emails
   // (from Wave A) but are independent of each other. Each is best-effort PER CALL (own catch →
@@ -1043,7 +1094,7 @@ export async function computeFeatureRevenue(
 
   // closeValueUsd = LTR — the per-lead cap for combining independent engagement routes (click +
   // reply) as independent probabilities of one close (`undefined` keeps the wall-clock `now`).
-  const result = computeRevenue(paths, persons, economics.lifetimeRevenueUsd);
+  const result = computeRevenue(paths, persons, economics.lifetimeRevenueUsd, funnel.milestones);
 
   return {
     headline: { ...result.headline, economicsSource },
@@ -1163,18 +1214,37 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     // ignores the override) — a feature with no funnel has no economics-derived output to go stale.
     // Priced on the DECLARED funnel (brand-wide only for the terms it does not state), so the
     // fingerprint below covers the funnel's own rates too — a funnel re-declaration lands on a new
-    // cell instead of replaying a price the brand no longer states.
-    const effectiveEconomics = funnel
-      ? await fetchFunnelPricedEconomics(brandId, headers, requestedFunnel, await fetchEffectiveEconomics(brandId, headers))
-      : undefined;
-    const econ = effectiveEconomics ? economicsFingerprint(effectiveEconomics) : undefined;
+    // cell instead of replaying a price the brand no longer states. The DECLARATION itself is read
+    // once here and reused by every campaign group, so a group can narrow to its OWN campaign's chain
+    // without a second brand-service call.
+    const [declaredFunnels, brandEconomics] = funnel
+      ? await Promise.all([fetchDeclaredFunnelsSoft(brandId, orgId), fetchEffectiveEconomics(brandId, headers)])
+      : [[] as DeclaredSalesFunnel[], null];
+    const brandPriced = brandEconomics ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, requestedFunnel) : undefined;
+    const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
+    // WHICH legs carry value is decided by the declared SET, which is not derivable from the economics
+    // fingerprint (two brands can share rates and declare different chains), so it rides the key too.
+    const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
+
+    /**
+     * The pricing for one campaign identity. A campaign states the chain it sells, so a campaign-scoped
+     * read is priced on THAT chain — not on the brand's first declared one. An explicit `?funnel=`
+     * still wins (the caller asked for a specific chain); a campaign that states none, or one the brand
+     * no longer declares, falls back to the brand-level pick. Pure — reuses the one declaration read.
+     */
+    const pricingForIdentity = (identityFunnelKey: string | null | undefined): FunnelPricedEconomics | undefined => {
+      if (!brandEconomics || !brandPriced) return undefined;
+      if (requestedFunnel) return brandPriced;
+      const stated = identityFunnelKey ? matchSalesFunnelKey(identityFunnelKey) : null;
+      return stated ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, stated) : brandPriced;
+    };
 
     // ── Grouped: one lean group per campaign (dashboard campaigns list) ──────────
     // Served through the Gold snapshot cache (O(1) read; the fan-out recomputes off-path ~per TTL).
     if (groupBy === "campaignId") {
       const payload = await servedCached({
         view: "revenue-grouped",
-        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing, econ }),
+        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing, econ, decl }),
         orgId,
         compute: async () => {
           const [campaignIds, families] = await Promise.all([
@@ -1203,7 +1273,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
                 // own still belongs to the campaign, and dropping it would drop its leads.
                 const identity = families.identityOf(idsWithRuns[0]);
                 const scope = identity?.campaignIds ?? idsWithRuns;
-                const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, effectiveEconomics, false, pricing, requestedFunnel);
+                const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, pricingForIdentity(identity?.funnelKey), false, pricing, requestedFunnel);
                 return idsWithRuns.map((cid) => ({
                   campaignId: cid,
                   campaignIdentity: describeIdentity(identity, cid),
@@ -1245,6 +1315,9 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         // MUST be in the key — keyed on the CANONICAL value the validator resolved, so a legacy spelling
         // shares one cell instead of fragmenting it. Absent → dropped → byte-identical to today's key.
         funnel: requestedFunnel,
+        // WHICH legs carry value comes from the brand's declared SET, which no other key part encodes
+        // (the identity key above carries the CAMPAIGN's funnel, and `econ` only the priced one's rates).
+        decl,
         pricing,
         econ,
       }),
@@ -1253,7 +1326,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
 
         // Overview (no lens) emits the canonical spend block; the lens path omits it (brand-total concept).
-        const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, lens, effectiveEconomics, !lens, pricing, requestedFunnel);
+        const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, lens, pricingForIdentity(campaignId ? identity?.funnelKey : null), !lens, pricing, requestedFunnel);
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 

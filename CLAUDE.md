@@ -822,11 +822,12 @@ the ranking.
 | `/revenue` `spend` — DERIVED/funnel (`cps`/`cpsm`/`cpfs`/`cpSale`) | **derived** (best-workflow projection, DISPLAY) | Same units rule as the per-audience funnel columns — a raw dollar total is never an answer to "cost per signup". `null` when the goal's projection does not resolve that column's rate (never the spend total), and **observed** on the no-goal / degraded paths. |
 
 **Rate helpers are NOT part of the cost engine and legitimately differ by consumption — do NOT "homogenize" them.**
-`platform-rates-client.ratio` returns **0** on 0-denom because its rates are MULTIPLIED in the EV funnel
-(`funnel-registry.ts` `r.sentPerContacted * pCloseSent` …) — `null` would poison the product with NaN.
 `pipeline-activity.ratio` returns **null** on 0-denom because its rates are DISPLAYED (0 contacted → unknown
-rate, not 0%). Same observed/projected-style polymorphism as cost: a multiplied rate needs a number, a
-displayed rate needs null. Neither is buggy.
+rate, not 0%), while a rate that is MULTIPLIED into a product needs **0** on 0-denom or it poisons the
+product with NaN. Same observed/projected-style polymorphism as cost: a multiplied rate needs a number, a
+displayed rate needs null. Neither is buggy. (`platform-rates-client` was the multiplied case; it is
+DELETED — the platform-global email rates existed only to chain a delivery down to a close, and nothing
+chains down from a delivery any more. See the funnel-legs section.)
 
 **A surface uses `projected` only where it HAS a coarser grain to floor against inside the endpoint;
 a top-grain surface with no coarser grain fetched uses `observed`.** workflow-projection has the full
@@ -1809,6 +1810,67 @@ a dash beside real numbers — which reads as a broken card, not a scoping decis
     that row's `roiMultiple`, the brand twin is the same formula, inheritance is verbatim, and a 0-LTR
     brand reads null on both). (Set 2026-08-14.)
 
+## ONLY A DECLARED FUNNEL'S LEGS ARE PIPELINE — an outreach that produced no conversion carries no value
+
+A brand's pipeline counts only what its OWN declared funnels say is worth counting. The paths that carry
+expected value are exactly the LEGS of those chains; a signal that is not a step of one contributes
+nothing — it is not decayed, not discounted, it simply is not a priced path.
+
+**The bug.** Verified on prod brand `75d7e3e8…`: pipeline $23,547, of which **$8,772 (37%) came from
+5,122 organisations whose only signal was that an email REACHED them**, and another $525 from 42 that
+clicked. That brand declares exactly ONE funnel — `sales_meetings_from_conversation`
+(Positive reply → Meeting booked → Meeting attended → Paid client) — where neither a delivery nor a
+click is a step at all. Every merely-delivered lead was earning a chained-down slice of a lifetime
+contract through the platform-global open/click/reply rates.
+
+- **contacted / sent / delivered / opened are MILESTONES, not paths — for EVERY brand.** They are a step
+  of no chain in brand-service's catalogue, so `FunnelMilestone` (`revenue-engine.ts`) carries **no
+  revenue field at all**: nothing on it can be zeroed or weighted down, because there is nothing on it to
+  price. This is the ONE part of the change that is universal rather than declaration-scoped — a delivery
+  is a step of no funnel for anybody, so there is no brand for whom it could be one. A milestone still
+  does two jobs: it gives a lead its POSITION tag when the lead reached no leg (`["delivered"]`), and it
+  keeps that lead in `leads[]` at `expectedRevenueUsd: 0`. **That second job is load-bearing** — every
+  Overview count series (`recipientsContacted`, opens, clicks, replies) and `buildSpend`'s CPC/CPPR
+  denominators are built from that same array, so dropping the lead would report a handful of contacted
+  where the brand has 7,181. It is in no organisation, in no event, in no time-series step and in no
+  total. Engine gate: a person enters `scored` when `ev > 0 || reachedMilestone`; ORGANIZATIONS, the
+  series and the headline keep the pre-existing `ev > 0` filter.
+- **A conversion leg prices a brand only when one of the funnels being priced contains it** —
+  `FUNNEL_LEG_SIGNALS` + `restrictPathsToDeclaredLegs` (`funnel-registry.ts`), read straight off
+  `SALES_FUNNELS[key].steps`: Positive reply→`positiveReply`, Website visit→`clicked`, Meeting
+  booked→`meeting`, Signup→`signup`, Form filled→`formSubmission`, Paid client→`closeWin`. So a website
+  visit prices a brand that declared a website-led chain and prices NOTHING for one that declared only
+  the conversation chain. "Meeting attended" needs no entry (it is folded into the booked→paid rate by
+  `meetingChainCloseRate`); `signup`/`formSubmission` are listed because they ARE legs, and no path
+  scores them today — if one is added it prices exactly the right brands with no further change.
+  **`closeWin` is always a leg** — every chain terminates in a paid client.
+- **Which funnels are "being priced"** is `FunnelPricedEconomics.pricedFunnelKeys` (`routes/revenue.ts`).
+  A brand that declared SEVERAL is priced on the UNION of their legs. A read NARROWED to one funnel is
+  priced on that chain's legs alone, in this precedence: the caller's `?funnel=` when the brand declared
+  it, else **the funnel the CAMPAIGN itself states** on a campaign-scoped read
+  (`campaignIdentity.funnelKey`, `matchSalesFunnelKey`) — a campaign sells one chain, so its figures are
+  that chain's figures, not the brand's first-declared one. The brand-scoped read keeps the deterministic
+  first-declared pick for the TERMS.
+- **NO DECLARED FUNNEL ⇒ every conversion leg is priced, exactly as before.** We do not know which chain
+  the brand sells, and inventing one to narrow against is the same fiction the defaulted goal produced.
+  The only thing that changes for such a brand is the delivery milestones, which were never a chain's
+  step for anybody. Same for an unreadable declaration (fail-SOFT with a loud log,
+  `fetchDeclaredFunnelsSoft`) — the Overview degrades, it never 502s.
+- **The declaration is read ONCE per request** and reused by every campaign group
+  (`priceOnDeclaredFunnel` is pure), so the grouped path stays at one brand-service call. The declared
+  KEY SET rides the Gold `scope_key` as `decl`: two brands can share economics and declare different
+  chains, so the `econ` fingerprint cannot stand in for it.
+- **`platform-rates-client.ts` is DELETED** and `FunnelInputs` no longer carries `platformRates`. Those
+  rates existed only to chain contacted→sent→delivered down to a close; nothing chains down from a
+  delivery now, so the whole read left Wave A (one fewer IO per Overview). `ResolvedPath.kind` is gone
+  too — every path is a funnel leg, and "delivery" is `FunnelMilestone`.
+- Guards: `funnel-registry.test.ts` (four legs only, a milestone has no revenue field, per-chain leg sets,
+  the union, closeWin always, no declaration ⇒ unchanged) + `revenue-engine.test.ts` (a milestone-only
+  lead is tagged, present in `leads[]`, and in no org / event / series / total) +
+  `routes/revenue.test.ts` (a merely-delivered lead is worth nothing while `recipientsContacted` still
+  counts it; a conversion signal prices a brand only under a chain that contains it, both directions and
+  the union) + `campaign-identity-aggregation.test.ts` (each campaign priced on its own stated chain,
+  `?funnel=` still wins, an unstated funnel falls back to the brand pick). (Set 2026-08-13.)
 ## THE REVENUE ENGINE HAS NO DECAY, AND IS NOT TIME-DEPENDENT — an outcome that happened stays counted, and the pipeline is priced on the brand's DECLARED FUNNEL
 
 Two independent bugs made a customer's Campaigns page report **0.7x ROI against 15 positive replies**.

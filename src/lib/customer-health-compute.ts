@@ -264,8 +264,11 @@ export interface CustomerHealthDeps {
    * row then reads null rather than being computed on a substituted chain). */
   declaredFunnels: (brandId: string, orgId: string) => Promise<SalesFunnelKey[]>;
   conversionCounts: (brandId: string) => Promise<ConversionCounts>;
-  /** Realized ROI/spend for one (org, brand) via the revenue engine. Called ONLY with own economics present. */
-  brandRevenue: (featureSlug: string, brandId: string, orgId: string, economics: SalesEconomics) => Promise<BrandRevenueResult>;
+  /** Realized ROI/spend for one (org, brand) via the revenue engine. Called ONLY with own economics
+   * present. `declaredFunnels` names the chains whose LEGS carry expected value — a signal that is not
+   * a step of one of them is not pipeline. `[]` (an unreadable declaration) prices every conversion
+   * leg, the same degrade the Overview takes. */
+  brandRevenue: (featureSlug: string, brandId: string, orgId: string, economics: SalesEconomics, declaredFunnels: SalesFunnelKey[]) => Promise<BrandRevenueResult>;
   /** Ranked audience evidence for one (org, brand, sales funnel). null when the feature is unknown (404). */
   audienceStats: (featureSlug: string, brandId: string, orgId: string, funnel: SalesFunnelKey) => Promise<AudienceStatsEnvelope | null>;
   /** Workflow projection for one (org, brand, sales funnel) — priced on that chain's own channel. */
@@ -288,12 +291,15 @@ const REAL_DEPS: CustomerHealthDeps = {
   dashboardReturns: fetchDashboardReturnsByOrg,
   budgetHistory: fetchBudgetChangeHistory,
   pauseHistory: fetchPauseHistory,
-  brandRevenue: async (featureSlug, brandId, orgId, economics) => {
+  brandRevenue: async (featureSlug, brandId, orgId, economics, declaredFunnels) => {
     const funnel = getFunnel(featureSlug);
     const headers: DownstreamHeaders = { orgId, featureSlug };
     // own economics present → source "user" (the engine skips its own effective fetch + never averages).
     const economicsOverride: EffectiveEconomics = { economics, source: "user" };
-    const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers, undefined, economicsOverride);
+    const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers, undefined, {
+      economics: economicsOverride,
+      pricedFunnelKeys: declaredFunnels,
+    });
     return {
       actualCostUsd: body.costEconomics.actualCostUsd,
       expectedPipelineUsd: body.headline.totalPipelineUsd,
@@ -565,7 +571,7 @@ export async function buildCustomerHealthBoard(
         const [audienceRes, revenueRes, workflowRes] = await Promise.all([
           deps.audienceStats(featureSlug, account.brandId, account.orgId, funnelForAudience),
           // Realized ROI only with the brand's OWN economics (else pipeline would be a cross-brand average).
-          economics ? deps.brandRevenue(featureSlug, account.brandId, account.orgId, economics) : Promise.resolve<BrandRevenueResult | null>(null),
+          economics ? deps.brandRevenue(featureSlug, account.brandId, account.orgId, economics, declaredFunnels) : Promise.resolve<BrandRevenueResult | null>(null),
           // Best workflow needs a chain the brand actually declared — it selects which outcome's cost is
           // being minimised, and the two meeting chains do not have the same answer.
           primaryFunnel ? deps.workflowProjection(featureSlug, account.brandId, account.orgId, primaryFunnel) : Promise.resolve<WorkflowProjectionResponse | null>(null),

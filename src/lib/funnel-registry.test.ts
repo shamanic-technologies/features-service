@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { getFunnel, orP, projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, combinedSaleProbability } from "./funnel-registry.js";
+import { getFunnel, orP, projectOutcomeCosts, restrictPathsToDeclaredLegs, declaredLegSignals, singleStepRateDecimal, formSubmissionRatesDecimal, combinedSaleProbability } from "./funnel-registry.js";
+import { SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
 
 const ECONOMICS = {
   lifetimeRevenueUsd: 1000,
@@ -11,25 +12,28 @@ const ECONOMICS = {
   visitToClosePct: 2,
 };
 
-// sent/contacted=1, delivered/sent=1, clicked/delivered=0.1, posReply/delivered=0.1
-const RATES = {
-  sentPerContacted: 1,
-  deliveredPerSent: 1,
-  clickedPerDelivered: 0.1,
-  positiveReplyPerDelivered: 0.1,
-};
-
-describe("sales funnel — resolvePaths", () => {
+describe("sales funnel — legs, milestones, and the declared-set restriction", () => {
   const funnel = getFunnel("sales-cold-email-outreach")!;
-  const paths = funnel.resolvePaths({ economics: ECONOMICS, platformRates: RATES });
+  const paths = funnel.resolvePaths({ economics: ECONOMICS });
   const byTag = Object.fromEntries(paths.map((p) => [p.tag, p]));
 
-  it("emits the 8 stage paths (incl. opened, meeting, closeWin)", () => {
-    expect(paths).toHaveLength(8);
-    expect(Object.keys(byTag).sort()).toEqual(["closeWin", "contacted", "delivered", "meeting", "opened", "reply", "sent", "visit"]);
+  it("emits ONLY the four funnel legs — no delivery stage is a path", () => {
+    expect(paths).toHaveLength(4);
+    expect(paths.map((p) => p.tag)).toEqual(["visit", "reply", "meeting", "closeWin"]);
   });
 
-  it("click / reply EV come from sales-economics (rate-independent)", () => {
+  it("contacted / sent / delivered / opened are MILESTONES, and a milestone has no revenue field", () => {
+    expect(funnel.milestones.map((m) => m.tag)).toEqual(["contacted", "sent", "delivered", "opened"]);
+    for (const milestone of funnel.milestones) {
+      // Not "zeroed" and not "weighted down" — there is nothing on a milestone to price.
+      expect(Object.keys(milestone).sort()).toEqual(["signal", "tag"]);
+    }
+    // …and no path claims one of their signals.
+    const legSignals = paths.map((p) => p.signal);
+    for (const milestone of funnel.milestones) expect(legSignals).not.toContain(milestone.signal);
+  });
+
+  it("click / reply EV come from sales-economics", () => {
     expect(byTag.visit.expectedRevenueUsd).toBeCloseTo(34.7); // 1000·orP(0.02, 0.05·0.30) = 1000·(1−0.98·0.985)
     expect(byTag.reply.expectedRevenueUsd).toBeCloseTo(120); // 1000·0.40·0.30
   });
@@ -44,36 +48,18 @@ describe("sales funnel — resolvePaths", () => {
     expect(byTag.meeting.expectedRevenueUsd).toBeLessThan(byTag.closeWin.expectedRevenueUsd);
   });
 
-  it("delivered / sent / contacted chain the platform rates down to close", () => {
-    // pClose_deliv = orP(0.1·0.0347, 0.1·0.12) = 1−(1−0.00347)(1−0.012) = 0.0154284 → 15.4284 ; ×1 ×1 upstream
-    expect(byTag.delivered.expectedRevenueUsd).toBeCloseTo(15.4284);
-    expect(byTag.sent.expectedRevenueUsd).toBeCloseTo(15.4284);
-    expect(byTag.contacted.expectedRevenueUsd).toBeCloseTo(15.4284);
+  it("click + reply are independent engagement routes; meeting + closeWin are not", () => {
+    expect(byTag.visit.engagementRoute).toBe(true);
+    expect(byTag.reply.engagementRoute).toBe(true);
+    expect(byTag.meeting.engagementRoute).toBeUndefined();
+    expect(byTag.closeWin.engagementRoute).toBeUndefined();
   });
 
-  it("tags delivery stages as delivery (ascending order) and visit/reply/meeting/closeWin as engagement", () => {
-    expect(byTag.contacted.kind).toBe("delivery");
-    expect(byTag.sent.kind).toBe("delivery");
-    expect(byTag.delivered.kind).toBe("delivery");
-    expect(byTag.opened.kind).toBe("delivery");
-    expect(byTag.visit.kind).toBe("engagement");
-    expect(byTag.reply.kind).toBe("engagement");
-    expect(byTag.meeting.kind).toBe("engagement");
-    expect(byTag.closeWin.kind).toBe("engagement");
-    // delivery stages must be in ascending funnel order (engine picks the last fired)
-    const order = paths.filter((p) => p.kind === "delivery").map((p) => p.tag);
-    expect(order).toEqual(["contacted", "sent", "delivered", "opened"]);
-  });
-
-  it("post-engagement stages are listed after engagement in ascending funnel order (reply < meeting < closeWin)", () => {
+  it("legs are listed in ascending funnel order (visit < reply < meeting < closeWin)", () => {
     const tagOrder = paths.map((p) => p.tag);
+    expect(tagOrder.indexOf("visit")).toBeLessThan(tagOrder.indexOf("reply"));
     expect(tagOrder.indexOf("reply")).toBeLessThan(tagOrder.indexOf("meeting"));
     expect(tagOrder.indexOf("meeting")).toBeLessThan(tagOrder.indexOf("closeWin"));
-    expect(tagOrder.indexOf("visit")).toBeLessThan(tagOrder.indexOf("reply"));
-  });
-
-  it("opened carries the delivered close-probability (a tag, no extra EV)", () => {
-    expect(byTag.opened.expectedRevenueUsd).toBeCloseTo(byTag.delivered.expectedRevenueUsd);
   });
 
   it("NO path carries a staleness window — nothing in this funnel expires", () => {
@@ -88,16 +74,44 @@ describe("sales funnel — resolvePaths", () => {
   it("every path is itemised in the events ledger", () => {
     expect(paths.every((p) => p.ledger !== false)).toBe(true);
   });
+});
 
-  it("upstream rates scale the stage EVs down", () => {
-    const paths2 = funnel.resolvePaths({
-      economics: ECONOMICS,
-      platformRates: { ...RATES, sentPerContacted: 0.5, deliveredPerSent: 0.5 },
-    });
-    const t = Object.fromEntries(paths2.map((p) => [p.tag, p]));
-    expect(t.delivered.expectedRevenueUsd).toBeCloseTo(15.4284); // unaffected by upstream
-    expect(t.sent.expectedRevenueUsd).toBeCloseTo(7.7142); // ×0.5 delivered|sent
-    expect(t.contacted.expectedRevenueUsd).toBeCloseTo(3.8571); // ×0.5 ×0.5
+describe("restrictPathsToDeclaredLegs — only a declared chain's legs carry value", () => {
+  const funnel = getFunnel("sales-cold-email-outreach")!;
+  const paths = funnel.resolvePaths({ economics: ECONOMICS });
+  const tagsFor = (keys: SalesFunnelKey[]) => restrictPathsToDeclaredLegs(paths, keys).map((p) => p.tag);
+
+  it("the conversation chain buys a reply, never a website visit", () => {
+    expect(tagsFor(["sales_meetings_from_conversation"])).toEqual(["reply", "meeting", "closeWin"]);
+  });
+
+  it("the website meeting chain buys a visit, never a reply", () => {
+    expect(tagsFor(["sales_meetings_from_website"])).toEqual(["visit", "meeting", "closeWin"]);
+  });
+
+  it("the visit-led self-serve chains buy a visit and the paid client, not a meeting", () => {
+    expect(tagsFor(["website_purchases"])).toEqual(["visit", "closeWin"]);
+    expect(tagsFor(["form_magnet"])).toEqual(["visit", "closeWin"]);
+  });
+
+  it("several declared chains are priced on the UNION of their legs", () => {
+    // The conversation chain brings the reply (and the meeting); the purchase chain brings the visit.
+    expect(tagsFor(["sales_meetings_from_conversation", "website_purchases"])).toEqual(["visit", "reply", "meeting", "closeWin"]);
+    // Two visit-led self-serve chains union to a set that still buys neither a reply nor a meeting.
+    expect(tagsFor(["website_purchases", "form_magnet"])).toEqual(["visit", "closeWin"]);
+  });
+
+  it("every chain terminates in a paid client, so closeWin is always a leg", () => {
+    for (const key of SALES_FUNNEL_KEYS) expect(tagsFor([key])).toContain("closeWin");
+  });
+
+  it("declaredLegSignals never names a delivery milestone, for any chain", () => {
+    const signals = declaredLegSignals(SALES_FUNNEL_KEYS);
+    for (const milestone of funnel.milestones) expect(signals.has(milestone.signal)).toBe(false);
+  });
+
+  it("NO declaration ⇒ every conversion leg is priced (we do not know the chain, and never invent one)", () => {
+    expect(tagsFor([])).toEqual(["visit", "reply", "meeting", "closeWin"]);
   });
 });
 
