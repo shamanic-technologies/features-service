@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeRevenue, buildContactedSeries, buildSignalSeries, type ResolvedPath, type EnginePerson, type LeadRow } from "./revenue-engine.js";
+import { computeRevenue, buildContactedSeries, buildSignalSeries, type ResolvedPath, type FunnelMilestone, type EnginePerson, type LeadRow } from "./revenue-engine.js";
 
 // Engine is funnel-agnostic — these are arbitrary fixture EVs (NOT the live funnel formula, which
 // now combines the click's two routes via orP). visit_EV=20, reply_EV=120 keep the engine assertions
@@ -115,51 +115,60 @@ describe("computeRevenue — orgDomain (for logo.dev)", () => {
   });
 });
 
-// 5-stage funnel: contacted < sent < delivered (delivery) + visit/reply (engagement)
-const STAGE_PATHS: ResolvedPath[] = [
-  { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery" },
-  { tag: "sent", signal: "sent", expectedRevenueUsd: 6, kind: "delivery" },
-  { tag: "delivered", signal: "delivered", expectedRevenueUsd: 12, kind: "delivery" },
-  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement" },
-  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, kind: "engagement" },
+// contacted < sent < delivered are MILESTONES (a step of no funnel, so worth nothing); visit / reply
+// are the funnel LEGS that carry the expected value.
+const STAGE_MILESTONES: FunnelMilestone[] = [
+  { tag: "contacted", signal: "contacted" },
+  { tag: "sent", signal: "sent" },
+  { tag: "delivered", signal: "delivered" },
 ];
+const STAGE_PATHS: ResolvedPath[] = [
+  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20 },
+  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120 },
+];
+const computeStages = (persons: EnginePerson[], closeValueUsd = 0) =>
+  computeRevenue(STAGE_PATHS, persons, closeValueUsd, STAGE_MILESTONES);
 
-describe("computeRevenue — tag collapse (furthest delivery stage, engagement multi-tag)", () => {
-  it("contacted only → tag [contacted], EV from contacted stage", () => {
-    const r = computeRevenue(STAGE_PATHS, [person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: false, delivered: false, clicked: false, positiveReply: false } })]);
+describe("computeRevenue — tag collapse (furthest delivery milestone, funnel-leg multi-tag)", () => {
+  it("contacted only → tag [contacted], and NOTHING of value", () => {
+    const r = computeStages([person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: false, delivered: false, clicked: false, positiveReply: false } })]);
     expect(r.leads[0].tags).toEqual(["contacted"]);
-    expect(r.leads[0].expectedRevenueUsd).toBe(3);
+    expect(r.leads[0].expectedRevenueUsd).toBe(0);
+    // …and it claims no expected revenue anywhere else either.
+    expect(r.organizations).toEqual([]);
+    expect(r.headline.totalPipelineUsd).toBe(0);
+    expect(r.timeSeries).toEqual([]);
   });
 
-  it("contacted+sent+delivered (no engagement) → only the FURTHEST stage tag", () => {
-    const r = computeRevenue(STAGE_PATHS, [person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false } })]);
+  it("contacted+sent+delivered (no funnel leg) → only the FURTHEST milestone tag, still worth nothing", () => {
+    const r = computeStages([person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false } })]);
     expect(r.leads[0].tags).toEqual(["delivered"]);
-    expect(r.leads[0].expectedRevenueUsd).toBe(12);
+    expect(r.leads[0].expectedRevenueUsd).toBe(0);
+    expect(r.headline.totalPipelineUsd).toBe(0);
   });
 
-  it("engagement suppresses the delivery tag → clicked shows [visit], not [delivered]", () => {
-    const r = computeRevenue(STAGE_PATHS, [person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: true, positiveReply: false } })]);
+  it("a funnel leg suppresses the milestone tag → clicked shows [visit], not [delivered]", () => {
+    const r = computeStages([person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: true, positiveReply: false } })]);
     expect(r.leads[0].tags).toEqual(["visit"]);
     expect(r.leads[0].expectedRevenueUsd).toBe(20);
   });
 
   it("both engagements → multi-tag [visit, reply]", () => {
-    const r = computeRevenue(STAGE_PATHS, [person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: true, positiveReply: true } })]);
+    const r = computeStages([person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: true, positiveReply: true } })]);
     expect(r.leads[0].tags.sort()).toEqual(["reply", "visit"]);
     expect(r.leads[0].expectedRevenueUsd).toBe(120);
   });
 
-  it("events ledger itemises EVERY dated stage (delivery + engagement)", () => {
-    const r = computeRevenue(STAGE_PATHS, [
+  it("events ledger itemises the dated funnel LEGS only — a milestone is not an event", () => {
+    const r = computeStages([
       person({
         leadId: "l1", orgId: "o1",
         signals: { contacted: true, sent: true, delivered: true, clicked: true, positiveReply: false },
         signalDates: { contacted: "2026-01-01T00:00:00Z", sent: "2026-01-02T00:00:00Z", delivered: "2026-01-03T00:00:00Z", clicked: "2026-01-04T00:00:00Z" },
       }),
     ]);
-    // Default sort is most-advanced status first → visit, delivered, sent, contacted.
-    expect(r.events.map((e) => e.eventType)).toEqual(["visit", "delivered", "sent", "contacted"]);
-    expect(r.events.find((e) => e.eventType === "contacted")!.contributionUsd).toBe(3);
+    expect(r.events.map((e) => e.eventType)).toEqual(["visit"]);
+    expect(r.events[0].contributionUsd).toBe(20);
   });
 });
 
@@ -167,7 +176,7 @@ describe("computeRevenue — default sort (most-advanced status desc, then date 
   const D = (iso: string) => iso;
 
   it("leads: most-advanced status first (reply > visit > delivered)", () => {
-    const r = computeRevenue(STAGE_PATHS, [
+    const r = computeStages([
       person({ leadId: "deliv", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false } }),
       person({ leadId: "rep", orgId: "o2", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: true } }),
       person({ leadId: "vis", orgId: "o3", signals: { contacted: true, sent: true, delivered: true, clicked: true, positiveReply: false } }),
@@ -176,7 +185,7 @@ describe("computeRevenue — default sort (most-advanced status desc, then date 
   });
 
   it("leads: iso-status → most-recent conversion date first", () => {
-    const r = computeRevenue(STAGE_PATHS, [
+    const r = computeStages([
       person({ leadId: "old", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false }, signalDates: { delivered: D("2026-01-01T00:00:00Z") } }),
       person({ leadId: "new", orgId: "o2", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false }, signalDates: { delivered: D("2026-03-01T00:00:00Z") } }),
       person({ leadId: "mid", orgId: "o3", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false }, signalDates: { delivered: D("2026-02-01T00:00:00Z") } }),
@@ -185,34 +194,32 @@ describe("computeRevenue — default sort (most-advanced status desc, then date 
   });
 
   it("leads: iso-status → null conversion date sorts last", () => {
-    const r = computeRevenue(STAGE_PATHS, [
+    const r = computeStages([
       person({ leadId: "undated", orgId: "o1", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false } }),
       person({ leadId: "dated", orgId: "o2", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false }, signalDates: { delivered: D("2026-01-01T00:00:00Z") } }),
     ]);
     expect(r.leads.map((l) => l.leadId)).toEqual(["dated", "undated"]);
   });
 
-  it("organizations: furthest stage desc, then most-recent date desc", () => {
-    const r = computeRevenue(STAGE_PATHS, [
+  it("organizations: only the ones that reached a funnel leg, furthest stage desc then date desc", () => {
+    const r = computeStages([
       person({ leadId: "l1", orgId: "deliv", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: false }, signalDates: { delivered: D("2026-05-01T00:00:00Z") } }),
       person({ leadId: "l2", orgId: "repA", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: true }, signalDates: { positiveReply: D("2026-01-01T00:00:00Z") } }),
       person({ leadId: "l3", orgId: "repB", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: true }, signalDates: { positiveReply: D("2026-02-01T00:00:00Z") } }),
     ]);
-    // both reply orgs (rank 4) before the delivered org (rank 2); reply orgs by recent date desc.
-    expect(r.organizations.map((o) => o.orgId)).toEqual(["repB", "repA", "deliv"]);
+    // The merely-delivered org is absent entirely; the reply orgs sort by recent date desc.
+    expect(r.organizations.map((o) => o.orgId)).toEqual(["repB", "repA"]);
   });
 
   it("events: most-advanced status desc, then most-recent date desc across leads", () => {
-    const r = computeRevenue(STAGE_PATHS, [
+    const r = computeStages([
       person({ leadId: "l1", orgId: "o1", signals: { contacted: true, sent: false, delivered: false, clicked: true, positiveReply: false }, signalDates: { contacted: D("2026-01-01T00:00:00Z"), clicked: D("2026-01-10T00:00:00Z") } }),
       person({ leadId: "l2", orgId: "o2", signals: { contacted: true, sent: false, delivered: false, clicked: true, positiveReply: false }, signalDates: { contacted: D("2026-02-01T00:00:00Z"), clicked: D("2026-02-10T00:00:00Z") } }),
     ]);
-    // visit events (rank 3) before contacted events (rank 0); within each stage recent-first.
+    // only the visit events are itemised (a milestone carries nothing); recent-first within the stage.
     expect(r.events.map((e) => `${e.eventType}@${e.eventDate}`)).toEqual([
       "visit@2026-02-10T00:00:00Z",
       "visit@2026-01-10T00:00:00Z",
-      "contacted@2026-02-01T00:00:00Z",
-      "contacted@2026-01-01T00:00:00Z",
     ]);
   });
 });
@@ -286,35 +293,39 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse("2026-06-01T00:00:00Z");
 const ago = (days: number): string => new Date(NOW - days * DAY).toISOString();
 
-// The live sales funnel's shape: delivery milestones, the two engagement routes, then the
+// The live sales funnel's shape: the delivery milestones, the two engagement routes, then the
 // post-engagement positions. Not one of them expires.
+const AGE_MILESTONES: FunnelMilestone[] = [
+  { tag: "contacted", signal: "contacted" },
+  { tag: "sent", signal: "sent" },
+  { tag: "delivered", signal: "delivered" },
+  { tag: "opened", signal: "open" },
+];
 const AGE_PATHS: ResolvedPath[] = [
-  { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery" },
-  { tag: "sent", signal: "sent", expectedRevenueUsd: 6, kind: "delivery" },
-  { tag: "delivered", signal: "delivered", expectedRevenueUsd: 12, kind: "delivery" },
-  { tag: "opened", signal: "open", expectedRevenueUsd: 12, kind: "delivery" },
-  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement" },
-  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, kind: "engagement" },
-  { tag: "meeting", signal: "meeting", expectedRevenueUsd: 300, kind: "engagement" },
-  { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 1000, kind: "engagement" },
+  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20 },
+  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120 },
+  { tag: "meeting", signal: "meeting", expectedRevenueUsd: 300 },
+  { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 1000 },
 ];
 
+const computeAges = (persons: EnginePerson[]) => computeRevenue(AGE_PATHS, persons, 0, AGE_MILESTONES);
+
 describe("computeRevenue — no decay: age never reduces a lead", () => {
-  it("a lead contacted a year ago counts exactly as much as one contacted yesterday", () => {
-    const old = computeRevenue(AGE_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { contacted: true }, signalDates: { contacted: ago(365) } }),
+  it("a lead clicked a year ago counts exactly as much as one clicked yesterday", () => {
+    const old = computeAges([
+      person({ leadId: "l1", orgId: "o1", signals: { clicked: true }, signalDates: { clicked: ago(365) } }),
     ]);
-    const fresh = computeRevenue(AGE_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { contacted: true }, signalDates: { contacted: ago(1) } }),
+    const fresh = computeAges([
+      person({ leadId: "l1", orgId: "o1", signals: { clicked: true }, signalDates: { clicked: ago(1) } }),
     ]);
-    expect(old.headline.totalPipelineUsd).toBe(3);
+    expect(old.headline.totalPipelineUsd).toBe(20);
     expect(old.headline.totalPipelineUsd).toBe(fresh.headline.totalPipelineUsd);
-    expect(old.leads[0].tags).toEqual(["contacted"]); // no `stale` tag exists any more
+    expect(old.leads[0].tags).toEqual(["visit"]); // no `stale` tag exists any more
     expect(old.organizations).toHaveLength(1);
   });
 
   it("a positive reply from months ago still counts, and its event stays on the ledger", () => {
-    const r = computeRevenue(AGE_PATHS, [
+    const r = computeAges([
       person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true }, signalDates: { positiveReply: ago(200) } }),
     ]);
     expect(r.headline.totalPipelineUsd).toBe(120);
@@ -325,7 +336,7 @@ describe("computeRevenue — no decay: age never reduces a lead", () => {
   });
 
   it("a meeting booked long ago still counts at the meeting EV", () => {
-    const r = computeRevenue(AGE_PATHS, [
+    const r = computeAges([
       person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true, meeting: true }, signalDates: { positiveReply: ago(300), meeting: ago(250) } }),
     ]);
     expect(r.headline.totalPipelineUsd).toBe(300);
@@ -333,25 +344,25 @@ describe("computeRevenue — no decay: age never reduces a lead", () => {
   });
 
   it("closed-won books full LTR however old it is", () => {
-    const r = computeRevenue(AGE_PATHS, [
+    const r = computeAges([
       person({ leadId: "l1", orgId: "o1", signals: { positiveReply: true, meeting: true, closeWin: true }, signalDates: { positiveReply: ago(420), meeting: ago(410), closeWin: ago(400) } }),
     ]);
     expect(r.headline.totalPipelineUsd).toBe(1000);
     expect(r.leads[0].tags).toContain("closeWin");
   });
 
-  it("every org contributes: an old stalled lead is NOT dropped from the total or the table", () => {
-    const r = computeRevenue(AGE_PATHS, [
+  it("every org that reached a funnel leg contributes, however old — age drops nobody", () => {
+    const r = computeAges([
       person({ leadId: "l1", orgId: "recent", signals: { clicked: true }, signalDates: { clicked: ago(2) } }),
-      person({ leadId: "l2", orgId: "ancient", signals: { delivered: true }, signalDates: { delivered: ago(400) } }),
+      person({ leadId: "l2", orgId: "ancient", signals: { positiveReply: true }, signalDates: { positiveReply: ago(400) } }),
     ]);
-    expect(r.headline.totalPipelineUsd).toBe(32); // 20 + 12 — the old org is still pipeline
+    expect(r.headline.totalPipelineUsd).toBe(140); // 20 + 120 — the 400-day-old reply is still pipeline
     expect(r.organizations).toHaveLength(2);
   });
 
   it("the cumulative time series is MONOTONE NON-DECREASING and ends at the headline total", () => {
-    const r = computeRevenue(AGE_PATHS, [
-      person({ leadId: "l1", orgId: "a", signals: { delivered: true }, signalDates: { delivered: ago(400) } }),
+    const r = computeAges([
+      person({ leadId: "l1", orgId: "a", signals: { clicked: true }, signalDates: { clicked: ago(400) } }),
       person({ leadId: "l2", orgId: "b", signals: { positiveReply: true }, signalDates: { positiveReply: ago(200) } }),
       person({ leadId: "l3", orgId: "c", signals: { clicked: true }, signalDates: { clicked: ago(2) } }),
     ]);
@@ -359,14 +370,14 @@ describe("computeRevenue — no decay: age never reduces a lead", () => {
     expect(series).toEqual([...series].sort((x, y) => x - y));
     for (let i = 1; i < series.length; i += 1) expect(series[i]).toBeGreaterThanOrEqual(series[i - 1]);
     expect(series[series.length - 1]).toBe(r.headline.totalPipelineUsd);
-    expect(r.headline.totalPipelineUsd).toBe(152); // 12 + 120 + 20, nothing phased out
+    expect(r.headline.totalPipelineUsd).toBe(160); // 20 + 120 + 20, nothing phased out
   });
 
   it("a lead with no known date is unaffected (it simply cannot be placed on the timeline)", () => {
-    const r = computeRevenue(AGE_PATHS, [
-      person({ leadId: "l1", orgId: "o1", signals: { delivered: true } }), // no signalDates
+    const r = computeAges([
+      person({ leadId: "l1", orgId: "o1", signals: { clicked: true } }), // no signalDates
     ]);
-    expect(r.headline.totalPipelineUsd).toBe(12);
+    expect(r.headline.totalPipelineUsd).toBe(20);
     expect(r.timeSeries).toEqual([]);
   });
 });
@@ -374,16 +385,15 @@ describe("computeRevenue — no decay: age never reduces a lead", () => {
 // ── Engagement-route combine (click + reply summed as independent probabilities, bounded 1 LTR) ──
 const LTR = 1000;
 const ROUTE_PATHS: ResolvedPath[] = [
-  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement", engagementRoute: true },
-  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, kind: "engagement", engagementRoute: true },
+  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, engagementRoute: true },
+  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, engagementRoute: true },
 ];
-// delivery + both routes + convergence/terminal (meeting, closeWin are NOT routes → stay MAX).
+// both routes + convergence/terminal (meeting, closeWin are NOT routes → stay MAX).
 const FULL_PATHS: ResolvedPath[] = [
-  { tag: "delivered", signal: "delivered", expectedRevenueUsd: 12, kind: "delivery" },
-  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, kind: "engagement", engagementRoute: true },
-  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, kind: "engagement", engagementRoute: true },
-  { tag: "meeting", signal: "meeting", expectedRevenueUsd: 300, kind: "engagement" },
-  { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 1000, kind: "engagement" },
+  { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, engagementRoute: true },
+  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 120, engagementRoute: true },
+  { tag: "meeting", signal: "meeting", expectedRevenueUsd: 300 },
+  { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 1000 },
 ];
 
 describe("computeRevenue — engagement-route combine (independent-probability SUM)", () => {
@@ -408,8 +418,8 @@ describe("computeRevenue — engagement-route combine (independent-probability S
 
   it("BOTH routes with high rates → bounded ≤ 1 LTR", () => {
     const HOT: ResolvedPath[] = [
-      { tag: "visit", signal: "clicked", expectedRevenueUsd: 600, kind: "engagement", engagementRoute: true },
-      { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 800, kind: "engagement", engagementRoute: true },
+      { tag: "visit", signal: "clicked", expectedRevenueUsd: 600, engagementRoute: true },
+      { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 800, engagementRoute: true },
     ];
     const r = computeRevenue(HOT, [person({ leadId: "l1", signals: { clicked: true, positiveReply: true } })], LTR);
     expect(r.leads[0].expectedRevenueUsd).toBeCloseTo(920, 6); // 600 + 800 − 480
@@ -421,10 +431,13 @@ describe("computeRevenue — engagement-route combine (independent-probability S
     expect(r.leads[0].expectedRevenueUsd).toBe(120);
   });
 
-  it("delivery-furthest only (no engagement) → unchanged MAX", () => {
-    const r = computeRevenue(FULL_PATHS, [person({ leadId: "l1", signals: { delivered: true } })], LTR);
-    expect(r.leads[0].expectedRevenueUsd).toBe(12);
+  it("a delivery milestone only (no funnel leg) → tagged, and worth nothing", () => {
+    const r = computeRevenue(FULL_PATHS, [person({ leadId: "l1", signals: { delivered: true } })], LTR, [
+      { tag: "delivered", signal: "delivered" },
+    ]);
+    expect(r.leads[0].expectedRevenueUsd).toBe(0);
     expect(r.leads[0].tags).toEqual(["delivered"]);
+    expect(r.headline.totalPipelineUsd).toBe(0);
   });
 
   it("routes + meeting → MAX(combined, meeting) — convergence not double-counted", () => {
@@ -442,13 +455,12 @@ describe("computeRevenue — engagement-route combine (independent-probability S
 // date so the Outreach stat card (a count) and the pipeline-activity daily graph (per-day buckets)
 // can render from this ONE snapshot, agreeing with the leads table they share. Single source.
 describe("computeRevenue — contacted flag + contactedAt (features-service#371)", () => {
-  const STAGE_PATHS: ResolvedPath[] = [
-    { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery" },
-    { tag: "visit", signal: "clicked", expectedRevenueUsd: 20 },
-  ];
+  const MILESTONES: FunnelMilestone[] = [{ tag: "contacted", signal: "contacted" }];
+  const PATHS: ResolvedPath[] = [{ tag: "visit", signal: "clicked", expectedRevenueUsd: 20 }];
+  const computeStages = (persons: EnginePerson[]) => computeRevenue(PATHS, persons, 0, MILESTONES);
 
   it("exposes contacted=true + the firstContactedAt date from the overlay", () => {
-    const r = computeRevenue(STAGE_PATHS, [
+    const r = computeStages([
       person({
         leadId: "l1",
         signals: { contacted: true, clicked: false },
@@ -460,7 +472,7 @@ describe("computeRevenue — contacted flag + contactedAt (features-service#371)
   });
 
   it("a clicked (engaged) lead is still contacted=true — count never undercounts past contacted", () => {
-    const r = computeRevenue(STAGE_PATHS, [
+    const r = computeStages([
       person({
         leadId: "l1",
         signals: { contacted: true, clicked: true },
@@ -474,7 +486,7 @@ describe("computeRevenue — contacted flag + contactedAt (features-service#371)
   });
 
   it("contactedAt null when contacted but no date known (no synthesis)", () => {
-    const r = computeRevenue(STAGE_PATHS, [
+    const r = computeStages([
       person({ leadId: "l1", signals: { contacted: true, clicked: false } }),
     ]);
     expect(r.leads[0].contacted).toBe(true);
@@ -482,7 +494,7 @@ describe("computeRevenue — contacted flag + contactedAt (features-service#371)
   });
 
   it("the card count + daily buckets are both derivable from one snapshot (three surfaces agree)", () => {
-    const r = computeRevenue(STAGE_PATHS, [
+    const r = computeStages([
       person({ leadId: "l1", signals: { contacted: true, clicked: true }, signalDates: { contacted: "2026-06-20T09:00:00.000Z" } }),
       person({ leadId: "l2", signals: { contacted: true, clicked: false }, signalDates: { contacted: "2026-06-20T23:00:00.000Z" } }),
       person({ leadId: "l3", signals: { contacted: true, clicked: false }, signalDates: { contacted: "2026-06-21T08:00:00.000Z" } }),
@@ -588,16 +600,19 @@ describe("buildContactedSeries — server-computed Outreach aggregates (features
 // other (no "open with nothing contacted"). The engine exposes the per-lead signal flags + dates;
 // buildSignalSeries buckets ANY of them the same coherent way as buildContactedSeries.
 describe("computeRevenue — opened/clicked/meeting/purchase flags + dates (features-service#377)", () => {
+  const MILESTONES: FunnelMilestone[] = [
+    { tag: "contacted", signal: "contacted" },
+    { tag: "opened", signal: "open" },
+  ];
   const PATHS: ResolvedPath[] = [
-    { tag: "contacted", signal: "contacted", expectedRevenueUsd: 3, kind: "delivery" },
-    { tag: "opened", signal: "open", expectedRevenueUsd: 3, kind: "delivery" },
     { tag: "visit", signal: "clicked", expectedRevenueUsd: 20, engagementRoute: true },
     { tag: "meeting", signal: "meeting", expectedRevenueUsd: 40 },
     { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 100 },
   ];
+  const computeRev377 = (persons: EnginePerson[]) => computeRevenue(PATHS, persons, 0, MILESTONES);
 
   it("exposes opened/clicked/repliedPositive/meetingBooked/purchased flags + their first-occurrence dates", () => {
-    const r = computeRevenue(PATHS, [
+    const r = computeRev377([
       person({
         leadId: "l1",
         signals: { contacted: true, open: true, clicked: true, positiveReply: true, meeting: true, closeWin: true },
@@ -621,7 +636,7 @@ describe("computeRevenue — opened/clicked/meeting/purchase flags + dates (feat
   });
 
   it("flags default false + dates null when the signal did not fire (no synthesis)", () => {
-    const r = computeRevenue(PATHS, [
+    const r = computeRev377([
       person({ leadId: "l1", signals: { contacted: true, open: true, clicked: false }, signalDates: { contacted: "2026-06-20T10:00:00.000Z", open: "2026-06-21T10:00:00.000Z" } }),
     ]);
     const lead = r.leads[0];
@@ -640,7 +655,7 @@ describe("computeRevenue — opened/clicked/meeting/purchase flags + dates (feat
   // per-lead `repliedPositiveAt` must honor its contract (null unless positive-classified) so the daily
   // digest never surfaces a non-positive replier as a positive reply.
   it("repliedPositiveAt is NULL when a lead replied but is NOT positive-classified, even with a firstRepliedAt date", () => {
-    const r = computeRevenue(PATHS, [
+    const r = computeRev377([
       // negative-only replier: reply date present (sentiment-agnostic firstRepliedAt), positiveReply signal false
       person({ leadId: "neg", signals: { contacted: true, positiveReply: false }, signalDates: { contacted: "2026-06-20T10:00:00.000Z", positiveReply: "2026-06-21T09:00:00.000Z" } }),
       // neutral-only replier: same shape
@@ -660,7 +675,7 @@ describe("computeRevenue — opened/clicked/meeting/purchase flags + dates (feat
   });
 
   it("opened/clicked counts never exceed the contacted snapshot — all from the same leads[]", () => {
-    const r = computeRevenue(PATHS, [
+    const r = computeRev377([
       person({ leadId: "l1", signals: { contacted: true, open: true, clicked: true }, signalDates: { contacted: "2026-06-20T09:00:00.000Z", open: "2026-06-20T10:00:00.000Z", clicked: "2026-06-20T11:00:00.000Z" } }),
       person({ leadId: "l2", signals: { contacted: true, open: true, clicked: false }, signalDates: { contacted: "2026-06-20T09:00:00.000Z", open: "2026-06-21T10:00:00.000Z" } }),
       person({ leadId: "l3", signals: { contacted: true, open: false, clicked: false }, signalDates: { contacted: "2026-06-21T09:00:00.000Z" } }),

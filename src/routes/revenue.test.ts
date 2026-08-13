@@ -33,7 +33,6 @@ process.env.NODE_ENV = "test";
 process.env.FEATURE_VIEW_CACHE_ENABLED = "false"; // exercise the pure live-compute path here
 
 const { db } = await import("../db/index.js");
-const { __resetPlatformRatesCache } = await import("../lib/platform-rates-client.js");
 const app = (await import("../index.js")).default;
 
 const AUTH = {
@@ -190,7 +189,6 @@ function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; lead
 
 describe("GET /features/:featureSlug/revenue", () => {
   beforeEach(() => {
-    __resetPlatformRatesCache();
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
   });
   afterEach(() => vi.restoreAllMocks());
@@ -464,18 +462,25 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.leads[0].tags.sort()).toEqual(["reply", "visit"]);
   });
 
-  it("earns stage EV from Contacted/Delivered onward (no click or reply)", async () => {
+  it("a merely-delivered lead is worth NOTHING — no pipeline, no organization, no event", async () => {
+    // An email that only LANDED is a step of no funnel in the catalogue, so it buys nothing. It used
+    // to earn a chained-down slice of the lifetime contract (15.42836 here); on prod that made 5,122
+    // merely-delivered organisations 37% of one brand's pipeline.
     mockFetch({
       economics: ECONOMICS,
       leads: [leadRow({ leadId: "l3", email: "cold@z.com", lead: { firstName: "Cold", lastName: "Z", photoUrl: null, organization: { id: "o3", name: "Org3", logoUrl: null } } })],
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(15.42836, 4); // delivered-stage EV, no click/reply
+    expect(res.body.headline.totalPipelineUsd).toBe(0);
+    expect(res.body.organizations).toEqual([]);
+    expect(res.body.events).toEqual([]);
+    // The lead itself stays in the snapshot — every Overview count series is built from it — but it
+    // claims no expected revenue, and its position tag still reads honestly.
     expect(res.body.leads).toHaveLength(1);
-    expect(res.body.leads[0].expectedRevenueUsd).toBeCloseTo(15.42836, 4);
-    expect(res.body.leads[0].tags).toContain("delivered");
-    expect(res.body.events).toEqual([]); // delivery-stage events are not itemised
+    expect(res.body.leads[0].expectedRevenueUsd).toBe(0);
+    expect(res.body.leads[0].tags).toEqual(["delivered"]);
+    expect(res.body.recipientsContacted.total).toBe(1);
   });
 
   it("bounced lead earns no expected revenue (excluded even if clicked)", async () => {
@@ -717,19 +722,6 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.leads[0].orgDomain).toBeNull();
   });
 
-  it("502 when platform rates (/public/stats) fails", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = typeof input === "string" ? input : (input as any).url;
-      if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
-      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
-      if (url.includes("/public/stats")) return new Response("boom", { status: 500 });
-      if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
-      return new Response("{}", { status: 200 });
-    });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
-    expect(res.status).toBe(502);
-  });
-
   it("degrades to dateless (still 200, pipeline correct) when email-gateway /orgs/status fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
@@ -842,23 +834,23 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(15.42836, 4); // opened carries delivered-stage EV
-    expect(res.body.leads[0].tags).toContain("opened");
+    expect(res.body.headline.totalPipelineUsd).toBe(0); // an open buys no step of any chain
+    expect(res.body.leads[0].expectedRevenueUsd).toBe(0);
+    expect(res.body.leads[0].tags).toEqual(["opened"]); // still the lead's honest position
   });
 
-  it("a long-stalled contacted lead still counts — no `stale` tag, still an organization", async () => {
+  it("a long-stalled positive reply still counts in full — no `stale` tag, still an organization", async () => {
     mockFetch({
       economics: ECONOMICS,
-      leads: [leadRow({ leadId: "lc", email: "cold@x.com", sent: false, delivered: false, lead: { firstName: "Co", lastName: "Ld", photoUrl: null, organization: { id: "o9", name: "Org9", logoUrl: null } } })],
-      timestamps: { "cold@x.com": { firstContactedAt: daysAgo(200) } }, // contacted 200d ago — used to be zeroed
+      leads: [leadRow({ leadId: "lr", email: "reply@x.com", replied: true, replyClassification: "positive", lead: { firstName: "Re", lastName: "Ply", photoUrl: null, organization: { id: "o9", name: "Org9", logoUrl: null } } })],
+      timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(200) } }, // replied 200d ago — used to be zeroed
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBeGreaterThan(0);
+    expect(res.body.headline.totalPipelineUsd).toBe(120); // the brand-wide 12%, undiminished by age
     expect(res.body.organizations).toHaveLength(1);
     expect(res.body.leads).toHaveLength(1);
-    expect(res.body.leads[0].expectedRevenueUsd).toBe(res.body.headline.totalPipelineUsd);
-    expect(res.body.leads[0].tags).toEqual(["contacted"]);
+    expect(res.body.leads[0].tags).toEqual(["reply"]);
   });
 
   // ── the pipeline EV prices on the brand's DECLARED sales funnel ───────────
@@ -950,9 +942,47 @@ describe("GET /features/:featureSlug/revenue", () => {
     // Unqualified → the FIRST declared funnel in catalogue order (the conversation chain).
     const first = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(first.body.headline.totalPipelineUsd).toBe(350);
-    // Named → that chain's own terms: 10% × 10% = 1%.
+    // Named → that chain alone, on its own terms AND its own legs. A positive reply is not a step of
+    // the WEBSITE chain (Website visit → Meeting booked → …), so this lead buys nothing under it.
     const named = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&funnel=sales_meetings_from_website").set(AUTH);
-    expect(named.body.headline.totalPipelineUsd).toBeCloseTo(10, 6);
+    expect(named.body.headline.totalPipelineUsd).toBe(0);
+  });
+
+  it("a conversion signal prices a brand only when it is a leg of one of its DECLARED chains", async () => {
+    const CLICK_AND_REPLY = [
+      leadRow({ leadId: "lr", email: "reply@x.com", replied: true, replyClassification: "positive", lead: { firstName: "Re", lastName: "Ply", photoUrl: null, organization: { id: "or", name: "OrgR", logoUrl: null } } }),
+      leadRow({ leadId: "lc", email: "click@x.com", clicked: true, lead: { firstName: "Cl", lastName: "Ick", photoUrl: null, organization: { id: "oc", name: "OrgC", logoUrl: null } } }),
+    ];
+    // Declares ONLY the conversation chain: the reply is a leg, the website visit is not.
+    mockFetch({ economics: ECONOMICS, leads: CLICK_AND_REPLY, salesFunnels: [declaredFunnel({ rates: {} })] });
+    const conversation = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(conversation.status).toBe(200);
+    expect(conversation.body.headline.totalPipelineUsd).toBe(120); // the reply alone, brand-wide 12%
+    expect(conversation.body.organizations.map((o: any) => o.orgId)).toEqual(["or"]);
+
+    // Declares ONLY a website chain: now the visit is a leg and the reply is not.
+    mockFetch({
+      economics: ECONOMICS,
+      leads: CLICK_AND_REPLY,
+      salesFunnels: [declaredFunnel({ funnelKey: "website_purchases", name: "Website purchases", steps: ["Website visit", "Signup", "Paid client"], rates: {} })],
+    });
+    const website = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(website.status).toBe(200);
+    expect(website.body.headline.totalPipelineUsd).toBeCloseTo(34.7, 5); // the click alone
+    expect(website.body.organizations.map((o: any) => o.orgId)).toEqual(["oc"]);
+
+    // Declares BOTH: a brand that declared several funnels is priced on ALL of their legs.
+    mockFetch({
+      economics: ECONOMICS,
+      leads: CLICK_AND_REPLY,
+      salesFunnels: [
+        declaredFunnel({ rates: {} }),
+        declaredFunnel({ funnelKey: "website_purchases", name: "Website purchases", steps: ["Website visit", "Signup", "Paid client"], rates: {} }),
+      ],
+    });
+    const both = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(both.status).toBe(200);
+    expect(both.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // 120 + 34.7, two distinct orgs
   });
 
   it("a brand that declared NO funnel is priced exactly as before (brand-wide record)", async () => {
@@ -1283,16 +1313,18 @@ describe("GET /features/:featureSlug/revenue", () => {
     // (Promise.all) drives inFlight to the expected count → barrier releases → all resolve. Sequential
     // awaits would stall the first call on the barrier forever → vitest timeout. So the test PASSING is
     // itself proof of concurrency; a regression to sequential awaits times out.
-    // The Overview path fires FOUR concurrent calls: fetchSpendBreakdown makes TWO /stats/costs calls
-    // (per-source costName + today's spend), plus platform rates + leads.
+    // The Overview path fires THREE concurrent calls: fetchSpendBreakdown makes TWO /stats/costs calls
+    // (per-source costName + today's spend), plus leads. The platform-global email rates left the wave
+    // with the delivery stages they used to chain down to a close — nothing chains down from a
+    // delivery any more, so nothing fetches them.
     //
     // Economics is deliberately NOT in this wave any more: it is resolved ONCE on the request path ahead
     // of the Gold cache lookup, because its fingerprint is part of the `scope_key` (an economics write
     // must land on a different cell instead of replaying a pre-write snapshot). That costs one serial
     // brand-service read on the MISS path only — the trade for never blocking a revisit on the full
     // fan-out. It is still fetched exactly once per request, and Wave A must still be concurrent.
-    const WAVE_A = ["/stats/costs", "/public/stats", "/orgs/leads"];
-    const EXPECTED_CONCURRENT = 4;
+    const WAVE_A = ["/stats/costs", "/orgs/leads"];
+    const EXPECTED_CONCURRENT = 3;
     let inFlight = 0;
     let releaseAll!: () => void;
     const allInFlight = new Promise<void>((r) => { releaseAll = r; });
@@ -1378,7 +1410,6 @@ function mockFetchGrouped(opts: { economics?: unknown; economicsAverage?: unknow
 
 describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
   beforeEach(() => {
-    __resetPlatformRatesCache();
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
   });
   afterEach(() => vi.restoreAllMocks());
@@ -1391,7 +1422,7 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
       economics: ECONOMICS,
       campaigns: {
         c1: { costCents: 7000, leads: [replyLead("o1")] },     // reply EV 120, $70 cost
-        c2: { costCents: 1000, leads: [deliveredLead("o2")] }, // delivered EV 15.4284, $10 cost
+        c2: { costCents: 1000, leads: [deliveredLead("o2")] }, // merely delivered → no pipeline, $10 cost
       },
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId").set(AUTH);
@@ -1414,9 +1445,9 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
     expect(byId.c1.headline.totalPipelineUsd).toBe(120);
     expect(byId.c1.costEconomics.actualCostUsd).toBe(70);
     expect(byId.c1.costEconomics.roiMultiple).toBeCloseTo(120 / 70, 5);
-    expect(byId.c2.headline.totalPipelineUsd).toBeCloseTo(15.42836, 4);
+    expect(byId.c2.headline.totalPipelineUsd).toBe(0); // a merely-delivered lead buys no funnel step
     expect(byId.c2.costEconomics.actualCostUsd).toBe(10);
-    expect(byId.c2.costEconomics.costOfAcquisitionPct).toBeCloseTo((10 / 15.42836) * 100, 4);
+    expect(byId.c2.costEconomics.costOfAcquisitionPct).toBeNull();
   });
 
   it("a group's headline + costEconomics are byte-equal to the standalone ?campaignId= call (incl. enrichment)", async () => {
@@ -1432,7 +1463,6 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
     expect(single.body.headline.totalPipelineUsd).toBe(1000); // close-win books realized LTR
 
     mockFetchGrouped(opts);
-    __resetPlatformRatesCache();
     const grouped = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId").set(AUTH);
     expect(grouped.status).toBe(200);
     const g = grouped.body.groups.find((x: any) => x.campaignId === "c1");
