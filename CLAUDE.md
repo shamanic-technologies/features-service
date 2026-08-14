@@ -1804,6 +1804,22 @@ a dash beside real numbers — which reads as a broken card, not a scoping decis
     evidence priced the row. `brandProjection.lifetimeRevenueUsd` is surfaced so a consumer can never
     pair a return with an LTR this projection did not use.
   - Zero new IO: `fetchBrandProjectedParents` already resolved the economics and both grains.
+  - **The THIRD unit of the same statement is `projection.costOfAcquisitionPct` (+ the
+    `brandProjection` twin), and it is SERVED, not left to the browser.** It is what winning a
+    customer from this audience costs as a SHARE of what that customer is worth:
+    `100 × costPerPaidClientUsd / lifetimeRevenueUsd`, which is exactly `100 / returnPerDollar`. It is
+    IMPLEMENTED as that reciprocal (`costOfAcquisitionPct` in `audience-stats-brand-projection.ts`
+    calls `returnPerDollar`), so the two null together and can never disagree by a rounding step —
+    the same relation `/workflow-projection` states between `roiMultiple` and `cacPct`. Being the
+    reciprocal of a field already on the row is precisely WHY it is served: a consumer dividing one
+    of our fields into another is how two surfaces come to print two numbers for one statistic the
+    day either side changes.
+  - **PROJECTED, and the OpenAPI says so on both fields.** Do NOT pair it with `/revenue`'s
+    `costEconomics.costOfAcquisitionPct`, which is REALIZED (measured spend ÷ measured pipeline). Same
+    projected-vs-realized split `returnPerDollar` already carries against `roiMultiple`.
+  - Inheritance, nulling and grain are `returnPerDollar`'s verbatim: an audience with no measured
+    grain takes `brandProjection`, and an unmeasurable value is `null` — never 0, which would say
+    winning a customer costs nothing.
   - Guards: the `per-audience RETURN per dollar` block in `routes/audience-cost-coherence.test.ts`
     (same one fixture as the cost-coherence cases: the audience's `costPerPaidClientUsd` equals the
     `resolved.costPerPaidClientUsd` of the row the Strategy page RENDERS, its `returnPerDollar` equals
