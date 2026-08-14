@@ -1749,6 +1749,66 @@ extraction-quality prompt**, not just UI help text — it's what brand-service's
 the value. Pick a clear `extractKey`; org name/url/logo are already known by construction (don't
 ask), prefer extraction over user-entry for anything scrapeable.
 
+## AT BRAND LEVEL THERE IS NO GOAL — `/audience-stats` with NEITHER `funnel` NOR `goal` prices each audience across EVERY funnel the brand DECLARED, combined as the BEST-RETURNING chain
+
+A brand runs several sales funnels at once, so the only thing that matters at that grain is return:
+what came back per dollar. Until now exactly one of `funnel` / `goal` was REQUIRED, and the funnel
+decides the whole cost basis — so a brand-level consumer had to PICK one of the brand's chains and
+price every audience through it. The dashboard picked the one the RETIRED brand column implies, which
+is worse than arbitrary: that column is server-defaulted (`funnel-ranking` says so at the top of this
+file), so a brand that chose nothing read as "website purchases" and its Audiences table was ranked and
+priced through a funnel it may never have declared.
+
+**Sending neither parameter is now a first-class request, not a missing one.** `goal` reads `null`,
+`sortMetric` is `returnPerDollar` (DESCENDING, unmeasurable rows last), and every row's `projection`
+carries `returnPerDollar` / `costPerPaidClientUsd` / `costOfAcquisitionPct` for the brand as a whole.
+
+- **THE COMBINATION RULE IS THE BEST-RETURNING DECLARED FUNNEL — `max`, never a blend and never a sum.**
+  A dollar buys a customer through whichever of the brand's chains converts it best. Same doctrine as
+  the combined-`sales` cost (`min` over channels ⟺ `max` over returns), and the reason no combined
+  figure can read better than the honest single-chain one. Ties break on the canonical funnel-catalogue
+  order, so the same evidence always gives the same answer.
+- **It RECONCILES by construction, both ways, and the test drives all three surfaces from ONE fixture**
+  (`routes/audience-brand-return.test.ts`). `brandProjection.returnPerDollar` IS the head of
+  `/funnel-ranking` (identical `returnPerDollar` definition, identical evidence, so the maximum over the
+  declared set is the same number), and an audience's return IS its return on a `?funnel=` read of the
+  chain it was combined through. Nothing is asserted twice.
+- **The row names its OWN chain — `projection.basisFunnelKey` — and it is routinely NOT the brand's.**
+  An audience whose replies are cheap pays through the conversation chain while the brand's headline
+  pays through the website one; inheriting the brand's basis would print a number the audience does not
+  earn. `projection.lifetimeRevenueUsd` rides each row for the same reason: two audiences can be priced
+  through chains the brand values differently ($200 self-serve vs a $20k contract), so a consumer can
+  never pair a return with an LTR this projection did not use.
+- **The response STATES WHAT IT COVERS — `funnelCoverage`.** Every DECLARED funnel is listed with
+  `priced` and, when false, its `reason` (`no_economics` / `no_workflow_evidence` /
+  `no_paid_client_path` / `no_return_defined` — the SAME vocabulary `/funnel-ranking` reports, exported
+  as `FunnelPricingReason` from `audience-stats-brand-projection.ts`). A reader who cannot tell what
+  went in cannot trust the number.
+- **COST COLUMNS are denominated in ONE chain and the response names it** (`pricingBasisFunnelKey`):
+  the best-returning declared funnel, else the FIRST declared in catalogue order. A cost per outcome is
+  denominated in a chain's own outcome, so unlike a return it cannot be combined across chains. The
+  funnel-denominated conversion columns (`cpfsCents`/`cpsCents`/`cpsaleCents`) stay `null` on this read
+  — "cost per signup" is a question only a signup chain asks.
+- **ONE evidence fan-out, N pure projections.** `fetchBrandProjectedParents` split into
+  `fetchBrandProjectionEvidence` (all the IO, goal- AND funnel-independent) + `projectBrandParents`
+  (pure), exactly as `/funnel-ranking` ranks N funnels off one `WorkflowProjectionEvidence`. Pricing 4
+  declared funnels costs the same IO as pricing one; fetching per funnel would multiply the per-audience
+  email fan-out by the declared count. Do NOT re-merge them.
+- **A brand that declared NOTHING has no answer here, and it is distinguishable: 502
+  `reason: "declared_funnels_unavailable"`** — the same producer-gap doctrine as `/funnel-ranking` (an
+  empty declaration is a gap, not "sells through nothing"), never a zero return and never a substituted
+  set. A brand whose chains price but state no lifetime revenue reads `null` on every return field with
+  `reason: "no_return_defined"` — a different statement from an unreadable declaration, and neither is 0.
+- **NAMING A FUNNEL IS UNCHANGED, byte for byte** — one chain, its own cost columns, its own `cpc`/`cppr`
+  order, no `funnelCoverage`, no `basisFunnelKey`. The campaign level genuinely sells ONE funnel, so that
+  read stays correct and stays supported; this is an additional way to ask. Guarded by a case in the same
+  suite. A NAMED-but-unrecognised `goal`/`funnel` is still a 400 — only omitting BOTH is the brand read.
+- **The declared KEY SET rides the Gold `scope_key` as `decl`** (fail-soft, it feeds the key not the
+  body), so re-declaring a funnel lands on a new cell instead of replaying a coverage block naming
+  funnels the brand no longer sells through. Same reasoning as the economics fingerprint beside it.
+- Consumers: distribute.you's brand Audiences table + the Overview's Top-audiences card, both of which
+  rank on return and were pricing it through the retired column. (features-service#769, set 2026-08-14.)
+
 ## THE BRAND OVERVIEW ANSWERS "IS THIS WORKING?" IN MONEY — $CAC on the DEFAULT read, ROI over the brand's LIFE, ROI per AUDIENCE
 
 A brand runs several acquisition channels and several sales funnels at once, so the honest answer at

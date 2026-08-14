@@ -318,11 +318,12 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     fleetOverride = null;
   });
 
-  it("400 when brandId or the funnel/goal pair is missing, or limit is invalid", async () => {
+  it("400 when brandId is missing, when a named goal/funnel is unrecognised, or when limit is invalid", async () => {
     let res = await request(app).get("/features/sales-cold-email-outreach/audience-stats?goal=signup").set(AUTH);
     expect(res.status).toBe(400);
 
-    res = await request(app).get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1").set(AUTH);
+    // Omitting BOTH is the brand-level read, not an error — a NAMED-but-unrecognised value still 400s.
+    res = await request(app).get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=not-a-goal").set(AUTH);
     expect(res.status).toBe(400);
 
     res = await request(app).get("/features/sales-cold-email-outreach/audience-stats?brandId=brand-1&goal=signup&limit=1abc").set(AUTH);
