@@ -88,7 +88,7 @@ function audienceRow(id: string, memberCount: number, contacted: number, cpcCent
       positiveReplies: 0,
     },
     metrics: { cpcCents, cpprCents: null, cpfsCents: null, cpsCents: null, cpsaleCents: null },
-    projection: { costPerPaidClientUsd: null, returnPerDollar: null },
+    projection: { costPerPaidClientUsd: null, returnPerDollar: null, costOfAcquisitionPct: null },
   };
 }
 
@@ -100,7 +100,12 @@ function audienceEnvelope(brandId: string, rows: AudienceStatsRow[]): AudienceSt
     brandProfileId: null,
     sortMetric: "cpc",
     audiences: rows,
-    brandProjection: { lifetimeRevenueUsd: null, costPerPaidClientUsd: null, returnPerDollar: null },
+    brandProjection: {
+      lifetimeRevenueUsd: null,
+      costPerPaidClientUsd: null,
+      returnPerDollar: null,
+      costOfAcquisitionPct: null,
+    },
   };
 }
 

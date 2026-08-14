@@ -529,6 +529,34 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
       );
     });
 
+    it("states the same thing in a THIRD unit — cost as a SHARE of lifetime revenue, reciprocal of the return at BOTH grains", async () => {
+      fleet = FLEET_GOAL_BEATS_CLICKS;
+      audienceSpendSlug = "wf-closer";
+      audienceSpendCents = 40000;
+      audienceClicks = 100;
+
+      const stats = await request(app)
+        .get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=websitePurchase`)
+        .set(AUTH);
+      const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
+
+      // One statement, three units: the share reconciles with the cost AND with the return it sits
+      // beside — and with the brand-level answer for the same brand at the same moment.
+      expect(row.projection.costOfAcquisitionPct).toBeCloseTo(
+        (100 * row.projection.costPerPaidClientUsd) / ECONOMICS.lifetimeRevenueUsd,
+        9,
+      );
+      expect(row.projection.costOfAcquisitionPct).toBeCloseTo(100 / row.projection.returnPerDollar, 9);
+      expect(stats.body.brandProjection.costOfAcquisitionPct).toBeCloseTo(
+        100 / stats.body.brandProjection.returnPerDollar,
+        9,
+      );
+      expect(stats.body.brandProjection.costOfAcquisitionPct).toBeCloseTo(
+        (100 * stats.body.brandProjection.costPerPaidClientUsd) / ECONOMICS.lifetimeRevenueUsd,
+        9,
+      );
+    });
+
     it("prices the audience off the SAME workflow row /workflow-projection resolves for it", async () => {
       fleet = FLEET_GOAL_BEATS_CLICKS;
       audienceSpendSlug = "wf-closer";
@@ -548,6 +576,9 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
       expect(row.projection.costPerPaidClientUsd).toBeCloseTo(rendered.resolved.costPerPaidClientUsd, 9);
       // ...so the audience's return equals the roiMultiple that same row reports. One number, two pages.
       expect(row.projection.returnPerDollar).toBeCloseTo(rendered.resolved.roiMultiple, 9);
+      // And the share-of-lifetime-revenue is that row's cacPct — the SAME reciprocal relation, so a
+      // reader cannot get two answers to "what slice of a customer's worth did winning them cost".
+      expect(row.projection.costOfAcquisitionPct).toBeCloseTo(rendered.resolved.cacPct, 9);
     });
 
     it("RANKS BY WHAT PAYS, not by what is cheap — a cheap audience that converts to nothing loses", async () => {
@@ -577,6 +608,8 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
 
       expect(row.projection.costPerPaidClientUsd).toBe(stats.body.brandProjection.costPerPaidClientUsd);
       expect(row.projection.returnPerDollar).toBe(stats.body.brandProjection.returnPerDollar);
+      expect(row.projection.costOfAcquisitionPct).toBe(stats.body.brandProjection.costOfAcquisitionPct);
+      expect(row.projection.costOfAcquisitionPct).not.toBeNull();
     });
 
     it("is NULL, never 0, when the brand states no lifetime revenue", async () => {
@@ -597,6 +630,9 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
 
       expect(row.projection.returnPerDollar).toBeNull();
       expect(stats.body.brandProjection.returnPerDollar).toBeNull();
+      // "we could not measure this", NOT "winning a customer costs nothing" — never 0.
+      expect(row.projection.costOfAcquisitionPct).toBeNull();
+      expect(stats.body.brandProjection.costOfAcquisitionPct).toBeNull();
     });
   });
 });

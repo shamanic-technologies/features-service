@@ -3710,13 +3710,19 @@
                       "type": "number",
                       "nullable": true,
                       "description": "PROJECTED — dollars of lifetime revenue per dollar spent on this audience = brandProjection.lifetimeRevenueUsd / costPerPaidClientUsd. Rank a brand's audiences on THIS, not on cost per outcome: cost per outcome ranks by cheapness, so an audience that converts to nothing outranks an expensive one that pays. It is the IDENTICAL definition /features/{slug}/funnel-ranking ranks a brand's declared funnels on, so an audience's return and the brand's return are one statistic at two grains. Not the REALIZED /revenue costEconomics.roiMultiple (that divides measured pipeline by measured spend) — this is what the evidence PROJECTS. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns take). Null (never 0) when unmeasurable."
+                    },
+                    "costOfAcquisitionPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "PROJECTED — what winning a customer from this audience costs as a SHARE of what that customer is worth over their lifetime, percent = 100 x costPerPaidClientUsd / brandProjection.lifetimeRevenueUsd, which is exactly 100 / returnPerDollar. Below 100 means the audience pays for itself. Served rather than left to the consumer BECAUSE it is the reciprocal of a field already on this row: a consumer dividing one of our fields into another is how two surfaces come to print two numbers for one statistic. Same statement as returnPerDollar and costPerPaidClientUsd in a third unit, so the three can never disagree, and the identical definition one grain coarser at brandProjection.costOfAcquisitionPct. PROJECTED, NOT REALIZED: do not pair it with the realized /revenue costEconomics.costOfAcquisitionPct (measured spend / measured pipeline) as if they were the same figure — this one prices what the audience's own observed unit costs imply under the brand's declared economics. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns and returnPerDollar take). NULL (never 0) whenever it could not be measured — no lifetime revenue, no path to a paying client, cold start; a 0 would say winning a customer costs nothing."
                     }
                   },
                   "required": [
                     "costPerPaidClientUsd",
-                    "returnPerDollar"
+                    "returnPerDollar",
+                    "costOfAcquisitionPct"
                   ],
-                  "description": "PROJECTED return for this audience, on the brand's own economics. See returnPerDollar."
+                  "description": "PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."
                 }
               },
               "required": [
@@ -3747,12 +3753,18 @@
                 "type": "number",
                 "nullable": true,
                 "description": "PROJECTED brand-level return per dollar = lifetimeRevenueUsd / costPerPaidClientUsd — the same definition as each row's, one grain coarser. Read a row's return against this ('this audience beats the brand'). Null (never 0) when unmeasurable."
+              },
+              "costOfAcquisitionPct": {
+                "type": "number",
+                "nullable": true,
+                "description": "PROJECTED brand-level cost of acquisition as a share of lifetime revenue, percent = 100 / returnPerDollar — the same definition as each row's, one grain coarser, and the value a row with no measured grain inherits. Read a row's share against this ('this audience wins customers at a smaller slice of their worth than the brand does'). PROJECTED, not the realized /revenue costEconomics.costOfAcquisitionPct. Null (never 0) when unmeasurable."
               }
             },
             "required": [
               "lifetimeRevenueUsd",
               "costPerPaidClientUsd",
-              "returnPerDollar"
+              "returnPerDollar",
+              "costOfAcquisitionPct"
             ],
             "description": "The BRAND-level twin of every row's projection, on the same economics and the same formula."
           }
@@ -9153,13 +9165,19 @@
                                 "type": "number",
                                 "nullable": true,
                                 "description": "PROJECTED — dollars of lifetime revenue per dollar spent on this audience = brandProjection.lifetimeRevenueUsd / costPerPaidClientUsd. Rank a brand's audiences on THIS, not on cost per outcome: cost per outcome ranks by cheapness, so an audience that converts to nothing outranks an expensive one that pays. It is the IDENTICAL definition /features/{slug}/funnel-ranking ranks a brand's declared funnels on, so an audience's return and the brand's return are one statistic at two grains. Not the REALIZED /revenue costEconomics.roiMultiple (that divides measured pipeline by measured spend) — this is what the evidence PROJECTS. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns take). Null (never 0) when unmeasurable."
+                              },
+                              "costOfAcquisitionPct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "PROJECTED — what winning a customer from this audience costs as a SHARE of what that customer is worth over their lifetime, percent = 100 x costPerPaidClientUsd / brandProjection.lifetimeRevenueUsd, which is exactly 100 / returnPerDollar. Below 100 means the audience pays for itself. Served rather than left to the consumer BECAUSE it is the reciprocal of a field already on this row: a consumer dividing one of our fields into another is how two surfaces come to print two numbers for one statistic. Same statement as returnPerDollar and costPerPaidClientUsd in a third unit, so the three can never disagree, and the identical definition one grain coarser at brandProjection.costOfAcquisitionPct. PROJECTED, NOT REALIZED: do not pair it with the realized /revenue costEconomics.costOfAcquisitionPct (measured spend / measured pipeline) as if they were the same figure — this one prices what the audience's own observed unit costs imply under the brand's declared economics. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns and returnPerDollar take). NULL (never 0) whenever it could not be measured — no lifetime revenue, no path to a paying client, cold start; a 0 would say winning a customer costs nothing."
                               }
                             },
                             "required": [
                               "costPerPaidClientUsd",
-                              "returnPerDollar"
+                              "returnPerDollar",
+                              "costOfAcquisitionPct"
                             ],
-                            "description": "PROJECTED return for this audience, on the brand's own economics. See returnPerDollar."
+                            "description": "PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."
                           }
                         },
                         "required": [
@@ -9190,12 +9208,18 @@
                           "type": "number",
                           "nullable": true,
                           "description": "PROJECTED brand-level return per dollar = lifetimeRevenueUsd / costPerPaidClientUsd — the same definition as each row's, one grain coarser. Read a row's return against this ('this audience beats the brand'). Null (never 0) when unmeasurable."
+                        },
+                        "costOfAcquisitionPct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "PROJECTED brand-level cost of acquisition as a share of lifetime revenue, percent = 100 / returnPerDollar — the same definition as each row's, one grain coarser, and the value a row with no measured grain inherits. Read a row's share against this ('this audience wins customers at a smaller slice of their worth than the brand does'). PROJECTED, not the realized /revenue costEconomics.costOfAcquisitionPct. Null (never 0) when unmeasurable."
                         }
                       },
                       "required": [
                         "lifetimeRevenueUsd",
                         "costPerPaidClientUsd",
-                        "returnPerDollar"
+                        "returnPerDollar",
+                        "costOfAcquisitionPct"
                       ],
                       "description": "The BRAND-level twin of every row's projection, on the same economics and the same formula."
                     }
