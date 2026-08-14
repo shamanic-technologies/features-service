@@ -67,6 +67,26 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // would not see. This read feeds a cache KEY, not the response, so its failure must not change the
     // endpoint's HTTP semantics — degrade to "no fingerprint in the key" and let the compute (which reads
     // economics fail-loud) decide the status.
+    // THE BRAND-LEVEL read's body is priced on the brand's DECLARED SET, which is not a query parameter —
+    // so a brand that adds or drops a funnel would keep being served the previous set's answer (with a
+    // `funnelCoverage` naming funnels it no longer sells through) until the hard-stale cap. Folding the
+    // declared keys into the key makes a re-declaration land on a DIFFERENT cell, exactly as the economics
+    // fingerprint does for an economics write. Fail-soft: it feeds the KEY, not the response — a read that
+    // cannot be answered still 502s from the compute, which owns that decision.
+    let decl: string | undefined;
+    if (!validated.funnelKey && validated.goal === null) {
+      try {
+        decl = (await fetchDeclaredSalesFunnels(validated.brandId, orgId))
+          .map((f) => f.funnelKey)
+          .sort()
+          .join(",");
+      } catch (err) {
+        console.warn(
+          `[features-service] audience-stats declared-funnel key unavailable (keying without it): ${(err as Error).message}`,
+        );
+      }
+    }
+
     let econ: string | undefined;
     try {
       econ = economicsFingerprint(
@@ -95,6 +115,7 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
       brandProfileId: req.query.brandProfileId,
       pricing,
       econ,
+      decl,
       // Campaign scope is part of the cache key so campaign-scoped and brand-wide snapshots never
       // collide. Absent → dropped by buildScopeKey → key byte-identical to the brand-wide request.
       campaignId: req.query.campaignId,
@@ -110,6 +131,17 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     }
     res.json(result.envelope);
   } catch (error) {
+    // The BRAND-LEVEL read (no funnel, no goal) prices the brand through the funnels it DECLARED, so a
+    // declaration we cannot read leaves it with no question to answer — reported as what failed, never
+    // as a substituted default set and never as a zero return. Same reason string the `?funnel=` path
+    // above uses, so a consumer reads one word for one failure.
+    if (error instanceof SalesFunnelsUnavailableError) {
+      console.error("[features-service] Audience stats: declared set unavailable:", error.message);
+      return res.status(502).json({
+        error: `could not read the sales funnels this brand declared, and features-service will not substitute a default set: ${error.message}`,
+        reason: "declared_funnels_unavailable",
+      });
+    }
     console.error("[features-service] Audience stats error:", error);
     res.status(502).json({ error: "Failed to compute audience stats" });
   }

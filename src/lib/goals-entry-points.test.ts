@@ -170,10 +170,21 @@ describe("the request door: `?funnel=` is sufficient, `?goal=` still works besid
     if (both.ok) expect(both.funnelKey).toBe("form_magnet");
   });
 
-  it("neither one → 400, and an unrecognised funnel → 400; never a substituted chain", () => {
+  it("neither one is the BRAND-LEVEL read (goal null, no chain named); an unrecognised funnel/goal is still 400", () => {
+    // A brand runs several funnels at once, so at brand level there is no goal — the read is combined
+    // over the brand's DECLARED set and carries no goal at all. It is a request, not a missing parameter.
     const neither = validateAudienceStatsQuery(req({ brandId: "b1" }));
-    expect(neither.ok).toBe(false);
-    if (!neither.ok) expect(neither.status).toBe(400);
+    expect(neither.ok).toBe(true);
+    if (neither.ok) {
+      expect(neither.goal).toBeNull();
+      expect(neither.funnelKey).toBeUndefined();
+    }
+
+    // A NAMED-but-unrecognised value stays a 400 — never a silent fall back to the brand-level read,
+    // which would answer a chain-specific question with a brand-wide number and look right.
+    const bogusGoal = validateAudienceStatsQuery(req({ brandId: "b1", goal: "not_a_goal" }));
+    expect(bogusGoal.ok).toBe(false);
+    if (!bogusGoal.ok) expect(bogusGoal.status).toBe(400);
 
     const bogus = validateAudienceStatsQuery(req({ brandId: "b1", funnel: "not_a_funnel" }));
     expect(bogus.ok).toBe(false);

@@ -108,6 +108,22 @@ export interface AudienceProjectedCostsUsd {
  * Fleet-backed projected cost-per-outcome (USD) per /audience-stats cost column. Each field is the
  * PARENT the corresponding column floors against at 0 outcomes. null when the driving input is absent.
  */
+/**
+ * Why a projection carries no defined RETURN. Same vocabulary `/funnel-ranking` reports per declared
+ * funnel (`UnrankableReason`), deliberately spelled the same so a consumer reads one set of words for
+ * "this chain could not be priced" wherever it meets it. Never a substituted number — the reason IS the
+ * answer.
+ */
+export type FunnelPricingReason =
+  /** No effective economics for this brand (cold start) — nothing to normalise through. */
+  | "no_economics"
+  /** No workflow carries a usable cost of this chain's outcome. */
+  | "no_workflow_evidence"
+  /** The chain has no defined path to a paying client (a leg is undeclared or sits at 0). */
+  | "no_paid_client_path"
+  /** A paid-client cost exists but the brand states no lifetime revenue, so there is no return. */
+  | "no_return_defined";
+
 export interface BrandProjectedParentsUsd {
   cpcUsd: number | null; // cost per website visit (raw fleet CPC)
   cpprUsd: number | null; // cost per positive reply (raw fleet CPPR)
@@ -140,6 +156,12 @@ export interface BrandProjectedParentsUsd {
    * pair a return with an LTR the projection did not use). null at cold start / no economics.
    */
   lifetimeRevenueUsd: number | null;
+  /**
+   * Null ⟺ this projection HAS a defined, positive return (`lifetimeRevenueUsd / costPerPaidClientUsd`).
+   * Otherwise the reason it does not — so a consumer combining several chains can say which of the
+   * brand's funnels went into a figure and why the others did not, instead of showing a silent gap.
+   */
+  pricingReason: FunnelPricingReason | null;
 }
 
 /**
@@ -271,6 +293,50 @@ function grainUnitCosts(ev: WorkflowGrainEvidence, parent: DynastyUnitCosts | nu
  * Fails loud on any downstream error (no silent fallback; NET fail-loud via fetchPublicCosts). Cross-org
  * reads are public (api-key only); the brand + audience + economics reads are org-scoped.
  */
+/**
+ * Everything the brand-level projection reads from the network, for ONE (brand, feature, pricing).
+ *
+ * GOAL- AND FUNNEL-INDEPENDENT by construction — nothing here is priced. That is what lets a caller that
+ * must price the SAME brand through SEVERAL declared funnels (the funnel-less `/audience-stats` read) pay
+ * for the fan-out ONCE and then run N pure projections, exactly as `/funnel-ranking` reuses one
+ * `WorkflowProjectionEvidence` for every funnel it ranks. Fetching per funnel instead would multiply the
+ * per-audience email fan-out by the number of funnels the brand declared.
+ */
+export interface BrandProjectionEvidence {
+  workflows: Awaited<ReturnType<typeof fetchPublicWorkflows>>;
+  slugToDynasty: Map<string, string>;
+  fleetCostGroups: Awaited<ReturnType<typeof fetchPublicCosts>>;
+  fleetEmail: Awaited<ReturnType<typeof fetchPublicEmailStats>>;
+  effective: Awaited<ReturnType<typeof fetchEffectiveEconomics>>;
+  brandGrain: Awaited<ReturnType<typeof fetchBrandWorkflowEvidence>>;
+  audienceGrain: Awaited<ReturnType<typeof fetchAudienceGrainEvidence>>;
+}
+
+/**
+ * The network half of `fetchBrandProjectedParents` — the cross-org fleet reads, the brand grain, the
+ * per-(audience × dynasty) grain and the brand's effective economics. Fails loud on any downstream error.
+ */
+export async function fetchBrandProjectionEvidence(
+  brandId: string,
+  featureSlug: string,
+  identity: ProjectionIdentity,
+  pricing: Pricing = "gross",
+  audienceIds?: string[],
+): Promise<BrandProjectionEvidence> {
+  const workflows = await fetchPublicWorkflows(featureSlug, "all");
+  // The SAME slug → dynasty map the crossOrg/brand rollups use, so the audience grain's dynasty keys line
+  // up with the dynasty-keyed rows (and skips runs-service's lossy workflowDynastySlug regroup).
+  const slugToDynasty = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
+  const [fleetCostGroups, fleetEmail, effective, brandGrain, audienceGrain] = await Promise.all([
+    fetchPublicCosts(featureSlug, "workflowSlug", pricing),
+    fetchPublicEmailStats(featureSlug, "workflowSlug"),
+    fetchEffectiveEconomics(brandId, identity),
+    fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing),
+    fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing, audienceIds),
+  ]);
+  return { workflows, slugToDynasty, fleetCostGroups, fleetEmail, effective, brandGrain, audienceGrain };
+}
+
 export async function fetchBrandProjectedParents(
   brandId: string,
   featureSlug: string,
@@ -289,17 +355,21 @@ export async function fetchBrandProjectedParents(
   // on the funnel's, and the two surfaces split apart for one funnel.
   funnelEconomics?: Partial<SalesEconomics> | null,
 ): Promise<BrandProjectedParentsUsd> {
-  const workflows = await fetchPublicWorkflows(featureSlug, "all");
-  // The SAME slug → dynasty map the crossOrg/brand rollups use, so the audience grain's dynasty keys line
-  // up with the dynasty-keyed rows (and skips runs-service's lossy workflowDynastySlug regroup).
-  const slugToDynasty = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
-  const [fleetCostGroups, fleetEmail, effective, brandGrain, audienceGrain] = await Promise.all([
-    fetchPublicCosts(featureSlug, "workflowSlug", pricing),
-    fetchPublicEmailStats(featureSlug, "workflowSlug"),
-    fetchEffectiveEconomics(brandId, identity),
-    fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing),
-    fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing, audienceIds),
-  ]);
+  const evidence = await fetchBrandProjectionEvidence(brandId, featureSlug, identity, pricing, audienceIds);
+  return projectBrandParents(evidence, goal, funnelKey, funnelEconomics);
+}
+
+/**
+ * The PURE half: price one already-fetched evidence set through ONE chain (a funnel when named, else the
+ * goal). No IO — so a caller may run it once per declared funnel over the same evidence.
+ */
+export function projectBrandParents(
+  evidence: BrandProjectionEvidence,
+  goal: Goal,
+  funnelKey?: SalesFunnelKey,
+  funnelEconomics?: Partial<SalesEconomics> | null,
+): BrandProjectedParentsUsd {
+  const { workflows, slugToDynasty, fleetCostGroups, fleetEmail, effective, brandGrain, audienceGrain } = evidence;
 
   // Collapse each workflow's version chain into ONE dynasty before comparing — the EXACT rollup
   // workflow-projection's crossOrg/brand grains use, so "a workflow" means the same thing on both
@@ -401,6 +471,9 @@ export async function fetchBrandProjectedParents(
       byAudience: new Map(),
       costPerPaidClientUsd: null,
       lifetimeRevenueUsd: economics?.lifetimeRevenueUsd ?? null,
+      // Told apart because a combining caller reports them apart: "this brand has no economics" and "no
+      // workflow carries a cost of this chain's outcome" are different gaps with different fixes.
+      pricingReason: econ ? "no_workflow_evidence" : "no_economics",
     };
   }
 
@@ -494,5 +567,14 @@ export async function fetchBrandProjectedParents(
     byAudience,
     costPerPaidClientUsd: brandLevel.costPerPaidClientUsd,
     lifetimeRevenueUsd: economics?.lifetimeRevenueUsd ?? null,
+    // A chain with no path to a paying client and one whose brand states no lifetime revenue both carry
+    // no return, and they are NOT the same gap: the first is a leg the brand never declared, the second
+    // is a price it never put on a customer.
+    pricingReason:
+      brandLevel.costPerPaidClientUsd == null || !(brandLevel.costPerPaidClientUsd > 0)
+        ? "no_paid_client_path"
+        : returnPerDollar(economics?.lifetimeRevenueUsd ?? null, brandLevel.costPerPaidClientUsd) == null
+          ? "no_return_defined"
+          : null,
   };
 }
