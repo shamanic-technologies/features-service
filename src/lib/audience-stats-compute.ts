@@ -6,7 +6,11 @@ import { AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { fetchAudiencesByStatuses, fetchAudienceMemberEmails, type Audience, type AudienceFilters, type AudienceStatus } from "./human-client.js";
 import { flooredCostPerOutcome, derivedCostPerOutcome } from "./cost-engine.js";
-import { fetchBrandProjectedParents, returnPerDollar } from "./audience-stats-brand-projection.js";
+import {
+  fetchBrandProjectedParents,
+  returnPerDollar,
+  costOfAcquisitionPct,
+} from "./audience-stats-brand-projection.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
 import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "./sales-funnels.js";
@@ -114,15 +118,23 @@ export interface AudienceStatsRow {
    * evidence to price and inherits `envelope.brandProjection` verbatim — the same brand-level
    * fallback every derived cost column already takes — rather than being blanked or invented.
    *
-   * Both fields are null (never 0) when the brand states no lifetime revenue, when the chain has no
-   * path to a paying client, or at cold start. A consumer renders a dash and says it could not be
-   * measured; a 0 would read as "this audience returns nothing", which is a different claim.
+   * All three fields are null (never 0) when the brand states no lifetime revenue, when the chain has
+   * no path to a paying client, or at cold start. A consumer renders a dash and says it could not be
+   * measured; a 0 would read as "this audience returns nothing" / "winning a customer costs nothing",
+   * which are different claims.
    */
   projection: {
     /** Projected cost to win ONE paying client from this audience. Denominator of the return. */
     costPerPaidClientUsd: number | null;
     /** Dollars of lifetime revenue per dollar spent. Higher is better; > 1 means it pays for itself. */
     returnPerDollar: number | null;
+    /**
+     * That same cost as a SHARE of what the customer is worth, percent = 100 × costPerPaidClientUsd /
+     * lifetimeRevenueUsd = 100 / returnPerDollar. Below 100 means the audience pays for itself. Served
+     * rather than left to the consumer precisely BECAUSE it is the reciprocal: a browser dividing one
+     * of our fields into another is how two surfaces come to print two numbers for one statistic.
+     */
+    costOfAcquisitionPct: number | null;
   };
 }
 
@@ -140,13 +152,15 @@ export interface AudienceStatsEnvelope {
    * guess at it), and it is what a rows' return is read AGAINST ("this audience beats the brand").
    *
    * `lifetimeRevenueUsd` is the numerator behind every return on this payload, surfaced so a
-   * consumer can never pair a return with an LTR this projection did not use. All three null at cold
+   * consumer can never pair a return with an LTR this projection did not use. All four null at cold
    * start / no economics — never 0.
    */
   brandProjection: {
     lifetimeRevenueUsd: number | null;
     costPerPaidClientUsd: number | null;
     returnPerDollar: number | null;
+    /** 100 / returnPerDollar — the brand-level twin of a row's `costOfAcquisitionPct`. */
+    costOfAcquisitionPct: number | null;
   };
 }
 
@@ -779,6 +793,10 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
           brandProjected.lifetimeRevenueUsd,
           audienceProjected?.costPerPaidClientUsd ?? brandProjected.costPerPaidClientUsd,
         ),
+        costOfAcquisitionPct: costOfAcquisitionPct(
+          brandProjected.lifetimeRevenueUsd,
+          audienceProjected?.costPerPaidClientUsd ?? brandProjected.costPerPaidClientUsd,
+        ),
       },
     });
   }
@@ -800,6 +818,10 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
         lifetimeRevenueUsd: brandProjected.lifetimeRevenueUsd,
         costPerPaidClientUsd: brandProjected.costPerPaidClientUsd,
         returnPerDollar: returnPerDollar(
+          brandProjected.lifetimeRevenueUsd,
+          brandProjected.costPerPaidClientUsd,
+        ),
+        costOfAcquisitionPct: costOfAcquisitionPct(
           brandProjected.lifetimeRevenueUsd,
           brandProjected.costPerPaidClientUsd,
         ),
