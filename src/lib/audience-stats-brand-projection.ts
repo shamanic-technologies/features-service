@@ -74,7 +74,7 @@ import {
   type SalesEconomics,
 } from "./funnel-registry.js";
 import { projectedCostPerOutcome } from "./cost-engine.js";
-import { goalToProjectionInputs, funnelToProjectionInputs, outcomeCostForGoal, grainHasObservedOutcome } from "../routes/workflow-projection.js";
+import { goalToProjectionInputs, funnelToProjectionInputs, outcomeCostForGoal, paidClientCostForGoal, grainHasObservedOutcome } from "../routes/workflow-projection.js";
 import type { MeetingChannel, SalesFunnelKey } from "./sales-funnels.js";
 import { mergeFunnelEconomics } from "./declared-funnels.js";
 import {
@@ -94,6 +94,14 @@ export interface AudienceProjectedCostsUsd {
   cpfsUsd: number | null; // cost per form submission (projected)
   cpsUsd: number | null; // cost per signup (projected)
   cpsaleUsd: number | null; // cost per sale (goal=sales → best-channel; goal=websitePurchase → close funnel)
+  /**
+   * What it costs THIS audience to win one PAYING CLIENT — its own unit costs pushed through the
+   * queried goal's chain by the SAME `paidClientCostForGoal` `/workflow-projection` and
+   * `/funnel-ranking` route through. The denominator of the audience's return per dollar. null when
+   * the chain has no path to a paying client on the brand's declared rates (never 0, which would
+   * read as an infinite return).
+   */
+  costPerPaidClientUsd: number | null;
 }
 
 /**
@@ -119,6 +127,44 @@ export interface BrandProjectedParentsUsd {
    * `resolvePick` falls back from the audience grain to the brand grain. Empty at cold start.
    */
   byAudience: Map<string, AudienceProjectedCostsUsd>;
+  /**
+   * The brand's cost per PAYING CLIENT on the winning workflow — the brand-level twin of each
+   * audience's `costPerPaidClientUsd`, and the number an audience with no measured grain of its own
+   * inherits (the same brand-level fallback every derived column already takes).
+   */
+  costPerPaidClientUsd: number | null;
+  /**
+   * The brand's lifetime revenue per paying client, from the resolved (declared-funnel-priced)
+   * economics this projection was built on — the NUMERATOR of every return per dollar reported
+   * beside it. Surfaced so a consumer never has to source it from a second endpoint (and so cannot
+   * pair a return with an LTR the projection did not use). null at cold start / no economics.
+   */
+  lifetimeRevenueUsd: number | null;
+}
+
+/**
+ * RETURN PER DOLLAR — how many dollars of lifetime revenue one dollar of spend buys, for whatever
+ * grain the two inputs describe.
+ *
+ * This is the ONE definition of "return" in this service, shared verbatim with `/funnel-ranking`
+ * (which ranks a brand's declared funnels on it) so an audience's return and the brand's return are
+ * the same statistic at two grains — a brand cannot read two different returns on two pages.
+ *
+ * PROJECTED, not realized: it prices what the grain's OWN observed unit costs imply under the
+ * brand's OWN declared economics. That is what makes audiences comparable — cost per outcome alone
+ * ranks them by CHEAPNESS, so an audience that converts to nothing outranks an expensive one that
+ * pays.
+ *
+ * null (never 0) whenever either input is missing or non-positive: no economics, no path to a
+ * paying client, or a cost of 0 that would read as an infinite return.
+ */
+export function returnPerDollar(
+  lifetimeRevenueUsd: number | null,
+  costPerPaidClientUsd: number | null,
+): number | null {
+  if (lifetimeRevenueUsd == null || !(lifetimeRevenueUsd > 0)) return null;
+  if (costPerPaidClientUsd == null || !(costPerPaidClientUsd > 0)) return null;
+  return lifetimeRevenueUsd / costPerPaidClientUsd;
 }
 
 export interface ProjectionIdentity {
@@ -331,6 +377,8 @@ export async function fetchBrandProjectedParents(
       cpsaleUsd: null,
       cpsmUsd: null,
       byAudience: new Map(),
+      costPerPaidClientUsd: null,
+      lifetimeRevenueUsd: economics?.lifetimeRevenueUsd ?? null,
     };
   }
 
@@ -359,6 +407,16 @@ export async function fetchBrandProjectedParents(
       cpsUsd: p.costPerSignupUsd,
       cpsaleUsd,
       cpsmUsd: p.costPerMeetingBookedUsd,
+      // The grain's own path to a paying client, routed by the SAME function `/workflow-projection`
+      // and `/funnel-ranking` use — masked to the funnel's channel exactly like every column above.
+      costPerPaidClientUsd: paidClientCostForGoal(
+        econ!,
+        { clickUsd: cpcUsd, replyUsd: cpprUsd },
+        objective,
+        singleStepGoal,
+        formSubmissionGoal,
+        meetingChannel,
+      ),
     };
   };
   const brandLevel = funnelCosts(bestUnits);
@@ -400,8 +458,8 @@ export async function fetchBrandProjectedParents(
       if (audienceUnits == null || units.clickUsd < audienceUnits.clickUsd) audienceUnits = units;
     }
     if (!audienceUnits) continue;
-    const { cpfsUsd, cpsUsd, cpsaleUsd } = funnelCosts(audienceUnits);
-    byAudience.set(ev.audienceId, { cpfsUsd, cpsUsd, cpsaleUsd });
+    const { cpfsUsd, cpsUsd, cpsaleUsd, costPerPaidClientUsd } = funnelCosts(audienceUnits);
+    byAudience.set(ev.audienceId, { cpfsUsd, cpsUsd, cpsaleUsd, costPerPaidClientUsd });
   }
 
   return {
@@ -412,5 +470,7 @@ export async function fetchBrandProjectedParents(
     cpsaleUsd: brandLevel.cpsaleUsd,
     cpsmUsd: brandLevel.cpsmUsd,
     byAudience,
+    costPerPaidClientUsd: brandLevel.costPerPaidClientUsd,
+    lifetimeRevenueUsd: economics?.lifetimeRevenueUsd ?? null,
   };
 }
