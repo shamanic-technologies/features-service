@@ -115,6 +115,11 @@ the day either side changes.
   `lib/cost-economics.ts` (so a lib can build them without importing a route; `routes/revenue.ts`
   re-exports both, so no existing importer changed) and the two per-lead overlay loops →
   `lib/signal-overlays.ts` (one copy, so the two grains cannot disagree about whether a lead opened).
+- **Σ groups is the brand's spend to within sub-cent ROUNDING, not to the cent** — prod `75d7e3e8…`
+  reads $2,142.35 across 24 workflows against the Overview's $2,142.32. runs-service returns fractional
+  cents per group, and the Overview's spend rounds once per cost SOURCE (`fetchSpendBreakdown`) while
+  this read rounds once per (workflowSlug × costName) group. Same ledger, different grouping. Do NOT
+  "fix" it by re-basing the Overview's spend — that is the customer's number.
 - **The un-grouped and per-campaign responses are byte-unchanged** — they are the customer dashboard's
   Overview and Campaigns table. Guard: `routes/workflow-revenue-grain.test.ts` drives all three from ONE
   fixture (dynasty folding, the burned-it group, the single-workflow equality with the brand read, the
