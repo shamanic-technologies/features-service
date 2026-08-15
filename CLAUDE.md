@@ -65,6 +65,63 @@ either stated, or absent — and absent is a producer gap we surface, never fill
 - **NO ranking was re-scored.** This is a vocabulary + contract change: `rankDeclaredFunnels` and the
   return-per-dollar basis are untouched. (Set 2026-08-12.)
 
+## `GET /revenue?groupBy=workflow` — WHICH OF THE WORKFLOWS WE RAN FOR THIS BRAND MADE MONEY; a workflow is a DYNASTY, and BOTH legs are attributed by the producer that froze them
+
+The same REALIZED-money answer `/revenue` already gives for a brand and for its campaigns, at the grain
+of the workflow: one lean group per workflow the brand has run for the feature, carrying the four
+figures the brand read carries — `headline.totalPipelineUsd`, `costEconomics.roiMultiple`,
+`costOfAcquisitionPct`, `costPerAcquisitionUsd`. Nothing here is projected; the projected per-workflow
+surface is `/workflow-projection`, and the two must not be conflated.
+
+A consumer cannot roll this up from `?groupBy=campaignId`: prod brand `75d7e3e8…` runs ~20 campaigns
+over ~15 workflows, several workflows carrying 2–4 campaigns, so the rollup would mean summing pipeline
+and re-deriving the ratios in the browser — client-side money math that drifts from the brand Overview
+the day either side changes.
+
+- **A WORKFLOW IS A DYNASTY**, its identity across versions (`lib/workflow-revenue.ts`). Every other
+  surface here means a dynasty by "a workflow" (workflow-projection's three grains, the Strategy pick,
+  the cross-org per-workflow benchmark), and the consumer renders these figures BESIDE that
+  dynasty-keyed benchmark — a version-grain answer would be a second, unjoinable vocabulary.
+  `workflowSlugs` lists what was folded in, so nothing is hidden.
+- **A slug workflow-service does not describe is its OWN dynasty of one** — never dropped, never folded
+  on a guess. Do NOT reuse `buildUpgradeChains`/`aggregateAcrossChains` here: those are built from
+  ACTIVE workflows and emit only chains with runs, so a RETIRED lineage vanishes with its spend — and a
+  retired workflow is exactly the one a "what burned money" question is asking about. workflow-service
+  unreachable ⇒ every slug is its own dynasty (fail-SOFT, loud log): a poorer GROUPING of the same
+  correct numbers, never a fabricated one.
+- **NEVER attribute either leg from the campaign row's workflow.** campaign-service now SWITCHES the
+  workflow of the campaign already alive on an identity instead of opening a new row, so its current
+  workflow mis-attributes every lead and every dollar spent before the switch. Spend comes from
+  runs-service `groupBy=workflowSlug` (`fetchRunsCostCentsByWorkflowSlug` — byte the same request
+  `fetchRunsCostCents` already makes, kept SPLIT instead of summed, same rounding, so Σ slugs IS the
+  brand's number to the cent); leads come from the `workflowSlug` lead-service froze on each
+  `leads_campaigns` row at serve time, carried onto `EnginePerson` exactly as `campaignId` is.
+- **ONE brand-wide lead read, ONE cost read, ONE overlay pair, then N pure engine passes** — the shape
+  `/funnel-ranking` uses to rank N funnels off one fetch. Do NOT reuse the per-campaign machinery (one
+  `computeFeatureRevenue` per group): that re-reads the brand's lead page once per workflow, under a
+  384 MB heap.
+- **A single-workflow brand reads identically at both grains, by construction** (same request, same
+  engine, same brand-priced economics — a workflow states no funnel of its own). Across SEVERAL
+  workflows the groups do NOT sum to the brand: a lead served under two workflows is ONE lead to the
+  brand and belongs to both, and the engine's per-organisation combination is not additive across
+  partitions. Same property the campaign grain already has — counting people, not an error to correct.
+- **A lead the producer served under NO workflow is in NO group**, and unattributed spend is in no group
+  either (loud log naming the cents). Parking either on a workflow would invent an attribution nobody
+  recorded.
+- **A workflow that spent and returned nothing reports `roiMultiple: 0`, not null** — that is a measured
+  answer and the one the staff member is hunting. `costPerAcquisitionUsd` is null there (it won nobody);
+  the pipeline is null only when there is no funnel wired / no economics at all.
+- Two extractions came with it, both pure moves: `buildCostEconomics` + `CostEconomics` →
+  `lib/cost-economics.ts` (so a lib can build them without importing a route; `routes/revenue.ts`
+  re-exports both, so no existing importer changed) and the two per-lead overlay loops →
+  `lib/signal-overlays.ts` (one copy, so the two grains cannot disagree about whether a lead opened).
+- **The un-grouped and per-campaign responses are byte-unchanged** — they are the customer dashboard's
+  Overview and Campaigns table. Guard: `routes/workflow-revenue-grain.test.ts` drives all three from ONE
+  fixture (dynasty folding, the burned-it group, the single-workflow equality with the brand read, the
+  unattributed lead, the undescribed lineage, the workflow-service degrade, and the two untouched
+  shapes). The api-service gateway already forwards `groupBy` on this read — no gateway change.
+  (Set 2026-08-15.)
+
 ## A campaign's figures are its IDENTITY's figures — (org, brand, sales funnel, acquisition channel), read from campaign-service, never re-derived
 
 campaign-service used to create a NEW campaign row every time workflow selection switched workflows,

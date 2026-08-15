@@ -457,6 +457,30 @@ const featureRevenueGroupedResponseSchema = z.object({
 
 const featureRevenueGroupedResponseRef = registry.register("FeatureRevenueGroupedResponse", featureRevenueGroupedResponseSchema);
 
+// Per-WORKFLOW variant — returned only when ?groupBy=workflow. One LEAN group per workflow the brand
+// has run for this feature, carrying the SAME four realized-money figures the brand read carries:
+// pipeline revenue, ROI, cost of acquisition as a %, and the dollar cost per acquisition. REALIZED,
+// never projected. A workflow is a DYNASTY (its identity across versions), because that is what every
+// other surface here means by "a workflow" and what the cross-org per-workflow benchmark is keyed on.
+const revenueWorkflowGroupSchema = z.object({
+  workflowDynastySlug: z.string().describe("The workflow's identity across its versions — the key to join a cross-org per-workflow benchmark on. A slug workflow-service does not describe is its own dynasty of one (never folded onto a neighbour, never dropped: a retired lineage is exactly the workflow a 'what burned money' question is about)."),
+  workflowDynastyName: z.string().nullable().describe("Human name of the dynasty. Null when workflow-service does not describe this slug."),
+  workflowSlugs: z.array(z.string()).describe("Every versioned workflow slug folded into this group, ascending. Upgrading a workflow to v2 does not make it a different workflow that earned nothing — nothing is hidden, the versions are listed."),
+  headline: z.object({
+    totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline for the leads this workflow served. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start) — null is 'we could not price this', never 'it returned nothing'."),
+    economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used, as on the brand read. Null when the pipeline is null."),
+  }),
+  costEconomics: revenueCostEconomicsSchema,
+});
+
+const featureRevenueByWorkflowResponseSchema = z.object({
+  featureSlug: z.string(),
+  groupBy: z.literal("workflow"),
+  groups: z.array(revenueWorkflowGroupSchema),
+});
+
+const featureRevenueByWorkflowResponseRef = registry.register("FeatureRevenueByWorkflowResponse", featureRevenueByWorkflowResponseSchema);
+
 registry.registerPath({
   method: "get",
   path: "/features/{featureSlug}/revenue",
@@ -471,7 +495,8 @@ registry.registerPath({
     "When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. " +
     "costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition %, ROI multiple, and costPerAcquisitionUsd — the dollar cost of winning one customer, now answered on this default un-lensed brand read and equal to the lensed costPerConversionUsd for the same scope. " +
     "With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature " +
-    "(campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call.",
+    "(campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call. " +
+    "With ?groupBy=workflow it is one LEAN group per WORKFLOW DYNASTY the brand has run (workflowDynastySlug + workflowDynastyName + workflowSlugs + headline.totalPipelineUsd + costEconomics), answering which of the workflows we ran for this brand made money and which burned it.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
@@ -479,14 +504,14 @@ registry.registerPath({
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — revenue is brand-scoped."),
       campaignId: z.string().optional().describe("Optional campaign drill-down (ignored when groupBy=campaignId)."),
-      groupBy: z.enum(["campaignId"]).optional().describe("When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview."),
+      groupBy: z.enum(["campaignId", "workflow"]).optional().describe("When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview. When 'workflow', return one lean group per WORKFLOW DYNASTY the brand has run for the feature, carrying the same four realized-money figures (pipeline revenue, ROI, cost-of-acquisition %, $ per acquisition). Both legs are attributed by the producer that froze them — runs-service's per-workflow spend and the workflowSlug lead-service froze on each served lead — never inferred from the campaign row's current workflow (a campaign switches workflow while keeping its id). A brand whose spend all sits on one workflow reads the same figures at both grains; across several workflows the groups do NOT sum to the brand, because a lead served under two workflows is one lead to the brand and belongs to both."),
       lens: z.enum(["signups", "booked-meetings", "website_purchase", "sales", "website_visits", "positive_replies"]).optional().describe("Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), website_purchase=click and/or positive reply, multi-step self-serve/meeting close (RENAMED from the former `sales` lens; legacy `purchase` spelling still accepted), sales=COMBINED goal — click and/or positive reply, per-lead sale probability = probabilistic OR of visit→paid (P=visitToPaidClient) and reply→paid (P=replyToPaidClient) (a lead converts at most once; ≤1×LTR), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged."),
       funnel: z.string().optional().describe("The SALES FUNNEL the spend block's cost-per-outcome columns are priced on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`). Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. Omitted → the brand's FIRST DECLARED funnel in catalogue order (a deterministic pick over the brand's own declarations, never a default chain); a brand that has declared nothing keeps OBSERVED columns (null at 0 outcomes), never a substituted chain. A value the brand never declared is ignored in favour of that same pick. An unrecognised value is a 400."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (spend block, costEconomics actualCostUsd, CAC, ROI, cps/cpsm/cpfs). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (counts, rates, pipeline revenue) are identical either way."),
     }),
   },
   responses: {
-    200: { description: "Feature revenue (overview, or grouped when groupBy=campaignId; lensed when ?lens= is set)", content: { "application/json": { schema: z.union([featureRevenueResponseRef, featureRevenueGroupedResponseRef]) } } },
+    200: { description: "Feature revenue (overview, or grouped when groupBy=campaignId / groupBy=workflow; lensed when ?lens= is set)", content: { "application/json": { schema: z.union([featureRevenueResponseRef, featureRevenueGroupedResponseRef, featureRevenueByWorkflowResponseRef]) } } },
     400: { description: "Missing brandId, invalid lens, invalid funnel, or invalid pricing value", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },

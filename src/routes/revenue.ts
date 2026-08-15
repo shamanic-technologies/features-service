@@ -47,76 +47,16 @@ import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
 import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
 import { fetchBrandActualSpendByDay } from "../lib/brand-spend-by-day-client.js";
+import { buildCostEconomics, type CostEconomics } from "../lib/cost-economics.js";
+import { applySignalOverlays } from "../lib/signal-overlays.js";
+import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
 
 const router = Router();
 
-/**
- * Derived cost economics for the brand(+campaign), feature-scoped. Always present.
- *
- * ROI / CAC are computed on REALIZED spend — `actualCostUsd` carries ACTUAL (billed) cost ONLY, NOT
- * the committed total (which includes provisioned holds). Naming follows the service-wide
- * total/actual/provisioned convention: a forward-looking "money reserved" figure (the `spend` block's
- * total…) must never inflate ROI/CAC, so the field is named `actualCostUsd` to make the realized basis
- * unambiguous and distinct from the committed `total…` figures. (Same source as /stats
- * systemStats.actualCostInUsdCents and the `spend` block's actualSpentCents.)
- *   - actualCostUsd:         ACTUAL (billed) run cost in dollars (excludes provisioned holds), >= 0.
- *   - costOfAcquisitionPct:  (actualCostUsd / totalPipelineUsd) * 100; null when pipeline is null OR 0.
- *   - roiMultiple:           totalPipelineUsd / actualCostUsd; null when cost is 0 OR pipeline is null.
- *   - costPerAcquisitionUsd: what it cost to win ONE customer, for whatever scope this body describes.
- *                            Present on EVERY body, the un-lensed brand read included — see below.
- *   - expectedConversions:   LENS ONLY — sum of per-lead conversion probability (decimal) across the
- *                            lensed leads (totalPipelineUsd = expectedConversions × LTR). Absent off-lens.
- *   - costPerConversionUsd:  LENS ONLY — actualCostUsd / expectedConversions; null when expectedConversions
- *                            is 0. Absent off-lens.
- *
- * COST PER ACQUISITION IS NOT A NEW COMPUTATION — it was already implied by two fields sitting side by
- * side. A brand's pipeline is `expected paying clients × lifetime revenue`, so the expected client
- * COUNT is `totalPipelineUsd / lifetimeRevenueUsd` and the dollar cost of one of them is
- * `actualCostUsd ÷ that count` = `(costOfAcquisitionPct / 100) × lifetimeRevenueUsd` = `LTR ÷
- * roiMultiple`. The three are one statement in three units, which is exactly why the Overview can show
- * Pipeline / ROI / %CAC and then render a dash for $CAC and look broken rather than scoped.
- *
- * It was previously reachable only on a `?lens=` read (as `costPerConversionUsd`), and the brand
- * Overview is not lensed — it is the whole brand, every funnel. The identity above is why the un-lensed
- * figure MATCHES the lensed one for the same scope instead of being a second opinion: the lens divides
- * the same realized spend by `Σ per-lead probability`, and that sum IS `lensPipeline / LTR`. Same
- * economics in, same dollars out, and `revenue.test.ts` drives both from one fixture to keep it so.
- *
- * NULL, never 0, when the brand states no lifetime revenue, when it is 0, or when the pipeline is
- * null/0 — "we could not measure this" and "a customer costs nothing" are different statements.
- */
-export interface CostEconomics {
-  actualCostUsd: number;
-  costOfAcquisitionPct: number | null;
-  roiMultiple: number | null;
-  /** REALIZED — actual spend ÷ expected paying clients. null when unmeasurable; never 0 as a stand-in. */
-  costPerAcquisitionUsd: number | null;
-  expectedConversions?: number;
-  costPerConversionUsd?: number | null;
-}
-
-export function buildCostEconomics(
-  actualCostInUsdCents: number,
-  totalPipelineUsd: number | null,
-  // The brand's lifetime revenue per paying client, from the SAME resolved (declared-funnel-priced)
-  // economics that produced `totalPipelineUsd`. Omitted on the paths that have no economics at all
-  // (no funnel wired / cold start) → costPerAcquisitionUsd is null, which is the honest answer there.
-  lifetimeRevenueUsd?: number | null,
-): CostEconomics {
-  const actualCostUsd = actualCostInUsdCents / 100;
-  const costOfAcquisitionPct =
-    totalPipelineUsd === null || totalPipelineUsd === 0 ? null : (actualCostUsd / totalPipelineUsd) * 100;
-  const roiMultiple =
-    actualCostUsd === 0 || totalPipelineUsd === null ? null : totalPipelineUsd / actualCostUsd;
-  // expected paying clients = pipeline / LTR; a 0 or absent LTR leaves the count undefined, not zero.
-  const expectedPaidClients =
-    totalPipelineUsd === null || lifetimeRevenueUsd == null || !(lifetimeRevenueUsd > 0)
-      ? null
-      : totalPipelineUsd / lifetimeRevenueUsd;
-  const costPerAcquisitionUsd =
-    expectedPaidClients === null || expectedPaidClients === 0 ? null : actualCostUsd / expectedPaidClients;
-  return { actualCostUsd, costOfAcquisitionPct, roiMultiple, costPerAcquisitionUsd };
-}
+// The derived cost economics every grain reports (brand, campaign identity, workflow) now live in
+// `lib/cost-economics.ts` so a lib can build them without importing a route. Re-exported here because
+// this module is where every existing consumer imports them from.
+export { buildCostEconomics, type CostEconomics } from "../lib/cost-economics.js";
 
 /**
  * Canonical spend block for the Overview "Outreach & Conversions" card — every number the card shows
@@ -1042,39 +982,9 @@ export async function computeFeatureRevenue(
     }),
   ]);
 
-  if (timestamps) {
-    for (const person of persons) {
-      const dates = person.email ? timestamps.get(person.email) : undefined;
-      if (dates) {
-        person.signalDates = {
-          contacted: dates.contacted,
-          sent: dates.sent,
-          delivered: dates.delivered,
-          open: dates.open,
-          clicked: dates.clicked,
-          positiveReply: dates.positiveReply,
-        };
-        // `open` has no boolean in the leads overlay — a known open timestamp IS the signal.
-        if (dates.open) person.signals.open = true;
-      }
-    }
-  }
-
-  if (quals) {
-    for (const person of persons) {
-      const q = person.email ? quals.get(person.email) : undefined;
-      if (!q) continue;
-      person.signalDates = person.signalDates ?? {};
-      if (q.meetingBookedAt) {
-        person.signals.meeting = true;
-        person.signalDates.meeting = q.meetingBookedAt;
-      }
-      if (q.closedAt) {
-        person.signals.closeWin = true;
-        person.signalDates.closeWin = q.closedAt;
-      }
-    }
-  }
+  // The identical merge the per-workflow grain applies (`lib/signal-overlays.ts`) — one copy, so the
+  // two grains can never disagree about whether a lead opened, or when.
+  applySignalOverlays(persons, timestamps, quals);
 
   // Per-lead SIGNUP / FORM-SUBMISSION outcome attribution (lead-service conversion tracker). The
   // producer matches each website conversion back to a lead we emailed and exposes the DISTINCT
@@ -1238,6 +1148,40 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       const stated = identityFunnelKey ? matchSalesFunnelKey(identityFunnelKey) : null;
       return stated ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, stated) : brandPriced;
     };
+
+    // ── Grouped: one lean group per WORKFLOW the brand has run ──────────────────
+    //
+    // The same realized-money question this endpoint answers for a brand and for its campaigns, at
+    // the grain of the workflow: what came back, what it cost, and the two divided into each other.
+    // A workflow is a DYNASTY (its identity across versions) and both legs are attributed by the
+    // producer that froze them — see `lib/workflow-revenue.ts` for why neither may be inferred from
+    // the campaign row. Realized on both legs; nothing here is projected.
+    if (groupBy === "workflow") {
+      const payload = await servedCached({
+        view: "revenue-by-workflow",
+        // No `campaignId` and no `funnel`: the grain is the brand's whole spend, priced on the
+        // brand's own declared chains (a workflow states none of its own). `econ` + `decl` carry the
+        // economics + declaration the pipeline is priced on, exactly as the sibling grains do.
+        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "workflow", pricing, econ, decl }),
+        orgId,
+        compute: async () => {
+          const groups = await computeWorkflowRevenueGroups({
+            featureSlug,
+            brandId,
+            funnel,
+            headers,
+            pricing,
+            priced: brandPriced ?? null,
+          });
+
+          traceEvent(runId, { service: "features-service", event: "feature-revenue-by-workflow", detail: `featureSlug=${featureSlug}, brandId=${brandId}, workflows=${groups.length}` }, req.headers).catch(() => {});
+
+          return { featureSlug, groupBy: "workflow", groups };
+        },
+      });
+
+      return res.json(payload);
+    }
 
     // ── Grouped: one lean group per campaign (dashboard campaigns list) ──────────
     // Served through the Gold snapshot cache (O(1) read; the fan-out recomputes off-path ~per TTL).
