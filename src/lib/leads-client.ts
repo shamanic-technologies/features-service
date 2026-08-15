@@ -43,6 +43,13 @@ interface LeadRow {
   leadId: string;
   /** The campaign the row was served under — the key a campaign family is filtered on. */
   campaignId?: string | null;
+  /**
+   * The WORKFLOW the row was served under, as lead-service froze it on the `leads_campaigns` row at
+   * serve time. The producer owns this attribution — it is never inferred here from the campaign's
+   * CURRENT workflow, which a campaign switches while keeping its id (so the campaign row's workflow
+   * would mis-attribute every lead served before the switch).
+   */
+  workflowSlug?: string | null;
   email?: string | null;
   // Delivery-status overlay (brand- or campaign-scoped depending on the query params).
   contacted?: boolean;
@@ -174,6 +181,7 @@ export async function fetchLeadsForRevenue(
     return {
       leadId: row.leadId,
       campaignId: row.campaignId ?? null,
+      workflowSlug: row.workflowSlug ?? null,
       email: row.email ?? null,
       firstName: row.lead?.firstName ?? null,
       lastName: row.lead?.lastName ?? null,

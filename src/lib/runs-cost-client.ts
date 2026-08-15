@@ -83,6 +83,80 @@ export async function fetchRunsCostCents(
 }
 
 /**
+ * The SAME ACTUAL brand+feature spend `fetchRunsCostCents` sums, kept SPLIT per versioned
+ * `workflowSlug` instead of totalled — the cost leg of `GET /revenue?groupBy=workflow`.
+ *
+ * It is deliberately the identical request (`groupBy=workflowSlug`, same brand + feature-lineage
+ * filter, same `selectCostCents` gross/net selection, same per-group rounding); only the final `+=`
+ * differs. So Σ over every slug here IS the number the brand read reports, to the cent, and a brand
+ * whose spend all sits on one workflow reads the same figure at both grains by construction rather
+ * than by a correction.
+ *
+ * Brand-wide only (no campaign scope): the workflow grain answers "of everything we ran for this
+ * brand, which workflows made money", which is the brand's whole spend.
+ *
+ * Fail-loud, for the same reason as its sibling: a swallowed error would fake $0 cost and print an
+ * infinite ROI for a workflow that burned money.
+ */
+export async function fetchRunsCostCentsByWorkflowSlug(
+  brandId: string,
+  featureSlug: string,
+  headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
+  pricing: Pricing = "gross",
+): Promise<Map<string, number>> {
+  const url = process.env.RUNS_SERVICE_URL;
+  const apiKey = process.env.RUNS_SERVICE_API_KEY;
+  if (!url || !apiKey) {
+    throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
+  }
+
+  const params = new URLSearchParams({ groupBy: "workflowSlug", brandId, featureSlugs: featureSlug });
+
+  const reqHeaders: Record<string, string> = {
+    "x-api-key": apiKey,
+    "x-org-id": headers.orgId,
+    "x-brand-id": brandId,
+  };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+  if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
+
+  const response = await fetchWithRetry(`${url}/v1/stats/costs?${params}`, { headers: reqHeaders });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`runs-service /v1/stats/costs (groupBy=workflowSlug) failed (${response.status}): ${text}`);
+  }
+
+  const data = (await response.json()) as {
+    groups?: Array<Record<string, unknown> & { dimensions?: Record<string, string | null> }>;
+  };
+  if (!Array.isArray(data.groups)) {
+    throw new Error("runs-service /v1/stats/costs returned no groups array");
+  }
+
+  const bySlug = new Map<string, number>();
+  // Spend runs-service could not attribute to a workflow at all. It belongs to no workflow, so it is
+  // reported to NO group rather than parked on one — and said out loud, because it is the one thing
+  // that can make the groups sum to less than the brand total.
+  let unattributedCents = 0;
+  for (const group of data.groups) {
+    const cents = Math.round(selectCostCents(group, "actualCostInUsdCents", pricing));
+    const slug = group.dimensions?.workflowSlug;
+    if (!slug || slug === "__total__") {
+      unattributedCents += cents;
+      continue;
+    }
+    bySlug.set(slug, (bySlug.get(slug) ?? 0) + cents);
+  }
+  if (unattributedCents !== 0) {
+    console.warn(
+      `[features-service] ${unattributedCents} cents of ${brandId}'s ${featureSlug} spend carry no workflow and are in no per-workflow group`,
+    );
+  }
+  return bySlug;
+}
+
+/**
  * Enumerate the campaignIds that have runs for a brand, scoped to one feature's workflow
  * lineage — the same runs-service source `/stats` uses for its campaignId dimension. Drives
  * GET /features/:slug/revenue?groupBy=campaignId: one group per campaign returned here.
