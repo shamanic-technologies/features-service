@@ -116,6 +116,14 @@ export interface EnginePerson {
    * because a deduped person no longer belongs to a single campaign.
    */
   campaignId?: string | null;
+  /**
+   * The WORKFLOW the row was served under, frozen on the producer's `leads_campaigns` row at serve
+   * time. Carried for the SAME reason as `campaignId` above and with the same rules: it lets a grain
+   * partition persons BEFORE they are deduped, the engine never reads it (it can never affect EV),
+   * and `dedupPersonsByLead` keeps the first row's value because a deduped person no longer belongs
+   * to a single workflow. Null when the producer states none.
+   */
+  workflowSlug?: string | null;
   /** Which funnel signals fired for this person (e.g. { clicked: true, positiveReply: false }). */
   signals: Record<string, boolean>;
   /** ISO timestamp of each signal's first occurrence, when known (null otherwise). */
