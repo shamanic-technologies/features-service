@@ -459,8 +459,9 @@ const featureRevenueGroupedResponseRef = registry.register("FeatureRevenueGroupe
 
 // Per-WORKFLOW variant — returned only when ?groupBy=workflow. One LEAN group per workflow the brand
 // has run for this feature, carrying the SAME four realized-money figures the brand read carries:
-// pipeline revenue, ROI, cost of acquisition as a %, and the dollar cost per acquisition. REALIZED,
-// never projected. A workflow is a DYNASTY (its identity across versions), because that is what every
+// pipeline revenue, ROI, cost of acquisition as a %, and the dollar cost per acquisition — plus, in
+// `outcomes`, the volume half the brand read also answers (outreach, visits, positive replies,
+// realized spend, cost per visit, cost per reply). REALIZED, never projected. A workflow is a DYNASTY (its identity across versions), because that is what every
 // other surface here means by "a workflow" and what the cross-org per-workflow benchmark is keyed on.
 const revenueWorkflowGroupSchema = z.object({
   workflowDynastySlug: z.string().describe("The workflow's identity across its versions — the key to join a cross-org per-workflow benchmark on. A slug workflow-service does not describe is its own dynasty of one (never folded onto a neighbour, never dropped: a retired lineage is exactly the workflow a 'what burned money' question is about)."),
@@ -471,6 +472,16 @@ const revenueWorkflowGroupSchema = z.object({
     economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used, as on the brand read. Null when the pipeline is null."),
   }),
   costEconomics: revenueCostEconomicsSchema,
+  outcomes: z
+    .object({
+      recipientsContacted: z.number().describe("Distinct leads this workflow reached for this brand — the workflow-grain twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes."),
+      recipientsClicked: z.number().describe("Distinct leads that visited the site off this workflow — twin of recipientsClicked.total."),
+      recipientsRepliesPositive: z.number().describe("Distinct leads that replied positively — twin of recipientsRepliesPositive.total."),
+      actualSpentCents: z.number().describe("REALIZED (actual, billed) spend attributed to this dynasty, in cents — costEconomics.actualCostUsd in the unit the two rates are denominated in. Cost is attributed by runs-service's own per-workflow split, never inferred from the campaign row's current workflow."),
+      cpcCents: z.number().nullable().describe("Realized spend ÷ website visits, in cents. OBSERVED accounting: null when this workflow bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection per workflow lives on /workflow-projection)."),
+      cpprCents: z.number().nullable().describe("Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."),
+    })
+    .describe("The VOLUME half of this workflow's answer — this brand's own outreach through this dynasty and what it realized, the same six figures the un-grouped brand read gives for the whole brand. Every figure rides REALIZED (actual) spend, the basis costEconomics rides, so cpcCents × recipientsClicked ≈ actualSpentCents by construction. That is a deliberate divergence from the brand read's `spend` block, whose cost-per-outcome columns are COMMITTED and floored against a fleet benchmark. Counts are distinct leads: a lead served under two workflows is one lead to the brand and belongs to both groups, so the groups do not sum to the brand (the same counting-people property the money half carries); a lead served under no workflow is in no group."),
 });
 
 const featureRevenueByWorkflowResponseSchema = z.object({
@@ -496,7 +507,7 @@ registry.registerPath({
     "costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition %, ROI multiple, and costPerAcquisitionUsd — the dollar cost of winning one customer, now answered on this default un-lensed brand read and equal to the lensed costPerConversionUsd for the same scope. " +
     "With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature " +
     "(campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call. " +
-    "With ?groupBy=workflow it is one LEAN group per WORKFLOW DYNASTY the brand has run (workflowDynastySlug + workflowDynastyName + workflowSlugs + headline.totalPipelineUsd + costEconomics), answering which of the workflows we ran for this brand made money and which burned it.",
+    "With ?groupBy=workflow it is one LEAN group per WORKFLOW DYNASTY the brand has run (workflowDynastySlug + workflowDynastyName + workflowSlugs + headline.totalPipelineUsd + costEconomics + outcomes), answering which of the workflows we ran for this brand made money and which burned it — and, in `outcomes`, what that money was made of: this brand's own outreach volume, website visits, positive replies, realized spend and the cost of a visit and of a reply, per workflow.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,

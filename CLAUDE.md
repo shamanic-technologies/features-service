@@ -115,6 +115,30 @@ the day either side changes.
   `lib/cost-economics.ts` (so a lib can build them without importing a route; `routes/revenue.ts`
   re-exports both, so no existing importer changed) and the two per-lead overlay loops →
   `lib/signal-overlays.ts` (one copy, so the two grains cannot disagree about whether a lead opened).
+- **Σ groups is the brand's spend to within sub-cent ROUNDING, not to the cent** — prod `75d7e3e8…`
+  reads $2,142.35 across 24 workflows against the Overview's $2,142.32. runs-service returns fractional
+  cents per group, and the Overview's spend rounds once per cost SOURCE (`fetchSpendBreakdown`) while
+  this read rounds once per (workflowSlug × costName) group. Same ledger, different grouping. Do NOT
+  "fix" it by re-basing the Overview's spend — that is the customer's number.
+- **`outcomes` is the VOLUME half, and it rides ONE REALIZED basis.** The money block says what came
+  back; `outcomes` says what it was made of — `recipientsContacted` / `recipientsClicked` /
+  `recipientsRepliesPositive` (distinct leads), `actualSpentCents`, `cpcCents`, `cpprCents`. The same
+  six answers the un-grouped brand read gives for the whole brand, absent per workflow until now and
+  underivable by a consumer (a group is a DYNASTY, so a browser would sum versions and re-divide —
+  client-side money math). Every figure rides **REALIZED (actual, billed)** spend, the basis
+  `costEconomics` already rides, so `cpcCents × recipientsClicked ≈ actualSpentCents` by construction
+  and a workflow's ROI and its cost per click are two views of one number. That is a DELIBERATE
+  divergence from the brand read's `spend` block, whose cost-per-outcome columns are **COMMITTED** and
+  floored against a fleet benchmark: a committed numerator inside a group whose ROI is realized would
+  be two currencies in one block. The rates are **OBSERVED** (accounting) — a workflow with spend and
+  no outcome of a kind reports **null**, never 0 and never a floored estimate; projection per workflow
+  already has its own surface (`/workflow-projection`). Counts read off the SAME per-lead signals the
+  brand's `recipients*` series read, after the engine's own `dedupPersonsByLead`, so a single-workflow
+  brand reads its brand figure here by construction and a lead re-served under two VERSIONS counts
+  once. Across several workflows they do NOT sum to the brand (a lead served under two workflows is
+  one lead to the brand and belongs to both) — the counting-people property the money half carries.
+  The volume half is funnel-INDEPENDENT: how many people a workflow reached is a measured fact, so it
+  is answered even for a brand with no funnel wired, exactly the brand whose money half is null.
 - **The un-grouped and per-campaign responses are byte-unchanged** — they are the customer dashboard's
   Overview and Campaigns table. Guard: `routes/workflow-revenue-grain.test.ts` drives all three from ONE
   fixture (dynasty folding, the burned-it group, the single-workflow equality with the brand read, the
