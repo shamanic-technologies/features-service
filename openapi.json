@@ -2009,6 +2009,46 @@
                     "roiMultiple",
                     "costPerAcquisitionUsd"
                   ]
+                },
+                "outcomes": {
+                  "type": "object",
+                  "properties": {
+                    "recipientsContacted": {
+                      "type": "number",
+                      "description": "Distinct leads this workflow reached for this brand — the workflow-grain twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes."
+                    },
+                    "recipientsClicked": {
+                      "type": "number",
+                      "description": "Distinct leads that visited the site off this workflow — twin of recipientsClicked.total."
+                    },
+                    "recipientsRepliesPositive": {
+                      "type": "number",
+                      "description": "Distinct leads that replied positively — twin of recipientsRepliesPositive.total."
+                    },
+                    "actualSpentCents": {
+                      "type": "number",
+                      "description": "REALIZED (actual, billed) spend attributed to this dynasty, in cents — costEconomics.actualCostUsd in the unit the two rates are denominated in. Cost is attributed by runs-service's own per-workflow split, never inferred from the campaign row's current workflow."
+                    },
+                    "cpcCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Realized spend ÷ website visits, in cents. OBSERVED accounting: null when this workflow bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection per workflow lives on /workflow-projection)."
+                    },
+                    "cpprCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."
+                    }
+                  },
+                  "required": [
+                    "recipientsContacted",
+                    "recipientsClicked",
+                    "recipientsRepliesPositive",
+                    "actualSpentCents",
+                    "cpcCents",
+                    "cpprCents"
+                  ],
+                  "description": "The VOLUME half of this workflow's answer — this brand's own outreach through this dynasty and what it realized, the same six figures the un-grouped brand read gives for the whole brand. Every figure rides REALIZED (actual) spend, the basis costEconomics rides, so cpcCents × recipientsClicked ≈ actualSpentCents by construction. That is a deliberate divergence from the brand read's `spend` block, whose cost-per-outcome columns are COMMITTED and floored against a fleet benchmark. Counts are distinct leads: a lead served under two workflows is one lead to the brand and belongs to both groups, so the groups do not sum to the brand (the same counting-people property the money half carries); a lead served under no workflow is in no group."
                 }
               },
               "required": [
@@ -2016,7 +2056,8 @@
                 "workflowDynastyName",
                 "workflowSlugs",
                 "headline",
-                "costEconomics"
+                "costEconomics",
+                "outcomes"
               ]
             }
           }
@@ -6676,7 +6717,7 @@
     "/features/{featureSlug}/revenue": {
       "get": {
         "summary": "Expected pipeline revenue for a feature",
-        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events and the date columns are dated from the per-lead event timestamps (email-gateway + instantly manual qualifications); an outcome with no timestamp is counted in the headline but placed on no day. roiHistory charts return on spend across the brand's whole life (cumulative on both legs, realized on both legs, terminating on costEconomics.roiMultiple). totalPipelineUsd is null when no funnel is wired for the feature, or the brand has no saved economics AND no cross-brand average exists (cold start). When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition %, ROI multiple, and costPerAcquisitionUsd — the dollar cost of winning one customer, now answered on this default un-lensed brand read and equal to the lensed costPerConversionUsd for the same scope. With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature (campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call. With ?groupBy=workflow it is one LEAN group per WORKFLOW DYNASTY the brand has run (workflowDynastySlug + workflowDynastyName + workflowSlugs + headline.totalPipelineUsd + costEconomics), answering which of the workflows we ran for this brand made money and which burned it.",
+        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events and the date columns are dated from the per-lead event timestamps (email-gateway + instantly manual qualifications); an outcome with no timestamp is counted in the headline but placed on no day. roiHistory charts return on spend across the brand's whole life (cumulative on both legs, realized on both legs, terminating on costEconomics.roiMultiple). totalPipelineUsd is null when no funnel is wired for the feature, or the brand has no saved economics AND no cross-brand average exists (cold start). When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition %, ROI multiple, and costPerAcquisitionUsd — the dollar cost of winning one customer, now answered on this default un-lensed brand read and equal to the lensed costPerConversionUsd for the same scope. With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature (campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call. With ?groupBy=workflow it is one LEAN group per WORKFLOW DYNASTY the brand has run (workflowDynastySlug + workflowDynastyName + workflowSlugs + headline.totalPipelineUsd + costEconomics + outcomes), answering which of the workflows we ran for this brand made money and which burned it — and, in `outcomes`, what that money was made of: this brand's own outreach volume, website visits, positive replies, realized spend and the cost of a visit and of a reply, per workflow.",
         "tags": [
           "Stats"
         ],
