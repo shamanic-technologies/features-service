@@ -50,12 +50,31 @@
  * both workflows, and the engine's per-organisation combination is not additive across partitions.
  * That is the same property the per-campaign grain already has, and it is a property of counting
  * people rather than an error to correct.
+ *
+ * ── THE VOLUME HALF, AND WHY IT IS ONE REALIZED BASIS ───────────────────────────────────────────
+ *
+ * The money block answers what came back. `outcomes` answers what it was made of: how many people
+ * this workflow reached, how many of them visited the site, how many replied positively, what each
+ * of those cost, and the realized dollars behind all of it. Same six answers the un-grouped brand
+ * read already gives for the whole brand — absent per workflow until now, and underivable by a
+ * consumer (a group is a DYNASTY, so a browser would have to sum versions and re-divide).
+ *
+ * EVERY figure in a group rides REALIZED (ACTUAL, billed) spend — the basis `costEconomics` already
+ * rides. So `cpcCents × recipientsClicked ≈ actualSpentCents` by construction, and a workflow's ROI
+ * and its cost per click are two views of one number. This is a DELIBERATE divergence from the brand
+ * read's `spend` block, whose cost-per-outcome columns are denominated in COMMITTED spend (the
+ * Overview card shows reserved money) and floored against a fleet benchmark: a committed numerator
+ * inside a group whose ROI is realized would be two currencies in one block. The rates here are
+ * OBSERVED — ACCOUNTING, "what did this actually cost", so a workflow with spend and no outcome of a
+ * kind reports NULL for that kind's rate ("we could not measure this"), never 0 and never a floored
+ * estimate. Projection per workflow already has its own surface: `/workflow-projection`.
  */
 import { restrictPathsToDeclaredLegs, type EconomicsSource, type getFunnel } from "./funnel-registry.js";
 import type { EffectiveEconomics } from "./sales-economics-client.js";
 import type { SalesFunnelKey } from "./sales-funnels.js";
 import { buildCostEconomics, type CostEconomics } from "./cost-economics.js";
-import { computeRevenue, type EnginePerson } from "./revenue-engine.js";
+import { computeRevenue, dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
+import { observedCostPerOutcome } from "./cost-engine.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { fetchRunsCostCentsByWorkflowSlug } from "./runs-cost-client.js";
 import { fetchEventTimestamps } from "./email-status-client.js";
@@ -63,6 +82,36 @@ import { fetchQualifications } from "./qualifications-client.js";
 import { applySignalOverlays } from "./signal-overlays.js";
 import { fetchPublicWorkflows, type WorkflowMetadata } from "./public-stats-clients.js";
 import type { Pricing } from "./pricing.js";
+
+/**
+ * The volume half of a workflow's answer — this brand's OWN outreach through this dynasty, and what
+ * it realized. Every field is scoped to (this brand, this feature, this dynasty), versions folded in.
+ *
+ * The three counts are DISTINCT LEADS, deduped within the dynasty by the SAME `dedupPersonsByLead`
+ * the engine uses and read off the SAME per-lead signals the brand read's `recipientsContacted` /
+ * `recipientsClicked` / `recipientsRepliesPositive` series are built from — so a single-workflow
+ * brand reads its brand figure here, by construction. A lead served under two workflows is ONE lead
+ * to the brand and belongs to BOTH groups, so across several workflows the counts do not sum to the
+ * brand: the same counting-people property the money half already carries. A lead the producer
+ * served under no workflow is in no group.
+ *
+ * 0 is a MEASURED count. The two rates are null when unmeasurable — no outcome of that kind, or no
+ * realized spend — never 0, and never floored to a benchmark (see the module header).
+ */
+export interface WorkflowRevenueOutcomes {
+  /** Distinct leads this workflow reached. The workflow-grain twin of `recipientsContacted.total`. */
+  recipientsContacted: number;
+  /** Distinct leads that visited the site off this workflow. Twin of `recipientsClicked.total`. */
+  recipientsClicked: number;
+  /** Distinct leads that replied positively. Twin of `recipientsRepliesPositive.total`. */
+  recipientsRepliesPositive: number;
+  /** REALIZED (actual, billed) spend attributed to this dynasty, in cents — `costEconomics.actualCostUsd` in the unit the two rates below are denominated in. */
+  actualSpentCents: number;
+  /** Realized spend ÷ website visits. Null when this workflow bought no visit, or spent nothing. */
+  cpcCents: number | null;
+  /** Realized spend ÷ positive replies. Null when this workflow bought no reply, or spent nothing. */
+  cpprCents: number | null;
+}
 
 /** One workflow the brand has run, and what it returned. The four figures are the brand read's own. */
 export interface WorkflowRevenueGroup {
@@ -77,6 +126,8 @@ export interface WorkflowRevenueGroup {
     economicsSource: EconomicsSource | null;
   };
   costEconomics: CostEconomics;
+  /** ADDITIVE, purely — the volume half. See {@link WorkflowRevenueOutcomes}. */
+  outcomes: WorkflowRevenueOutcomes;
 }
 
 type Headers = { orgId: string; userId?: string; runId?: string; featureSlug?: string };
@@ -113,6 +164,40 @@ function dynastyNames(workflows: WorkflowMetadata[]): Map<string, string> {
     }
   }
   return names;
+}
+
+/**
+ * PURE: the volume half for ONE dynasty's persons + its realized cents.
+ *
+ * Dedup FIRST, on the engine's own rule: a lead the producer served twice under the same dynasty is
+ * one person, and its signals OR together — the identical treatment the brand read gives it. The
+ * counts then read straight off the deduped signals rather than off the engine's `leads[]`, so they
+ * survive the no-funnel / no-economics path where the engine is never run at all. Where the engine
+ * IS run the two agree by construction: a contacted lead always reaches a delivery milestone and a
+ * lead carrying any conversion signal scores above zero, so every lead counted here is a row there.
+ */
+export function buildWorkflowOutcomes(
+  persons: EnginePerson[],
+  actualCostInUsdCents: number,
+): WorkflowRevenueOutcomes {
+  const deduped = dedupPersonsByLead(persons);
+  let recipientsContacted = 0;
+  let recipientsClicked = 0;
+  let recipientsRepliesPositive = 0;
+  for (const person of deduped) {
+    if (person.signals.contacted) recipientsContacted += 1;
+    if (person.signals.clicked) recipientsClicked += 1;
+    if (person.signals.positiveReply) recipientsRepliesPositive += 1;
+  }
+  return {
+    recipientsContacted,
+    recipientsClicked,
+    recipientsRepliesPositive,
+    actualSpentCents: actualCostInUsdCents,
+    // OBSERVED, never floored: null is "this workflow bought none of these", not "$0 each".
+    cpcCents: observedCostPerOutcome(actualCostInUsdCents, recipientsClicked),
+    cpprCents: observedCostPerOutcome(actualCostInUsdCents, recipientsRepliesPositive),
+  };
 }
 
 /**
@@ -195,6 +280,10 @@ export function buildWorkflowRevenueGroups(input: {
           totalPipelineUsd,
           economics?.lifetimeRevenueUsd,
         ),
+        // The volume half is funnel-INDEPENDENT on purpose: how many people a workflow reached is a
+        // measured fact, so it is answered even for a brand with no funnel wired and no economics —
+        // exactly the brand whose money half is honestly null.
+        outcomes: buildWorkflowOutcomes(mine, actualCostInUsdCents),
       };
     });
 }

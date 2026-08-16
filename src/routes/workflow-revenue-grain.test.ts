@@ -79,6 +79,16 @@ function replyLead(workflowSlug: string | null, leadId: string): Record<string, 
   };
 }
 
+/** Contacted + delivered, and nothing else — the workflow reached this person and got no answer. */
+function silentLead(workflowSlug: string | null, leadId: string): Record<string, unknown> {
+  return { ...replyLead(workflowSlug, leadId), clicked: false, replied: false, replyClassification: null };
+}
+
+/** Contacted + a website visit, no reply. */
+function clickLead(workflowSlug: string | null, leadId: string): Record<string, unknown> {
+  return { ...silentLead(workflowSlug, leadId), clicked: true };
+}
+
 interface Fixture {
   /** ACTUAL cost cents per VERSIONED workflow slug — what runs-service answers at groupBy=workflowSlug. */
   costBySlug: Record<string, number>;
@@ -250,6 +260,98 @@ describe("GET /revenue?groupBy=workflow — which workflows made money", () => {
     expect(Object.keys(groups).sort()).toEqual(["dawn", "retired-legacy"]);
     expect(groups["retired-legacy"].workflowDynastyName).toBeNull();
     expect(groups["retired-legacy"].costEconomics.actualCostUsd).toBeCloseTo(70, 6);
+  });
+
+  it("answers the VOLUME half per workflow — outreach, visits, replies, realized spend and the two costs", async () => {
+    mockFetch({
+      costBySlug: { "dawn-v1": 3000, "dawn-v2": 2000, "osprey-v1": 4000 },
+      leads: [
+        // Dawn, across BOTH versions: 4 people reached, 2 of them visited, 1 of them replied.
+        replyLead("dawn-v1", "l1"),
+        clickLead("dawn-v2", "l2"),
+        clickLead("dawn-v1", "l3"),
+        silentLead("dawn-v2", "l4"),
+        // Osprey reached one person and got nothing back.
+        silentLead("osprey-v1", "l5"),
+      ],
+      workflows: WORKFLOWS,
+    });
+
+    const groups = byWorkflow(
+      (await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=workflow").set(AUTH)).body,
+    );
+
+    // Dawn's versions fold into ONE dynasty on the volume half exactly as they do on the money half.
+    expect(groups.dawn.outcomes).toEqual({
+      recipientsContacted: 4,
+      recipientsClicked: 2,
+      recipientsRepliesPositive: 1,
+      actualSpentCents: 5000,
+      cpcCents: 2500,
+      cpprCents: 5000,
+    });
+    // Realized spend is the money block's own, in cents — one basis, so the rates and the ROI agree.
+    expect(groups.dawn.outcomes.actualSpentCents).toBe(groups.dawn.costEconomics.actualCostUsd * 100);
+    expect(groups.osprey.outcomes.recipientsContacted).toBe(1);
+    expect(groups.osprey.outcomes.actualSpentCents).toBe(4000);
+  });
+
+  it("reports NULL, never 0, for a rate a workflow bought no outcome for", async () => {
+    mockFetch({
+      // Osprey spent $40 and bought neither a visit nor a positive reply.
+      costBySlug: { "dawn-v1": 3000, "osprey-v1": 4000 },
+      leads: [clickLead("dawn-v1", "l1"), silentLead("osprey-v1", "l2")],
+      workflows: WORKFLOWS,
+    });
+
+    const groups = byWorkflow(
+      (await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=workflow").set(AUTH)).body,
+    );
+    // Spend, no outcome: "we could not measure this", not "$0 each" and not a floored benchmark.
+    expect(groups.osprey.outcomes.cpcCents).toBeNull();
+    expect(groups.osprey.outcomes.cpprCents).toBeNull();
+    expect(groups.osprey.outcomes.recipientsClicked).toBe(0);
+    // Dawn bought a visit but no reply — the two rates are decided independently.
+    expect(groups.dawn.outcomes.cpcCents).toBe(3000);
+    expect(groups.dawn.outcomes.cpprCents).toBeNull();
+  });
+
+  it("reads the SAME volume figures as the brand when all the spend sits on one workflow", async () => {
+    const fixture: Fixture = {
+      costBySlug: { "dawn-v1": 3000, "dawn-v2": 2000 },
+      leads: [replyLead("dawn-v1", "l1"), clickLead("dawn-v2", "l2"), silentLead("dawn-v1", "l3")],
+      workflows: WORKFLOWS,
+    };
+
+    mockFetch(fixture);
+    const brand = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(brand.status).toBe(200);
+
+    mockFetch(fixture);
+    const only = (
+      await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=workflow").set(AUTH)
+    ).body.groups[0];
+
+    expect(only.outcomes.recipientsContacted).toBe(brand.body.recipientsContacted.total);
+    expect(only.outcomes.recipientsClicked).toBe(brand.body.recipientsClicked.total);
+    expect(only.outcomes.recipientsRepliesPositive).toBe(brand.body.recipientsRepliesPositive.total);
+    expect(only.outcomes.actualSpentCents).toBe(brand.body.spend.actualSpentCents);
+  });
+
+  it("counts a lead re-served under two VERSIONS of one workflow ONCE", async () => {
+    mockFetch({
+      costBySlug: { "dawn-v1": 1000, "dawn-v2": 1000 },
+      // The same person, served under both of Dawn's versions. One person to the dynasty.
+      leads: [clickLead("dawn-v1", "l1"), clickLead("dawn-v2", "l1")],
+      workflows: WORKFLOWS,
+    });
+
+    const groups = byWorkflow(
+      (await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=workflow").set(AUTH)).body,
+    );
+    expect(groups.dawn.outcomes.recipientsContacted).toBe(1);
+    expect(groups.dawn.outcomes.recipientsClicked).toBe(1);
+    expect(groups.dawn.outcomes.cpcCents).toBe(2000);
   });
 
   it("degrades to the VERSION grain when workflow-service cannot be read — a poorer grouping, never a wrong number", async () => {
