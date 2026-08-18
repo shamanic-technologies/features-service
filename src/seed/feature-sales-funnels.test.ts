@@ -18,7 +18,7 @@ import { SALES_FUNNEL_KEYS, matchSalesFunnelKey } from "../lib/sales-funnels.js"
 import { FUNNEL_REGISTRY } from "../lib/funnel-registry.js";
 import { coldEmailOutreachSlugs } from "../lib/send-forecast-compute.js";
 
-const FEEDBACK_SLUG = "sales-feedback-request-cold-email-outreach";
+const FEEDBACK_SLUG = "feedback-request-cold-email-outreach";
 const SALES_SLUG = "sales-cold-email-outreach";
 
 const bySlug = (slug: string) => SEED_FEATURES.find((f) => f.slug === slug);
@@ -111,6 +111,15 @@ describe("the feedback-request cold email feature", () => {
 
   it("is a cold-email channel by its slug, so the fleet audits already count it", () => {
     expect(coldEmailOutreachSlugs([FEEDBACK_SLUG, "ai-visibility-scoring"])).toEqual([FEEDBACK_SLUG]);
+  });
+
+  it("carries ONE name — the pre-rename slug is gone from the catalogue and the registry, not aliased", () => {
+    const dead = "sales-feedback-request-cold-email-outreach";
+    expect(bySlug(dead)).toBeUndefined();
+    expect(FUNNEL_REGISTRY[dead]).toBeUndefined();
+    // The family membership was never bought by the `sales-` prefix: every fleet audit derives its
+    // account universe from the `-cold-email-outreach` SUFFIX, which the rename keeps.
+    expect(coldEmailOutreachSlugs([FEEDBACK_SLUG])).toEqual([FEEDBACK_SLUG]);
   });
 
   it("prices on the same funnel as the pitch — same medium, same measurement, different offer", () => {
