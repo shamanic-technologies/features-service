@@ -66,13 +66,16 @@ function buildDownstreamHeaders(
 }
 
 interface SystemStats {
-  totalCostInUsdCents: number;
   /**
-   * ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds
-   * + cancelled reservations that inflate totalCostInUsdCents). This is the canonical "Total spent" the
-   * dashboard renders, and the numerator behind every cost-per-X metric (so CPC, $/outlet etc reconcile
-   * with the displayed spend). totalCostInUsdCents stays for back-compat. (features-service#396)
+   * COMMITTED run spend (USD cents) — billed `actual` PLUS the open `provisioned` holds. THE single
+   * spend basis of this service: the "Total spent" the dashboard renders AND the numerator behind
+   * every cost-per-X metric, so CPC / $/outlet reconcile both with the displayed spend and with
+   * /revenue's ROI. Do NOT repoint those numerators at the billed-only twin — a second basis is what
+   * made one brand read $202 on its Overview and $191 on its campaigns table.
+   * (features-service#396, single basis features-service#779)
    */
+  totalCostInUsdCents: number;
+  /** Billed-only run spend (USD cents). REPORTED for consumer migration; divided by nowhere. */
   actualCostInUsdCents: number;
   completedRuns: number;
   activeCampaigns: number;

@@ -814,7 +814,8 @@ export async function handlePublicRevenue(
           return {
             brandId,
             pipeline: body.headline.totalPipelineUsd,
-            costUsd: body.costEconomics.actualCostUsd,
+            committedCostUsd: body.costEconomics.committedCostUsd,
+            actualCostUsd: body.costEconomics.actualCostUsd,
             timeSeries: body.timeSeries,
           };
         } catch (error) {
@@ -832,15 +833,16 @@ export async function handlePublicRevenue(
     // Aggregate per brand: pipeline = sum of the orgs' non-null pipelines (null iff EVERY org's is
     // null — i.e. no saved economics anywhere); cost always sums. Leads are disjoint per org, so the
     // sum does not double-count.
-    const byBrand = new Map<string, { pipelineSum: number; hasPipeline: boolean; costCents: number; timelineDeltas: Map<string, number> }>();
+    const byBrand = new Map<string, { pipelineSum: number; hasPipeline: boolean; committedCostCents: number; actualCostCents: number; timelineDeltas: Map<string, number> }>();
     for (const c of computed) {
       if (c === null) continue;
-      const agg = byBrand.get(c.brandId) ?? { pipelineSum: 0, hasPipeline: false, costCents: 0, timelineDeltas: new Map<string, number>() };
+      const agg = byBrand.get(c.brandId) ?? { pipelineSum: 0, hasPipeline: false, committedCostCents: 0, actualCostCents: 0, timelineDeltas: new Map<string, number>() };
       if (c.pipeline !== null) {
         agg.pipelineSum += c.pipeline;
         agg.hasPipeline = true;
       }
-      agg.costCents += Math.round(c.costUsd * 100);
+      agg.committedCostCents += Math.round(c.committedCostUsd * 100);
+      agg.actualCostCents += Math.round(c.actualCostUsd * 100);
       let previous = 0;
       for (const point of c.timeSeries) {
         const delta = point.cumulativePipelineUsd - previous;
@@ -868,7 +870,11 @@ export async function handlePublicRevenue(
       return {
         brand: { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null },
         headline: { totalPipelineUsd },
-        costEconomics: buildCostEconomics(agg.costCents, totalPipelineUsd),
+        costEconomics: buildCostEconomics({
+          committedCostInUsdCents: agg.committedCostCents,
+          actualCostInUsdCents: agg.actualCostCents,
+          totalPipelineUsd,
+        }),
         ...(timeline.length > 0 ? { timeline } : {}),
       };
     });
@@ -877,11 +883,11 @@ export async function handlePublicRevenue(
     results.sort((a, b) => {
       const ap = a.headline.totalPipelineUsd;
       const bp = b.headline.totalPipelineUsd;
-      if (ap === null && bp === null) return b.costEconomics.actualCostUsd - a.costEconomics.actualCostUsd;
+      if (ap === null && bp === null) return b.costEconomics.committedCostUsd - a.costEconomics.committedCostUsd;
       if (ap === null) return 1;
       if (bp === null) return -1;
       if (bp !== ap) return bp - ap;
-      return b.costEconomics.actualCostUsd - a.costEconomics.actualCostUsd;
+      return b.costEconomics.committedCostUsd - a.costEconomics.committedCostUsd;
     });
 
     const body: PublicRevenuePayload = { featureSlug, groupBy: "brand", results };
