@@ -47,6 +47,17 @@ needs a new call.
   migration: `registerSeedFeatures` sweep-deletes every row whose slug is not in `SEED_FEATURES` on
   every cold start, so the old row is pruned by the first boot of this build (logged
   `Deleted stale feature: …`). (Set 2026-08-18.)
+- **THE SEED PRUNES STALE ROWS BEFORE IT UPSERTS, and a SLUG RENAME is the reason — do not move the
+  sweep back to the end of `registerSeedFeatures`.** A slug rename is a DELETE plus an INSERT, and
+  while both rows exist they agree on every column but the slug — including `name`, which is UNIQUE
+  in the schema. Upserting the new row first therefore trips `features_name_unique` (`23505`), and
+  the seed runs on the BOOT path before `app.listen()`, so the process dies before it binds: the
+  deploy health check fails and the box rolls the whole service back. Nothing about this is visible
+  in the suite or the build — it needs a DB that already holds the OLD row, which only prod and
+  staging do. Guard: `src/seed/register.test.ts` (the prune is the first write; every seed name is
+  unique). Cost 2026-08-18 (#785): this rename's first prod deploy crash-looped on
+  `Key (name)=(Sales Feedback Request Cold Email Outreach) already exists` and rolled back, so the
+  rename shipped one build later than the merge.
 - Guards: `src/seed/feature-sales-funnels.test.ts` (every feature answers, only catalogue keys, none/all
   distinguishable, the feedback funnel alone, the pitch's four unchanged, same funnel + same measurement
   as the pitch) + the new slug folded into the existing cold-email output/funnel-step suites in

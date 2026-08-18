@@ -4,11 +4,30 @@ import { features } from "../db/schema.js";
 import { SEED_FEATURES } from "./features.js";
 
 /**
- * Register seed features via upsert-by-slug, then sweep-delete any DB rows
- * whose slug is no longer in SEED_FEATURES. Seed file is the source of truth.
- * Called on every cold start. Idempotent.
+ * Sweep-delete any DB row whose slug is no longer in SEED_FEATURES, THEN upsert every seed
+ * feature by slug. Seed file is the source of truth. Called on every cold start. Idempotent.
+ *
+ * THE PRUNE RUNS FIRST, AND THAT ORDER IS LOAD-BEARING — do not move it back to the end.
+ * Renaming a feature's SLUG is a delete plus an insert, and the two rows overlap on every other
+ * column while both exist. `features.name` is UNIQUE, so upserting the new slug before the dead one
+ * is gone violates `features_name_unique` (`23505`) — which throws on the BOOT path, before
+ * `app.listen()`, so the container never binds, the deploy health check fails and the box rolls the
+ * whole service back. Pruning first means the dead row is gone before its replacement is written,
+ * and a slug rename is a plain deploy. Cost 2026-08-18 (features-service#785): the
+ * feedback-request channel rename crash-looped prod's new build on
+ * `Key (name)=(Sales Feedback Request Cold Email Outreach) already exists` and was rolled back.
  */
 export async function registerSeedFeatures(): Promise<void> {
+  const seedSlugs = SEED_FEATURES.map((f) => f.slug);
+  const deleted = await db
+    .delete(features)
+    .where(notInArray(features.slug, seedSlugs))
+    .returning({ slug: features.slug });
+
+  for (const row of deleted) {
+    console.log(`[features-service] Deleted stale feature: ${row.slug}`);
+  }
+
   for (const seed of SEED_FEATURES) {
     const existing = await db.query.features.findFirst({
       where: eq(features.slug, seed.slug),
@@ -52,16 +71,6 @@ export async function registerSeedFeatures(): Promise<void> {
 
       console.log(`[features-service] Inserted feature: ${seed.slug}`);
     }
-  }
-
-  const seedSlugs = SEED_FEATURES.map((f) => f.slug);
-  const deleted = await db
-    .delete(features)
-    .where(notInArray(features.slug, seedSlugs))
-    .returning({ slug: features.slug });
-
-  for (const row of deleted) {
-    console.log(`[features-service] Deleted stale feature: ${row.slug}`);
   }
 
   console.log(`[features-service] Seed registration complete (${SEED_FEATURES.length} features, ${deleted.length} pruned)`);
