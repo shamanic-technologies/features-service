@@ -111,7 +111,7 @@ export const SEED_FEATURES: SeedFeature[] = [
    * That single-funnel restriction is the whole reason the per-feature answer exists.
    */
   {
-    slug: "sales-feedback-request-cold-email-outreach",
+    slug: "feedback-request-cold-email-outreach",
     name: "Sales Feedback Request Cold Email Outreach",
     description: "Ask buyers for feedback on the problem you solve instead of pitching them, then turn the replies into sales meetings. Same cold email sending, tracked through the same funnel.",
     icon: "message-square",

@@ -297,7 +297,7 @@ describe("SEED_FEATURES — pr-expert-quote-opportunities", () => {
 describe("SEED_FEATURES — cold-email % Clicks stat", () => {
   const COLD_EMAIL_SLUGS = [
     "sales-cold-email-outreach",
-    "sales-feedback-request-cold-email-outreach",
+    "feedback-request-cold-email-outreach",
     "pr-cold-email-outreach",
     "hiring-cold-email-outreach",
     "vc-cold-email-outreach",
@@ -352,7 +352,7 @@ describe("SEED_FEATURES — cold-email funnel Link Clicks step", () => {
   // (outletsDiscovered-led) funnel and is intentionally excluded.
   const FUNNEL_CLICK_SLUGS = [
     "sales-cold-email-outreach",
-    "sales-feedback-request-cold-email-outreach",
+    "feedback-request-cold-email-outreach",
     "hiring-cold-email-outreach",
     "vc-cold-email-outreach",
     "accelerators-cold-email-outreach",

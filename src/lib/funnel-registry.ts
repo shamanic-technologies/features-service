@@ -461,7 +461,7 @@ export const FUNNEL_REGISTRY: Record<string, FunnelDefinition> = {
   // prices on the same funnel. Which CHAIN a given brand is sold this feature through is narrowed
   // separately by the catalogue's per-feature `salesFunnels` (the conversation chain alone here),
   // and by `restrictPathsToDeclaredLegs` at pricing time.
-  "sales-feedback-request-cold-email-outreach": salesFunnel,
+  "feedback-request-cold-email-outreach": salesFunnel,
 };
 
 export function getFunnel(featureSlug: string): FunnelDefinition | null {

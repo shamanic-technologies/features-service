@@ -6,7 +6,7 @@ distribute acquires through more than one channel, and a channel in this fleet's
 feature slug. There is no channel table, no channel concept and none may be introduced: a second
 cold-email offer is a second feature, measured by the machinery the first one already has.
 
-`sales-feedback-request-cold-email-outreach` is that second one. Same medium, same sending
+`feedback-request-cold-email-outreach` is that second one. Same medium, same sending
 infrastructure, same funnel in `FUNNEL_REGISTRY`, byte-identical outputs / charts / entities to
 `sales-cold-email-outreach` — the only thing that differs is what the email ASKS FOR. It requests
 feedback on the problem we solve instead of pitching, and the conversation it opens is what becomes
@@ -36,6 +36,17 @@ needs a new call.
 - **Being a `*-cold-email-outreach` slug is load-bearing**: `coldEmailOutreachSlugs` derives the fleet
   audits' account universe from that suffix, so the new channel enters send-forecast / accounts /
   customer-health with no further change.
+- **The slug is `feedback-request-cold-email-outreach`, and the pre-rename
+  `sales-feedback-request-cold-email-outreach` is GONE — no alias, no redirect.** It shipped under the
+  longer name for about an hour, before any campaign or billing row could carry it, which is the only
+  window in which this is a one-line change. Two names for one channel is exactly the second-vocabulary
+  problem this feature line exists to avoid, so nothing accepts the old spelling. **The `sales-` prefix
+  bought NOTHING** — every family/audit/registry keys on the `-cold-email-outreach` SUFFIX
+  (`coldEmailOutreachSlugs`) or on the exact slug (`FUNNEL_REGISTRY`), never on the prefix; the
+  membership is asserted rather than left to the name in the rename guard. The stale DB row needs no
+  migration: `registerSeedFeatures` sweep-deletes every row whose slug is not in `SEED_FEATURES` on
+  every cold start, so the old row is pruned by the first boot of this build (logged
+  `Deleted stale feature: …`). (Set 2026-08-18.)
 - Guards: `src/seed/feature-sales-funnels.test.ts` (every feature answers, only catalogue keys, none/all
   distinguishable, the feedback funnel alone, the pitch's four unchanged, same funnel + same measurement
   as the pitch) + the new slug folded into the existing cold-email output/funnel-step suites in
