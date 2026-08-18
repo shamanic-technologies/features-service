@@ -120,17 +120,18 @@ the day either side changes.
   cents per group, and the Overview's spend rounds once per cost SOURCE (`fetchSpendBreakdown`) while
   this read rounds once per (workflowSlug × costName) group. Same ledger, different grouping. Do NOT
   "fix" it by re-basing the Overview's spend — that is the customer's number.
-- **`outcomes` is the VOLUME half, and it rides ONE REALIZED basis.** The money block says what came
-  back; `outcomes` says what it was made of — `recipientsContacted` / `recipientsClicked` /
-  `recipientsRepliesPositive` (distinct leads), `actualSpentCents`, `cpcCents`, `cpprCents`. The same
-  six answers the un-grouped brand read gives for the whole brand, absent per workflow until now and
-  underivable by a consumer (a group is a DYNASTY, so a browser would sum versions and re-divide —
-  client-side money math). Every figure rides **REALIZED (actual, billed)** spend, the basis
-  `costEconomics` already rides, so `cpcCents × recipientsClicked ≈ actualSpentCents` by construction
-  and a workflow's ROI and its cost per click are two views of one number. That is a DELIBERATE
-  divergence from the brand read's `spend` block, whose cost-per-outcome columns are **COMMITTED** and
-  floored against a fleet benchmark: a committed numerator inside a group whose ROI is realized would
-  be two currencies in one block. The rates are **OBSERVED** (accounting) — a workflow with spend and
+- **`outcomes` is the VOLUME half, and it rides the ONE COMMITTED basis.** The money block says what
+  came back; `outcomes` says what it was made of — `recipientsContacted` / `recipientsClicked` /
+  `recipientsRepliesPositive` (distinct leads), `committedSpentCents` (+ the transitional
+  `actualSpentCents`), `cpcCents`, `cpprCents`. The same answers the un-grouped brand read gives for
+  the whole brand, absent per workflow until now and underivable by a consumer (a group is a DYNASTY,
+  so a browser would sum versions and re-divide — client-side money math). Every figure rides
+  **COMMITTED** spend, the single basis `costEconomics` rides, so
+  `cpcCents × recipientsClicked ≈ committedSpentCents` by construction and a workflow's ROI and its
+  cost per click are two views of one number. This block once rode billed-only ON PURPOSE, to avoid a
+  committed numerator inside a group whose ROI was realized; the ROI moved to committed
+  (features-service#779), so that divergence would now BE the incoherence. The rates are **OBSERVED**
+  (accounting) — a workflow with spend and
   no outcome of a kind reports **null**, never 0 and never a floored estimate; projection per workflow
   already has its own surface (`/workflow-projection`). Counts read off the SAME per-lead signals the
   brand's `recipients*` series read, after the engine's own `dedupPersonsByLead`, so a single-workflow
@@ -896,7 +897,7 @@ the ranking.
 | `workflow-projection` (unit costs → projected goal costs) | **projected** (cascade crossOrg→brand→audience) | DONE (PR1) |
 | `audience-stats` `cpcCents`/`cpprCents` (RAW) | **floored** (cascade audience→brand, DISPLAY) | The click / reply IS the outcome, so the raw-spend floor is sound. A 0-outcome audience with spend → max(spend, brand cost-per-outcome), never a raw tiny-spend value, never null; 0-spend + 0-outcome → null. The brand parent is the FLEET-BACKED cross-org **BEST-WORKFLOW** projected cost (see the best-workflow section at the top), NOT a brand-own aggregate and NOT a cross-workflow pooled average. campaign-service NO LONGER reads audience-stats (it ranks on `workflow-projection` `resolved.costPerOutcomeUsd`), so the floor does not touch its ranking. |
 | `audience-stats` `cpfsCents`/`cpsCents`/`cpsaleCents` (DERIVED/funnel) | **derived** (per-(audience × winning workflow) projection) | A form submission / signup / sale is reached THROUGH a click, so at 0 outcomes these take the audience's own funnel projection under the goal's winning workflow — byte-equal to `workflow-projection` `resolved` for the same row — NEVER the audience's raw dollar total (the prod bug: cost-per-form-submission == net spend to the cent). |
-| `/stats` `costPerRecipient*` (registry `type:"currency"`) | **observed** | DONE (PR3) — brand is the TOP grain here (no coarser grain fetched → no cascade), so observed (null on 0). Also killed a latent false-$0 (0 cost / >0 outcomes → was $0, now null). |
+| `/stats` `costPerRecipient*` (registry `type:"currency"`) | **observed** | DONE (PR3) — brand is the TOP grain here (no coarser grain fetched → no cascade), so observed (null on 0). Also killed a latent false-$0 (0 cost / >0 outcomes → was $0, now null). Its numerator is the registry's `totalCostInUsdCents` (COMMITTED) since features-service#779 — the observed/projected axis is orthogonal to the spend basis, and there is only one basis. |
 | `/public/stats/cost-projection` | **projected** (already EV) | not yet routed through the module |
 | `pipeline-activity` | n/a (no cost ratio) | It computes forecast **RATES** (`openPerOutreach`…) not costs; its local `ratio` returns `null` on 0-denom = correct for a displayed rate. Nothing to route. |
 | `/revenue` `spend` — RAW (`total/actual/provisioned Cpc`, `cppr`) | **floored** (cascade brand/campaign → best-workflow benchmark, DISPLAY) | Was observed-only, which rendered as the brand's own total spend under a cost-per-outcome label. Now the AGGREGATE twin of the per-audience rows: `max(own committed spend, the goal-winning workflow's projected unit cost)`. Falls back to **observed** when the brand declares no goal, or when the projection read degrades (fail-soft). |
@@ -1232,7 +1233,7 @@ audiences after #295 get attributed; historical = unattributed, acceptable.
 `HUMAN_SERVICE_URL`/`HUMAN_SERVICE_API_KEY` are read at CALL time (no boot crash) and fail loud when
 the targeting read runs without them — no fallback. (Set 2026-06-19; persona-stats alias removed 2026-06-20.)
 
-## Spend naming convention: `total…`=committed (actual+provisioned), `actual…`=billed, `provisioned…`=holds — `/revenue` `spend` shows COMMITTED; ROI stays ACTUAL (PR #396, committed-naming PR #403)
+## ONE SPEND BASIS, AND IT IS COMMITTED — every money figure derived from run spend divides by `total…` (actual + provisioned). `actual…` is REPORTED, never divided by (supersedes the ROI-stays-ACTUAL rule of #396/#403)
 
 runs-service `/v1/stats/costs` returns BOTH `totalCostInUsdCents` (committed = actual + **provisioned
 holds**) and `actualCostInUsdCents` (only `actual` is billable spend) per group. The service-wide naming
@@ -1241,7 +1242,7 @@ convention (a field name must never lie about its accounting):
 - **`total…`** = COMMITTED = ACTUAL + PROVISIONED (money already reserved, incl. open holds for
   scheduled follow-up sends). The customer-facing "Total spent" / "Budget spent today" / "CPC". It
   legitimately **DIPS** when a hold releases (a follow-up actualizes → net-zero; a cancelled hold → drop).
-- **`actual…`** = actualized / billed spend only. ROI/CAC and projected cost-per-outcome ride THIS.
+- **`actual…`** = actualized / billed spend only. **REPORTED ONLY — nothing divides by it.**
 - **`provisioned…`** = open holds only (= total − actual).
 
 **The `/revenue` `spend` block displays COMMITTED** (PR #403 — product wants customers to see reserved
@@ -1265,16 +1266,53 @@ fabricated 0) when lead-service didn't serve the counts. The counts read is **fa
 while the client itself is fail-loud. features-service CONSUMES the counts verbatim — it does NOT own or
 default them. `spend` is on the OVERVIEW only (null on `?lens=`, absent on `?groupBy=campaignId` groups).
 
-**ROI/CAC + `costEconomics` ride REALIZED (ACTUAL) spend, NOT committed.** `fetchRunsCostCents`
-(revenue.ts) sums `actualCostInUsdCents` → `costEconomics.actualCostUsd` (renamed from the ambiguous
-`totalCostUsd` in PR #403 so it is unmistakably distinct from the committed `total…` figures) — brand +
-grouped + lens + public revenue. ROI = `pipeline / actualCostUsd`, CAC = `actualCostUsd / pipeline`.
-Counting reserved-but-unbilled holds as cost-spent would understate ROI on money not yet billed.
+**ROI/CAC + `costEconomics` RIDE COMMITTED SPEND, and so does everything else here. A SPLIT BASIS IS A
+BUG, NOT A TRADEOFF (supersedes #396/#403's "ROI rides ACTUAL").** #403 deliberately put the `spend`
+block on committed and left ROI on billed-only, reasoning that reserved-but-unbilled holds would
+understate ROI. The consequence was that ONE payload answered "how much did this cost" TWO ways at
+once — every cost-per-outcome column divided by committed while ROI, %CAC, $CAC, cost per conversion
+and the ROI-history spend leg divided by billed. Prod, 2026-08-18, brand `6e21bb6c…` / org
+`org_3G8ARUvJgV2CC97ulggyBXcoGwV` / `sales-cold-email-outreach`: the brand Overview read **"Total spent
+$202"** while its campaigns table read **"$ Invested $191"** with ROI 7.2x and %CAC 14% computed off the
+smaller figure — and that brand runs exactly ONE campaign, so the two figures describe the identical
+scope and cannot legitimately differ. Owner ruling (Kevin): *"all stats must be homogenously on committed
+values. Dont split, it would be too complicated."* / *"BTW all stats must be on commited, it is a bug if
+it not!!!"*
 
-- `/stats` `systemStats.actualCostInUsdCents` (alongside `totalCostInUsdCents`) + the stats-registry
-  `actualCostInUsdCents` raw key, to which **every `costPer*Cents` derived numerator points** (incl.
-  `costPerOutletCents`). **Already** convention-compliant (actual = billed, total = committed) — NOT
-  renamed by #403.
+- **`fetchRunsCostCents` returns BOTH** (`{committedCents, actualCents}`, one read, one runs group —
+  zero extra IO). `buildCostEconomics` takes an OBJECT, not positional cents, precisely so a transposed
+  `(actual, committed)` pair cannot compile and silently reinstate the split.
+- **`costEconomics.committedCostUsd` is the basis and the field a consumer renders as "$ Invested".**
+  `actualCostUsd` STAYS on the response and stays honestly BILLED-ONLY: a field whose name asserts
+  "actual" must never start carrying a committed value, and a consumer reading the old field needs a
+  gap-free path onto the new one. Same shape for the transitional twins added beside it:
+  `outcomes.committedSpentCents` beside `actualSpentCents` (per-workflow) and
+  `currentEconomics.committedSpendUsd` beside `realizedSpendUsd` (customer-health). **Drop the old names
+  only once the dashboard + staff console have migrated — not in the same ship.**
+- **It holds at EVERY grain**, because a grain left behind reproduces the bug one click away: the
+  un-lensed brand read, `?lens=`, `?groupBy=campaignId`, `?groupBy=workflow`, and the cross-org public
+  revenue. The per-workflow `outcomes` block moved too — it rode billed-only ON PURPOSE, to avoid a
+  committed numerator beside a realized ROI; the ROI moved, so that divergence would now BE the
+  incoherence.
+- **`roiHistory`'s spend leg is dated COMMITTED spend** (`fetchBrandCommittedSpendByDay` reads
+  `totalCostInUsdCents` / frozen `netTotalCostInUsdCents`), so the curve's last cumulative point IS the
+  headline `roiMultiple` instead of charting a different currency under the ROI card.
+- **NET is unchanged and still fail-loud**: a net request divides by the frozen `netTotalCostInUsdCents`,
+  never falling back to gross, never to the net billed twin.
+- **Expected numeric shift, intended:** every ROI moves DOWN and every CAC moves UP by the open-holds
+  share. That prod brand: 7.2x → ~6.8x, 14% → ~15%, invested 191 → 202.
+- **NO consumer-side reconciliation, NO basis query parameter, NO silent fallback.** A figure that cannot
+  be computed is `null` ("we could not measure this"), never 0.
+- **The one thing that legitimately stays billed-only is `/internal/stats/revenue`'s realized-revenue
+  series** — that is OUR income (what we actually billed orgs), not a customer's acquisition spend. An
+  open hold is money reserved to spend, not revenue we earned. Budget-derived MRR/ARR stay undiscounted
+  config projections as documented in the staff-metrics section.
+- `/stats` `systemStats` carries BOTH raw keys, and **every `costPer*Cents` derived numerator now points
+  at `totalCostInUsdCents`** (incl. `costPerOutletCents`) so `/stats` and `/revenue` price one brand one
+  way. Do NOT repoint them back at `actualCostInUsdCents`.
+- Guard: `src/routes/committed-spend-basis.test.ts` drives brand / campaign / workflow / lens / ROI-curve
+  / net from ONE fixture where committed ($202) and billed ($191) DIFFER — a fixture where they coincide
+  cannot fail this way, which is why the pre-existing suites stayed green through the bug.
 - `workflow-projection` `roiMultiple = LTR / resolved.costPerOutcomeUsd` (budget-independent,
   = 100/cacPct; the `resolved` pick is the finest-grain cost-per-outcome from the 3-grain ladder) —
   the dashboard renders it instead of inverting `cacPct` client-side.
@@ -1285,7 +1323,8 @@ force a CPC number. The per-audience `/audience-stats metrics.*Cents` (and `pipe
 key on `totalCostInUsdCents` (committed) and are INTENTIONALLY left untouched (provisioned component
 negligible at that grain; **campaign-service consumes `metrics.cpcCents` byte-equal** via
 `features-audience-client.ts`, so renaming there would break it — out of scope). (Set 2026-06-26;
-committed-spend on `/revenue` + total/actual/provisioned naming 2026-06-27, PR #403.)
+committed-spend on `/revenue` + total/actual/provisioned naming 2026-06-27, PR #403; single COMMITTED
+basis service-wide 2026-08-18, features-service#779.)
 
 ## `GET /internal/stats/send-forecast` — GLOBAL fleet email send forecast (api-key, staff-gated at api-service), 3 email-grain series stacked
 
@@ -1899,7 +1938,7 @@ a dash beside real numbers — which reads as a broken card, not a scoping decis
 
 - **`costEconomics.costPerAcquisitionUsd` is on EVERY revenue body, the un-lensed brand read
   included.** It was NOT a new computation: pipeline is `expected paying clients × LTR`, so the client
-  COUNT is `totalPipelineUsd / lifetimeRevenueUsd` and `$CAC = actualCostUsd ÷ that count =
+  COUNT is `totalPipelineUsd / lifetimeRevenueUsd` and `$CAC = committedCostUsd ÷ that count =
   (costOfAcquisitionPct/100) × LTR = LTR / roiMultiple`. Pipeline, ROI, %CAC and $CAC are ONE statement
   in four units. It was previously reachable only via `?lens=` (`costPerConversionUsd`), and the brand
   Overview is not lensed — it is the whole brand, every funnel. The two AGREE by construction (the
@@ -1913,9 +1952,11 @@ a dash beside real numbers — which reads as a broken card, not a scoping decis
   spend on a day buys outcomes that land days or weeks later, so a period-grain ratio oscillates
   between 0 and absurd and describes nothing. The cumulative form converges, and its LAST `roiMultiple`
   IS `costEconomics.roiMultiple` for the same read.
-  - **REALIZED on both legs, nothing modelled.** Spend is dated by runs-service
-    `/v1/stats/public/costs/timeseries` (`brand-spend-by-day-client.ts`, org+brand+feature filtered,
-    ACTUAL / frozen-`netActual` per `pricing`); runs guarantees Σ buckets == the untimed total for the
+  - **MEASURED on both legs, nothing modelled.** Spend is dated by runs-service
+    `/v1/stats/public/costs/timeseries` (`brand-spend-by-day-client.ts` →
+    `fetchBrandCommittedSpendByDay`, org+brand+feature filtered, **COMMITTED** `total` /
+    frozen-`netTotal` per `pricing` — the SAME single basis the headline ROI rides, which is what makes
+    the terminal point reconcile rather than chart a second currency); runs guarantees Σ buckets == the untimed total for the
     same filter, which is exactly why the curve terminates ON the headline instead of being corrected
     onto it. Pipeline is the engine's OWN `timeSeries` (each org steps the total up at its
     most-advanced event date). **Do NOT spread spend evenly over time** — that invents the shape of the

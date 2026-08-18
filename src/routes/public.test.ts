@@ -669,7 +669,10 @@ describe("GET /stats/best (authenticated)", () => {
 
 interface PairResult {
   pipeline: number | null;
+  /** COMMITTED spend for the pair — the basis the cross-org ROI/CAC ride. */
   costUsd: number;
+  /** Billed-only spend. Defaults to `costUsd` when a case is not about the basis. */
+  actualCostUsd?: number;
   timeSeries?: Array<{ date: string; cumulativePipelineUsd: number }>;
 }
 
@@ -682,7 +685,12 @@ function setPairResults(pairs: Record<string, PairResult>): void {
       const v = pairs[`${headers.orgId}::${brandId}`] ?? { pipeline: 0, costUsd: 0 };
       return {
         headline: { totalPipelineUsd: v.pipeline },
-        costEconomics: { actualCostUsd: v.costUsd, costOfAcquisitionPct: null, roiMultiple: null },
+        costEconomics: {
+          committedCostUsd: v.costUsd,
+          actualCostUsd: v.actualCostUsd ?? v.costUsd,
+          costOfAcquisitionPct: null,
+          roiMultiple: null,
+        },
         timeSeries: v.timeSeries ?? [], organizations: [], leads: [], events: [],
       };
     },
@@ -743,14 +751,14 @@ describe("GET /public/stats/revenue", () => {
     expect(b1.brand.id).toBe("brand-1");
     expect(b1.brand.name).toBe("Acme");
     expect(b1.headline.totalPipelineUsd).toBe(140);
-    expect(b1.costEconomics.actualCostUsd).toBe(15); // 10 + 5
+    expect(b1.costEconomics.committedCostUsd).toBe(15); // 10 + 5
     expect(b1.costEconomics.roiMultiple).toBeCloseTo(140 / 15, 5);
     expect(b1.costEconomics.costOfAcquisitionPct).toBeCloseTo((15 / 140) * 100, 5);
 
     const b2 = res.body.results[1];
     expect(b2.brand.id).toBe("brand-2");
     expect(b2.headline.totalPipelineUsd).toBe(30);
-    expect(b2.costEconomics.actualCostUsd).toBe(8);
+    expect(b2.costEconomics.committedCostUsd).toBe(8);
 
     // 3 distinct (org, brand) pairs → engine called exactly 3 times (not 4 — wf rows deduped)
     expect(mockComputeFeatureRevenue).toHaveBeenCalledTimes(3);

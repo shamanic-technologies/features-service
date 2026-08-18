@@ -587,7 +587,7 @@ describe("GET /features/:featureSlug/stats — feature-scoped fan-out", () => {
   });
 });
 
-describe("GET /features/:featureSlug/stats — actual-spend reconciliation (features-service#396)", () => {
+describe("GET /features/:featureSlug/stats — ONE COMMITTED spend basis (features-service#396, #779)", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -599,7 +599,7 @@ describe("GET /features/:featureSlug/stats — actual-spend reconciliation (feat
     vi.restoreAllMocks();
   });
 
-  it("systemStats.actualCostInUsdCents + cost-per-X use ACTUAL spend (excludes provisioned holds), not totalCostInUsdCents", async () => {
+  it("every cost-per-X divides by COMMITTED spend (billed + holds), never the billed-only twin", async () => {
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
       if (url.includes("runs:3000")) {
@@ -615,12 +615,13 @@ describe("GET /features/:featureSlug/stats — actual-spend reconciliation (feat
     // No brandId → engagement snapshot is gated off; isolates the runs/outlets cost path.
     const res = await request(app).get("/features/sales-cold-email-outreach/stats").set(AUTH_HEADERS);
     expect(res.status).toBe(200);
-    // Canonical "Total spent" = actual; total stays for back-compat.
+    // Both raw keys stay on the response — the billed-only twin is REPORTED, never divided by.
     expect(res.body.systemStats.totalCostInUsdCents).toBe(2000);
     expect(res.body.systemStats.actualCostInUsdCents).toBe(1500);
-    // #7 + reconciliation: $/outlet = ACTUAL 1500 / 30 = 50, NOT total 2000/30 = 66.67.
-    expect(res.body.stats.costPerOutletCents).toBe(50);
-    // Every cost-per-X derives from actual now (e.g. $/link-click uses actual too).
+    // ONE basis: $/outlet = COMMITTED 2000 / 30 = 66.67, NOT the billed-only 1500/30 = 50. This is
+    // the same total /revenue's ROI now rides, so the two endpoints cannot price one brand two ways.
+    expect(res.body.stats.costPerOutletCents).toBeCloseTo(2000 / 30, 6);
+    expect(res.body.stats.totalCostInUsdCents).toBe(2000);
     expect(res.body.stats.actualCostInUsdCents).toBe(1500);
   });
 });

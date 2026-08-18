@@ -15,7 +15,7 @@ import {
   type BrandProjectedParentsUsd,
 } from "../lib/audience-stats-brand-projection.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
-import { fetchRunsCostCents, fetchCampaignIdsWithRuns } from "../lib/runs-cost-client.js";
+import { fetchRunsCostCents, fetchCampaignIdsWithRuns, type RunsCostCents } from "../lib/runs-cost-client.js";
 import { fetchSpendBreakdown, type SpendBreakdown, type SpendSource } from "../lib/spend-client.js";
 import { fetchConversionCounts, type ConversionCounts } from "../lib/conversion-counts-client.js";
 import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
@@ -46,7 +46,7 @@ import { singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js"
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
 import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
-import { fetchBrandActualSpendByDay } from "../lib/brand-spend-by-day-client.js";
+import { fetchBrandCommittedSpendByDay } from "../lib/brand-spend-by-day-client.js";
 import { buildCostEconomics, type CostEconomics } from "../lib/cost-economics.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
@@ -537,7 +537,7 @@ export type DownstreamHeaders = { orgId: string; userId?: string; runId?: string
 
 function emptyBody(
   totalPipelineUsd: number | null,
-  actualCostInUsdCents: number,
+  cost: RunsCostCents,
   spend: Spend | null,
   sequences: SignalSeries | null = null,
   roiHistory: RoiHistory | null = null,
@@ -545,7 +545,11 @@ function emptyBody(
   return {
     headline: { totalPipelineUsd, economicsSource: null },
     // No economics on this path (no funnel wired, or cold start) → no LTR, so no cost per acquisition.
-    costEconomics: buildCostEconomics(actualCostInUsdCents, totalPipelineUsd),
+    costEconomics: buildCostEconomics({
+      committedCostInUsdCents: cost.committedCents,
+      actualCostInUsdCents: cost.actualCents,
+      totalPipelineUsd,
+    }),
     timeSeries: [],
     roiHistory,
     organizations: [],
@@ -599,7 +603,7 @@ function fetchSpendByDaySoft(
   headers: DownstreamHeaders,
   pricing: Pricing,
 ): Promise<Map<string, number> | null> {
-  return fetchBrandActualSpendByDay(brandId, campaignScope, featureSlug, headers, pricing).catch((err) => {
+  return fetchBrandCommittedSpendByDay(brandId, campaignScope, featureSlug, headers, pricing).catch((err) => {
     console.warn(
       `[features-service] dated-spend enrichment failed (degrading roiHistory to null): ${(err as Error).message}`,
     );
@@ -737,7 +741,7 @@ function buildLensBody(
   rawPersons: EnginePerson[],
   economics: SalesEconomics,
   economicsSource: EconomicsSource,
-  actualCostInUsdCents: number,
+  cost: RunsCostCents,
 ): RevenueBody {
   const ltr = economics.lifetimeRevenueUsd;
   const leads: LeadRow[] = [];
@@ -792,17 +796,23 @@ function buildLensBody(
   );
   const totalPipelineUsd = leads.reduce((sum, l) => sum + l.expectedRevenueUsd, 0);
   // LENS ONLY: expected conversion COUNT = sum of per-lead probability (decimal). totalPipelineUsd =
-  // expectedConversions × LTR. costPerConversionUsd = actualCostUsd / expectedConversions (null at 0).
+  // expectedConversions × LTR. costPerConversionUsd = committedCostUsd / expectedConversions (null at 0)
+  // — the same single COMMITTED basis every other money figure here rides.
   const expectedConversions = leads.reduce((sum, l) => sum + (l.conversionProbabilityPct ?? 0) / 100, 0);
   // `costPerAcquisitionUsd` derives from the SAME LTR the lens prices with, so it comes out equal to
   // `costPerConversionUsd` below (expectedConversions === totalPipelineUsd / ltr, by construction).
-  const costEconomics = buildCostEconomics(actualCostInUsdCents, totalPipelineUsd, ltr);
+  const costEconomics = buildCostEconomics({
+    committedCostInUsdCents: cost.committedCents,
+    actualCostInUsdCents: cost.actualCents,
+    totalPipelineUsd,
+    lifetimeRevenueUsd: ltr,
+  });
   return {
     headline: { totalPipelineUsd, economicsSource },
     costEconomics: {
       ...costEconomics,
       expectedConversions,
-      costPerConversionUsd: expectedConversions === 0 ? null : costEconomics.actualCostUsd / expectedConversions,
+      costPerConversionUsd: expectedConversions === 0 ? null : costEconomics.committedCostUsd / expectedConversions,
     },
     timeSeries: [],
     // The lens describes a SUBSET of the brand's leads; its spend leg would be the brand's whole
@@ -886,11 +896,16 @@ export async function computeFeatureRevenue(
         fetchConversionCountsSoft(brandId),
         fetchSpendCostParentsSoft(brandId, featureSlug, headers, campaignId, pricing, requestedFunnel),
       ]);
-      // ROI/CAC ride ACTUAL spend; the `spend` block carries the committed total separately.
-      return emptyBody(null, breakdown.actualSpentCents, buildSpend(breakdown, [], counts, parents), sequences);
+      // ONE basis: ROI/CAC ride the SAME committed total the `spend` block reports.
+      return emptyBody(
+        null,
+        { committedCents: breakdown.totalSpentCents, actualCents: breakdown.actualSpentCents },
+        buildSpend(breakdown, [], counts, parents),
+        sequences,
+      );
     }
-    const actualCostInUsdCents = await fetchRunsCostCents(brandId, campaignScope, featureSlug, headers, pricing);
-    return emptyBody(null, actualCostInUsdCents, null);
+    const cost = await fetchRunsCostCents(brandId, campaignScope, featureSlug, headers, pricing);
+    return emptyBody(null, cost, null);
   }
 
   // ── Wave A: the downstream reads with NO data dependency on each other, in parallel.
@@ -939,20 +954,23 @@ export async function computeFeatureRevenue(
       : Promise.resolve<Map<string, number> | null>(null),
   ]);
   const { economics, source } = priced.economics;
-  const breakdown: SpendBreakdown | null = typeof costResult === "number" ? null : costResult;
-  // ROI/CAC + costEconomics ride ACTUAL (billed) spend; the `spend` block (buildSpend) carries the
-  // committed total + provisioned separately. fetchRunsCostCents already returns actual.
-  const actualCostInUsdCents = typeof costResult === "number" ? costResult : costResult.actualSpentCents;
+  const breakdown: SpendBreakdown | null = "totalSpentCents" in costResult ? costResult : null;
+  // ONE basis, COMMITTED. Whether the cost arrived as the Overview's spend breakdown or as the plain
+  // runs read, `committedCents` is byte the same total the `spend` block reports — so the ROI a
+  // campaign row shows and the "Total spent" the Overview shows can never describe different money.
+  const cost: RunsCostCents = breakdown
+    ? { committedCents: breakdown.totalSpentCents, actualCents: breakdown.actualSpentCents }
+    : (costResult as RunsCostCents);
 
   if (economics === null) {
-    return emptyBody(null, actualCostInUsdCents, breakdown ? buildSpend(breakdown, [], counts, parents) : null, sequences);
+    return emptyBody(null, cost, breakdown ? buildSpend(breakdown, [], counts, parents) : null, sequences);
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
 
   // Lensed overview: a fixed per-signal probability from sales economics. Uses ONLY Wave A
   // (economics + persons' clicked / positiveReply) — short-circuit BEFORE Wave B + the engine.
   if (lens) {
-    return buildLensBody(lens, persons, economics, economicsSource, actualCostInUsdCents);
+    return buildLensBody(lens, persons, economics, economicsSource, cost);
   }
 
   // ONLY THE LEGS OF THE FUNNELS BEING PRICED. A signal that is not a step of one of the brand's
@@ -1008,14 +1026,16 @@ export async function computeFeatureRevenue(
 
   return {
     headline: { ...result.headline, economicsSource },
-    costEconomics: buildCostEconomics(
-      actualCostInUsdCents,
-      result.headline.totalPipelineUsd,
-      economics.lifetimeRevenueUsd,
-    ),
+    costEconomics: buildCostEconomics({
+      committedCostInUsdCents: cost.committedCents,
+      actualCostInUsdCents: cost.actualCents,
+      totalPipelineUsd: result.headline.totalPipelineUsd,
+      lifetimeRevenueUsd: economics.lifetimeRevenueUsd,
+    }),
     timeSeries: result.timeSeries,
-    // Both legs realized: runs' dated buckets against the engine's own dated pipeline. Null when the
-    // dated-spend read degraded — a curve is never drawn from one leg.
+    // runs' dated COMMITTED buckets against the engine's own dated pipeline — the same basis the
+    // headline ROI rides, so the curve's last point IS that ROI. Null when the dated-spend read
+    // degraded — a curve is never drawn from one leg.
     roiHistory: spendByDay
       ? buildRoiHistory(spendByDay, result.timeSeries, result.headline.totalPipelineUsd)
       : null,
