@@ -1,5 +1,46 @@
 # Features Service — CLAUDE.md
 
+## A CHANNEL IS A FEATURE SLUG, and the catalogue states per feature WHICH SALES FUNNELS IT MAY BE SOLD THROUGH — `[]` and all four are two written statements, never an absence
+
+distribute acquires through more than one channel, and a channel in this fleet's vocabulary IS a
+feature slug. There is no channel table, no channel concept and none may be introduced: a second
+cold-email offer is a second feature, measured by the machinery the first one already has.
+
+`sales-feedback-request-cold-email-outreach` is that second one. Same medium, same sending
+infrastructure, same funnel in `FUNNEL_REGISTRY`, byte-identical outputs / charts / entities to
+`sales-cold-email-outreach` — the only thing that differs is what the email ASKS FOR. It requests
+feedback on the problem we solve instead of pitching, and the conversation it opens is what becomes
+the sales meeting. GA (`implemented: true`, `status: "active"`), never gated behind alpha/beta.
+
+**Every feature states `salesFunnels` — which sales funnels it may be SOLD THROUGH.** It is a product
+statement about the feature, so this service owns it; the dashboard offers only valid (funnel, feature)
+pairs from it and campaign-service refuses to provision a pair absent from it. Hardcoding the matrix in
+each consumer was rejected (one product fact, four drifting copies — the way the staff-email allowlist
+already drifts), and so was putting it in billing-service (a payments service does not hold a product
+taxonomy). It rides `GET /features` + `GET /features/:slug` as a column on the row, so no consumer
+needs a new call.
+
+- **"SELLS THROUGH NONE" AND "SELLS THROUGH ALL" ARE DIFFERENT STATEMENTS, and BOTH are written out.**
+  A consumer that could not tell them apart would offer nonsense pairs, so nothing is left unstated: a
+  non-sales feature (PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert
+  quotes) states `[]`, and a sales feature sold through every declared chain states all four keys
+  explicitly. A SHORTER list is a real restriction, not a gap. The column is `NOT NULL DEFAULT '[]'`, so
+  the only row the default can ever cover is one the seed has not reached — and it reads as the
+  restrictive side, which is the recoverable mistake.
+- **The feedback request states `sales_meetings_from_conversation` ALONE.** Its offer buys a
+  CONVERSATION, and the other three chains buy their first step with a website CLICK — it has no
+  website step to sell. That single-funnel restriction is the whole reason the per-feature answer
+  exists.
+- **The keys are brand-service's, unchanged.** Nothing here invents a funnel; the values are
+  `SALES_FUNNEL_KEYS` and a stored legacy spelling is a bug (guarded).
+- **Being a `*-cold-email-outreach` slug is load-bearing**: `coldEmailOutreachSlugs` derives the fleet
+  audits' account universe from that suffix, so the new channel enters send-forecast / accounts /
+  customer-health with no further change.
+- Guards: `src/seed/feature-sales-funnels.test.ts` (every feature answers, only catalogue keys, none/all
+  distinguishable, the feedback funnel alone, the pitch's four unchanged, same funnel + same measurement
+  as the pitch) + the new slug folded into the existing cold-email output/funnel-step suites in
+  `seed/features.test.ts`. (Set 2026-08-18.)
+
 ## THE GOAL IS RETIRED — a brand has DECLARED SALES FUNNELS, and the objective is always maximise ROI
 
 Nothing in this service reads a brand's `optimizationGoal` any more, and nothing may read one again.
