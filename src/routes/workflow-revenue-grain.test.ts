@@ -90,7 +90,8 @@ function clickLead(workflowSlug: string | null, leadId: string): Record<string, 
 }
 
 interface Fixture {
-  /** ACTUAL cost cents per VERSIONED workflow slug — what runs-service answers at groupBy=workflowSlug. */
+  /** Cost cents per VERSIONED workflow slug — what runs-service answers at groupBy=workflowSlug.
+   * The fixture sets committed == billed unless a case deliberately splits them. */
   costBySlug: Record<string, number>;
   leads: Array<Record<string, unknown>>;
   /** workflow-service metadata. `null` = the service is unreachable (the version-grain degrade). */
@@ -286,6 +287,7 @@ describe("GET /revenue?groupBy=workflow — which workflows made money", () => {
       recipientsContacted: 4,
       recipientsClicked: 2,
       recipientsRepliesPositive: 1,
+      committedSpentCents: 5000,
       actualSpentCents: 5000,
       cpcCents: 2500,
       cpprCents: 5000,

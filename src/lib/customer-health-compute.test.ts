@@ -146,7 +146,7 @@ function makeDeps(fixtures: {
     economics: SalesEconomics | null;
     funnels: SalesFunnelKey[];
     counts?: ConversionCounts;
-    revenue?: { actualCostUsd: number; expectedPipelineUsd: number | null; roiMultiple: number | null; cacPct: number | null };
+    revenue?: { committedCostUsd?: number; actualCostUsd: number; expectedPipelineUsd: number | null; roiMultiple: number | null; cacPct: number | null };
     audiences?: AudienceStatsRow[];
     workflow?: WorkflowProjectionResponse["rows"];
     throwOwnership?: boolean;
@@ -193,7 +193,9 @@ function makeDeps(fixtures: {
     brandRevenue: async (_f, brandId) => {
       const r = fixtures.perBrand[brandId]?.revenue;
       if (!r) throw new Error(`no revenue fixture for ${brandId}`);
-      return r;
+      // committed defaults to the billed figure — a fixture only splits them when the case is about
+      // the basis. ROI/CAC on the row ride `committedCostUsd`.
+      return { committedCostUsd: r.committedCostUsd ?? r.actualCostUsd, ...r };
     },
     audienceStats: async (_f, brandId) => {
       const a = fixtures.perBrand[brandId]?.audiences;
@@ -335,7 +337,7 @@ describe("buildCustomerHealthBoard", () => {
     expect(row.breakevenCacUsd).toBeNull();
     expect(row.ltrUsd).toBeNull();
     expect(row.economics).toBeNull();
-    expect(row.currentEconomics).toEqual({ realizedSpendUsd: null, expectedPipelineUsd: null, currentCacUsd: null, roiMultiple: null, cacPct: null });
+    expect(row.currentEconomics).toEqual({ committedSpendUsd: null, realizedSpendUsd: null, expectedPipelineUsd: null, currentCacUsd: null, roiMultiple: null, cacPct: null });
     // The website-purchase chain converts on the CLIENT's site, so it DOES need a tracker there — and
     // with no observed conversions the tracker reads not-firing (0), never null.
     expect(row.conversionTracker.needed).toBe(true);

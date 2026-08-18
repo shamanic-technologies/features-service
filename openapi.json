@@ -111,11 +111,11 @@
         "properties": {
           "totalCostInUsdCents": {
             "type": "number",
-            "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+            "description": "COMMITTED run cost (USD cents) — billed `actual` PLUS the open `provisioned` holds. The canonical 'Total spent' and the numerator behind every cost-per-X stat on this response, so cost-per metrics reconcile with the displayed spend AND with /revenue's ROI. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
           },
           "actualCostInUsdCents": {
             "type": "number",
-            "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
+            "description": "Billed-only run spend (USD cents) — excludes provisioned holds + cancelled reservations. REPORTED ONLY; no cost-per-X stat divides by it. (features-service#396, single basis features-service#779)"
           },
           "completedRuns": {
             "type": "number"
@@ -217,11 +217,11 @@
             "properties": {
               "totalCostInUsdCents": {
                 "type": "number",
-                "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                "description": "COMMITTED run cost (USD cents) — billed `actual` PLUS the open `provisioned` holds. The canonical 'Total spent' and the numerator behind every cost-per-X stat on this response, so cost-per metrics reconcile with the displayed spend AND with /revenue's ROI. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
               },
               "actualCostInUsdCents": {
                 "type": "number",
-                "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
+                "description": "Billed-only run spend (USD cents) — excludes provisioned holds + cancelled reservations. REPORTED ONLY; no cost-per-X stat divides by it. (features-service#396, single basis features-service#779)"
               },
               "completedRuns": {
                 "type": "number"
@@ -276,11 +276,11 @@
             "properties": {
               "totalCostInUsdCents": {
                 "type": "number",
-                "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                "description": "COMMITTED run cost (USD cents) — billed `actual` PLUS the open `provisioned` holds. The canonical 'Total spent' and the numerator behind every cost-per-X stat on this response, so cost-per metrics reconcile with the displayed spend AND with /revenue's ROI. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
               },
               "actualCostInUsdCents": {
                 "type": "number",
-                "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
+                "description": "Billed-only run spend (USD cents) — excludes provisioned holds + cancelled reservations. REPORTED ONLY; no cost-per-X stat divides by it. (features-service#396, single basis features-service#779)"
               },
               "completedRuns": {
                 "type": "number"
@@ -384,11 +384,11 @@
                   "properties": {
                     "totalCostInUsdCents": {
                       "type": "number",
-                      "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                      "description": "COMMITTED run cost (USD cents) — billed `actual` PLUS the open `provisioned` holds. The canonical 'Total spent' and the numerator behind every cost-per-X stat on this response, so cost-per metrics reconcile with the displayed spend AND with /revenue's ROI. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
                     },
                     "actualCostInUsdCents": {
                       "type": "number",
-                      "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
+                      "description": "Billed-only run spend (USD cents) — excludes provisioned holds + cancelled reservations. REPORTED ONLY; no cost-per-X stat divides by it. (features-service#396, single basis features-service#779)"
                     },
                     "completedRuns": {
                       "type": "number"
@@ -454,11 +454,11 @@
             "properties": {
               "totalCostInUsdCents": {
                 "type": "number",
-                "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                "description": "COMMITTED run cost (USD cents) — billed `actual` PLUS the open `provisioned` holds. The canonical 'Total spent' and the numerator behind every cost-per-X stat on this response, so cost-per metrics reconcile with the displayed spend AND with /revenue's ROI. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
               },
               "actualCostInUsdCents": {
                 "type": "number",
-                "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
+                "description": "Billed-only run spend (USD cents) — excludes provisioned holds + cancelled reservations. REPORTED ONLY; no cost-per-X stat divides by it. (features-service#396, single basis features-service#779)"
               },
               "completedRuns": {
                 "type": "number"
@@ -562,11 +562,11 @@
                   "properties": {
                     "totalCostInUsdCents": {
                       "type": "number",
-                      "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                      "description": "COMMITTED run cost (USD cents) — billed `actual` PLUS the open `provisioned` holds. The canonical 'Total spent' and the numerator behind every cost-per-X stat on this response, so cost-per metrics reconcile with the displayed spend AND with /revenue's ROI. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
                     },
                     "actualCostInUsdCents": {
                       "type": "number",
-                      "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
+                      "description": "Billed-only run spend (USD cents) — excludes provisioned holds + cancelled reservations. REPORTED ONLY; no cost-per-X stat divides by it. (features-service#396, single basis features-service#779)"
                     },
                     "completedRuns": {
                       "type": "number"
@@ -824,7 +824,7 @@
               },
               "actualSpentCents": {
                 "type": "integer",
-                "description": "ACTUAL (billed) spend only (USD cents), == Σ sources[].actualSpentCents. Same source as systemStats.actualCostInUsdCents / costEconomics.actualCostUsd (the realized spend ROI/CAC ride)."
+                "description": "Billed-only spend (USD cents), == Σ sources[].actualSpentCents. Same source as systemStats.actualCostInUsdCents / costEconomics.actualCostUsd. REPORTED ONLY — ROI/CAC and every cost-per-outcome column ride the COMMITTED totalSpentCents beside it."
               },
               "provisionedSpentCents": {
                 "type": "integer",
@@ -1342,24 +1342,28 @@
           "costEconomics": {
             "type": "object",
             "properties": {
+              "committedCostUsd": {
+                "type": "number",
+                "description": "COMMITTED run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0) — billed `actual` PLUS the open `provisioned` holds. THE spend basis: every money figure below divides by it, and it is byte the same total the `spend` block reports as totalSpentCents, so the ROI a campaign row shows and the 'Total spent' the Overview shows can never describe different money. This is the field a consumer renders as '$ Invested'. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
+              },
               "actualCostUsd": {
                 "type": "number",
-                "description": "ACTUAL (billed) run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). ROI/CAC ride REALIZED spend, so this is the billed amount ONLY — it EXCLUDES the provisioned holds that the `spend` block's committed total… figures include. Named `actualCostUsd` (renamed from the ambiguous `totalCostUsd`) to be unambiguously distinct from those committed total… figures. Same source as /stats systemStats.actualCostInUsdCents and spend.actualSpentCents. (features-service#396, naming features-service#402)"
+                "description": "Billed-only run spend for the same scope, in dollars (>= 0) — EXCLUDES the open provisioned holds. TRANSITIONAL AND REPORTED ONLY: it is kept populated (and still honestly billed-only, because a field whose name asserts 'actual' must never start carrying a committed value) so a consumer rendering money off this field has a gap-free path onto committedCostUsd. NOTHING divides by it any more — ROI, %CAC, cost per acquisition and cost per conversion all ride committedCostUsd. (features-service#396, naming features-service#402, single basis features-service#779)"
               },
               "costOfAcquisitionPct": {
                 "type": "number",
                 "nullable": true,
-                "description": "(actualCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
               },
               "roiMultiple": {
                 "type": "number",
                 "nullable": true,
-                "description": "totalPipelineUsd / actualCostUsd. Null when actualCostUsd is 0 or totalPipelineUsd is null."
+                "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
               },
               "costPerAcquisitionUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "REALIZED cost of winning ONE customer, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = actualCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same realized spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
+                "description": "Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
               },
               "expectedConversions": {
                 "type": "number",
@@ -1368,10 +1372,11 @@
               "costPerConversionUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "LENS ONLY — actualCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
               }
             },
             "required": [
+              "committedCostUsd",
               "actualCostUsd",
               "costOfAcquisitionPct",
               "roiMultiple",
@@ -1413,7 +1418,7 @@
                     },
                     "cumulativeSpendUsd": {
                       "type": "number",
-                      "description": "REALIZED — every dollar of ACTUAL (billed) spend from the brand's first spend up to and including this day. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                      "description": "COMMITTED — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, the SAME basis costEconomics.committedCostUsd rides, so the curve's last point reconciles with the headline ROI rather than charting a different currency. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
                     },
                     "cumulativePipelineUsd": {
                       "type": "number",
@@ -1448,7 +1453,7 @@
               "datedPipelineUsd",
               "undatedPipelineUsd"
             ],
-            "description": "RETURN ON SPEND ACROSS THE BRAND'S WHOLE LIFE — one line a consumer charts instead of a raw cumulative signal count. BOTH legs are CUMULATIVE SINCE INCEPTION, not per-period: spend on a day buys outcomes that land days or weeks later, so a period-grain ratio oscillates and describes nothing actionable, while the cumulative form converges and its LAST roiMultiple IS costEconomics.roiMultiple for the same read (coherent by construction, not corrected). REALIZED on both legs — spend dated by runs-service cost buckets, pipeline dated by the same per-lead event timestamps as timeSeries; nothing is modelled, spread or amortised. OVERVIEW ONLY (same gate as spend): null on the lensed (?lens=) response, absent on grouped (?groupBy=campaignId) groups. Fail-SOFT: null when the dated-spend read fails — null means 'could not be measured', never 'the return was zero'."
+            "description": "RETURN ON SPEND ACROSS THE BRAND'S WHOLE LIFE — one line a consumer charts instead of a raw cumulative signal count. BOTH legs are CUMULATIVE SINCE INCEPTION, not per-period: spend on a day buys outcomes that land days or weeks later, so a period-grain ratio oscillates and describes nothing actionable, while the cumulative form converges and its LAST roiMultiple IS costEconomics.roiMultiple for the same read (coherent by construction, not corrected). MEASURED on both legs — COMMITTED spend dated by runs-service cost buckets (the same single basis costEconomics.roiMultiple rides, which is what makes the terminal point reconcile), pipeline dated by the same per-lead event timestamps as timeSeries; nothing is modelled, spread or amortised. OVERVIEW ONLY (same gate as spend): null on the lensed (?lens=) response, absent on grouped (?groupBy=campaignId) groups. Fail-SOFT: null when the dated-spend read fails — null means 'could not be measured', never 'the return was zero'."
           },
           "organizations": {
             "type": "array",
@@ -1863,24 +1868,28 @@
                 "costEconomics": {
                   "type": "object",
                   "properties": {
+                    "committedCostUsd": {
+                      "type": "number",
+                      "description": "COMMITTED run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0) — billed `actual` PLUS the open `provisioned` holds. THE spend basis: every money figure below divides by it, and it is byte the same total the `spend` block reports as totalSpentCents, so the ROI a campaign row shows and the 'Total spent' the Overview shows can never describe different money. This is the field a consumer renders as '$ Invested'. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
+                    },
                     "actualCostUsd": {
                       "type": "number",
-                      "description": "ACTUAL (billed) run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). ROI/CAC ride REALIZED spend, so this is the billed amount ONLY — it EXCLUDES the provisioned holds that the `spend` block's committed total… figures include. Named `actualCostUsd` (renamed from the ambiguous `totalCostUsd`) to be unambiguously distinct from those committed total… figures. Same source as /stats systemStats.actualCostInUsdCents and spend.actualSpentCents. (features-service#396, naming features-service#402)"
+                      "description": "Billed-only run spend for the same scope, in dollars (>= 0) — EXCLUDES the open provisioned holds. TRANSITIONAL AND REPORTED ONLY: it is kept populated (and still honestly billed-only, because a field whose name asserts 'actual' must never start carrying a committed value) so a consumer rendering money off this field has a gap-free path onto committedCostUsd. NOTHING divides by it any more — ROI, %CAC, cost per acquisition and cost per conversion all ride committedCostUsd. (features-service#396, naming features-service#402, single basis features-service#779)"
                     },
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(actualCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / actualCostUsd. Null when actualCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
                     },
                     "costPerAcquisitionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "REALIZED cost of winning ONE customer, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = actualCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same realized spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
+                      "description": "Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
                     },
                     "expectedConversions": {
                       "type": "number",
@@ -1889,10 +1898,11 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — actualCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
                     }
                   },
                   "required": [
+                    "committedCostUsd",
                     "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
@@ -1974,24 +1984,28 @@
                 "costEconomics": {
                   "type": "object",
                   "properties": {
+                    "committedCostUsd": {
+                      "type": "number",
+                      "description": "COMMITTED run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0) — billed `actual` PLUS the open `provisioned` holds. THE spend basis: every money figure below divides by it, and it is byte the same total the `spend` block reports as totalSpentCents, so the ROI a campaign row shows and the 'Total spent' the Overview shows can never describe different money. This is the field a consumer renders as '$ Invested'. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
+                    },
                     "actualCostUsd": {
                       "type": "number",
-                      "description": "ACTUAL (billed) run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). ROI/CAC ride REALIZED spend, so this is the billed amount ONLY — it EXCLUDES the provisioned holds that the `spend` block's committed total… figures include. Named `actualCostUsd` (renamed from the ambiguous `totalCostUsd`) to be unambiguously distinct from those committed total… figures. Same source as /stats systemStats.actualCostInUsdCents and spend.actualSpentCents. (features-service#396, naming features-service#402)"
+                      "description": "Billed-only run spend for the same scope, in dollars (>= 0) — EXCLUDES the open provisioned holds. TRANSITIONAL AND REPORTED ONLY: it is kept populated (and still honestly billed-only, because a field whose name asserts 'actual' must never start carrying a committed value) so a consumer rendering money off this field has a gap-free path onto committedCostUsd. NOTHING divides by it any more — ROI, %CAC, cost per acquisition and cost per conversion all ride committedCostUsd. (features-service#396, naming features-service#402, single basis features-service#779)"
                     },
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(actualCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / actualCostUsd. Null when actualCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
                     },
                     "costPerAcquisitionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "REALIZED cost of winning ONE customer, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = actualCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same realized spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
+                      "description": "Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
                     },
                     "expectedConversions": {
                       "type": "number",
@@ -2000,10 +2014,11 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — actualCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
                     }
                   },
                   "required": [
+                    "committedCostUsd",
                     "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
@@ -2025,9 +2040,13 @@
                       "type": "number",
                       "description": "Distinct leads that replied positively — twin of recipientsRepliesPositive.total."
                     },
+                    "committedSpentCents": {
+                      "type": "number",
+                      "description": "COMMITTED spend attributed to this dynasty, in cents — costEconomics.committedCostUsd in the unit the two rates are denominated in. Cost is attributed by runs-service's own per-workflow split, never inferred from the campaign row's current workflow."
+                    },
                     "actualSpentCents": {
                       "type": "number",
-                      "description": "REALIZED (actual, billed) spend attributed to this dynasty, in cents — costEconomics.actualCostUsd in the unit the two rates are denominated in. Cost is attributed by runs-service's own per-workflow split, never inferred from the campaign row's current workflow."
+                      "description": "Billed-only spend for this dynasty, in cents. TRANSITIONAL — reported for consumer migration, divided by nowhere."
                     },
                     "cpcCents": {
                       "type": "number",
@@ -2044,11 +2063,12 @@
                     "recipientsContacted",
                     "recipientsClicked",
                     "recipientsRepliesPositive",
+                    "committedSpentCents",
                     "actualSpentCents",
                     "cpcCents",
                     "cpprCents"
                   ],
-                  "description": "The VOLUME half of this workflow's answer — this brand's own outreach through this dynasty and what it realized, the same six figures the un-grouped brand read gives for the whole brand. Every figure rides REALIZED (actual) spend, the basis costEconomics rides, so cpcCents × recipientsClicked ≈ actualSpentCents by construction. That is a deliberate divergence from the brand read's `spend` block, whose cost-per-outcome columns are COMMITTED and floored against a fleet benchmark. Counts are distinct leads: a lead served under two workflows is one lead to the brand and belongs to both groups, so the groups do not sum to the brand (the same counting-people property the money half carries); a lead served under no workflow is in no group."
+                  "description": "The VOLUME half of this workflow's answer — this brand's own outreach through this dynasty and what it cost, the same figures the un-grouped brand read gives for the whole brand. Every figure rides COMMITTED spend, the single basis costEconomics rides, so cpcCents × recipientsClicked ≈ committedSpentCents by construction. This block once rode billed-only spend to avoid a committed numerator beside a realized ROI; the ROI moved to committed, so that divergence would now BE the incoherence. Counts are distinct leads: a lead served under two workflows is one lead to the brand and belongs to both groups, so the groups do not sum to the brand (the same counting-people property the money half carries); a lead served under no workflow is in no group."
                 }
               },
               "required": [
@@ -4063,24 +4083,28 @@
                 "costEconomics": {
                   "type": "object",
                   "properties": {
+                    "committedCostUsd": {
+                      "type": "number",
+                      "description": "COMMITTED run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0) — billed `actual` PLUS the open `provisioned` holds. THE spend basis: every money figure below divides by it, and it is byte the same total the `spend` block reports as totalSpentCents, so the ROI a campaign row shows and the 'Total spent' the Overview shows can never describe different money. This is the field a consumer renders as '$ Invested'. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
+                    },
                     "actualCostUsd": {
                       "type": "number",
-                      "description": "ACTUAL (billed) run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0). ROI/CAC ride REALIZED spend, so this is the billed amount ONLY — it EXCLUDES the provisioned holds that the `spend` block's committed total… figures include. Named `actualCostUsd` (renamed from the ambiguous `totalCostUsd`) to be unambiguously distinct from those committed total… figures. Same source as /stats systemStats.actualCostInUsdCents and spend.actualSpentCents. (features-service#396, naming features-service#402)"
+                      "description": "Billed-only run spend for the same scope, in dollars (>= 0) — EXCLUDES the open provisioned holds. TRANSITIONAL AND REPORTED ONLY: it is kept populated (and still honestly billed-only, because a field whose name asserts 'actual' must never start carrying a committed value) so a consumer rendering money off this field has a gap-free path onto committedCostUsd. NOTHING divides by it any more — ROI, %CAC, cost per acquisition and cost per conversion all ride committedCostUsd. (features-service#396, naming features-service#402, single basis features-service#779)"
                     },
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(actualCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / actualCostUsd. Null when actualCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
                     },
                     "costPerAcquisitionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "REALIZED cost of winning ONE customer, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = actualCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same realized spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
+                      "description": "Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
                     },
                     "expectedConversions": {
                       "type": "number",
@@ -4089,10 +4113,11 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — actualCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
                     }
                   },
                   "required": [
+                    "committedCostUsd",
                     "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
@@ -4567,10 +4592,15 @@
                 "currentEconomics": {
                   "type": "object",
                   "properties": {
+                    "committedSpendUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "COMMITTED acquisition spend, USD (billed + open holds) — the single basis roiMultiple / cacPct / currentCacUsd are computed on. null when not computed (no own economics)."
+                    },
                     "realizedSpendUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Realized (billed) acquisition spend, USD. null when not computed (no own economics)."
+                      "description": "Billed-only acquisition spend, USD. TRANSITIONAL — reported for the staff console's migration, divided by nowhere. null when not computed (no own economics)."
                     },
                     "expectedPipelineUsd": {
                       "type": "number",
@@ -4594,6 +4624,7 @@
                     }
                   },
                   "required": [
+                    "committedSpendUsd",
                     "realizedSpendUsd",
                     "expectedPipelineUsd",
                     "currentCacUsd",
@@ -6523,11 +6554,11 @@
                       "properties": {
                         "totalCostInUsdCents": {
                           "type": "number",
-                          "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                          "description": "COMMITTED run cost (USD cents) — billed `actual` PLUS the open `provisioned` holds. The canonical 'Total spent' and the numerator behind every cost-per-X stat on this response, so cost-per metrics reconcile with the displayed spend AND with /revenue's ROI. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
                         },
                         "actualCostInUsdCents": {
                           "type": "number",
-                          "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
+                          "description": "Billed-only run spend (USD cents) — excludes provisioned holds + cancelled reservations. REPORTED ONLY; no cost-per-X stat divides by it. (features-service#396, single basis features-service#779)"
                         },
                         "completedRuns": {
                           "type": "number"
@@ -6631,11 +6662,11 @@
                             "properties": {
                               "totalCostInUsdCents": {
                                 "type": "number",
-                                "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                                "description": "COMMITTED run cost (USD cents) — billed `actual` PLUS the open `provisioned` holds. The canonical 'Total spent' and the numerator behind every cost-per-X stat on this response, so cost-per metrics reconcile with the displayed spend AND with /revenue's ROI. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
                               },
                               "actualCostInUsdCents": {
                                 "type": "number",
-                                "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
+                                "description": "Billed-only run spend (USD cents) — excludes provisioned holds + cancelled reservations. REPORTED ONLY; no cost-per-X stat divides by it. (features-service#396, single basis features-service#779)"
                               },
                               "completedRuns": {
                                 "type": "number"
@@ -6717,7 +6748,7 @@
     "/features/{featureSlug}/revenue": {
       "get": {
         "summary": "Expected pipeline revenue for a feature",
-        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events and the date columns are dated from the per-lead event timestamps (email-gateway + instantly manual qualifications); an outcome with no timestamp is counted in the headline but placed on no day. roiHistory charts return on spend across the brand's whole life (cumulative on both legs, realized on both legs, terminating on costEconomics.roiMultiple). totalPipelineUsd is null when no funnel is wired for the feature, or the brand has no saved economics AND no cross-brand average exists (cold start). When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition %, ROI multiple, and costPerAcquisitionUsd — the dollar cost of winning one customer, now answered on this default un-lensed brand read and equal to the lensed costPerConversionUsd for the same scope. With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature (campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call. With ?groupBy=workflow it is one LEAN group per WORKFLOW DYNASTY the brand has run (workflowDynastySlug + workflowDynastyName + workflowSlugs + headline.totalPipelineUsd + costEconomics + outcomes), answering which of the workflows we ran for this brand made money and which burned it — and, in `outcomes`, what that money was made of: this brand's own outreach volume, website visits, positive replies, realized spend and the cost of a visit and of a reply, per workflow.",
+        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events and the date columns are dated from the per-lead event timestamps (email-gateway + instantly manual qualifications); an outcome with no timestamp is counted in the headline but placed on no day. roiHistory charts return on spend across the brand's whole life (cumulative on both legs, measured on both legs, spend on the same COMMITTED basis, terminating on costEconomics.roiMultiple). totalPipelineUsd is null when no funnel is wired for the feature, or the brand has no saved economics AND no cross-brand average exists (cold start). When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition %, ROI multiple, and costPerAcquisitionUsd — the dollar cost of winning one customer, now answered on this default un-lensed brand read and equal to the lensed costPerConversionUsd for the same scope. With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature (campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call. With ?groupBy=workflow it is one LEAN group per WORKFLOW DYNASTY the brand has run (workflowDynastySlug + workflowDynastyName + workflowSlugs + headline.totalPipelineUsd + costEconomics + outcomes), answering which of the workflows we ran for this brand made money and which burned it — and, in `outcomes`, what that money was made of: this brand's own outreach volume, website visits, positive replies, committed spend and the cost of a visit and of a reply, per workflow.",
         "tags": [
           "Stats"
         ],
@@ -6757,10 +6788,10 @@
                 "campaignId",
                 "workflow"
               ],
-              "description": "When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview. When 'workflow', return one lean group per WORKFLOW DYNASTY the brand has run for the feature, carrying the same four realized-money figures (pipeline revenue, ROI, cost-of-acquisition %, $ per acquisition). Both legs are attributed by the producer that froze them — runs-service's per-workflow spend and the workflowSlug lead-service froze on each served lead — never inferred from the campaign row's current workflow (a campaign switches workflow while keeping its id). A brand whose spend all sits on one workflow reads the same figures at both grains; across several workflows the groups do NOT sum to the brand, because a lead served under two workflows is one lead to the brand and belongs to both."
+              "description": "When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview. When 'workflow', return one lean group per WORKFLOW DYNASTY the brand has run for the feature, carrying the same four money figures (pipeline revenue, ROI, cost-of-acquisition %, $ per acquisition), on the same single COMMITTED spend basis. Both legs are attributed by the producer that froze them — runs-service's per-workflow spend and the workflowSlug lead-service froze on each served lead — never inferred from the campaign row's current workflow (a campaign switches workflow while keeping its id). A brand whose spend all sits on one workflow reads the same figures at both grains; across several workflows the groups do NOT sum to the brand, because a lead served under two workflows is one lead to the brand and belongs to both."
             },
             "required": false,
-            "description": "When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview. When 'workflow', return one lean group per WORKFLOW DYNASTY the brand has run for the feature, carrying the same four realized-money figures (pipeline revenue, ROI, cost-of-acquisition %, $ per acquisition). Both legs are attributed by the producer that froze them — runs-service's per-workflow spend and the workflowSlug lead-service froze on each served lead — never inferred from the campaign row's current workflow (a campaign switches workflow while keeping its id). A brand whose spend all sits on one workflow reads the same figures at both grains; across several workflows the groups do NOT sum to the brand, because a lead served under two workflows is one lead to the brand and belongs to both.",
+            "description": "When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview. When 'workflow', return one lean group per WORKFLOW DYNASTY the brand has run for the feature, carrying the same four money figures (pipeline revenue, ROI, cost-of-acquisition %, $ per acquisition), on the same single COMMITTED spend basis. Both legs are attributed by the producer that froze them — runs-service's per-workflow spend and the workflowSlug lead-service froze on each served lead — never inferred from the campaign row's current workflow (a campaign switches workflow while keeping its id). A brand whose spend all sits on one workflow reads the same figures at both grains; across several workflows the groups do NOT sum to the brand, because a lead served under two workflows is one lead to the brand and belongs to both.",
             "name": "groupBy",
             "in": "query"
           },
@@ -6799,10 +6830,10 @@
                 "gross",
                 "net"
               ],
-              "description": "Pricing basis for every MONEY metric (spend block, costEconomics actualCostUsd, CAC, ROI, cps/cpsm/cpfs). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (counts, rates, pipeline revenue) are identical either way."
+              "description": "Pricing basis for every MONEY metric (spend block, costEconomics committedCostUsd, CAC, ROI, cps/cpsm/cpfs). Orthogonal to the ACCOUNTING basis, which is not selectable: committed, always. Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (counts, rates, pipeline revenue) are identical either way."
             },
             "required": false,
-            "description": "Pricing basis for every MONEY metric (spend block, costEconomics actualCostUsd, CAC, ROI, cps/cpsm/cpfs). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (counts, rates, pipeline revenue) are identical either way.",
+            "description": "Pricing basis for every MONEY metric (spend block, costEconomics committedCostUsd, CAC, ROI, cps/cpsm/cpfs). Orthogonal to the ACCOUNTING basis, which is not selectable: committed, always. Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (counts, rates, pipeline revenue) are identical either way.",
             "name": "pricing",
             "in": "query"
           },
@@ -9721,11 +9752,11 @@
                       "properties": {
                         "totalCostInUsdCents": {
                           "type": "number",
-                          "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                          "description": "COMMITTED run cost (USD cents) — billed `actual` PLUS the open `provisioned` holds. The canonical 'Total spent' and the numerator behind every cost-per-X stat on this response, so cost-per metrics reconcile with the displayed spend AND with /revenue's ROI. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
                         },
                         "actualCostInUsdCents": {
                           "type": "number",
-                          "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
+                          "description": "Billed-only run spend (USD cents) — excludes provisioned holds + cancelled reservations. REPORTED ONLY; no cost-per-X stat divides by it. (features-service#396, single basis features-service#779)"
                         },
                         "completedRuns": {
                           "type": "number"
@@ -9829,11 +9860,11 @@
                             "properties": {
                               "totalCostInUsdCents": {
                                 "type": "number",
-                                "description": "Total committed run cost (USD cents) — includes provisioned holds. Back-compat; for displayed spend use actualCostInUsdCents."
+                                "description": "COMMITTED run cost (USD cents) — billed `actual` PLUS the open `provisioned` holds. The canonical 'Total spent' and the numerator behind every cost-per-X stat on this response, so cost-per metrics reconcile with the displayed spend AND with /revenue's ROI. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
                               },
                               "actualCostInUsdCents": {
                                 "type": "number",
-                                "description": "ACTUAL run spend (USD cents) — only `actual` counts as billable spend (excludes provisioned holds + cancelled reservations). The canonical 'Total spent' and the numerator behind every cost-per-X stat, so cost-per metrics reconcile with the displayed spend. (features-service#396)"
+                                "description": "Billed-only run spend (USD cents) — excludes provisioned holds + cancelled reservations. REPORTED ONLY; no cost-per-X stat divides by it. (features-service#396, single basis features-service#779)"
                               },
                               "completedRuns": {
                                 "type": "number"

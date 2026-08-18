@@ -1,5 +1,5 @@
 /**
- * WHICH OF THE WORKFLOWS WE RAN FOR THIS BRAND MADE MONEY — the realized-money answer `/revenue`
+ * WHICH OF THE WORKFLOWS WE RAN FOR THIS BRAND MADE MONEY — the measured-money answer `/revenue`
  * already gives for a brand and for its campaigns, at the grain of the WORKFLOW.
  *
  * A consumer cannot roll this up from the per-campaign answer: one brand runs ~20 campaigns over ~15
@@ -51,23 +51,24 @@
  * That is the same property the per-campaign grain already has, and it is a property of counting
  * people rather than an error to correct.
  *
- * ── THE VOLUME HALF, AND WHY IT IS ONE REALIZED BASIS ───────────────────────────────────────────
+ * ── THE VOLUME HALF, AND WHY IT IS ONE COMMITTED BASIS ──────────────────────────────────────────
  *
  * The money block answers what came back. `outcomes` answers what it was made of: how many people
  * this workflow reached, how many of them visited the site, how many replied positively, what each
- * of those cost, and the realized dollars behind all of it. Same six answers the un-grouped brand
+ * of those cost, and the committed dollars behind all of it. Same six answers the un-grouped brand
  * read already gives for the whole brand — absent per workflow until now, and underivable by a
  * consumer (a group is a DYNASTY, so a browser would have to sum versions and re-divide).
  *
- * EVERY figure in a group rides REALIZED (ACTUAL, billed) spend — the basis `costEconomics` already
- * rides. So `cpcCents × recipientsClicked ≈ actualSpentCents` by construction, and a workflow's ROI
- * and its cost per click are two views of one number. This is a DELIBERATE divergence from the brand
- * read's `spend` block, whose cost-per-outcome columns are denominated in COMMITTED spend (the
- * Overview card shows reserved money) and floored against a fleet benchmark: a committed numerator
- * inside a group whose ROI is realized would be two currencies in one block. The rates here are
- * OBSERVED — ACCOUNTING, "what did this actually cost", so a workflow with spend and no outcome of a
- * kind reports NULL for that kind's rate ("we could not measure this"), never 0 and never a floored
- * estimate. Projection per workflow already has its own surface: `/workflow-projection`.
+ * EVERY figure in a group rides COMMITTED spend — the single basis `costEconomics` rides, the same
+ * total the brand read's `spend` block reports. So `cpcCents × recipientsClicked ≈ committedSpentCents`
+ * by construction, and a workflow's ROI and its cost per click are two views of one number. This block
+ * once rode billed-only spend on purpose, to avoid a committed numerator beside a realized ROI; the
+ * ROI moved to committed, so the divergence has no reason to exist and would now BE the incoherence.
+ * `actualSpentCents` stays reported (billed-only, honest) for the consumer transition and is divided
+ * by nowhere. The rates are OBSERVED — ACCOUNTING, "what did this cost", so a workflow with spend and
+ * no outcome of a kind reports NULL for that kind's rate ("we could not measure this"), never 0 and
+ * never a floored estimate. Projection per workflow already has its own surface:
+ * `/workflow-projection`.
  */
 import { restrictPathsToDeclaredLegs, type EconomicsSource, type getFunnel } from "./funnel-registry.js";
 import type { EffectiveEconomics } from "./sales-economics-client.js";
@@ -76,7 +77,7 @@ import { buildCostEconomics, type CostEconomics } from "./cost-economics.js";
 import { computeRevenue, dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import { observedCostPerOutcome } from "./cost-engine.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
-import { fetchRunsCostCentsByWorkflowSlug } from "./runs-cost-client.js";
+import { fetchRunsCostCentsByWorkflowSlug, type RunsCostCents } from "./runs-cost-client.js";
 import { fetchEventTimestamps } from "./email-status-client.js";
 import { fetchQualifications } from "./qualifications-client.js";
 import { applySignalOverlays } from "./signal-overlays.js";
@@ -85,7 +86,7 @@ import type { Pricing } from "./pricing.js";
 
 /**
  * The volume half of a workflow's answer — this brand's OWN outreach through this dynasty, and what
- * it realized. Every field is scoped to (this brand, this feature, this dynasty), versions folded in.
+ * it cost. Every field is scoped to (this brand, this feature, this dynasty), versions folded in.
  *
  * The three counts are DISTINCT LEADS, deduped within the dynasty by the SAME `dedupPersonsByLead`
  * the engine uses and read off the SAME per-lead signals the brand read's `recipientsContacted` /
@@ -96,7 +97,7 @@ import type { Pricing } from "./pricing.js";
  * served under no workflow is in no group.
  *
  * 0 is a MEASURED count. The two rates are null when unmeasurable — no outcome of that kind, or no
- * realized spend — never 0, and never floored to a benchmark (see the module header).
+ * committed spend — never 0, and never floored to a benchmark (see the module header).
  */
 export interface WorkflowRevenueOutcomes {
   /** Distinct leads this workflow reached. The workflow-grain twin of `recipientsContacted.total`. */
@@ -105,11 +106,13 @@ export interface WorkflowRevenueOutcomes {
   recipientsClicked: number;
   /** Distinct leads that replied positively. Twin of `recipientsRepliesPositive.total`. */
   recipientsRepliesPositive: number;
-  /** REALIZED (actual, billed) spend attributed to this dynasty, in cents — `costEconomics.actualCostUsd` in the unit the two rates below are denominated in. */
+  /** COMMITTED spend attributed to this dynasty, in cents — `costEconomics.committedCostUsd` in the unit the two rates below are denominated in. */
+  committedSpentCents: number;
+  /** Billed-only spend for this dynasty, in cents. TRANSITIONAL — reported, divided by nowhere. */
   actualSpentCents: number;
-  /** Realized spend ÷ website visits. Null when this workflow bought no visit, or spent nothing. */
+  /** Committed spend ÷ website visits. Null when this workflow bought no visit, or spent nothing. */
   cpcCents: number | null;
-  /** Realized spend ÷ positive replies. Null when this workflow bought no reply, or spent nothing. */
+  /** Committed spend ÷ positive replies. Null when this workflow bought no reply, or spent nothing. */
   cpprCents: number | null;
 }
 
@@ -178,7 +181,7 @@ function dynastyNames(workflows: WorkflowMetadata[]): Map<string, string> {
  */
 export function buildWorkflowOutcomes(
   persons: EnginePerson[],
-  actualCostInUsdCents: number,
+  cost: RunsCostCents,
 ): WorkflowRevenueOutcomes {
   const deduped = dedupPersonsByLead(persons);
   let recipientsContacted = 0;
@@ -193,10 +196,11 @@ export function buildWorkflowOutcomes(
     recipientsContacted,
     recipientsClicked,
     recipientsRepliesPositive,
-    actualSpentCents: actualCostInUsdCents,
+    committedSpentCents: cost.committedCents,
+    actualSpentCents: cost.actualCents,
     // OBSERVED, never floored: null is "this workflow bought none of these", not "$0 each".
-    cpcCents: observedCostPerOutcome(actualCostInUsdCents, recipientsClicked),
-    cpprCents: observedCostPerOutcome(actualCostInUsdCents, recipientsRepliesPositive),
+    cpcCents: observedCostPerOutcome(cost.committedCents, recipientsClicked),
+    cpprCents: observedCostPerOutcome(cost.committedCents, recipientsRepliesPositive),
   };
 }
 
@@ -214,7 +218,7 @@ export function buildWorkflowOutcomes(
  */
 export function buildWorkflowRevenueGroups(input: {
   persons: EnginePerson[];
-  costCentsBySlug: Map<string, number>;
+  costCentsBySlug: Map<string, RunsCostCents>;
   workflows: WorkflowMetadata[];
   funnel: ReturnType<typeof getFunnel>;
   /** The brand's DECLARED-funnel-priced economics — resolved ONCE by the route, shared by every group. */
@@ -224,11 +228,15 @@ export function buildWorkflowRevenueGroups(input: {
   const dynastyOf = dynastyOfSlug(workflows);
   const names = dynastyNames(workflows);
 
-  const costByDynasty = new Map<string, number>();
+  const costByDynasty = new Map<string, RunsCostCents>();
   const slugsByDynasty = new Map<string, Set<string>>();
   for (const [slug, cents] of costCentsBySlug) {
     const dynasty = dynastyOf(slug);
-    costByDynasty.set(dynasty, (costByDynasty.get(dynasty) ?? 0) + cents);
+    const prev = costByDynasty.get(dynasty);
+    costByDynasty.set(dynasty, {
+      committedCents: (prev?.committedCents ?? 0) + cents.committedCents,
+      actualCents: (prev?.actualCents ?? 0) + cents.actualCents,
+    });
     (slugsByDynasty.get(dynasty) ?? slugsByDynasty.set(dynasty, new Set()).get(dynasty)!).add(slug);
   }
 
@@ -259,7 +267,7 @@ export function buildWorkflowRevenueGroups(input: {
   return [...slugsByDynasty.keys()]
     .sort()
     .map((dynasty) => {
-      const actualCostInUsdCents = costByDynasty.get(dynasty) ?? 0;
+      const cost: RunsCostCents = costByDynasty.get(dynasty) ?? { committedCents: 0, actualCents: 0 };
       const mine = personsByDynasty.get(dynasty) ?? [];
       // No funnel wired / cold start → a null pipeline, exactly as the brand read reports it. Null is
       // "we could not price this", never "it returned nothing".
@@ -275,15 +283,16 @@ export function buildWorkflowRevenueGroups(input: {
           totalPipelineUsd,
           economicsSource: totalPipelineUsd === null ? null : economicsSource,
         },
-        costEconomics: buildCostEconomics(
-          actualCostInUsdCents,
+        costEconomics: buildCostEconomics({
+          committedCostInUsdCents: cost.committedCents,
+          actualCostInUsdCents: cost.actualCents,
           totalPipelineUsd,
-          economics?.lifetimeRevenueUsd,
-        ),
+          lifetimeRevenueUsd: economics?.lifetimeRevenueUsd,
+        }),
         // The volume half is funnel-INDEPENDENT on purpose: how many people a workflow reached is a
         // measured fact, so it is answered even for a brand with no funnel wired and no economics —
         // exactly the brand whose money half is honestly null.
-        outcomes: buildWorkflowOutcomes(mine, actualCostInUsdCents),
+        outcomes: buildWorkflowOutcomes(mine, cost),
       };
     });
 }

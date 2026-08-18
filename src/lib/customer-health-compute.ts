@@ -70,13 +70,16 @@ export const AUDIENCE_NEAR_EXHAUSTED_PCT = 80;
 
 export type HealthBadge = "green" | "yellow" | "red";
 
-/** The realized-economics slice of a row, computed from the revenue engine (own-economics only). */
+/** The economics slice of a row, computed from the revenue engine (own-economics only). */
 interface CurrentEconomics {
-  /** Realized (billed) acquisition spend in USD. null when not computed (no own economics). */
+  /** COMMITTED acquisition spend in USD — the single basis roiMultiple/cacPct/currentCacUsd ride. */
+  committedSpendUsd: number | null;
+  /** Billed-only acquisition spend, USD. TRANSITIONAL — reported for the staff console's migration,
+   * divided by nowhere. null when not computed (no own economics). */
   realizedSpendUsd: number | null;
   /** Expected pipeline in USD (revenue engine EV total). null when incomputable. */
   expectedPipelineUsd: number | null;
-  /** Realized cost to acquire ONE paying customer, USD = (cacPct/100) × LTR. null when incomputable. */
+  /** Committed cost to acquire ONE paying customer, USD = (cacPct/100) × LTR. null when incomputable. */
   currentCacUsd: number | null;
   /** LTR / CAC = pipeline / spend. ≥ 1 ⟺ CAC below breakeven. null when spend or pipeline is 0/unknown. */
   roiMultiple: number | null;
@@ -204,7 +207,7 @@ export interface CustomerHealthRow {
   ltrUsd: number | null;
   /** Full conversion economics (all rates + LTR) — the brand's OWN saved set, or null. Passthrough. */
   economics: SalesEconomics | null;
-  /** Realized CAC / ROI / %CAC from realized spend + outcomes (own-economics only). */
+  /** CAC / ROI / %CAC from COMMITTED spend + measured outcomes (own-economics only). */
   currentEconomics: CurrentEconomics;
 
   // ── Audiences ──────────────────────────────────────────────────────────────
@@ -242,8 +245,11 @@ export interface CustomerHealthBoard {
   asOf: string;
 }
 
-/** Realized economics returned by the revenue-engine dep. */
+/** Economics returned by the revenue-engine dep. */
 interface BrandRevenueResult {
+  /** COMMITTED spend — the basis roiMultiple/cacPct below are computed on. */
+  committedCostUsd: number;
+  /** Billed-only spend. Reported, never divided by. */
   actualCostUsd: number;
   expectedPipelineUsd: number | null;
   roiMultiple: number | null;
@@ -301,6 +307,7 @@ const REAL_DEPS: CustomerHealthDeps = {
       pricedFunnelKeys: declaredFunnels,
     });
     return {
+      committedCostUsd: body.costEconomics.committedCostUsd,
       actualCostUsd: body.costEconomics.actualCostUsd,
       expectedPipelineUsd: body.headline.totalPipelineUsd,
       roiMultiple: body.costEconomics.roiMultiple,
@@ -534,6 +541,7 @@ export async function buildCustomerHealthBoard(
     let primaryFunnel: SalesFunnelKey | null = null;
     let conversionCounts: ConversionCounts = { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 };
     let currentEconomics: CurrentEconomics = {
+      committedSpendUsd: null,
       realizedSpendUsd: null,
       expectedPipelineUsd: null,
       currentCacUsd: null,
@@ -583,6 +591,7 @@ export async function buildCustomerHealthBoard(
           const ltr = economics.lifetimeRevenueUsd;
           const currentCacUsd = revenueRes.cacPct != null ? (revenueRes.cacPct / 100) * ltr : null;
           currentEconomics = {
+            committedSpendUsd: revenueRes.committedCostUsd,
             realizedSpendUsd: revenueRes.actualCostUsd,
             expectedPipelineUsd: revenueRes.expectedPipelineUsd,
             currentCacUsd,
