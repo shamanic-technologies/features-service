@@ -15,6 +15,18 @@ export const features = pgTable(
     outputs: jsonb("outputs").notNull(),
     charts: jsonb("charts").notNull(),
     entities: jsonb("entities").notNull(),
+    /**
+     * WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH — a product statement about the feature,
+     * owned here, read by the dashboard (to offer only valid pairs) and by campaign-service (to refuse
+     * an invalid one). Values are brand-service's own funnel keys; no funnel is invented here.
+     *
+     * ALWAYS STATED, so absence can never be mistaken for "all of them": a feature that sells through
+     * no sales funnel states `[]`, and one that sells through every declared funnel states all four
+     * keys explicitly. A consumer reading a shorter list than the catalogue's is reading a real
+     * restriction, not a gap. NOT NULL with a `[]` default, so an unseeded row reads "none" — the safe
+     * side of that distinction, since offering nothing is recoverable and offering nonsense is not.
+     */
+    salesFunnels: jsonb("sales_funnels").notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -57,6 +57,13 @@
       "when": 1784128602713,
       "tag": "0007_committed_mrr_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786060800000,
+      "tag": "0008_feature_sales_funnels",
+      "breakpoints": true
     }
   ]
 }

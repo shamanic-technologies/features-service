@@ -457,6 +457,11 @@ export const FUNNEL_REGISTRY: Record<string, FunnelDefinition> = {
   // Sales first. press / hiring / investors / vc / accelerators reuse the engine with
   // their own funnel + economics once defined — until then they return a null pipeline.
   "sales-cold-email-outreach": salesFunnel,
+  // Same medium, same measurement, different OFFER (a feedback request rather than a pitch), so it
+  // prices on the same funnel. Which CHAIN a given brand is sold this feature through is narrowed
+  // separately by the catalogue's per-feature `salesFunnels` (the conversation chain alone here),
+  // and by `restrictPathsToDeclaredLegs` at pricing time.
+  "sales-feedback-request-cold-email-outreach": salesFunnel,
 };
 
 export function getFunnel(featureSlug: string): FunnelDefinition | null {
