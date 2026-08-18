@@ -1767,7 +1767,13 @@ Prefix the whole session instead — `export PATH="$HOME/.nvm/versions/node/v22.
 then `pnpm install --frozen-lockfile` succeeds (it exits 1 on an `ERR_PNPM_IGNORED_BUILDS` warning
 about esbuild; deps ARE installed and the suite runs fine). Same PATH for `./node_modules/.bin/tsc`
 and `./node_modules/.bin/vitest`. pnpm 11 also drops a `pnpm-workspace.yaml` `allowBuilds` stub in
-the repo root — an install artifact, delete it, never commit it.
+the repo root — an install artifact, delete it, never commit it. **`git add -A` sweeps it in silently
+and CI fails at SETUP, before a single test runs**: `actions/setup-node`'s pnpm cache step shells
+`pnpm store path`, which reads the stub as a workspace manifest and dies with
+`ERROR packages field missing or empty` — a message that names neither pnpm-workspace.yaml nor your
+change, so it reads as broken CI rather than a stray file. `rm -f pnpm-workspace.yaml` BEFORE staging,
+or stage explicit paths. It is not gitignored, so nothing catches it locally. (Cost 2026-08-18, #780:
+one full red CI cycle + a force-push amend.)
 
 **A workspace branch is cut from `origin/main` but PRs target `staging`, so a staging-only change to
 a function you CALL breaks only after the merge.** The release skill's base-branch check
