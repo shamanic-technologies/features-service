@@ -3,6 +3,35 @@
  * On cold start, these are upserted by slug into the DB.
  */
 
+import { SALES_FUNNEL_KEYS, type SalesFunnelKey } from "../lib/sales-funnels.js";
+
+/**
+ * WHICH SALES FUNNELS A FEATURE MAY BE SOLD THROUGH — stated on EVERY feature, never omitted.
+ *
+ * The dashboard offers only valid (funnel, feature) pairs and campaign-service refuses to provision an
+ * invalid one; both read the answer from here, because it is a product statement about the feature and
+ * this service owns the feature catalogue. Hardcoding the matrix in each consumer was rejected — that
+ * is how one product fact becomes four drifting copies.
+ *
+ * The keys are brand-service's (`SALES_FUNNEL_KEYS`), unchanged: nothing here invents a funnel, and a
+ * feature can only be sold through a chain a brand actually declares.
+ *
+ * "SELLS THROUGH NONE" AND "SELLS THROUGH ALL" ARE DIFFERENT STATEMENTS, and both are written out. A
+ * non-sales feature (PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert
+ * quotes) states `[]` — it is not sold through a sales funnel at all. A sales feature sold through every
+ * declared chain states all four keys. Nothing is left unstated, so a consumer never has to decide what
+ * an absent answer means; the column's `[]` default only ever covers a row this seed has not reached,
+ * and reads as the restrictive side.
+ */
+const ALL_SALES_FUNNELS: readonly SalesFunnelKey[] = Object.freeze([...SALES_FUNNEL_KEYS]);
+const NO_SALES_FUNNEL: readonly SalesFunnelKey[] = Object.freeze([]);
+/**
+ * The reply-to-meeting chain alone — brand-service's "Sales Meeting from Conversation". The feedback
+ * request buys a CONVERSATION, and the conversation is what becomes the meeting; there is no website
+ * step in that offer, so the three click-driven chains are not things it can be sold through.
+ */
+const CONVERSATION_MEETING_ONLY: readonly SalesFunnelKey[] = Object.freeze(["sales_meetings_from_conversation" as SalesFunnelKey]);
+
 export interface SeedFeature {
   slug: string;
   name: string;
@@ -11,6 +40,8 @@ export interface SeedFeature {
   implemented: boolean;
   displayOrder: number;
   status: string;
+  /** The sales funnels this feature may be sold through — see `ALL_SALES_FUNNELS` above. Never omitted. */
+  salesFunnels: readonly SalesFunnelKey[];
   inputs: unknown[];
   outputs: unknown[];
   charts: unknown[];
@@ -26,6 +57,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 1,
     status: "active",
+    salesFunnels: ALL_SALES_FUNNELS,
     inputs: [
       { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who the campaign targets — ICP description (role, company size, industry). Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize outreach.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
       { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "callToAction", description: "The desired action from the recipient (book a call, sign up, reply, etc.). Should be a single, clear call-to-action. Examples: 'Book a 15-min demo call', 'Start a free trial', 'Schedule a discovery call'. The LLM uses this to craft the email CTA.", placeholder: "Book sales demos" },
@@ -65,6 +97,63 @@ export const SEED_FEATURES: SeedFeature[] = [
     ],
   },
 
+  /**
+   * SECOND ACQUISITION CHANNEL, SAME MEDIUM, DIFFERENT OFFER.
+   *
+   * A channel IS a feature slug in this fleet's vocabulary; there is no separate channel concept and
+   * none is introduced here. This one sends cold email over the same infrastructure as
+   * `sales-cold-email-outreach` and is measured by the same funnel, outputs, charts and entities — the
+   * only thing that differs is what the email ASKS FOR. Instead of pitching, it asks a buyer for
+   * feedback on the problem we solve, and the conversation it opens is what becomes the sales meeting.
+   *
+   * So it is sold through EXACTLY ONE chain: `sales_meetings_from_conversation`. The other three chains
+   * buy their first step with a website CLICK, and a feedback request has no website step to sell.
+   * That single-funnel restriction is the whole reason the per-feature answer exists.
+   */
+  {
+    slug: "sales-feedback-request-cold-email-outreach",
+    name: "Sales Feedback Request Cold Email Outreach",
+    description: "Ask buyers for feedback on the problem you solve instead of pitching them, then turn the replies into sales meetings. Same cold email sending, tracked through the same funnel.",
+    icon: "message-square",
+    implemented: true,
+    displayOrder: 12,
+    status: "active",
+    salesFunnels: CONVERSATION_MEETING_ONLY,
+    inputs: [
+      { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who the campaign targets — ICP description (role, company size, industry). Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize the feedback request.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
+      { key: "problemToValidate", type: "text", label: "Problem to Validate", extractKey: "problemStatement", description: "The problem the product solves, stated the way the recipient would experience it — this is what the email asks them for feedback on, so it must be a problem they recognize in their own work, not a product description. Examples: 'Sales reps spend half their week researching accounts instead of selling', 'Compliance reviews block every release by two weeks'. The LLM builds the feedback question from this.", placeholder: "Which part of this problem is real for you?" },
+      { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "callToAction", description: "What the conversation should lead to once the recipient replies. This offer converts through the reply, so the call-to-action is a low-friction ask for their view, and the meeting is proposed after they answer. Examples: 'Two-line reply on whether this problem is real, then a 15-min call', 'Their take on how they solve this today'. The LLM uses this to craft the ask.", placeholder: "A short reply, then a 15-min call" },
+      { key: "valueForTarget", type: "text", label: "Value for Target", extractKey: "valueProposition", description: "Why answering is worth the recipient's time — what they get back for the two minutes it costs them. Examples: 'Early access to the benchmark we build from these answers', 'A summary of how 40 peers solve this'. The LLM uses this to justify the ask.", placeholder: "What do they get back for replying?" },
+      { key: "socialProof", type: "text", label: "Social Proof", extractKey: "socialProof", description: "Trust signals that make the request credible — who else answered, customer count, notable logos, or published results. Examples: 'Already heard from 40 heads of RevOps', 'Trusted by 500+ SaaS companies'. The LLM uses this to establish standing before asking.", placeholder: "40 peers have already answered" },
+    ],
+    // Byte-identical measurement to sales-cold-email-outreach: same medium, same recipients* family
+    // from email-gateway, same ranked leaderboard. The offer changed, not what is counted.
+    outputs: [
+      { key: "emailsGenerated", displayOrder: 1 },
+      { key: "recipientsContacted", displayOrder: 2 },
+      { key: "recipientsSent", displayOrder: 3 },
+      { key: "recipientsDelivered", displayOrder: 4 },
+      { key: "recipientsOpened", displayOrder: 5 },
+      { key: "recipientsRepliesPositive", displayOrder: 6 },
+      { key: "recipientsRepliesNegative", displayOrder: 7 },
+      { key: "recipientsRepliesNeutral", displayOrder: 8 },
+      { key: "recipientOpenRate", displayOrder: 9 },
+      { key: "recipientClickRate", displayOrder: 10 },
+      { key: "recipientPositiveReplyRate", displayOrder: 11 },
+      { key: "costPerRecipientOpenCents", displayOrder: 12 },
+      { key: "costPerRecipientPositiveReplyCents", defaultSort: true, displayOrder: 13, sortDirection: "asc" },
+    ],
+    charts: [
+      { key: "funnel", type: "funnel-bar", title: "Campaign Funnel", displayOrder: 1, steps: [{ key: "emailsGenerated" }, { key: "recipientsContacted" }, { key: "recipientsSent" }, { key: "recipientsDelivered" }, { key: "recipientsOpened" }, { key: "recipientsClicked" }, { key: "recipientsRepliesPositive" }] },
+      { key: "replyBreakdown", type: "breakdown-bar", title: "Reply Breakdown", displayOrder: 2, segments: [{ key: "recipientsRepliesPositive", color: "green", sentiment: "positive" }, { key: "recipientsRepliesNeutral", color: "gray", sentiment: "neutral" }, { key: "recipientsRepliesNegative", color: "red", sentiment: "negative" }, { key: "recipientsRepliesAutoReply", color: "orange", sentiment: "neutral" }] },
+    ],
+    entities: [
+      { name: "leads", countKey: "leadsServed" },
+      { name: "companies" },
+      { name: "emails", countKey: "emailsGenerated" },
+    ],
+  },
+
   {
     slug: "sales-crm-email-outreach",
     name: "Sales CRM Email Outreach",
@@ -73,6 +162,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 11,
     status: "active",
+    salesFunnels: ALL_SALES_FUNNELS,
     inputs: [
       { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who the campaign targets — ICP description (role, company size, industry). Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize outreach.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
       { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "callToAction", description: "The desired action from the recipient (book a call, sign up, reply, etc.). Should be a single, clear call-to-action. Examples: 'Book a 15-min demo call', 'Start a free trial', 'Schedule a discovery call'. The LLM uses this to craft the email CTA.", placeholder: "Book sales demos" },
@@ -120,6 +210,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 2,
     status: "active",
+    salesFunnels: NO_SALES_FUNNEL,
     inputs: [
       { key: "targetOutlets", type: "text", label: "Target Outlets", extractKey: "targetOutlets", description: "Types of media outlets or specific publications to target. Be specific about outlet tier, beat, and format (online, print, podcast). Examples: 'Top-tier tech blogs (TechCrunch, The Verge)', 'B2B SaaS trade publications', 'Fintech newsletters with 10k+ subscribers'. The LLM uses this to find and prioritize matching journalists.", placeholder: "TechCrunch, Forbes, industry trade publications..." },
       { key: "prAngle", type: "text", label: "PR Angle", extractKey: "suggestedAngles", description: "The editorial hook or story angle to pitch. Should be newsworthy and specific. Examples: 'Series B funding of $25M led by Sequoia', 'Launch of AI-powered compliance platform', 'Industry report on developer productivity trends'. The LLM uses this as the core pitch in the outreach email.", placeholder: "Series B funding announcement, product launch..." },
@@ -162,6 +253,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 3,
     status: "active",
+    salesFunnels: NO_SALES_FUNNEL,
     inputs: [
       { key: "targetProfile", type: "textarea", label: "Target Candidate Profile", extractKey: "target_profile", description: "ICP description of the ideal candidate — role, seniority, skills, industry, geography. The LLM uses this to find matching leads and personalize outreach.", placeholder: "e.g. Senior Backend Engineer, 5+ years Go/Rust, startup experience, EU-based" },
       { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "target_outcome", description: "The desired action from the candidate — should be a single, clear call-to-action. Examples: 'Book a 30-min intro call', 'Apply to the role', 'Schedule a discovery conversation'.", placeholder: "e.g. Book a 30-min intro call" },
@@ -209,6 +301,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 4,
     status: "active",
+    salesFunnels: NO_SALES_FUNNEL,
     inputs: [
       { key: "industry", type: "text", label: "Industry", extractKey: "industry", description: "The industry vertical to target for discovery. Be specific — this drives which media outlets are searched. Examples: 'Enterprise cybersecurity', 'Consumer fintech', 'Climate tech / clean energy'. The discovery engine uses this to generate targeted search queries.", placeholder: "SaaS, AI, Fintech, Healthcare..." },
       { key: "angles", type: "text", label: "PR Angles", extractKey: "suggestedAngles", description: "Story hooks or editorial angles the outreach should pitch. Comma-separated. Examples: 'Series B funding announcement', 'New product launch for SMBs', 'Thought leadership on AI regulation'. Helps match outlets that cover these topics.", placeholder: "Fundraising announcement, product launch, thought leadership..." },
@@ -237,6 +330,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 5,
     status: "active",
+    salesFunnels: NO_SALES_FUNNEL,
     inputs: [
       { key: "prAngle", type: "text", label: "PR Angle", extractKey: "suggestedAngles", description: "The editorial hook or story angle for the press kit. Should be newsworthy and specific. Examples: 'Series B funding of $25M led by Sequoia', 'Launch of AI-powered compliance platform'. The LLM uses this as the core narrative for the press kit.", placeholder: "Series B funding announcement, product launch..." },
       { key: "companyContext", type: "text", label: "Company Context", extractKey: "companyDescription", description: "Brief background on the company. Include founding date, traction metrics, notable customers, or market position. Examples: 'Founded 2022, 500+ enterprise customers', 'Only platform certified for EU AI Act compliance'. Gives the LLM credibility context for the press kit content.", placeholder: "What does your company do and why is this relevant now?" },
@@ -266,6 +360,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 6,
     status: "active",
+    salesFunnels: NO_SALES_FUNNEL,
     inputs: [
       { key: "expertName", type: "text", label: "Expert Name", extractKey: "spokespersonName", description: "Full name of the brand's primary public spokesperson — the founder, CEO, or designated expert who will be quoted. Auto-extracted from the brand's site (about / team / leadership pages); edit if the wrong person is picked. Featured.com journalists attribute the published quote to this name verbatim.", placeholder: "Jane Doe" },
       { key: "expertTitle", type: "text", label: "Title / Role", extractKey: "spokespersonTitle", description: "Job title or role of the spokesperson at the company (e.g. 'CEO', 'CTO', 'Head of Research'). Printed next to the quote to establish authority. Auto-extracted from the brand's about / team page.", placeholder: "CEO" },
@@ -299,6 +394,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 7,
     status: "active",
+    salesFunnels: NO_SALES_FUNNEL,
     inputs: [
       { key: "brandName", type: "text", label: "Brand Name", extractKey: "brandName", description: "The brand or company name to audit. Used as the primary entity to detect in LLM answers. Examples: 'Stripe', 'Linear', 'Vercel'. Detection is exact-match plus close variants (case-insensitive, common suffix stripping).", placeholder: "Stripe" },
       { key: "competitors", type: "textarea", label: "Competitors", extractKey: "competitors", description: "Competitor brands to score against. Comma- or newline-separated. Used to compute share-of-voice and ranking comparisons. Examples: 'Adyen, Checkout.com, Braintree'. Aim for 3-7 direct competitors for meaningful share-of-voice metrics.", placeholder: "Adyen, Checkout.com, Braintree" },
@@ -344,6 +440,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 8,
     status: "active",
+    salesFunnels: NO_SALES_FUNNEL,
     inputs: [
       { key: "targetInvestorProfile", type: "text", label: "Target Investor Profile", extractKey: "targetInvestorProfile", description: "ICP description of the ideal VC — stage, sector thesis, geography, typical check size, fund size. Be precise about investment stage (pre-seed/seed/Series A), focus sectors, and ticket range. Example: 'Pre-seed and seed B2B SaaS funds, US and EU, $250k-$2M initial checks'. The LLM uses this to find matching VC partners and personalize outreach.", placeholder: "Pre-seed B2B SaaS funds, US+EU, $250k-$2M checks" },
       { key: "fundingAsk", type: "text", label: "Funding Ask", extractKey: "fundingAsk", description: "Round size, instrument, and headline terms. Should be specific and clear. Examples: 'Raising $3M seed on SAFE post-money cap $25M', 'Series A $10M priced round, 20% allocation for lead'. The LLM uses this as the core ask in the email body.", placeholder: "Raising $3M seed on SAFE, $25M post-money cap" },
@@ -392,6 +489,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 9,
     status: "active",
+    salesFunnels: NO_SALES_FUNNEL,
     inputs: [
       { key: "targetAcceleratorProfile", type: "text", label: "Target Accelerator Profile", extractKey: "targetAcceleratorProfile", description: "ICP description of the ideal accelerator — stage focus, sector thesis, geography, cohort cadence, equity/ticket terms. Be precise about program stage (pre-seed/seed), focus verticals, batch model (cohort vs rolling), and typical deal terms. Example: 'Top-tier US accelerators for pre-seed B2B SaaS, $125k-$500k for 5-7% equity, batch model, AI/dev-tools focus'. The LLM uses this to find matching programs and personalize outreach.", placeholder: "Top US accelerators, pre-seed B2B SaaS, $125k-$500k for 5-7%" },
       { key: "programAsk", type: "text", label: "Program Ask", extractKey: "programAsk", description: "What you want from the accelerator and which batch/cohort you're targeting. Should be specific. Examples: 'Applying to W26 batch, seeking $500k + mentorship + network', 'Rolling admission, looking for sector-specific mentors and US market entry support'. The LLM uses this as the core ask in the email body.", placeholder: "Applying to W26 batch, seeking $500k + mentor network" },
@@ -440,6 +538,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 10,
     status: "active",
+    salesFunnels: NO_SALES_FUNNEL,
     inputs: [
       { key: "expertName", type: "text", label: "Expert Name", extractKey: "spokespersonName", description: "Full name of the brand's primary public spokesperson — the founder, CEO, or designated expert who will be quoted. Auto-extracted from the brand's site (about / team / leadership pages); edit if the wrong person is picked. Featured.com journalists attribute the published quote to this name verbatim.", placeholder: "Jane Doe" },
       { key: "expertTitle", type: "text", label: "Title / Role", extractKey: "spokespersonTitle", description: "Job title or role of the spokesperson at the company (e.g. 'CEO', 'CTO', 'Head of Research'). Printed next to the quote to establish authority. Auto-extracted from the brand's about / team page.", placeholder: "CEO" },
