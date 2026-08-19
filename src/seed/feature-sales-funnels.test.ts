@@ -47,7 +47,11 @@ describe("per-feature sales funnels", () => {
   });
 
   it("'sells through NONE' and 'sells through ALL' are DISTINGUISHABLE — both are stated, neither is absent", () => {
-    const none = bySlug("pr-cold-email-outreach")!.salesFunnels;
+    // Hiring outreach is the "none" side now: it is not an acquisition channel at all, so it sells
+    // through nothing. Journalist outreach and expert quotes moved to the "some" side when they were
+    // published as earned acquisition channels — they produce website visits, so they sell through
+    // every click-driven chain.
+    const none = bySlug("hiring-cold-email-outreach")!.salesFunnels;
     const all = bySlug(SALES_SLUG)!.salesFunnels;
 
     expect(none).toEqual([]);
@@ -59,21 +63,32 @@ describe("per-feature sales funnels", () => {
     expect(all.length).toBe(SALES_FUNNEL_KEYS.length);
   });
 
-  it("every NON-SALES feature sells through no sales funnel", () => {
-    const nonSales = [
-      "pr-cold-email-outreach",
+  it("every feature that is NOT an acquisition channel sells through no sales funnel", () => {
+    // These acquire something other than a customer (a hire, an investor, a programme place) or are
+    // internal tooling, so they are not channels and there is nothing to pair them with.
+    const notChannels = [
       "hiring-cold-email-outreach",
       "vc-cold-email-outreach",
       "accelerators-cold-email-outreach",
       "outlet-database-discovery",
       "press-kit-page-generation",
-      "pr-expert-quote-outreach",
-      "pr-expert-quote-opportunities",
       "ai-visibility-scoring",
     ];
-    for (const slug of nonSales) {
+    for (const slug of notChannels) {
       expect(bySlug(slug), slug).toBeDefined();
+      expect(bySlug(slug)!.acquisitionChannel, slug).toBeNull();
       expect(bySlug(slug)!.salesFunnels, slug).toEqual([]);
+    }
+  });
+
+  it("the earned PR channels ARE published channels now, and sell through every click-driven chain", () => {
+    for (const slug of ["pr-cold-email-outreach", "pr-expert-quote-outreach", "pr-expert-quote-opportunities"]) {
+      expect(bySlug(slug)!.acquisitionChannel, slug).not.toBeNull();
+      expect(bySlug(slug)!.salesFunnels, slug).toEqual([
+        "sales_meetings_from_website",
+        "website_purchases",
+        "form_magnet",
+      ]);
     }
   });
 
