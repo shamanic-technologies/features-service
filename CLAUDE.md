@@ -52,6 +52,25 @@ channels are published, all bookable from day one, and a public marketing site i
 - **No new channel carries a free-text ICP input** — same rule as the audience-bandit note below: who a
   channel addresses is the audience entity, and a static "who we target" string would contradict it.
 
+- **A RETIRED SLUG IS UNPUBLISHED, NEVER RENAMED OR DELETED — `features.superseded_by_slug` names its
+  successor.** Live campaigns, live budgets and the cost ledger reference a retired slug, so its row,
+  its stats and every authenticated per-brand / per-campaign read of it keep answering exactly as
+  before. The ONE thing retirement changes is whether an anonymous caller can see it:
+  `buildChannelCatalogue` skips any row whose `supersededBySlug` is non-null, and the per-pair
+  economics is built from that catalogue, so an unlisted slug returns no pair (and 404s on
+  `?channelSlug=`) by construction rather than by a second rule. `pr-expert-quote-opportunities` is
+  the first one — the same offering on byte-identical terms is sold as `pr-expert-quote-outreach`, and
+  publishing both rendered two identical channel pages, split one offering's measured evidence across
+  two identities, and let a stranger book the dead spelling. **It is a general MARKER, not an
+  exclusion list**: the next retirement states its own successor on its seed row and needs no code
+  change here. Naming the successor rather than a bare boolean is what lets a consumer send a reader
+  where the offering actually lives. Stated on EVERY seed row (`null` = current), so a missing answer
+  can never read as a retirement nobody declared. Guards: the retirement cases in
+  `src/lib/channel-catalogue.test.ts` (the marker, not the slug, is what excludes) and the
+  `a RETIRED slug keeps working but is never published` suite in
+  `src/seed/acquisition-channel-catalogue.test.ts` (published exactly once, the dead row keeps its
+  terms, every successor is itself published and current). (Set 2026-08-19.)
+
 ### `GET /public/channels` + `GET /public/channel-funnel-economics` — NO AUTH, because the marketing site is generated from them
 
 Both are public and identity-free by design: a site that restates the terms is a site that can drift
@@ -1295,7 +1314,6 @@ npm run test         # Run tests (vitest)
 npm run build        # TypeScript compile
 npm run db:generate  # Generate Drizzle migrations from schema
 npm run db:push      # Push schema to DB (dev)
-npm run db:migrate:prod  # Run migrations on prod (tsx scripts/migrate-prod.ts)
 npm run generate:openapi # Regenerate openapi.json from Zod schemas
 ```
 
@@ -1940,6 +1958,35 @@ grains**: a workflow-grain open rate beside an audience-grain click rate was a b
 still falls back to the workflow's aggregate rates when NO audience qualifies (no clicks).
 `fetchBrandPersonas` / `BrandPersona` are DELETED and `git grep -i customerprofile src` returns ZERO
 matches; `fetchCurrentBrandProfile` stays (it still feeds the cost `brandProfileId` filter).
+
+## MIGRATIONS RUN ON THE BOOT PATH AND NOWHERE ELSE — there is no CI migrate job, and re-adding one is a regression
+
+`src/index.ts` runs `migrate(db, { migrationsFolder: "./drizzle" })` and then `registerSeedFeatures()`
+BEFORE `app.listen()`, and the box's deploy is health-checked with automatic rollback. So a migration and
+the code that needs it land together, atomically, and a migration that fails takes the deploy down with it
+rather than leaving prod half-migrated.
+
+A `migrate` job in `.github/workflows/ci.yml` used to run `pnpm db:migrate:prod` against a production
+`FEATURES_SERVICE_DATABASE_URL` secret on every push to main. It was **deleted** (2026-08-19), along with
+`scripts/migrate-prod.ts` and the `db:migrate:prod` package script. Three reasons, and the first alone is
+decisive:
+
+- **It could not work.** The fleet's Postgres is a container on the box publishing `127.0.0.1:5432`
+  (loopback only), so a GitHub runner cannot reach it at all. The job had been failing on
+  `password authentication failed for user 'neondb_owner'` since the Neon retirement — its secret still
+  pointed at the decommissioned database. "Repointing the secret" is not available without exposing prod
+  Postgres to the internet, which is not a trade worth making for a job that does nothing the boot path
+  does not already do.
+- **It was redundant.** Same migrator, same `./drizzle` folder, same files.
+- **It inverted the ordering.** CI migrated on PUSH, i.e. BEFORE the deploy — so prod's schema could move
+  ahead of the code that needed it, which is the one ordering a boot-path migration makes impossible.
+
+**`migrate` was a REQUIRED status check on `main` and was removed from the required contexts in the same
+change.** Deleting the job without that leaves every future PR to main blocked forever on a check that can
+never report. If you ever re-add a job under that name, re-add the context too; if you delete another
+required job, do the protection edit FIRST.
+
+`npm run db:migrate` (drizzle-kit, local dev) is untouched.
 
 ## Migration gotcha — drizzle-kit meta snapshot is DRIFTED; strip spurious `features` drops
 

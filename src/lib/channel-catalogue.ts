@@ -30,6 +30,11 @@ export interface CatalogueFeatureRow {
   icon: string;
   displayOrder: number;
   acquisitionChannel: unknown;
+  /**
+   * The slug that replaced this one, when this spelling is RETIRED. `null` is every current slug.
+   * A retired row is never published — see `buildChannelCatalogue`.
+   */
+  supersededBySlug?: string | null;
 }
 
 export interface PublicChannel {
@@ -110,10 +115,18 @@ export function parseAcquisitionChannel(slug: string, raw: unknown): Acquisition
  *
  * `salesFunnels` is DERIVED here from what the channel produces, exactly as the seed derives it, so the
  * public list and the stored column cannot disagree about which pairings exist.
+ *
+ * A RETIRED SLUG IS NOT PUBLISHED. A row naming a successor in `supersededBySlug` is the same offering
+ * under a spelling we no longer sell, so publishing it would render a second identical channel page,
+ * split one offering's measured evidence across two identities, and invite a stranger to book the dead
+ * one. The row itself is untouched — live campaigns, live budgets and the cost ledger reference it and
+ * every authenticated read of it keeps answering. This reads the marker rather than any particular
+ * slug, so the next retirement states its successor and needs nothing here.
  */
 export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): PublicChannel[] {
   const channels: PublicChannel[] = [];
   for (const row of rows) {
+    if (row.supersededBySlug != null) continue;
     const channel = parseAcquisitionChannel(row.slug, row.acquisitionChannel);
     if (!channel) continue;
     channels.push({
