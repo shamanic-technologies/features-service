@@ -64,6 +64,13 @@
       "when": 1786060800000,
       "tag": "0008_feature_sales_funnels",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787097600000,
+      "tag": "0009_feature_acquisition_channel",
+      "breakpoints": true
     }
   ]
 }

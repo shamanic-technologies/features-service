@@ -27,6 +27,22 @@ export const features = pgTable(
      * side of that distinction, since offering nothing is recoverable and offering nonsense is not.
      */
     salesFunnels: jsonb("sales_funnels").notNull().default([]),
+    /**
+     * THE ACQUISITION CHANNEL THIS FEATURE IS — its commercial terms (what operating it costs for a
+     * day whatever the volume, the minimum commitment in days, the upper bound on how long after
+     * booking it starts producing) and the kinds of step it can PRODUCE. Read publicly, with no
+     * customer identity, because the marketing site is generated from it and must never be able to
+     * drift from what we actually charge.
+     *
+     * NULL is a written statement, not a gap: this feature is not an acquisition channel (hiring,
+     * investor and accelerator outreach, outlet discovery, press-kit generation, AI visibility). The
+     * seed states it on every row, and a row the seed has not reached reads NULL — the restrictive
+     * side, since publishing nothing is recoverable and publishing terms nobody set is not.
+     *
+     * There is deliberately NO availability / "coming soon" flag in here. Every published channel is
+     * bookable; a channel we are slower to deliver says so through these very terms.
+     */
+    acquisitionChannel: jsonb("acquisition_channel"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

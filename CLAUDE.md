@@ -1,5 +1,92 @@
 # Features Service — CLAUDE.md
 
+## A CHANNEL PUBLISHES ITS COMMERCIAL TERMS AND WHAT IT CAN PRODUCE; WHICH FUNNELS IT SELLS THROUGH IS DERIVED, NEVER A SECOND LIST
+
+An acquisition channel IS a feature slug — still no channel table, still no channel concept, and none
+may be introduced. What a feature now states is `acquisitionChannel`: the commercial terms a buyer
+commits to before anything is measured, and the kinds of STEP the channel can PRODUCE. Roughly thirty
+channels are published, all bookable from day one, and a public marketing site is generated from them.
+
+- **`salesFunnels` IS DERIVED (`sellableFunnelsFor`) AND MUST STAY DERIVED.** A channel states what it
+  produces; a funnel states what STARTS it (`SALES_FUNNEL_ENTRY_STEP`, mirrored from brand-service and
+  pinned against `SALES_FUNNELS[key].steps[0]`); a pairing is possible when the two meet. Hand-writing
+  `salesFunnels` again would restore the drift the derivation removes. The wire field is UNCHANGED and
+  every existing row reads byte-identically: cold email and CRM email still all four, the feedback
+  request still `sales_meetings_from_conversation` alone, a non-channel still `[]`.
+- **NULL ON `acquisitionChannel` IS A WRITTEN STATEMENT** — this feature is not an acquisition channel
+  (hiring, VC and accelerator outreach, outlet discovery, press-kit generation, AI visibility). It
+  acquires something other than a customer, or is internal tooling, so there is nothing to pair it with.
+  Journalist outreach and both expert-quote features MOVED to the channel side: they are earned channels
+  producing website visits, so they now sell through the three click-driven chains where they used to
+  sell through nothing.
+- **THERE IS NO "COMING SOON", AND NO FLAG MAY BE ADDED FOR ONE.** Every published channel is
+  `implemented: true` / `status: "active"`. A channel we are slower to deliver says so through its OWN
+  terms — a high `dailyOperatingCostCents` (a phone channel carries the person on the line, LinkedIn Ads
+  carries its own daily floor, SEO carries the specialist), a long `maxDaysToFirstProduction`, a long
+  `minimumCommitmentDays`. Guard: the blob's key set is exactly `{family, producibleSteps, terms}` and
+  `maxDaysToFirstProduction ≤ minimumCommitmentDays` (we never sell a booking that ends before it can
+  produce).
+- **THE TWO ON-PLATFORM STEPS ARE STATED BEFORE THEIR FUNNELS EXIST, ON PURPOSE.**
+  `platform_form_submission` and `platform_booked_meeting` are produced on the ad platform rather than
+  the brand's site, and no deployed chain starts from either yet (brand-service ships them in parallel).
+  A channel producing only those sells through nothing TODAY and starts selling the moment the funnel
+  mirror gains the chain, with no change here. What a channel can produce is a fact about the channel,
+  not about what we happen to sell through it.
+- **THE PRE-EXISTING SLUGS DID NOT MOVE.** `sales-cold-email-outreach` and `sales-crm-email-outreach`
+  keep the legacy `sales-` prefix because live campaigns, live budgets and the cost ledger reference
+  them. And no NEW slug ends in `-cold-email-outreach`: that suffix is what `coldEmailOutreachSlugs`
+  derives the fleet audits' whole account universe from, so a new one landing in it would silently
+  enrol the channel in send-forecast / accounts / customer-health. Guarded.
+- **THE NEW CHANNELS DECLARE EMPTY `outputs`/`charts`/`entities`, AND THAT IS NOT A BOOKABILITY
+  STATEMENT.** Those three are the MEASUREMENT surface, and this service measures email today. A
+  cold-call channel declaring `recipientsOpened` would report 0 for ever, and a measured-looking zero is
+  exactly the fabricated figure that is forbidden. Empty says the honest thing.
+- **No new channel carries a free-text ICP input** — same rule as the audience-bandit note below: who a
+  channel addresses is the audience entity, and a static "who we target" string would contradict it.
+
+### `GET /public/channels` + `GET /public/channel-funnel-economics` — NO AUTH, because the marketing site is generated from them
+
+Both are public and identity-free by design: a site that restates the terms is a site that can drift
+from what we actually charge and actually measured.
+
+- **`/public/channels`** serves the catalogue: terms, producible steps (each with buyer-facing wording),
+  and the derived funnels, each carrying its own chain so a row renders without the consumer knowing the
+  catalogue. The step vocabulary rides the payload so nothing hardcodes it.
+- **`/public/channel-funnel-economics`** serves ONE ROW PER PAIR — the grain the marketing site prints.
+  A customer buys a PAIR, and the same chain costs a very different amount through a phone channel than
+  through paid search, so a brand-level or channel-level aggregate cannot answer it. `?channelSlug=`
+  narrows; an unknown slug is a 404, never an empty pair list (which would read as "sells through
+  nothing").
+- **NOT ENOUGH DATA IS AN ANSWER AND IT NAMES THE MISSING INGREDIENT** — `measured: false` with
+  `no_spend_recorded` / `no_entry_step_produced` / `no_economics_declared`, checked in that order so a
+  fresh channel says the plain thing. The same rule runs one level down: a STEP whose rate nobody
+  declared reads `costPerStepUsd: null` with its own `unpricedReason`, never 0. **"Meeting attended" is
+  permanently unpriced** — brand-service folds the show-up rate into booked→paid
+  (`meetingChainCloseRate`), so pricing it would assert a 100% show-up rate, the exact bug that
+  composition exists to prevent.
+- **A CHAIN IS PRICED THROUGH ITS OWN CHANNEL**, via the same `projectOutcomeCosts` + channel mask every
+  other cost surface uses, and `returnPerDollar` is the IDENTICAL definition `/funnel-ranking` ranks a
+  brand's declared funnels on. So a public per-pair figure and a customer's own dashboard can never
+  print two prices for one chain. Evidence is the SAME cross-org per-brand dataset
+  (`getFunnelBucketDatasetCached`) the other public cost surfaces read, so a channel nobody has run yet
+  reaches "not enough data" by the data being absent, never by a special case.
+- Both ride `LIFETIME_AGGREGATE_WINDOWS` through `servedPublicCached` (15 min fresh / 6 h stale,
+  single-flighted), like every other cross-org surface. A malformed stored channel blob FAILS the whole
+  read (`MalformedAcquisitionChannelError`) rather than half-publishing: a price list that silently
+  degrades would publish terms nobody set.
+- **The api-service gateway does NOT proxy these yet** — `/public/*` needs an EXPLICIT per-route proxy
+  there (no wildcard), so a consumer outside the cluster needs that follow-up before it can read them.
+- Vocabulary, owner-fixed: the terminal thing a customer buys is a **SALE**, each stage of a funnel is a
+  **STEP**, the step a funnel is named after is its **MILESTONE**. "Outcome" is deprecated (it named a
+  retired per-brand optimization goal) and nothing new here uses it.
+- Guards: `src/lib/acquisition-channels.test.ts` (the join, and the entry-step mirror pinned against the
+  chain's own first step), `src/seed/acquisition-channel-catalogue.test.ts` (every named channel present,
+  slugs unmoved, no availability flag, terms whole and self-consistent, `salesFunnels` derived, the
+  cold-email family unwidened), `src/lib/channel-catalogue.test.ts` (fail-loud parsing) and
+  `src/lib/channel-funnel-economics.test.ts` (the three unmeasured reasons, per-chain pricing, the
+  permanently-unpriced attended step, no false $0). (Set 2026-08-19.)
+
+
 ## A FREE-TEXT ICP INPUT CONTRADICTS THE AUDIENCE BANDIT — it is GONE from every bandit-fed channel, and KEPT on the two features where nothing else answers the question
 
 Audiences are first-class: they are saved entities owned by human-service, a campaign points at them,

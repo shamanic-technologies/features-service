@@ -30,6 +30,7 @@ import {
   mergeSpendByDay,
   mergeOutcomesByDay,
   meanFleetEconomics,
+  mean,
   normalizeObjective,
   type ObjectiveAverages,
   type TrendPoint,
@@ -60,6 +61,13 @@ import { apiKeyOnly } from "../middleware/auth.js";
 import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
 import { servedCached, PLATFORM_SCOPE_ORG_ID } from "../lib/view-cache.js";
+import {
+  buildChannelCatalogue,
+  producibleStepCatalogue,
+  type PublicChannel,
+} from "../lib/channel-catalogue.js";
+import { pricePair, type PairResult } from "../lib/channel-funnel-economics.js";
+import type { SalesFunnelKey } from "../lib/sales-funnels.js";
 
 const router = Router();
 
@@ -237,6 +245,8 @@ function allPublicCaches(): PublicCache[] {
     activeUsersCache,
     activeUsersByUserCache,
     revenueHistoryCache,
+    channelCatalogueCache,
+    channelFunnelEconomicsCache,
   ];
 }
 
@@ -2155,6 +2165,175 @@ export async function handleRevenueHistory(
   });
   res.json(payload);
 }
+
+// ── The public acquisition-channel catalogue + per-pair economics ────────────────────────────────────
+//
+// Two NO-AUTH reads, because the marketing site is generated from them and must never be able to drift
+// from what we actually charge and actually measured:
+//
+//   GET /public/channels                  — every acquisition channel, its commercial terms, and the
+//                                           kinds of step it can produce (plus the funnels that follow).
+//   GET /public/channel-funnel-economics  — one row per (sales funnel, channel) PAIR: either its
+//                                           measured economics or an explicit "not enough data".
+//
+// A customer buys a PAIR. The same chain costs a very different amount through a phone channel than
+// through paid search, so neither a brand-level nor a channel-level aggregate can answer this, and the
+// site prints one row per pair.
+
+const channelCatalogueCache: PublicCache = new Map();
+const channelFunnelEconomicsCache: PublicCache = new Map();
+
+/** Test seam — reset the acquisition-channel catalogue + per-pair economics caches. */
+export function __resetChannelCatalogueCache(): void {
+  clearPublicCache(channelCatalogueCache);
+  clearPublicCache(channelFunnelEconomicsCache);
+}
+
+async function loadPublishedChannels(): Promise<PublicChannel[]> {
+  const rows = await db.query.features.findMany({ where: eq(features.status, "active") });
+  return buildChannelCatalogue(rows);
+}
+
+interface ChannelCataloguePayload {
+  channels: PublicChannel[];
+  /** The step vocabulary itself, so a consumer never hardcodes it to join against a funnel's entry step. */
+  producibleSteps: ReturnType<typeof producibleStepCatalogue>;
+}
+
+export async function handlePublicChannels(res: import("express").Response): Promise<void> {
+  const payload = await servedPublicCached<ChannelCataloguePayload>({
+    cache: channelCatalogueCache,
+    key: "catalogue",
+    windows: LIFETIME_AGGREGATE_WINDOWS,
+    label: "acquisition-channel catalogue",
+    compute: async () => ({
+      channels: await loadPublishedChannels(),
+      producibleSteps: producibleStepCatalogue(),
+    }),
+  });
+  res.json(payload);
+}
+
+interface ChannelFunnelPairRow {
+  channelSlug: string;
+  channelName: string;
+  funnelKey: SalesFunnelKey;
+  funnelName: string;
+  /** The chain's steps in order, so a row renders without the consumer knowing the catalogue. */
+  funnelSteps: readonly string[];
+  result: PairResult;
+}
+
+// One channel's dataset build is already single-flighted and cached per slug; this only bounds how many
+// distinct channels build at once so a cold catalogue read does not burst the fan-out at the siblings.
+const CHANNEL_PAIR_CONCURRENCY = 6;
+
+/**
+ * Price every (funnel, channel) pair for these channels.
+ *
+ * Evidence comes from the SAME per-brand cross-org dataset every other public cost surface reads
+ * (`getFunnelBucketDatasetCached`), so a per-pair figure and the fleet cost surfaces cannot disagree
+ * about what a channel has spent or produced. A channel nobody has run yet has an empty dataset, which
+ * is exactly the "not enough data" answer — reached by the data being absent, never by a special case.
+ */
+async function buildChannelFunnelEconomics(channels: readonly PublicChannel[]): Promise<ChannelFunnelPairRow[]> {
+  const perChannel = await mapWithConcurrency(channels, CHANNEL_PAIR_CONCURRENCY, async (channel) => {
+    const dataset = await getFunnelBucketDatasetCached(channel.slug);
+
+    let totalSpentUsd = 0;
+    let websiteVisitsProduced = 0;
+    let conversationsProduced = 0;
+    for (const brand of dataset) {
+      for (const spend of brand.spendByDay.values()) totalSpentUsd += spend;
+      for (const day of brand.outcomesByDay.values()) {
+        websiteVisitsProduced += day.clicks;
+        conversationsProduced += day.replies;
+      }
+    }
+
+    // A unit cost only exists once the step it divides by has actually been produced. Null is "we have
+    // not seen one of these yet", never 0 (which would say the step is free).
+    const unitCosts = {
+      clickUsd: websiteVisitsProduced > 0 ? totalSpentUsd / websiteVisitsProduced : null,
+      replyUsd: conversationsProduced > 0 ? totalSpentUsd / conversationsProduced : null,
+    };
+    const economics = meanFleetEconomics(dataset.map((b) => b.economics));
+    const lifetimeRevenueUsd = mean(
+      dataset.map((b) => b.economics.lifetimeRevenueUsd).filter((v) => typeof v === "number" && v > 0),
+    );
+    const evidence = { totalSpentUsd, conversationsProduced, websiteVisitsProduced, brandCount: dataset.length };
+
+    return channel.salesFunnels.map((funnel): ChannelFunnelPairRow => ({
+      channelSlug: channel.slug,
+      channelName: channel.name,
+      funnelKey: funnel.key,
+      funnelName: funnel.name,
+      funnelSteps: funnel.steps,
+      result: pricePair({ funnelKey: funnel.key, unitCosts, economics, lifetimeRevenueUsd, evidence }),
+    }));
+  });
+
+  return perChannel.flat();
+}
+
+interface ChannelFunnelEconomicsPayload {
+  /** The channel this read was narrowed to, or null for the whole catalogue. */
+  channelSlug: string | null;
+  pairs: ChannelFunnelPairRow[];
+}
+
+export async function handleChannelFunnelEconomics(
+  channelSlug: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  const channels = await loadPublishedChannels();
+
+  if (channelSlug) {
+    // An unknown channel is a 404 naming what was asked for — never an empty pair list, which a consumer
+    // would read as "this channel sells through nothing".
+    const known = channels.some((c) => c.slug === channelSlug);
+    if (!known) {
+      res.status(404).json({ error: `Acquisition channel not found: "${channelSlug}"` });
+      return;
+    }
+  }
+
+  const payload = await servedPublicCached<ChannelFunnelEconomicsPayload>({
+    cache: channelFunnelEconomicsCache,
+    key: channelSlug ?? "__all__",
+    windows: LIFETIME_AGGREGATE_WINDOWS,
+    label: "channel-funnel economics",
+    compute: async () => ({
+      channelSlug: channelSlug ?? null,
+      pairs: await buildChannelFunnelEconomics(
+        channelSlug ? channels.filter((c) => c.slug === channelSlug) : channels,
+      ),
+    }),
+  });
+  res.json(payload);
+}
+
+// ── GET /public/channels ─────────────────────────────────────────────────────
+
+router.get("/public/channels", async (_req, res) => {
+  try {
+    await handlePublicChannels(res);
+  } catch (error) {
+    console.error("[features-service] Public channels error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/channel-funnel-economics ─────────────────────────────────────
+
+router.get("/public/channel-funnel-economics", async (req, res) => {
+  try {
+    await handleChannelFunnelEconomics(req.query.channelSlug as string | undefined, res);
+  } catch (error) {
+    console.error("[features-service] Public channel-funnel economics error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // ── GET /public/stats/ranked ─────────────────────────────────────────────────
 
