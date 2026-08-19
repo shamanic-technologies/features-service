@@ -1788,6 +1788,122 @@ registry.registerPath({
   },
 });
 
+// ── The public acquisition-channel catalogue ─────────────────────────────
+
+const channelTermsSchema = z.object({
+  dailyOperatingCostCents: z.number().int().describe("What operating this channel costs for a DAY regardless of volume, in whole cents. A phone channel carries the person on the line; an ad platform carries its own daily floor; a specialist-run channel carries that salary. A commercial figure we set, never a measured one."),
+  minimumCommitmentDays: z.number().int().describe("The shortest booking we sell, in days."),
+  maxDaysToFirstProduction: z.number().int().describe("UPPER BOUND on how many days after booking the channel starts producing — a promise, not an estimate. A channel we are slower to deliver says so HERE; there is deliberately no availability or coming-soon flag anywhere on this payload."),
+});
+
+const producibleStepSchema = z.object({
+  key: z.enum(["conversation", "website_visit", "platform_form_submission", "platform_booked_meeting"]),
+  label: z.string(),
+  description: z.string(),
+});
+
+const publicChannelSchema = registry.register(
+  "PublicAcquisitionChannel",
+  z.object({
+    slug: z.string().describe("The feature slug. A channel IS a feature slug in this fleet; there is no separate channel entity."),
+    name: z.string(),
+    description: z.string(),
+    icon: z.string(),
+    displayOrder: z.number().int(),
+    family: z.enum(["outbound_one_to_one", "paid_reach", "earned"]),
+    terms: channelTermsSchema,
+    producibleSteps: z.array(producibleStepSchema).describe("The kinds of step this channel can PRODUCE. A sales funnel states what step STARTS it, so a consumer joins the two to decide which pairings are possible."),
+    salesFunnels: z.array(z.object({ key: z.string(), name: z.string(), steps: z.array(z.string()) })).describe("The sales funnels this channel may be SOLD THROUGH — DERIVED from what it produces, so it can never drift from `producibleSteps`. An empty list is a real statement (no deployed chain starts from anything this channel produces), not a gap."),
+  }),
+);
+
+const channelCatalogueResponseSchema = registry.register(
+  "ChannelCatalogueResponse",
+  z.object({
+    channels: z.array(publicChannelSchema),
+    producibleSteps: z.array(producibleStepSchema).describe("The step vocabulary itself, published so a consumer never hardcodes it to join against a funnel's entry step."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/public/channels",
+  summary: "Every acquisition channel, its commercial terms and what it can produce (public, no auth)",
+  description:
+    "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), the kinds of step it can PRODUCE, and the sales funnels that follow from those steps. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms.",
+  tags: ["Public"],
+  responses: {
+    200: { description: "The acquisition-channel catalogue", content: { "application/json": { schema: channelCatalogueResponseSchema } } },
+  },
+});
+
+// ── GET /public/channel-funnel-economics ─────────────────────────────────
+
+const pricedStepSchema = z.object({
+  step: z.string().describe("The step, worded exactly as brand-service words it in the chain."),
+  milestone: z.boolean().describe("True for the step the funnel is NAMED after — its MILESTONE."),
+  costPerStepUsd: z.number().nullable().describe("What reaching this step costs through this pair. NULL when it cannot be priced — never 0, which would read as 'this step is free'."),
+  unpricedReason: z.enum(["rate_not_declared", "rate_is_zero"]).nullable().describe("Present exactly when `costPerStepUsd` is null."),
+});
+
+const pairEconomicsSchema = z.object({
+  steps: z.array(pricedStepSchema),
+  costPerSaleUsd: z.number().nullable().describe("What one SALE costs through this pair — the terminal step's own price."),
+  costPerSaleUnpricedReason: z.enum(["rate_not_declared", "rate_is_zero"]).nullable(),
+  returnPerDollar: z.number().nullable().describe("lifetimeRevenueUsd / costPerSaleUsd — the identical definition /features/{slug}/funnel-ranking ranks a brand's declared funnels on. Null, never 0, when either half is missing."),
+  lifetimeRevenueUsd: z.number().nullable(),
+  evidence: z.object({
+    totalSpentUsd: z.number(),
+    conversationsProduced: z.number(),
+    websiteVisitsProduced: z.number(),
+    brandCount: z.number().int(),
+  }),
+});
+
+const channelFunnelPairSchema = registry.register(
+  "ChannelFunnelPair",
+  z.object({
+    channelSlug: z.string(),
+    channelName: z.string(),
+    funnelKey: z.string(),
+    funnelName: z.string(),
+    funnelSteps: z.array(z.string()),
+    result: z.union([
+      z.object({ measured: z.literal(true), economics: pairEconomicsSchema }),
+      z.object({
+        measured: z.literal(false),
+        reason: z.enum(["no_spend_recorded", "no_entry_step_produced", "no_economics_declared"]).describe("Which INGREDIENT is missing. A pair we have not measured enough SAYS SO rather than returning a figure or an empty value a consumer would have to interpret."),
+      }),
+    ]),
+  }),
+);
+
+const channelFunnelEconomicsResponseSchema = registry.register(
+  "ChannelFunnelEconomicsResponse",
+  z.object({
+    channelSlug: z.string().nullable().describe("The channel this read was narrowed to, or null for the whole catalogue."),
+    pairs: z.array(channelFunnelPairSchema),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/public/channel-funnel-economics",
+  summary: "Measured economics per (sales funnel, acquisition channel) pair, or an explicit not-enough-data (public, no auth)",
+  description:
+    "One row per (sales funnel, acquisition channel) PAIR: either the pair's MEASURED economics — cost per each STEP of that funnel, cost per SALE, and return per dollar — or an explicit statement that there is not enough data, naming which ingredient is missing. A customer buys a PAIR, and the same chain costs a very different amount through a phone channel than through paid search, so neither a brand-level nor a channel-level aggregate can answer this. Evidence is the SAME cross-org per-brand dataset every other public cost surface reads, and a chain is priced through its OWN channel (the conversation chain on replies, the click-driven chains on visits), so a public per-pair figure and a customer's own dashboard can never print two prices for one chain. Nothing is fabricated: a pair with no spend, no produced entry step, or no declared economics returns `measured: false` with its reason.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      channelSlug: z.string().optional().describe("Narrow to one channel. Omitted returns every pair in the catalogue. An unknown slug is a 404, never an empty pair list."),
+    }),
+  },
+  responses: {
+    200: { description: "Per-pair economics", content: { "application/json": { schema: channelFunnelEconomicsResponseSchema } } },
+    404: { description: "Acquisition channel not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /public/stats/cost-per-outcome-lifetime ──────────────────────────
 
 registry.registerPath({

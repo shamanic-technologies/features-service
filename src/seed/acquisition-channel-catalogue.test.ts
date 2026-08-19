@@ -104,7 +104,7 @@ describe("the published acquisition-channel catalogue", () => {
     expect(new Set(SEED_FEATURES.map((f) => f.name)).size).toBe(SEED_FEATURES.length);
   });
 
-  it("does NOT widen the cold-email family — only the three email channels carry that suffix", () => {
+  it("does NOT widen the cold-email family — no new slug carries that suffix", () => {
     // The fleet audits derive their whole account universe from the `-cold-email-outreach` suffix, so a
     // new slug landing in it would silently enrol the channel in send-forecast / accounts / health.
     const cold = coldEmailOutreachSlugs(SEED_FEATURES.map((f) => f.slug)).sort();
@@ -115,7 +115,6 @@ describe("the published acquisition-channel catalogue", () => {
         "hiring-cold-email-outreach",
         "pr-cold-email-outreach",
         "sales-cold-email-outreach",
-        "sales-crm-email-outreach",
         "vc-cold-email-outreach",
       ].sort(),
     );

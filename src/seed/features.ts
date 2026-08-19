@@ -46,6 +46,27 @@ const terms = (
   maxDaysToFirstProduction: number,
 ): AcquisitionChannel["terms"] => ({ dailyOperatingCostCents, minimumCommitmentDays, maxDaysToFirstProduction });
 
+/**
+ * NO FREE-TEXT ICP INPUT ON A FEATURE WHOSE RECIPIENTS COME FROM THE AUDIENCE BANDIT.
+ *
+ * Audiences are first-class: they are saved entities owned by human-service, a campaign points at
+ * them, and a bandit picks ONE audience per run. A free-text "who we target" field typed once on the
+ * feature form therefore does not merely DUPLICATE the audience, it CONTRADICTS it: the run is
+ * addressing the bandit-selected audience while the prompt carries a single static ICP describing a
+ * different set of people.
+ *
+ * So the field is gone from every bandit-fed channel: sales, feedback request, VC, accelerators,
+ * hiring. It is KEPT on the two features where it is not a duplicate of anything:
+ *   - `ai-visibility-scoring` contacts nobody. Its `audienceProfile` frames the questions put to the
+ *     LLMs from a realistic buyer's point of view; there is no audience entity and no lead in play.
+ *   - `pr-cold-email-outreach` takes its recipients from journalists-service, not from the audience
+ *     entity, so there is no second source of truth to contradict.
+ *
+ * Removing the input does NOT strip the corresponding key from brand extraction: the extracted brand
+ * blob is assembled from field keys the workflow DAG asks brand-service for, independently of this
+ * catalogue. The blast radius is the customer-facing form and its prefill, nothing else.
+ * (Set 2026-08-19.)
+ */
 export interface SeedFeatureDef {
   slug: string;
   name: string;
@@ -81,7 +102,9 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     status: "active",
     acquisitionChannel: { family: "outbound_one_to_one", producibleSteps: CONVERSATION_AND_VISIT, terms: terms(800, 30, 14) },
     inputs: [
-      { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who the campaign targets — ICP description (role, company size, industry). Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize outreach.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
+      // NO free-text ICP input. Recipients come from the AUDIENCE BANDIT (a saved human-service
+      // audience picked per run), so a static ICP typed here would describe a different set of people
+      // than the run is actually addressing — a contradiction, not a duplicate. See AUDIENCE_BANDIT_NOTE.
       { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "callToAction", description: "The desired action from the recipient (book a call, sign up, reply, etc.). Should be a single, clear call-to-action. Examples: 'Book a 15-min demo call', 'Start a free trial', 'Schedule a discovery call'. The LLM uses this to craft the email CTA.", placeholder: "Book sales demos" },
       { key: "valueForTarget", type: "text", label: "Value for Target", extractKey: "valueProposition", description: "The core value proposition for the target audience — what they gain by engaging. Should be specific and quantified when possible. Examples: 'Cut infrastructure costs by 40%', 'Ship features 3x faster with our CI/CD platform'. The LLM uses this as the main selling point in the email body.", placeholder: "What do they gain from responding?" },
       { key: "urgency", type: "text", label: "Urgency", extractKey: "urgency", description: "Time pressure to act — a deadline, event date, or expiring offer that motivates the recipient to respond quickly. Examples: 'Beta access closes Friday', 'Event is in 2 weeks', 'Pricing increases April 1st'. Leave empty if no urgency applies.", placeholder: "Limited-time offer ending March 1st" },
@@ -141,12 +164,35 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 12,
     status: "active",
     acquisitionChannel: { family: "outbound_one_to_one", producibleSteps: CONVERSATION_ONLY, terms: terms(800, 30, 14) },
+    // THE OFFER HAS TWO HALVES, AND THE CUSTOMER STATES BOTH.
+    //
+    // This channel does not pitch. It gives something away (a gift) and asks for feedback in return,
+    // so Hormozi's value equation runs on BOTH sides at once: the prospect pays in EFFORT rather than
+    // money, which makes the FORM OF FEEDBACK the price tag of the offer rather than a config detail.
+    // A public video testimonial and a Google Maps rating are wildly different prices.
+    //
+    //     (value of the GIFT) x (credibility they will actually get it)
+    //     -------------------------------------------------------------
+    //     (delay before they get it) x (effort of the FEEDBACK asked)
+    //
+    // Hence exactly eight inputs: the two halves of the offer (gift, its anchored value), its price
+    // (form of feedback, effort asked), and the four persuasion levers. There is no target-audience
+    // field (the audience bandit owns that, see AUDIENCE_BANDIT_NOTE above), and no problem-to-validate
+    // or target-outcome field: the gift and its value already say what is on the table and what the
+    // relationship becomes afterwards.
+    //
+    // `feedbackForm` would ideally be a multiple choice. It is deliberately plain text whose
+    // placeholder enumerates the options: no new input TYPE is introduced in this iteration, and a
+    // select/multi-select must not be added for it.
     inputs: [
-      { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who the campaign targets — ICP description (role, company size, industry). Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize the feedback request.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
-      { key: "problemToValidate", type: "text", label: "Problem to Validate", extractKey: "problemStatement", description: "The problem the product solves, stated the way the recipient would experience it — this is what the email asks them for feedback on, so it must be a problem they recognize in their own work, not a product description. Examples: 'Sales reps spend half their week researching accounts instead of selling', 'Compliance reviews block every release by two weeks'. The LLM builds the feedback question from this.", placeholder: "Which part of this problem is real for you?" },
-      { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "callToAction", description: "What the conversation should lead to once the recipient replies. This offer converts through the reply, so the call-to-action is a low-friction ask for their view, and the meeting is proposed after they answer. Examples: 'Two-line reply on whether this problem is real, then a 15-min call', 'Their take on how they solve this today'. The LLM uses this to craft the ask.", placeholder: "A short reply, then a 15-min call" },
-      { key: "valueForTarget", type: "text", label: "Value for Target", extractKey: "valueProposition", description: "Why answering is worth the recipient's time — what they get back for the two minutes it costs them. Examples: 'Early access to the benchmark we build from these answers', 'A summary of how 40 peers solve this'. The LLM uses this to justify the ask.", placeholder: "What do they get back for replying?" },
-      { key: "socialProof", type: "text", label: "Social Proof", extractKey: "socialProof", description: "Trust signals that make the request credible — who else answered, customer count, notable logos, or published results. Examples: 'Already heard from 40 heads of RevOps', 'Trusted by 500+ SaaS companies'. The LLM uses this to establish standing before asking.", placeholder: "40 peers have already answered" },
+      { key: "gift", type: "text", label: "The Gift", extractKey: "gift", description: "What the recipient gets, before they give anything back. This offer leads with a gift instead of a pitch: a free trial, the product at cost, a service done for them, or early access. Examples: '3 months on the full plan, free', 'We run the migration for you at no cost', 'Early access to the beta'. The LLM opens the email with this.", placeholder: "3 months on the full plan, free" },
+      { key: "giftValue", type: "text", label: "Value of the Gift", extractKey: "giftValue", description: "What the gift normally costs, and what the relationship becomes once the feedback is given. Free is worth nothing without a price next to it, so anchor it. Examples: 'Normally 200 EUR per month, and they keep the workspace afterwards', 'A 2,000 EUR audit, yours at no charge, then a normal paid engagement if it helps'. The LLM uses this to make the offer concrete.", placeholder: "Normally 200 EUR per month" },
+      { key: "feedbackForm", type: "text", label: "Form of Feedback", extractKey: "feedbackForm", description: "What they give back. This is the price of the offer, so name the exact form: a written testimonial (private or public), a video testimonial (private or public), a call, or a review on a public platform such as G2, Google Maps, Trustpilot or Capterra. A public video costs the recipient far more than a private note, and the email has to ask for one specific thing.", placeholder: "Written or video testimonial (private or public), a call, or a public review on G2, Google Maps, Trustpilot, Capterra" },
+      { key: "feedbackEffort", type: "text", label: "Effort Asked", extractKey: "feedbackEffort", description: "How much of their time it takes, stated concretely so the price feels small and knowable. Examples: '15 minutes on a video call', 'Three questions in writing', 'A 60-second video'. The LLM uses this to size the ask in the email.", placeholder: "15 minutes on a video call" },
+      { key: "socialProof", type: "text", label: "Social Proof", extractKey: "socialProof", description: "Trust signals that make the offer credible: who already took it, customer count, notable logos, or published results. Examples: 'Already running with 40 heads of RevOps', 'Trusted by 500+ SaaS companies'. The LLM uses this to establish standing before offering.", placeholder: "40 testers already onboard" },
+      { key: "scarcity", type: "text", label: "Scarcity", extractKey: "scarcity", description: "How few tester seats there are. This offer is naturally scarce: giving the product away costs you something, so the number of people who can take it is limited, and saying the number makes the gift feel earned. Examples: 'Only 10 tester seats', '5 free audits this quarter'. Leave empty if no scarcity applies.", placeholder: "Only 10 tester seats" },
+      { key: "urgency", type: "text", label: "Urgency", extractKey: "urgency", description: "The deadline or closing cohort that makes replying this week better than replying next month. Examples: 'Tester cohort closes Friday', 'Free access ends March 1st'. Leave empty if no urgency applies.", placeholder: "Tester cohort closes Friday" },
+      { key: "riskReversal", type: "text", label: "Risk Reversal", extractKey: "riskReversal", description: "What removes the catch. A gift invites suspicion, so say plainly what the recipient is not signing up for. Examples: 'No commitment, no credit card', 'Cancel any time, we delete the data on request', 'No sales call unless they ask for one'. The LLM uses this to answer the unspoken objection.", placeholder: "No commitment, no credit card" },
     ],
     // Byte-identical measurement to sales-cold-email-outreach: same medium, same recipients* family
     // from email-gateway, same ranked leaderboard. The offer changed, not what is counted.
@@ -238,7 +284,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
       { key: "prAngle", type: "text", label: "PR Angle", extractKey: "suggestedAngles", description: "The editorial hook or story angle to pitch. Should be newsworthy and specific. Examples: 'Series B funding of $25M led by Sequoia', 'Launch of AI-powered compliance platform', 'Industry report on developer productivity trends'. The LLM uses this as the core pitch in the outreach email.", placeholder: "Series B funding announcement, product launch..." },
       { key: "companyContext", type: "text", label: "Company Context", extractKey: "companyDescription", description: "Brief background on the company and why this story matters now. Include founding date, traction metrics, notable customers, or market position. Examples: 'Founded 2022, 500+ enterprise customers, fastest-growing in category', 'Only platform certified for EU AI Act compliance'. Gives the LLM credibility context for the pitch.", placeholder: "What does your company do and why is this relevant now?" },
       { key: "newsHook", type: "text", label: "News Hook", extractKey: "newsHook", description: "A timely event, trend, or news cycle that makes the pitch relevant right now. Examples: 'Ahead of CES 2026 announcement', 'Following new SEC crypto regulations', 'During cybersecurity awareness month'. Helps the LLM frame the pitch as timely and urgent for editors.", placeholder: "Ties into upcoming regulation changes, industry event..." },
-      { key: "spokesperson", type: "text", label: "Spokesperson", extractKey: "spokesperson", description: "Who is available for interviews or quotes. Include name, title, and any notable credentials. Examples: 'John Smith, CTO — ex-Google, published AI researcher', 'Sarah Chen, CEO — Forbes 30 Under 30'. The LLM includes this as a resource offer in the pitch.", placeholder: "Jane Doe, CEO — available for interviews" },
+      { key: "spokesperson", type: "text", label: "Spokesperson", extractKey: "spokesperson", description: "Who is available for interviews or quotes. Include name, title, and any notable credentials. Examples: 'John Smith, CTO — ex-Google, published AI researcher', 'Sarah Chen, CEO — Forbes 30 Under 30'. The LLM includes this as a resource offer in the pitch.", placeholder: "Jane Doe, CEO, available for interviews" },
     ],
     outputs: [
       { key: "outletsDiscovered", displayOrder: 1 },
@@ -277,7 +323,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     status: "active",
     acquisitionChannel: null,
     inputs: [
-      { key: "targetProfile", type: "textarea", label: "Target Candidate Profile", extractKey: "target_profile", description: "ICP description of the ideal candidate — role, seniority, skills, industry, geography. The LLM uses this to find matching leads and personalize outreach.", placeholder: "e.g. Senior Backend Engineer, 5+ years Go/Rust, startup experience, EU-based" },
+      // No candidate-profile input: recipients come from the audience bandit (AUDIENCE_BANDIT_NOTE).
       { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "target_outcome", description: "The desired action from the candidate — should be a single, clear call-to-action. Examples: 'Book a 30-min intro call', 'Apply to the role', 'Schedule a discovery conversation'.", placeholder: "e.g. Book a 30-min intro call" },
       { key: "roleValueProp", type: "textarea", label: "Role Value Proposition", extractKey: "role_value_prop", description: "What makes the role and company attractive to the candidate — compensation, mission, growth, tech stack, remote policy, team culture. The LLM uses this as the main selling point.", placeholder: "e.g. Competitive comp, fully remote, Series B-backed, working on cutting-edge ML infrastructure" },
       { key: "urgency", type: "text", label: "Urgency", extractKey: "urgency", description: "Time pressure to act — a start date, hiring deadline, or closing window. Examples: 'Team onboarding in 6 weeks', 'Role closes Friday'. Leave empty if no urgency applies.", placeholder: "e.g. Role closes end of month, team starts Q3" },
@@ -356,7 +402,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     inputs: [
       { key: "prAngle", type: "text", label: "PR Angle", extractKey: "suggestedAngles", description: "The editorial hook or story angle for the press kit. Should be newsworthy and specific. Examples: 'Series B funding of $25M led by Sequoia', 'Launch of AI-powered compliance platform'. The LLM uses this as the core narrative for the press kit.", placeholder: "Series B funding announcement, product launch..." },
       { key: "companyContext", type: "text", label: "Company Context", extractKey: "companyDescription", description: "Brief background on the company. Include founding date, traction metrics, notable customers, or market position. Examples: 'Founded 2022, 500+ enterprise customers', 'Only platform certified for EU AI Act compliance'. Gives the LLM credibility context for the press kit content.", placeholder: "What does your company do and why is this relevant now?" },
-      { key: "spokesperson", type: "text", label: "Spokesperson", extractKey: "spokesperson", description: "Who is available for interviews or quotes. Include name, title, and any notable credentials. Examples: 'John Smith, CTO — ex-Google, published AI researcher'. The LLM includes this in the press kit's contact section.", placeholder: "Jane Doe, CEO — available for interviews" },
+      { key: "spokesperson", type: "text", label: "Spokesperson", extractKey: "spokesperson", description: "Who is available for interviews or quotes. Include name, title, and any notable credentials. Examples: 'John Smith, CTO — ex-Google, published AI researcher'. The LLM includes this in the press kit's contact section.", placeholder: "Jane Doe, CEO, available for interviews" },
     ],
     outputs: [
       { key: "pressKitsGenerated", displayOrder: 1 },
@@ -464,7 +510,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     status: "active",
     acquisitionChannel: null,
     inputs: [
-      { key: "targetInvestorProfile", type: "text", label: "Target Investor Profile", extractKey: "targetInvestorProfile", description: "ICP description of the ideal VC — stage, sector thesis, geography, typical check size, fund size. Be precise about investment stage (pre-seed/seed/Series A), focus sectors, and ticket range. Example: 'Pre-seed and seed B2B SaaS funds, US and EU, $250k-$2M initial checks'. The LLM uses this to find matching VC partners and personalize outreach.", placeholder: "Pre-seed B2B SaaS funds, US+EU, $250k-$2M checks" },
+      // No investor-profile input: recipients come from the audience bandit (AUDIENCE_BANDIT_NOTE).
       { key: "fundingAsk", type: "text", label: "Funding Ask", extractKey: "fundingAsk", description: "Round size, instrument, and headline terms. Should be specific and clear. Examples: 'Raising $3M seed on SAFE post-money cap $25M', 'Series A $10M priced round, 20% allocation for lead'. The LLM uses this as the core ask in the email body.", placeholder: "Raising $3M seed on SAFE, $25M post-money cap" },
       { key: "traction", type: "text", label: "Traction", extractKey: "traction", description: "Key metrics that prove momentum — revenue, growth rate, customers, retention, key logos. Be quantified and recent. Examples: '$1.2M ARR, 18% MoM growth, 120 paying customers, 95% logo retention', '50k WAU, 30% MoM growth'. The LLM leads with this to grab investor attention.", placeholder: "$1.2M ARR, 18% MoM growth, 120 paying customers" },
       { key: "valueForVC", type: "text", label: "Value for Investor", extractKey: "valueProposition", description: "Why this is a strong deal for the VC — market size, moat, returns potential, fit with their thesis. Examples: '$50B TAM, network-effects moat, fits your dev-tools thesis', 'Category-defining company in a market growing 40% YoY'. The LLM uses this to frame the investment opportunity.", placeholder: "$50B TAM, network-effects moat, fits your thesis" },
@@ -513,7 +559,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     status: "active",
     acquisitionChannel: null,
     inputs: [
-      { key: "targetAcceleratorProfile", type: "text", label: "Target Accelerator Profile", extractKey: "targetAcceleratorProfile", description: "ICP description of the ideal accelerator — stage focus, sector thesis, geography, cohort cadence, equity/ticket terms. Be precise about program stage (pre-seed/seed), focus verticals, batch model (cohort vs rolling), and typical deal terms. Example: 'Top-tier US accelerators for pre-seed B2B SaaS, $125k-$500k for 5-7% equity, batch model, AI/dev-tools focus'. The LLM uses this to find matching programs and personalize outreach.", placeholder: "Top US accelerators, pre-seed B2B SaaS, $125k-$500k for 5-7%" },
+      // No accelerator-profile input: recipients come from the audience bandit (AUDIENCE_BANDIT_NOTE).
       { key: "programAsk", type: "text", label: "Program Ask", extractKey: "programAsk", description: "What you want from the accelerator and which batch/cohort you're targeting. Should be specific. Examples: 'Applying to W26 batch, seeking $500k + mentorship + network', 'Rolling admission, looking for sector-specific mentors and US market entry support'. The LLM uses this as the core ask in the email body.", placeholder: "Applying to W26 batch, seeking $500k + mentor network" },
       { key: "traction", type: "text", label: "Traction", extractKey: "traction", description: "Key metrics that prove momentum — revenue, growth rate, customers, retention, key logos. Be quantified and recent. Examples: '$1.2M ARR, 18% MoM growth, 120 paying customers, 95% logo retention', '50k WAU, 30% MoM growth'. The LLM leads with this to demonstrate readiness for the program.", placeholder: "$1.2M ARR, 18% MoM growth, 120 paying customers" },
       { key: "valueForAccelerator", type: "text", label: "Value for Accelerator", extractKey: "valueProposition", description: "Why this startup is a strong fit for THEIR cohort/portfolio — sector match, returns potential, alumni network synergy, demo day appeal. Examples: '$50B TAM, fits your AI infra thesis, will headline demo day', 'Strong fit with your fintech vertical and 2024 cohort theme'. The LLM uses this to frame why the accelerator should care.", placeholder: "$50B TAM, fits your AI infra thesis, demo-day-ready" },
@@ -606,9 +652,14 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
  * channels from the same absence, out loud.
  */
 
-/** The offer questions every channel asks, whatever medium it runs on. */
+/**
+ * The offer questions every channel asks, whatever medium it runs on.
+ *
+ * NO free-text ICP field here either, for the reason stated above: who a channel addresses is the
+ * audience entity the bandit selects, and a static "who we target" string typed once on the form would
+ * contradict it rather than duplicate it.
+ */
 const OFFER_INPUTS: unknown[] = [
-  { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who this channel should reach — ICP description (role, company size, industry, geography). Be precise about job titles, industry vertical, company size range and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. Everything the channel produces is targeted from this.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
   { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "callToAction", description: "The single action you want from the person this channel reaches. Should be one clear call-to-action. Examples: 'Book a 15-min demo call', 'Start a free trial', 'Reply with their view'. This becomes the ask.", placeholder: "Book sales demos" },
   { key: "valueForTarget", type: "text", label: "Value for Target", extractKey: "valueProposition", description: "The core value proposition for the audience — what they gain by engaging. Specific and quantified where possible. Examples: 'Cut infrastructure costs by 40%', 'Ship features 3x faster'. This is the main selling point.", placeholder: "What do they gain from responding?" },
   { key: "socialProof", type: "text", label: "Social Proof", extractKey: "socialProof", description: "Trust signals that build credibility — customer count, notable logos, testimonials, awards, or metrics. Examples: 'Trusted by 500+ SaaS companies', 'Featured in TechCrunch', 'NPS of 72'. Used to establish standing before the ask.", placeholder: "500+ companies already onboarded" },

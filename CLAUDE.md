@@ -1,5 +1,154 @@
 # Features Service — CLAUDE.md
 
+## A CHANNEL PUBLISHES ITS COMMERCIAL TERMS AND WHAT IT CAN PRODUCE; WHICH FUNNELS IT SELLS THROUGH IS DERIVED, NEVER A SECOND LIST
+
+An acquisition channel IS a feature slug — still no channel table, still no channel concept, and none
+may be introduced. What a feature now states is `acquisitionChannel`: the commercial terms a buyer
+commits to before anything is measured, and the kinds of STEP the channel can PRODUCE. Roughly thirty
+channels are published, all bookable from day one, and a public marketing site is generated from them.
+
+- **`salesFunnels` IS DERIVED (`sellableFunnelsFor`) AND MUST STAY DERIVED.** A channel states what it
+  produces; a funnel states what STARTS it (`SALES_FUNNEL_ENTRY_STEP`, mirrored from brand-service and
+  pinned against `SALES_FUNNELS[key].steps[0]`); a pairing is possible when the two meet. Hand-writing
+  `salesFunnels` again would restore the drift the derivation removes. The wire field is UNCHANGED and
+  every existing row reads byte-identically: cold email and CRM email still all four, the feedback
+  request still `sales_meetings_from_conversation` alone, a non-channel still `[]`.
+- **NULL ON `acquisitionChannel` IS A WRITTEN STATEMENT** — this feature is not an acquisition channel
+  (hiring, VC and accelerator outreach, outlet discovery, press-kit generation, AI visibility). It
+  acquires something other than a customer, or is internal tooling, so there is nothing to pair it with.
+  Journalist outreach and both expert-quote features MOVED to the channel side: they are earned channels
+  producing website visits, so they now sell through the three click-driven chains where they used to
+  sell through nothing.
+- **THERE IS NO "COMING SOON", AND NO FLAG MAY BE ADDED FOR ONE.** Every published channel is
+  `implemented: true` / `status: "active"`. A channel we are slower to deliver says so through its OWN
+  terms — a high `dailyOperatingCostCents` (a phone channel carries the person on the line, LinkedIn Ads
+  carries its own daily floor, SEO carries the specialist), a long `maxDaysToFirstProduction`, a long
+  `minimumCommitmentDays`. Guard: the blob's key set is exactly `{family, producibleSteps, terms}` and
+  `maxDaysToFirstProduction ≤ minimumCommitmentDays` (we never sell a booking that ends before it can
+  produce).
+- **THE TWO ON-PLATFORM STEPS ARE STATED BEFORE THEIR FUNNELS EXIST, ON PURPOSE.**
+  `platform_form_submission` and `platform_booked_meeting` are produced on the ad platform rather than
+  the brand's site, and no deployed chain starts from either yet (brand-service ships them in parallel).
+  A channel producing only those sells through nothing TODAY and starts selling the moment the funnel
+  mirror gains the chain, with no change here. What a channel can produce is a fact about the channel,
+  not about what we happen to sell through it.
+- **THE PRE-EXISTING SLUGS DID NOT MOVE.** `sales-cold-email-outreach` and `sales-crm-email-outreach`
+  keep the legacy `sales-` prefix because live campaigns, live budgets and the cost ledger reference
+  them. And no NEW slug ends in `-cold-email-outreach`: that suffix is what `coldEmailOutreachSlugs`
+  derives the fleet audits' whole account universe from, so a new one landing in it would silently
+  enrol the channel in send-forecast / accounts / customer-health. Guarded.
+- **THE NEW CHANNELS DECLARE EMPTY `outputs`/`charts`/`entities`, AND THAT IS NOT A BOOKABILITY
+  STATEMENT.** Those three are the MEASUREMENT surface, and this service measures email today. A
+  cold-call channel declaring `recipientsOpened` would report 0 for ever, and a measured-looking zero is
+  exactly the fabricated figure that is forbidden. Empty says the honest thing.
+- **No new channel carries a free-text ICP input** — same rule as the audience-bandit note below: who a
+  channel addresses is the audience entity, and a static "who we target" string would contradict it.
+
+### `GET /public/channels` + `GET /public/channel-funnel-economics` — NO AUTH, because the marketing site is generated from them
+
+Both are public and identity-free by design: a site that restates the terms is a site that can drift
+from what we actually charge and actually measured.
+
+- **`/public/channels`** serves the catalogue: terms, producible steps (each with buyer-facing wording),
+  and the derived funnels, each carrying its own chain so a row renders without the consumer knowing the
+  catalogue. The step vocabulary rides the payload so nothing hardcodes it.
+- **`/public/channel-funnel-economics`** serves ONE ROW PER PAIR — the grain the marketing site prints.
+  A customer buys a PAIR, and the same chain costs a very different amount through a phone channel than
+  through paid search, so a brand-level or channel-level aggregate cannot answer it. `?channelSlug=`
+  narrows; an unknown slug is a 404, never an empty pair list (which would read as "sells through
+  nothing").
+- **NOT ENOUGH DATA IS AN ANSWER AND IT NAMES THE MISSING INGREDIENT** — `measured: false` with
+  `no_spend_recorded` / `no_entry_step_produced` / `no_economics_declared`, checked in that order so a
+  fresh channel says the plain thing. The same rule runs one level down: a STEP whose rate nobody
+  declared reads `costPerStepUsd: null` with its own `unpricedReason`, never 0. **"Meeting attended" is
+  permanently unpriced** — brand-service folds the show-up rate into booked→paid
+  (`meetingChainCloseRate`), so pricing it would assert a 100% show-up rate, the exact bug that
+  composition exists to prevent.
+- **A CHAIN IS PRICED THROUGH ITS OWN CHANNEL**, via the same `projectOutcomeCosts` + channel mask every
+  other cost surface uses, and `returnPerDollar` is the IDENTICAL definition `/funnel-ranking` ranks a
+  brand's declared funnels on. So a public per-pair figure and a customer's own dashboard can never
+  print two prices for one chain. Evidence is the SAME cross-org per-brand dataset
+  (`getFunnelBucketDatasetCached`) the other public cost surfaces read, so a channel nobody has run yet
+  reaches "not enough data" by the data being absent, never by a special case.
+- Both ride `LIFETIME_AGGREGATE_WINDOWS` through `servedPublicCached` (15 min fresh / 6 h stale,
+  single-flighted), like every other cross-org surface. A malformed stored channel blob FAILS the whole
+  read (`MalformedAcquisitionChannelError`) rather than half-publishing: a price list that silently
+  degrades would publish terms nobody set.
+- **The api-service gateway does NOT proxy these yet** — `/public/*` needs an EXPLICIT per-route proxy
+  there (no wildcard), so a consumer outside the cluster needs that follow-up before it can read them.
+- Vocabulary, owner-fixed: the terminal thing a customer buys is a **SALE**, each stage of a funnel is a
+  **STEP**, the step a funnel is named after is its **MILESTONE**. "Outcome" is deprecated (it named a
+  retired per-brand optimization goal) and nothing new here uses it.
+- Guards: `src/lib/acquisition-channels.test.ts` (the join, and the entry-step mirror pinned against the
+  chain's own first step), `src/seed/acquisition-channel-catalogue.test.ts` (every named channel present,
+  slugs unmoved, no availability flag, terms whole and self-consistent, `salesFunnels` derived, the
+  cold-email family unwidened), `src/lib/channel-catalogue.test.ts` (fail-loud parsing) and
+  `src/lib/channel-funnel-economics.test.ts` (the three unmeasured reasons, per-chain pricing, the
+  permanently-unpriced attended step, no false $0). (Set 2026-08-19.)
+
+
+## A FREE-TEXT ICP INPUT CONTRADICTS THE AUDIENCE BANDIT — it is GONE from every bandit-fed channel, and KEPT on the two features where nothing else answers the question
+
+Audiences are first-class: they are saved entities owned by human-service, a campaign points at them,
+and a bandit picks ONE audience per run. A free-text "who we target" field typed once on the feature
+form is therefore not merely REDUNDANT with the audience, it CONTRADICTS it — the run is addressing
+the bandit-selected audience while the prompt carries a single static ICP describing different people.
+
+- **Removed** from `sales-`, `feedback-request-`, `vc-`, `accelerators-` and `hiring-cold-email-outreach`
+  (`targetAudience` / `targetInvestorProfile` / `targetAcceleratorProfile` / `targetProfile`). Removed
+  means removed: no dead field left in place, no alias.
+- **Kept, and it is not a duplicate of anything:** `ai-visibility-scoring`'s `audienceProfile` (that
+  feature contacts NOBODY — the field frames the questions put to the LLMs from a realistic buyer's
+  point of view, so there is no audience entity and no lead in play) and the whole
+  `pr-cold-email-outreach` input set (its recipients come from journalists-service, a different
+  mechanism with no audience entity to contradict).
+- **Removing an input does NOT strip the key from brand extraction.** The extracted brand blob is
+  assembled from field keys the workflow DAG asks brand-service for, independently of this catalogue,
+  and of the 93 content-generation templates only three name a target-audience variable (one dead
+  blind-discovery variant, two PR templates). So the blast radius is the customer-facing form and its
+  prefill, not the generated emails.
+- **No stored-value cleanup.** A campaign's stored `featureInputs` may still carry a removed key; it
+  is simply never read again. Nothing 500s, nothing needs a migration.
+- Guard: the `free-text ICP vs the audience bandit` suite in `src/seed/feature-sales-funnels.test.ts`
+  (each bandit-fed slug exposes no ICP key and no "profile" label; the two keepers are pinned by
+  exact key / exact input list). (Set 2026-08-19.)
+
+## THE FEEDBACK REQUEST OFFERS A GIFT AND CHARGES IN FEEDBACK — the FORM of feedback is the PRICE TAG, and its eight inputs are the two halves of the offer plus the four levers
+
+This channel does not pitch. It gives something away (free trial, product at cost, a service done for
+them, early access) and asks for feedback in return, so Hormozi's value equation runs on BOTH sides at
+once: the prospect pays in EFFORT rather than money.
+
+```
+(value of the GIFT) x (credibility they will actually get it)
+-------------------------------------------------------------
+(delay before they get it) x (effort of the FEEDBACK asked)
+```
+
+The inputs it shipped with were copied from the sales pitch and described neither half of that offer.
+It now states exactly eight things and nothing else: `gift`, `giftValue`, `feedbackForm`,
+`feedbackEffort`, `socialProof`, `scarcity`, `urgency`, `riskReversal`.
+
+- **`feedbackForm` is the single most important field, because it IS the price.** A public video
+  testimonial and a Google Maps rating are wildly different prices, so the email must ask for one
+  specific thing: written testimonial (private or public), video testimonial (private or public), a
+  call, or a review on a public platform (G2, Google Maps, Trustpilot, Capterra).
+- **It is PLAIN TEXT whose placeholder enumerates the options, deliberately.** A multiple choice would
+  fit it better, and the decision was taken NOT to introduce a new input type for this iteration. Do
+  NOT add a select / multi-select / checkbox group. Guarded: the catalogue's whole input-type set is
+  pinned to `text` + `textarea`.
+- **`giftValue` anchors the gift to a real price AND covers what the relationship becomes afterwards**,
+  which is why there is no separate follow-on-outcome field. Free is worth nothing without a number
+  next to it.
+- **`riskReversal` is the load-bearing lever here**, not an afterthought: a gift invites suspicion, and
+  when the gift is a trial "no commitment, no credit card" is what answers it. `scarcity` is naturally
+  strong for the same reason (giving the product away costs something, so tester seats are limited).
+- **The four pitch questions are GONE** — `targetAudience` (the bandit owns it, see above),
+  `problemToValidate` and `targetOutcome` and `valueForTarget` (redundant with the gift and its value).
+- Guards: the eight-input list, the dead-key list, the plain-text-price case and the em-dash sweep (now
+  covering descriptions, not only labels and placeholders) in `src/seed/feature-sales-funnels.test.ts`.
+  (Set 2026-08-19.)
+
 ## A CHANNEL IS A FEATURE SLUG, and the catalogue states per feature WHICH SALES FUNNELS IT MAY BE SOLD THROUGH — `[]` and all four are two written statements, never an absence
 
 distribute acquires through more than one channel, and a channel in this fleet's vocabulary IS a
