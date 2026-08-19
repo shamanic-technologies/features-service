@@ -1314,7 +1314,6 @@ npm run test         # Run tests (vitest)
 npm run build        # TypeScript compile
 npm run db:generate  # Generate Drizzle migrations from schema
 npm run db:push      # Push schema to DB (dev)
-npm run db:migrate:prod  # Run migrations on prod (tsx scripts/migrate-prod.ts)
 npm run generate:openapi # Regenerate openapi.json from Zod schemas
 ```
 
@@ -1959,6 +1958,35 @@ grains**: a workflow-grain open rate beside an audience-grain click rate was a b
 still falls back to the workflow's aggregate rates when NO audience qualifies (no clicks).
 `fetchBrandPersonas` / `BrandPersona` are DELETED and `git grep -i customerprofile src` returns ZERO
 matches; `fetchCurrentBrandProfile` stays (it still feeds the cost `brandProfileId` filter).
+
+## MIGRATIONS RUN ON THE BOOT PATH AND NOWHERE ELSE — there is no CI migrate job, and re-adding one is a regression
+
+`src/index.ts` runs `migrate(db, { migrationsFolder: "./drizzle" })` and then `registerSeedFeatures()`
+BEFORE `app.listen()`, and the box's deploy is health-checked with automatic rollback. So a migration and
+the code that needs it land together, atomically, and a migration that fails takes the deploy down with it
+rather than leaving prod half-migrated.
+
+A `migrate` job in `.github/workflows/ci.yml` used to run `pnpm db:migrate:prod` against a production
+`FEATURES_SERVICE_DATABASE_URL` secret on every push to main. It was **deleted** (2026-08-19), along with
+`scripts/migrate-prod.ts` and the `db:migrate:prod` package script. Three reasons, and the first alone is
+decisive:
+
+- **It could not work.** The fleet's Postgres is a container on the box publishing `127.0.0.1:5432`
+  (loopback only), so a GitHub runner cannot reach it at all. The job had been failing on
+  `password authentication failed for user 'neondb_owner'` since the Neon retirement — its secret still
+  pointed at the decommissioned database. "Repointing the secret" is not available without exposing prod
+  Postgres to the internet, which is not a trade worth making for a job that does nothing the boot path
+  does not already do.
+- **It was redundant.** Same migrator, same `./drizzle` folder, same files.
+- **It inverted the ordering.** CI migrated on PUSH, i.e. BEFORE the deploy — so prod's schema could move
+  ahead of the code that needed it, which is the one ordering a boot-path migration makes impossible.
+
+**`migrate` was a REQUIRED status check on `main` and was removed from the required contexts in the same
+change.** Deleting the job without that leaves every future PR to main blocked forever on a check that can
+never report. If you ever re-add a job under that name, re-add the context too; if you delete another
+required job, do the protection edit FIRST.
+
+`npm run db:migrate` (drizzle-kit, local dev) is untouched.
 
 ## Migration gotcha — drizzle-kit meta snapshot is DRIFTED; strip spurious `features` drops
 
