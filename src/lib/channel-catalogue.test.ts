@@ -99,7 +99,7 @@ describe("building the public catalogue", () => {
     // No deployed chain starts from a platform form yet. The channel is still bookable and still
     // listed with its terms; what it cannot do today is be PAIRED, and it says that as an empty list.
     const [channel] = buildChannelCatalogue([
-      row({ acquisitionChannel: { ...CHANNEL, producibleSteps: ["platform_form_submission"] } }),
+      row({ acquisitionChannel: { ...CHANNEL, producibleSteps: ["in_ad_form_submission"] } }),
     ]);
     expect(channel.salesFunnels).toEqual([]);
     expect(channel.terms).toEqual(CHANNEL.terms);
