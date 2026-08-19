@@ -21,8 +21,8 @@ describe("what a channel can produce", () => {
     expect([...PRODUCIBLE_STEP_KEYS]).toEqual([
       "conversation",
       "website_visit",
-      "platform_form_submission",
-      "platform_booked_meeting",
+      "in_ad_form_submission",
+      "in_ad_booked_meeting",
     ]);
     for (const key of PRODUCIBLE_STEP_KEYS) {
       expect(PRODUCIBLE_STEPS[key].key).toBe(key);
@@ -33,7 +33,12 @@ describe("what a channel can produce", () => {
 
   it("tolerates separator and case variance on the way IN, and names nothing it does not know", () => {
     expect(matchProducibleStepKey("Website Visit")).toBe("website_visit");
-    expect(matchProducibleStepKey("platform-form-submission")).toBe("platform_form_submission");
+    expect(matchProducibleStepKey("in-ad-form-submission")).toBe("in_ad_form_submission");
+    expect(matchProducibleStepKey("In Ad Booked Meeting")).toBe("in_ad_booked_meeting");
+    // The pre-rename `platform_*` spelling is GONE, not aliased. It shipped for minutes, no consumer
+    // outside the cluster ever read it, and every row is rewritten by the boot seed — so two names for
+    // one step is a second vocabulary bought for nothing.
+    expect(matchProducibleStepKey("platform_form_submission")).toBeNull();
     expect(matchProducibleStepKey("carrier pigeon")).toBeNull();
   });
 });
@@ -77,9 +82,9 @@ describe("which pairings are possible", () => {
     // brand-service ships the on-platform chains in parallel. Until it does, a channel producing only
     // those sells through none of the declared four — and the moment the mirror gains the chain, it
     // starts selling with no change here.
-    expect(sellableFunnelsFor(["platform_form_submission"])).toEqual([]);
-    expect(sellableFunnelsFor(["platform_booked_meeting"])).toEqual([]);
-    expect(sellableFunnelsFor(["website_visit", "platform_form_submission"])).toEqual([
+    expect(sellableFunnelsFor(["in_ad_form_submission"])).toEqual([]);
+    expect(sellableFunnelsFor(["in_ad_booked_meeting"])).toEqual([]);
+    expect(sellableFunnelsFor(["website_visit", "in_ad_form_submission"])).toEqual([
       "sales_meetings_from_website",
       "website_purchases",
       "form_magnet",

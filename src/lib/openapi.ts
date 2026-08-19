@@ -1797,7 +1797,7 @@ const channelTermsSchema = z.object({
 });
 
 const producibleStepSchema = z.object({
-  key: z.enum(["conversation", "website_visit", "platform_form_submission", "platform_booked_meeting"]),
+  key: z.enum(["conversation", "website_visit", "in_ad_form_submission", "in_ad_booked_meeting"]),
   label: z.string(),
   description: z.string(),
 });

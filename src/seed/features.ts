@@ -31,11 +31,11 @@ import { sellableFunnelsFor, type AcquisitionChannel, type ProducibleStepKey } f
 const CONVERSATION_AND_VISIT: readonly ProducibleStepKey[] = ["conversation", "website_visit"];
 const CONVERSATION_ONLY: readonly ProducibleStepKey[] = ["conversation"];
 const VISIT_ONLY: readonly ProducibleStepKey[] = ["website_visit"];
-const VISIT_AND_PLATFORM_FORM: readonly ProducibleStepKey[] = ["website_visit", "platform_form_submission"];
-const VISIT_FORM_AND_AD_MEETING: readonly ProducibleStepKey[] = [
+const VISIT_AND_IN_AD_FORM: readonly ProducibleStepKey[] = ["website_visit", "in_ad_form_submission"];
+const VISIT_AND_IN_AD_STEPS: readonly ProducibleStepKey[] = [
   "website_visit",
-  "platform_form_submission",
-  "platform_booked_meeting",
+  "in_ad_form_submission",
+  "in_ad_booked_meeting",
 ];
 
 /** Commercial terms, written the way they are set: a daily operating cost in whole cents, a minimum
@@ -732,24 +732,24 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
   // Bought impressions. Most of these platforms also host a form the buyer fills without leaving, and
   // two of them can take a booking straight from the ad, which is why the steps differ across a family
   // that otherwise looks uniform.
-  { slug: "google-ads", name: "Google Ads", displayOrder: 20, icon: "search", family: "paid_reach", producibleSteps: VISIT_AND_PLATFORM_FORM,
+  { slug: "google-ads", name: "Google Ads", displayOrder: 20, icon: "search", family: "paid_reach", producibleSteps: VISIT_AND_IN_AD_FORM,
     terms: terms(5000, 30, 3),
     description: "Buy the searches your buyers already run, and the clicks and lead forms that come from them.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "meta-ads", name: "Meta Ads", displayOrder: 21, icon: "facebook", family: "paid_reach", producibleSteps: VISIT_FORM_AND_AD_MEETING,
+  { slug: "meta-ads", name: "Meta Ads", displayOrder: 21, icon: "facebook", family: "paid_reach", producibleSteps: VISIT_AND_IN_AD_STEPS,
     terms: terms(5000, 30, 3),
     description: "Buy reach on Facebook and Instagram, with lead forms and appointment booking that happen inside the platform.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "linkedin-ads", name: "LinkedIn Ads", displayOrder: 22, icon: "linkedin", family: "paid_reach", producibleSteps: VISIT_FORM_AND_AD_MEETING,
+  { slug: "linkedin-ads", name: "LinkedIn Ads", displayOrder: 22, icon: "linkedin", family: "paid_reach", producibleSteps: VISIT_AND_IN_AD_STEPS,
     // LinkedIn imposes its own daily floor per campaign; the terms carry it rather than hiding it.
     terms: terms(10000, 30, 3),
     description: "Buy reach against job title, company and seniority, with lead gen forms filled without leaving LinkedIn.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "tiktok-ads", name: "TikTok Ads", displayOrder: 23, icon: "video", family: "paid_reach", producibleSteps: VISIT_AND_PLATFORM_FORM,
+  { slug: "tiktok-ads", name: "TikTok Ads", displayOrder: 23, icon: "video", family: "paid_reach", producibleSteps: VISIT_AND_IN_AD_FORM,
     terms: terms(5000, 30, 5),
     description: "Buy short-video reach and the clicks and instant forms it produces.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "youtube-ads", name: "YouTube Ads", displayOrder: 24, icon: "youtube", family: "paid_reach", producibleSteps: VISIT_AND_PLATFORM_FORM,
+  { slug: "youtube-ads", name: "YouTube Ads", displayOrder: 24, icon: "youtube", family: "paid_reach", producibleSteps: VISIT_AND_IN_AD_FORM,
     terms: terms(5000, 30, 5),
     description: "Buy video reach on YouTube and the clicks and lead forms it produces.",
     inputs: PAID_REACH_INPUTS },
@@ -757,15 +757,15 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
     description: "Buy reach on X against interests and followings, and the clicks through to your site.",
     terms: terms(3000, 30, 3),
     inputs: PAID_REACH_INPUTS },
-  { slug: "reddit-ads", name: "Reddit Ads", displayOrder: 26, icon: "message-square", family: "paid_reach", producibleSteps: VISIT_AND_PLATFORM_FORM,
+  { slug: "reddit-ads", name: "Reddit Ads", displayOrder: 26, icon: "message-square", family: "paid_reach", producibleSteps: VISIT_AND_IN_AD_FORM,
     terms: terms(3000, 30, 3),
     description: "Buy reach inside the communities where your buyers discuss the problem, with forms filled on Reddit itself.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "bing-ads", name: "Bing Ads", displayOrder: 27, icon: "search", family: "paid_reach", producibleSteps: VISIT_AND_PLATFORM_FORM,
+  { slug: "bing-ads", name: "Bing Ads", displayOrder: 27, icon: "search", family: "paid_reach", producibleSteps: VISIT_AND_IN_AD_FORM,
     terms: terms(3000, 30, 3),
     description: "Buy the searches your buyers run on Bing, and the clicks and lead forms that come from them.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "quora-ads", name: "Quora Ads", displayOrder: 28, icon: "help-circle", family: "paid_reach", producibleSteps: VISIT_AND_PLATFORM_FORM,
+  { slug: "quora-ads", name: "Quora Ads", displayOrder: 28, icon: "help-circle", family: "paid_reach", producibleSteps: VISIT_AND_IN_AD_FORM,
     terms: terms(3000, 30, 5),
     description: "Buy reach against the questions your buyers ask, and the clicks and lead forms they produce.",
     inputs: PAID_REACH_INPUTS },

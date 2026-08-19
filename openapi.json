@@ -5668,8 +5668,8 @@
                   "enum": [
                     "conversation",
                     "website_visit",
-                    "platform_form_submission",
-                    "platform_booked_meeting"
+                    "in_ad_form_submission",
+                    "in_ad_booked_meeting"
                   ]
                 },
                 "label": {
@@ -5745,8 +5745,8 @@
                   "enum": [
                     "conversation",
                     "website_visit",
-                    "platform_form_submission",
-                    "platform_booked_meeting"
+                    "in_ad_form_submission",
+                    "in_ad_booked_meeting"
                   ]
                 },
                 "label": {

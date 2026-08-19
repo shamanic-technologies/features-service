@@ -26,12 +26,20 @@ channels are published, all bookable from day one, and a public marketing site i
   `minimumCommitmentDays`. Guard: the blob's key set is exactly `{family, producibleSteps, terms}` and
   `maxDaysToFirstProduction ≤ minimumCommitmentDays` (we never sell a booking that ends before it can
   produce).
-- **THE TWO ON-PLATFORM STEPS ARE STATED BEFORE THEIR FUNNELS EXIST, ON PURPOSE.**
-  `platform_form_submission` and `platform_booked_meeting` are produced on the ad platform rather than
-  the brand's site, and no deployed chain starts from either yet (brand-service ships them in parallel).
+- **THE TWO IN-AD STEPS ARE STATED BEFORE THEIR FUNNELS EXIST, ON PURPOSE.**
+  `in_ad_form_submission` and `in_ad_booked_meeting` are produced INSIDE THE AD UNIT rather than on the
+  brand's site, and no deployed chain starts from either yet (brand-service ships them in parallel).
   A channel producing only those sells through nothing TODAY and starts selling the moment the funnel
   mirror gains the chain, with no change here. What a channel can produce is a fact about the channel,
   not about what we happen to sell through it.
+  **THE `in_ad_` PREFIX IS LOAD-BEARING — do not shorten it to `form_submission` / `booked_meeting`.**
+  "Form filled" and "Meeting booked" ALREADY exist in the deployed catalogue as INTERMEDIATE steps
+  (`form_magnet` step 2, both meeting chains' milestone), reached through a click or a reply onto the
+  brand's site; an ad produces an ENTRY step reached without ever getting there, so the bare names
+  invite a consumer to read such a channel as able to START `form_magnet`, which it cannot. `platform_`
+  (the first spelling, renamed 2026-08-19) is wrong because `platform` is this fleet's word for OUR OWN
+  platform, and `ad_` alone reads as "attributed to an ad" — i.e. filled on the brand's site after the
+  click, the very reading the prefix blocks.
 - **THE PRE-EXISTING SLUGS DID NOT MOVE.** `sales-cold-email-outreach` and `sales-crm-email-outreach`
   keep the legacy `sales-` prefix because live campaigns, live budgets and the cost ledger reference
   them. And no NEW slug ends in `-cold-email-outreach`: that suffix is what `coldEmailOutreachSlugs`
