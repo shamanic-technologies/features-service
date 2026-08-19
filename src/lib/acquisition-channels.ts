@@ -36,18 +36,35 @@ import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-f
  * The kinds of step an acquisition channel can produce. Four are in play, and they are the four things
  * a sales funnel can be STARTED by.
  *
- * Two of them (`platform_form_submission`, `platform_booked_meeting`) are produced ON the advertising
- * platform rather than on the brand's own site, and no funnel in the deployed catalogue starts from
+ * Two of them (`in_ad_form_submission`, `in_ad_booked_meeting`) are produced INSIDE THE AD UNIT rather
+ * than on the brand's own site, and no funnel in the deployed catalogue starts from
  * either one YET — brand-service ships those chains in parallel. A channel that produces only those
  * therefore sells through nothing TODAY and starts selling the moment the mirror below gains the chain,
  * with no further change here. That is why they are stated now rather than when the funnel lands: what
  * a channel can produce is a fact about the channel, not about what we happen to sell through it.
+ *
+ * ── WHY THE `in_ad_` PREFIX, AND WHY NEITHER SHORTER NAME WORKS ───────────────────────────────────
+ *
+ * The prefix is LOAD-BEARING and must not be dropped. "Form filled" and "Meeting booked" ALREADY exist
+ * in the deployed funnel catalogue as INTERMEDIATE steps (`form_magnet` step 2, both meeting chains'
+ * milestone), reached through a click or a reply onto the brand's own site. What an ad produces is an
+ * ENTRY step reached without ever getting there. Naming ours `form_submission` / `booked_meeting` would
+ * invite a consumer to read a channel producing one as able to START `form_magnet` — which it cannot,
+ * since that chain starts with a website visit. That is the exact nonsense pairing the join prevents.
+ *
+ * `platform_` was the first spelling and is WRONG here: `platform` is this fleet's word for OUR OWN
+ * platform (platform runs, `/internal/platform-complete`, platform prices, `PLATFORM_SCOPE_ORG_ID`), so
+ * it reads as "a form filled on distribute.you". `ad_` alone is no better — `ad_form_submission` reads
+ * as "a form submission ATTRIBUTED to an ad", i.e. one filled on the brand's site after the click,
+ * which is the very reading the prefix exists to block. `in_ad_` says the literal thing: it happened
+ * inside the ad unit. Do not shorten it back.
+ *
  */
 export const PRODUCIBLE_STEP_KEYS = [
   "conversation",
   "website_visit",
-  "platform_form_submission",
-  "platform_booked_meeting",
+  "in_ad_form_submission",
+  "in_ad_booked_meeting",
 ] as const;
 
 export type ProducibleStepKey = (typeof PRODUCIBLE_STEP_KEYS)[number];
@@ -71,15 +88,15 @@ export const PRODUCIBLE_STEPS: Record<ProducibleStepKey, ProducibleStepDef> = {
     label: "Website visit",
     description: "A buyer lands on the brand's own website.",
   },
-  platform_form_submission: {
-    key: "platform_form_submission",
-    label: "Form filled on the platform",
-    description: "A buyer fills a form on the advertising platform itself, without leaving it.",
+  in_ad_form_submission: {
+    key: "in_ad_form_submission",
+    label: "Form filled in the ad",
+    description: "A buyer fills a form inside the ad itself, without ever reaching the brand's site.",
   },
-  platform_booked_meeting: {
-    key: "platform_booked_meeting",
+  in_ad_booked_meeting: {
+    key: "in_ad_booked_meeting",
     label: "Meeting booked from an ad",
-    description: "A buyer books a meeting straight from the ad, without leaving the platform.",
+    description: "A buyer books a meeting straight from the ad, without ever reaching the brand's site.",
   },
 };
 
@@ -114,8 +131,8 @@ export const SALES_FUNNEL_ENTRY_STEP: Record<SalesFunnelKey, ProducibleStepKey> 
 export const FUNNEL_ENTRY_STEP_LABEL: Record<ProducibleStepKey, readonly string[]> = {
   conversation: ["Positive reply"],
   website_visit: ["Website visit"],
-  platform_form_submission: [],
-  platform_booked_meeting: [],
+  in_ad_form_submission: [],
+  in_ad_booked_meeting: [],
 };
 
 /**
