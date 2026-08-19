@@ -3,36 +3,50 @@
  * On cold start, these are upserted by slug into the DB.
  */
 
-import { SALES_FUNNEL_KEYS, type SalesFunnelKey } from "../lib/sales-funnels.js";
+import { type SalesFunnelKey } from "../lib/sales-funnels.js";
+import { sellableFunnelsFor, type AcquisitionChannel, type ProducibleStepKey } from "../lib/acquisition-channels.js";
 
 /**
- * WHICH SALES FUNNELS A FEATURE MAY BE SOLD THROUGH — stated on EVERY feature, never omitted.
+ * WHICH SALES FUNNELS A FEATURE MAY BE SOLD THROUGH — stated on EVERY feature, never omitted, and
+ * DERIVED rather than typed out twice.
  *
  * The dashboard offers only valid (funnel, feature) pairs and campaign-service refuses to provision an
  * invalid one; both read the answer from here, because it is a product statement about the feature and
  * this service owns the feature catalogue. Hardcoding the matrix in each consumer was rejected — that
  * is how one product fact becomes four drifting copies.
  *
- * The keys are brand-service's (`SALES_FUNNEL_KEYS`), unchanged: nothing here invents a funnel, and a
- * feature can only be sold through a chain a brand actually declares.
+ * The one fact a feature STATES is its `acquisitionChannel`, and inside it, WHICH STEPS THE CHANNEL CAN
+ * PRODUCE. A sales funnel states what step STARTS it, so which pairings are possible falls out of the
+ * join (`sellableFunnelsFor`) instead of being a second list somebody keeps in sync. The keys are still
+ * brand-service's; nothing here invents a funnel.
  *
- * "SELLS THROUGH NONE" AND "SELLS THROUGH ALL" ARE DIFFERENT STATEMENTS, and both are written out. A
- * non-sales feature (PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert
- * quotes) states `[]` — it is not sold through a sales funnel at all. A sales feature sold through every
- * declared chain states all four keys. Nothing is left unstated, so a consumer never has to decide what
- * an absent answer means; the column's `[]` default only ever covers a row this seed has not reached,
- * and reads as the restrictive side.
+ * "SELLS THROUGH NONE" AND "SELLS THROUGH ALL" ARE STILL DIFFERENT STATEMENTS, and both are still
+ * written out — they are now written as what the channel can produce. A feature that is NOT an
+ * acquisition channel at all (hiring, investor and accelerator outreach, outlet discovery, press-kit
+ * generation, AI visibility) states `acquisitionChannel: null` and sells through nothing. A channel that
+ * produces both a conversation and a website visit sells through all four chains. Nothing is left
+ * unstated, so a consumer never has to decide what an absent answer means; the column's `[]` default
+ * only ever covers a row this seed has not reached, and reads as the restrictive side.
  */
-const ALL_SALES_FUNNELS: readonly SalesFunnelKey[] = Object.freeze([...SALES_FUNNEL_KEYS]);
-const NO_SALES_FUNNEL: readonly SalesFunnelKey[] = Object.freeze([]);
-/**
- * The reply-to-meeting chain alone — brand-service's "Sales Meeting from Conversation". The feedback
- * request buys a CONVERSATION, and the conversation is what becomes the meeting; there is no website
- * step in that offer, so the three click-driven chains are not things it can be sold through.
- */
-const CONVERSATION_MEETING_ONLY: readonly SalesFunnelKey[] = Object.freeze(["sales_meetings_from_conversation" as SalesFunnelKey]);
+const CONVERSATION_AND_VISIT: readonly ProducibleStepKey[] = ["conversation", "website_visit"];
+const CONVERSATION_ONLY: readonly ProducibleStepKey[] = ["conversation"];
+const VISIT_ONLY: readonly ProducibleStepKey[] = ["website_visit"];
+const VISIT_AND_PLATFORM_FORM: readonly ProducibleStepKey[] = ["website_visit", "platform_form_submission"];
+const VISIT_FORM_AND_AD_MEETING: readonly ProducibleStepKey[] = [
+  "website_visit",
+  "platform_form_submission",
+  "platform_booked_meeting",
+];
 
-export interface SeedFeature {
+/** Commercial terms, written the way they are set: a daily operating cost in whole cents, a minimum
+ *  booking in days, and the promise on how long until the channel starts producing. */
+const terms = (
+  dailyOperatingCostCents: number,
+  minimumCommitmentDays: number,
+  maxDaysToFirstProduction: number,
+): AcquisitionChannel["terms"] => ({ dailyOperatingCostCents, minimumCommitmentDays, maxDaysToFirstProduction });
+
+export interface SeedFeatureDef {
   slug: string;
   name: string;
   description: string;
@@ -40,15 +54,23 @@ export interface SeedFeature {
   implemented: boolean;
   displayOrder: number;
   status: string;
-  /** The sales funnels this feature may be sold through — see `ALL_SALES_FUNNELS` above. Never omitted. */
-  salesFunnels: readonly SalesFunnelKey[];
+  /**
+   * The acquisition channel this feature IS, or `null` said out loud when the feature is not one.
+   * Carries the commercial terms a buyer needs before booking and the steps the channel can produce.
+   */
+  acquisitionChannel: AcquisitionChannel | null;
   inputs: unknown[];
   outputs: unknown[];
   charts: unknown[];
   entities: unknown[];
 }
 
-export const SEED_FEATURES: SeedFeature[] = [
+export interface SeedFeature extends SeedFeatureDef {
+  /** DERIVED from `acquisitionChannel.producibleSteps` — see the block above. Never hand-written. */
+  salesFunnels: readonly SalesFunnelKey[];
+}
+
+const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
   {
     slug: "sales-cold-email-outreach",
     name: "Sales Cold Email Outreach",
@@ -57,7 +79,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 1,
     status: "active",
-    salesFunnels: ALL_SALES_FUNNELS,
+    acquisitionChannel: { family: "outbound_one_to_one", producibleSteps: CONVERSATION_AND_VISIT, terms: terms(800, 30, 14) },
     inputs: [
       { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who the campaign targets — ICP description (role, company size, industry). Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize outreach.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
       { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "callToAction", description: "The desired action from the recipient (book a call, sign up, reply, etc.). Should be a single, clear call-to-action. Examples: 'Book a 15-min demo call', 'Start a free trial', 'Schedule a discovery call'. The LLM uses this to craft the email CTA.", placeholder: "Book sales demos" },
@@ -118,7 +140,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 12,
     status: "active",
-    salesFunnels: CONVERSATION_MEETING_ONLY,
+    acquisitionChannel: { family: "outbound_one_to_one", producibleSteps: CONVERSATION_ONLY, terms: terms(800, 30, 14) },
     inputs: [
       { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who the campaign targets — ICP description (role, company size, industry). Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize the feedback request.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
       { key: "problemToValidate", type: "text", label: "Problem to Validate", extractKey: "problemStatement", description: "The problem the product solves, stated the way the recipient would experience it — this is what the email asks them for feedback on, so it must be a problem they recognize in their own work, not a product description. Examples: 'Sales reps spend half their week researching accounts instead of selling', 'Compliance reviews block every release by two weeks'. The LLM builds the feedback question from this.", placeholder: "Which part of this problem is real for you?" },
@@ -162,7 +184,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 11,
     status: "active",
-    salesFunnels: ALL_SALES_FUNNELS,
+    acquisitionChannel: { family: "outbound_one_to_one", producibleSteps: CONVERSATION_AND_VISIT, terms: terms(800, 30, 7) },
     inputs: [
       { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who the campaign targets — ICP description (role, company size, industry). Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize outreach.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
       { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "callToAction", description: "The desired action from the recipient (book a call, sign up, reply, etc.). Should be a single, clear call-to-action. Examples: 'Book a 15-min demo call', 'Start a free trial', 'Schedule a discovery call'. The LLM uses this to craft the email CTA.", placeholder: "Book sales demos" },
@@ -210,7 +232,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 2,
     status: "active",
-    salesFunnels: NO_SALES_FUNNEL,
+    acquisitionChannel: { family: "earned", producibleSteps: VISIT_ONLY, terms: terms(800, 30, 21) },
     inputs: [
       { key: "targetOutlets", type: "text", label: "Target Outlets", extractKey: "targetOutlets", description: "Types of media outlets or specific publications to target. Be specific about outlet tier, beat, and format (online, print, podcast). Examples: 'Top-tier tech blogs (TechCrunch, The Verge)', 'B2B SaaS trade publications', 'Fintech newsletters with 10k+ subscribers'. The LLM uses this to find and prioritize matching journalists.", placeholder: "TechCrunch, Forbes, industry trade publications..." },
       { key: "prAngle", type: "text", label: "PR Angle", extractKey: "suggestedAngles", description: "The editorial hook or story angle to pitch. Should be newsworthy and specific. Examples: 'Series B funding of $25M led by Sequoia', 'Launch of AI-powered compliance platform', 'Industry report on developer productivity trends'. The LLM uses this as the core pitch in the outreach email.", placeholder: "Series B funding announcement, product launch..." },
@@ -253,7 +275,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 3,
     status: "active",
-    salesFunnels: NO_SALES_FUNNEL,
+    acquisitionChannel: null,
     inputs: [
       { key: "targetProfile", type: "textarea", label: "Target Candidate Profile", extractKey: "target_profile", description: "ICP description of the ideal candidate — role, seniority, skills, industry, geography. The LLM uses this to find matching leads and personalize outreach.", placeholder: "e.g. Senior Backend Engineer, 5+ years Go/Rust, startup experience, EU-based" },
       { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "target_outcome", description: "The desired action from the candidate — should be a single, clear call-to-action. Examples: 'Book a 30-min intro call', 'Apply to the role', 'Schedule a discovery conversation'.", placeholder: "e.g. Book a 30-min intro call" },
@@ -301,7 +323,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 4,
     status: "active",
-    salesFunnels: NO_SALES_FUNNEL,
+    acquisitionChannel: null,
     inputs: [
       { key: "industry", type: "text", label: "Industry", extractKey: "industry", description: "The industry vertical to target for discovery. Be specific — this drives which media outlets are searched. Examples: 'Enterprise cybersecurity', 'Consumer fintech', 'Climate tech / clean energy'. The discovery engine uses this to generate targeted search queries.", placeholder: "SaaS, AI, Fintech, Healthcare..." },
       { key: "angles", type: "text", label: "PR Angles", extractKey: "suggestedAngles", description: "Story hooks or editorial angles the outreach should pitch. Comma-separated. Examples: 'Series B funding announcement', 'New product launch for SMBs', 'Thought leadership on AI regulation'. Helps match outlets that cover these topics.", placeholder: "Fundraising announcement, product launch, thought leadership..." },
@@ -330,7 +352,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 5,
     status: "active",
-    salesFunnels: NO_SALES_FUNNEL,
+    acquisitionChannel: null,
     inputs: [
       { key: "prAngle", type: "text", label: "PR Angle", extractKey: "suggestedAngles", description: "The editorial hook or story angle for the press kit. Should be newsworthy and specific. Examples: 'Series B funding of $25M led by Sequoia', 'Launch of AI-powered compliance platform'. The LLM uses this as the core narrative for the press kit.", placeholder: "Series B funding announcement, product launch..." },
       { key: "companyContext", type: "text", label: "Company Context", extractKey: "companyDescription", description: "Brief background on the company. Include founding date, traction metrics, notable customers, or market position. Examples: 'Founded 2022, 500+ enterprise customers', 'Only platform certified for EU AI Act compliance'. Gives the LLM credibility context for the press kit content.", placeholder: "What does your company do and why is this relevant now?" },
@@ -360,7 +382,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 6,
     status: "active",
-    salesFunnels: NO_SALES_FUNNEL,
+    acquisitionChannel: { family: "earned", producibleSteps: VISIT_ONLY, terms: terms(800, 30, 21) },
     inputs: [
       { key: "expertName", type: "text", label: "Expert Name", extractKey: "spokespersonName", description: "Full name of the brand's primary public spokesperson — the founder, CEO, or designated expert who will be quoted. Auto-extracted from the brand's site (about / team / leadership pages); edit if the wrong person is picked. Featured.com journalists attribute the published quote to this name verbatim.", placeholder: "Jane Doe" },
       { key: "expertTitle", type: "text", label: "Title / Role", extractKey: "spokespersonTitle", description: "Job title or role of the spokesperson at the company (e.g. 'CEO', 'CTO', 'Head of Research'). Printed next to the quote to establish authority. Auto-extracted from the brand's about / team page.", placeholder: "CEO" },
@@ -394,7 +416,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 7,
     status: "active",
-    salesFunnels: NO_SALES_FUNNEL,
+    acquisitionChannel: null,
     inputs: [
       { key: "brandName", type: "text", label: "Brand Name", extractKey: "brandName", description: "The brand or company name to audit. Used as the primary entity to detect in LLM answers. Examples: 'Stripe', 'Linear', 'Vercel'. Detection is exact-match plus close variants (case-insensitive, common suffix stripping).", placeholder: "Stripe" },
       { key: "competitors", type: "textarea", label: "Competitors", extractKey: "competitors", description: "Competitor brands to score against. Comma- or newline-separated. Used to compute share-of-voice and ranking comparisons. Examples: 'Adyen, Checkout.com, Braintree'. Aim for 3-7 direct competitors for meaningful share-of-voice metrics.", placeholder: "Adyen, Checkout.com, Braintree" },
@@ -440,7 +462,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 8,
     status: "active",
-    salesFunnels: NO_SALES_FUNNEL,
+    acquisitionChannel: null,
     inputs: [
       { key: "targetInvestorProfile", type: "text", label: "Target Investor Profile", extractKey: "targetInvestorProfile", description: "ICP description of the ideal VC — stage, sector thesis, geography, typical check size, fund size. Be precise about investment stage (pre-seed/seed/Series A), focus sectors, and ticket range. Example: 'Pre-seed and seed B2B SaaS funds, US and EU, $250k-$2M initial checks'. The LLM uses this to find matching VC partners and personalize outreach.", placeholder: "Pre-seed B2B SaaS funds, US+EU, $250k-$2M checks" },
       { key: "fundingAsk", type: "text", label: "Funding Ask", extractKey: "fundingAsk", description: "Round size, instrument, and headline terms. Should be specific and clear. Examples: 'Raising $3M seed on SAFE post-money cap $25M', 'Series A $10M priced round, 20% allocation for lead'. The LLM uses this as the core ask in the email body.", placeholder: "Raising $3M seed on SAFE, $25M post-money cap" },
@@ -489,7 +511,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 9,
     status: "active",
-    salesFunnels: NO_SALES_FUNNEL,
+    acquisitionChannel: null,
     inputs: [
       { key: "targetAcceleratorProfile", type: "text", label: "Target Accelerator Profile", extractKey: "targetAcceleratorProfile", description: "ICP description of the ideal accelerator — stage focus, sector thesis, geography, cohort cadence, equity/ticket terms. Be precise about program stage (pre-seed/seed), focus verticals, batch model (cohort vs rolling), and typical deal terms. Example: 'Top-tier US accelerators for pre-seed B2B SaaS, $125k-$500k for 5-7% equity, batch model, AI/dev-tools focus'. The LLM uses this to find matching programs and personalize outreach.", placeholder: "Top US accelerators, pre-seed B2B SaaS, $125k-$500k for 5-7%" },
       { key: "programAsk", type: "text", label: "Program Ask", extractKey: "programAsk", description: "What you want from the accelerator and which batch/cohort you're targeting. Should be specific. Examples: 'Applying to W26 batch, seeking $500k + mentorship + network', 'Rolling admission, looking for sector-specific mentors and US market entry support'. The LLM uses this as the core ask in the email body.", placeholder: "Applying to W26 batch, seeking $500k + mentor network" },
@@ -538,7 +560,7 @@ export const SEED_FEATURES: SeedFeature[] = [
     implemented: true,
     displayOrder: 10,
     status: "active",
-    salesFunnels: NO_SALES_FUNNEL,
+    acquisitionChannel: { family: "earned", producibleSteps: VISIT_ONLY, terms: terms(800, 30, 21) },
     inputs: [
       { key: "expertName", type: "text", label: "Expert Name", extractKey: "spokespersonName", description: "Full name of the brand's primary public spokesperson — the founder, CEO, or designated expert who will be quoted. Auto-extracted from the brand's site (about / team / leadership pages); edit if the wrong person is picked. Featured.com journalists attribute the published quote to this name verbatim.", placeholder: "Jane Doe" },
       { key: "expertTitle", type: "text", label: "Title / Role", extractKey: "spokespersonTitle", description: "Job title or role of the spokesperson at the company (e.g. 'CEO', 'CTO', 'Head of Research'). Printed next to the quote to establish authority. Auto-extracted from the brand's about / team page.", placeholder: "CEO" },
@@ -564,3 +586,225 @@ export const SEED_FEATURES: SeedFeature[] = [
     ],
   },
 ];
+
+/**
+ * THE PUBLISHED ACQUISITION CHANNELS BEYOND THE THREE EMAIL ONES.
+ *
+ * Every one of these is BOOKABLE from day one — that is why none of them carries an availability flag.
+ * A channel we are slower to deliver says so through its own commercial terms: a specialist-run channel
+ * carries that salary in `dailyOperatingCostCents`, a channel that needs an account warmed or a
+ * placement booked carries that wait in `maxDaysToFirstProduction`, and a channel whose economics only
+ * make sense over a quarter carries that in `minimumCommitmentDays`.
+ *
+ * ── WHY THEIR `outputs` / `charts` / `entities` ARE EMPTY ─────────────────────────────────────────
+ *
+ * Those three fields are the MEASUREMENT surface — which stat families this service renders for the
+ * feature — and this service measures email today. A cold-call channel declaring `recipientsOpened`
+ * would report 0 for ever, and a measured-looking zero is precisely the fabricated figure the brief
+ * forbids. Empty says the honest thing: we do not measure this channel's steps yet. It is NOT a
+ * bookability statement, and the public per-pair economics read answers "not enough data" for these
+ * channels from the same absence, out loud.
+ */
+
+/** The offer questions every channel asks, whatever medium it runs on. */
+const OFFER_INPUTS: unknown[] = [
+  { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who this channel should reach — ICP description (role, company size, industry, geography). Be precise about job titles, industry vertical, company size range and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. Everything the channel produces is targeted from this.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
+  { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "callToAction", description: "The single action you want from the person this channel reaches. Should be one clear call-to-action. Examples: 'Book a 15-min demo call', 'Start a free trial', 'Reply with their view'. This becomes the ask.", placeholder: "Book sales demos" },
+  { key: "valueForTarget", type: "text", label: "Value for Target", extractKey: "valueProposition", description: "The core value proposition for the audience — what they gain by engaging. Specific and quantified where possible. Examples: 'Cut infrastructure costs by 40%', 'Ship features 3x faster'. This is the main selling point.", placeholder: "What do they gain from responding?" },
+  { key: "socialProof", type: "text", label: "Social Proof", extractKey: "socialProof", description: "Trust signals that build credibility — customer count, notable logos, testimonials, awards, or metrics. Examples: 'Trusted by 500+ SaaS companies', 'Featured in TechCrunch', 'NPS of 72'. Used to establish standing before the ask.", placeholder: "500+ companies already onboarded" },
+];
+
+/** What a paid-reach channel additionally needs: the creative angle and where the click lands. */
+const PAID_REACH_INPUTS: unknown[] = [
+  ...OFFER_INPUTS,
+  { key: "creativeAngle", type: "text", label: "Creative Angle", extractKey: "creativeAngle", description: "The hook the ad leads with — the one line that makes the audience stop. Should name the problem or the result, not the product. Examples: 'Your CI pipeline is why releases slip', 'Close books in 2 days, not 2 weeks'. Drives every creative variant.", placeholder: "The line that makes them stop scrolling" },
+  { key: "landingUrl", type: "text", label: "Landing Page", extractKey: "landingUrl", description: "The exact URL the ad sends people to. Should be the page that matches the creative angle, not the homepage. Everything measured as a website visit for this channel lands here.", placeholder: "https://example.com/pricing" },
+];
+
+/** What an earned channel additionally needs: why anyone should cover or rank you. */
+const EARNED_INPUTS: unknown[] = [
+  ...OFFER_INPUTS,
+  { key: "topicAuthority", type: "text", label: "Topic Authority", extractKey: "topicAuthority", description: "The subjects this brand can speak on with real standing, and what backs that standing — data you hold, work you have shipped, years in the field. Examples: 'Payment fraud rates, from 4bn processed transactions', 'EU AI Act compliance, first certified platform'. Editors, hosts and ranking systems all read this.", placeholder: "What can you speak on that others cannot?" },
+  { key: "newsHook", type: "text", label: "News Hook", extractKey: "newsHook", description: "A timely event, trend or news cycle that makes this relevant right now. Examples: 'Ahead of the CES announcement', 'Following the new SEC rules', 'During cybersecurity awareness month'. Leave empty if the topic is evergreen.", placeholder: "Ties into an upcoming regulation change" },
+];
+
+interface ChannelSeed {
+  slug: string;
+  name: string;
+  description: string;
+  icon: string;
+  displayOrder: number;
+  family: AcquisitionChannel["family"];
+  producibleSteps: readonly ProducibleStepKey[];
+  terms: AcquisitionChannel["terms"];
+  inputs: unknown[];
+}
+
+const PUBLISHED_CHANNELS: ChannelSeed[] = [
+  // ── Outbound, one to one ────────────────────────────────────────────────────────────────────────
+  // A person is reached individually. A conversation is what these buy; several also carry a link, so
+  // they can produce a website visit too. Cold calling cannot: there is no link in a phone call.
+  { slug: "cold-call-outreach", name: "Cold Call Outreach", displayOrder: 13, icon: "phone", family: "outbound_one_to_one", producibleSteps: CONVERSATION_ONLY,
+    // A person is on the line for the whole day whether or not anyone picks up, which is the entire
+    // reason this channel's daily operating cost is two orders of magnitude above cold email's.
+    terms: terms(24000, 30, 5),
+    description: "Reach buyers by phone, one call at a time, and open the conversation that becomes the meeting.",
+    inputs: OFFER_INPUTS },
+  { slug: "cold-sms-outreach", name: "Cold SMS Outreach", displayOrder: 14, icon: "message-circle", family: "outbound_one_to_one", producibleSteps: CONVERSATION_AND_VISIT,
+    terms: terms(1500, 30, 7),
+    description: "Reach buyers by text message and turn the replies into conversations, with a link for the ones who would rather read first.",
+    inputs: OFFER_INPUTS },
+  { slug: "cold-whatsapp-outreach", name: "Cold WhatsApp Outreach", displayOrder: 15, icon: "message-square", family: "outbound_one_to_one", producibleSteps: CONVERSATION_AND_VISIT,
+    terms: terms(1500, 30, 10),
+    description: "Reach buyers on WhatsApp where replies are quick, and carry the ones who want detail through to your site.",
+    inputs: OFFER_INPUTS },
+  { slug: "cold-linkedin-outreach", name: "Cold LinkedIn Outreach", displayOrder: 16, icon: "linkedin", family: "outbound_one_to_one", producibleSteps: CONVERSATION_AND_VISIT,
+    // The sending account has to be aged and warmed before it can send at volume without restriction.
+    terms: terms(1200, 30, 14),
+    description: "Reach buyers through LinkedIn messages and connection requests, and turn the replies into conversations.",
+    inputs: OFFER_INPUTS },
+  { slug: "cold-x-outreach", name: "Cold X Outreach", displayOrder: 17, icon: "at-sign", family: "outbound_one_to_one", producibleSteps: CONVERSATION_AND_VISIT,
+    terms: terms(1000, 30, 14),
+    description: "Reach buyers through X direct messages and replies, and turn the ones who answer into conversations.",
+    inputs: OFFER_INPUTS },
+  { slug: "cold-instagram-outreach", name: "Cold Instagram Outreach", displayOrder: 18, icon: "instagram", family: "outbound_one_to_one", producibleSteps: CONVERSATION_AND_VISIT,
+    terms: terms(1000, 30, 14),
+    description: "Reach buyers through Instagram direct messages and turn the ones who answer into conversations.",
+    inputs: OFFER_INPUTS },
+  { slug: "cold-reddit-outreach", name: "Cold Reddit Outreach", displayOrder: 19, icon: "message-square", family: "outbound_one_to_one", producibleSteps: CONVERSATION_AND_VISIT,
+    // Reddit accounts need standing before they can message at all, so this one starts slowest.
+    terms: terms(1000, 30, 21),
+    description: "Reach buyers through Reddit direct messages, from an account with enough standing in their communities to be read.",
+    inputs: OFFER_INPUTS },
+
+  // ── Paid reach ──────────────────────────────────────────────────────────────────────────────────
+  // Bought impressions. Most of these platforms also host a form the buyer fills without leaving, and
+  // two of them can take a booking straight from the ad, which is why the steps differ across a family
+  // that otherwise looks uniform.
+  { slug: "google-ads", name: "Google Ads", displayOrder: 20, icon: "search", family: "paid_reach", producibleSteps: VISIT_AND_PLATFORM_FORM,
+    terms: terms(5000, 30, 3),
+    description: "Buy the searches your buyers already run, and the clicks and lead forms that come from them.",
+    inputs: PAID_REACH_INPUTS },
+  { slug: "meta-ads", name: "Meta Ads", displayOrder: 21, icon: "facebook", family: "paid_reach", producibleSteps: VISIT_FORM_AND_AD_MEETING,
+    terms: terms(5000, 30, 3),
+    description: "Buy reach on Facebook and Instagram, with lead forms and appointment booking that happen inside the platform.",
+    inputs: PAID_REACH_INPUTS },
+  { slug: "linkedin-ads", name: "LinkedIn Ads", displayOrder: 22, icon: "linkedin", family: "paid_reach", producibleSteps: VISIT_FORM_AND_AD_MEETING,
+    // LinkedIn imposes its own daily floor per campaign; the terms carry it rather than hiding it.
+    terms: terms(10000, 30, 3),
+    description: "Buy reach against job title, company and seniority, with lead gen forms filled without leaving LinkedIn.",
+    inputs: PAID_REACH_INPUTS },
+  { slug: "tiktok-ads", name: "TikTok Ads", displayOrder: 23, icon: "video", family: "paid_reach", producibleSteps: VISIT_AND_PLATFORM_FORM,
+    terms: terms(5000, 30, 5),
+    description: "Buy short-video reach and the clicks and instant forms it produces.",
+    inputs: PAID_REACH_INPUTS },
+  { slug: "youtube-ads", name: "YouTube Ads", displayOrder: 24, icon: "youtube", family: "paid_reach", producibleSteps: VISIT_AND_PLATFORM_FORM,
+    terms: terms(5000, 30, 5),
+    description: "Buy video reach on YouTube and the clicks and lead forms it produces.",
+    inputs: PAID_REACH_INPUTS },
+  { slug: "x-ads", name: "X Ads", displayOrder: 25, icon: "at-sign", family: "paid_reach", producibleSteps: VISIT_ONLY,
+    description: "Buy reach on X against interests and followings, and the clicks through to your site.",
+    terms: terms(3000, 30, 3),
+    inputs: PAID_REACH_INPUTS },
+  { slug: "reddit-ads", name: "Reddit Ads", displayOrder: 26, icon: "message-square", family: "paid_reach", producibleSteps: VISIT_AND_PLATFORM_FORM,
+    terms: terms(3000, 30, 3),
+    description: "Buy reach inside the communities where your buyers discuss the problem, with forms filled on Reddit itself.",
+    inputs: PAID_REACH_INPUTS },
+  { slug: "bing-ads", name: "Bing Ads", displayOrder: 27, icon: "search", family: "paid_reach", producibleSteps: VISIT_AND_PLATFORM_FORM,
+    terms: terms(3000, 30, 3),
+    description: "Buy the searches your buyers run on Bing, and the clicks and lead forms that come from them.",
+    inputs: PAID_REACH_INPUTS },
+  { slug: "quora-ads", name: "Quora Ads", displayOrder: 28, icon: "help-circle", family: "paid_reach", producibleSteps: VISIT_AND_PLATFORM_FORM,
+    terms: terms(3000, 30, 5),
+    description: "Buy reach against the questions your buyers ask, and the clicks and lead forms they produce.",
+    inputs: PAID_REACH_INPUTS },
+  { slug: "newsletter-sponsorships", name: "Newsletter Sponsorships", displayOrder: 29, icon: "mail", family: "paid_reach", producibleSteps: VISIT_ONLY,
+    // A placement is booked into a future issue, so the wait is the publisher's calendar, not ours.
+    terms: terms(6000, 30, 30),
+    description: "Buy placements in the newsletters your buyers already read, and the clicks through to your site.",
+    inputs: PAID_REACH_INPUTS },
+  { slug: "podcast-sponsorships", name: "Podcast Sponsorships", displayOrder: 30, icon: "mic", family: "paid_reach", producibleSteps: VISIT_ONLY,
+    terms: terms(8000, 60, 45),
+    description: "Buy read spots on the podcasts your buyers listen to, and the visits they send.",
+    inputs: PAID_REACH_INPUTS },
+  { slug: "creator-sponsorships", name: "Creator Sponsorships", displayOrder: 31, icon: "users", family: "paid_reach", producibleSteps: VISIT_ONLY,
+    terms: terms(8000, 60, 30),
+    description: "Pay creators your buyers follow to show your product to them, and measure the visits it sends.",
+    inputs: PAID_REACH_INPUTS },
+  { slug: "paid-directory-listings", name: "Paid Software Directory Listings", displayOrder: 32, icon: "list", family: "paid_reach", producibleSteps: VISIT_ONLY,
+    terms: terms(4000, 90, 14),
+    description: "Buy placement in the software directories buyers shortlist from, and the visits that follow.",
+    inputs: PAID_REACH_INPUTS },
+
+  // ── Earned ──────────────────────────────────────────────────────────────────────────────────────
+  // Nothing here buys an impression; it earns one. That is why these carry the longest starts: an
+  // article has to be published and indexed, an editor has to choose you, a host has to book you.
+  { slug: "seo-content", name: "SEO Content", displayOrder: 33, icon: "file-text", family: "earned", producibleSteps: VISIT_ONLY,
+    // Publishing and ranking is a quarter's work before it produces, and it is worth nothing bought by
+    // the week — which is what the 90-day minimum says out loud.
+    terms: terms(12000, 90, 90),
+    description: "Publish content that ranks for what your buyers search, and earn the visits it brings every month after.",
+    inputs: EARNED_INPUTS },
+  { slug: "press-placements", name: "Press Placements", displayOrder: 34, icon: "newspaper", family: "earned", producibleSteps: VISIT_ONLY,
+    terms: terms(8000, 30, 30),
+    description: "Place guaranteed articles about your brand in real publications, and earn the visits and authority they carry.",
+    inputs: EARNED_INPUTS },
+  { slug: "podcast-guesting", name: "Podcast Guesting", displayOrder: 35, icon: "mic", family: "earned", producibleSteps: VISIT_ONLY,
+    terms: terms(6000, 60, 45),
+    description: "Get your spokesperson booked on the podcasts your buyers listen to, and earn the visits each episode sends.",
+    inputs: EARNED_INPUTS },
+  { slug: "affiliate-programme", name: "Affiliate Programme", displayOrder: 36, icon: "share-2", family: "earned", producibleSteps: VISIT_ONLY,
+    terms: terms(4000, 90, 45),
+    description: "Recruit partners who send you buyers and get paid on what closes, and measure the visits they send.",
+    inputs: EARNED_INPUTS },
+  { slug: "organic-linkedin-publishing", name: "Organic LinkedIn Publishing", displayOrder: 37, icon: "linkedin", family: "earned", producibleSteps: CONVERSATION_AND_VISIT,
+    terms: terms(10000, 90, 30),
+    description: "Publish on LinkedIn under your spokesperson's name, and earn both the replies it opens and the visits it sends.",
+    inputs: EARNED_INPUTS },
+  { slug: "organic-x-publishing", name: "Organic X Publishing", displayOrder: 38, icon: "at-sign", family: "earned", producibleSteps: CONVERSATION_AND_VISIT,
+    terms: terms(8000, 90, 30),
+    description: "Publish on X under your spokesperson's name, and earn both the replies it opens and the visits it sends.",
+    inputs: EARNED_INPUTS },
+  { slug: "organic-reddit-publishing", name: "Organic Reddit Publishing", displayOrder: 39, icon: "message-square", family: "earned", producibleSteps: CONVERSATION_AND_VISIT,
+    terms: terms(8000, 90, 45),
+    description: "Post in the communities where your buyers discuss the problem, and earn the replies and visits it produces.",
+    inputs: EARNED_INPUTS },
+  { slug: "organic-youtube-publishing", name: "Organic YouTube Publishing", displayOrder: 40, icon: "youtube", family: "earned", producibleSteps: CONVERSATION_AND_VISIT,
+    terms: terms(12000, 90, 60),
+    description: "Publish video that answers what your buyers search on YouTube, and earn the comments and visits it brings.",
+    inputs: EARNED_INPUTS },
+];
+
+for (const channel of PUBLISHED_CHANNELS) {
+  SEED_FEATURE_DEFS.push({
+    slug: channel.slug,
+    name: channel.name,
+    description: channel.description,
+    icon: channel.icon,
+    // BOOKABLE, like every other published channel. There is no half-published state to express here.
+    implemented: true,
+    displayOrder: channel.displayOrder,
+    status: "active",
+    acquisitionChannel: {
+      family: channel.family,
+      producibleSteps: channel.producibleSteps,
+      terms: channel.terms,
+    },
+    inputs: channel.inputs,
+    // Empty on purpose — see the block above. This service measures email today, and a stat family a
+    // channel cannot produce would report a measured-looking zero for ever.
+    outputs: [],
+    charts: [],
+    entities: [],
+  });
+}
+
+/**
+ * The catalogue as every consumer reads it: the definitions above with `salesFunnels` DERIVED from what
+ * each channel can produce. A feature that is not an acquisition channel sells through nothing, which is
+ * the same statement it made before this join existed.
+ */
+export const SEED_FEATURES: SeedFeature[] = SEED_FEATURE_DEFS.map((def) => ({
+  ...def,
+  salesFunnels: def.acquisitionChannel ? sellableFunnelsFor(def.acquisitionChannel.producibleSteps) : [],
+}));
