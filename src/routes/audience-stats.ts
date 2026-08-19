@@ -5,6 +5,7 @@ import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
 import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
+import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 
 const router = Router();
 
@@ -31,6 +32,25 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     if (!validated.ok) {
       return res.status(validated.status).json({ error: validated.error });
     }
+
+    // ── Offer scope ──────────────────────────────────────────────────────────
+    // `?offerId=` narrows every per-audience cost and engagement numerator to the ONE offer a brand
+    // sells — the grain between the brand and its campaigns (see lib/offer-scope.ts). It resolves to
+    // the offer's campaign ids and takes the campaign-scope path the single `?campaignId=` already
+    // takes, with more than one member. Absent → byte-identical to today.
+    //
+    // The AUDIENCES themselves stay brand-wide, exactly as they do under a campaign scope: an audience
+    // is a brand-level entity that several offers may address, and hiding one because this offer has
+    // not reached it yet would answer a question about the audience list with one about the spend.
+    const offerId = ((req.query.offerId as string | undefined) ?? "").trim() || undefined;
+    if (offerId && req.query.campaignId) {
+      return res.status(400).json({ error: "offerId and campaignId are mutually exclusive: a campaign already sells exactly one offer" });
+    }
+    // Fail-loud: with the partition unreadable there is no way to tell the offer's spend from the
+    // brand's, and answering anyway would rank audiences on money this offer never spent.
+    const offerCampaignIds = offerId
+      ? await resolveOfferCampaignIds(offerId, validated.brandId, featureSlug, { orgId, userId, runId })
+      : undefined;
 
     // A funnel the brand never declared has no cost to serve — "we could not estimate this" and "it
     // costs zero" are different statements, and only the first is true. 404 with the reason rather than
@@ -119,18 +139,25 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
       // Campaign scope is part of the cache key so campaign-scoped and brand-wide snapshots never
       // collide. Absent → dropped by buildScopeKey → key byte-identical to the brand-wide request.
       campaignId: req.query.campaignId,
+      // Same rule one grain up: an offer-scoped body and the brand-wide one must never share a cell.
+      offerId,
     });
     const result = await servedCached<ComputeResult>({
       view: "audience-stats",
       scopeKey,
       orgId,
-      compute: () => computeAudienceStats(req, pricing),
+      compute: () => computeAudienceStats(req, pricing, offerCampaignIds),
     });
     if (!result.ok) {
       return res.status(result.status).json({ error: result.error });
     }
     res.json(result.envelope);
   } catch (error) {
+    // An offer no campaign of this brand sells has no spend to rank audiences on — named, never
+    // answered with the brand's own numbers and never with a fabricated zero.
+    if (error instanceof OfferHasNoCampaignsError) {
+      return res.status(404).json({ error: error.message, reason: "offer_has_no_campaigns", offerId: error.offerId });
+    }
     // The BRAND-LEVEL read (no funnel, no goal) prices the brand through the funnels it DECLARED, so a
     // declaration we cannot read leaves it with no question to answer — reported as what failed, never
     // as a substituted default set and never as a zero return. Same reason string the `?funnel=` path

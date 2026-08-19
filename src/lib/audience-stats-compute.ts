@@ -21,6 +21,7 @@ import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_
 import { fetchDeclaredSalesFunnels } from "./sales-funnels-client.js";
 import { declaredEconomicsForFunnel, declaredFunnelsToRank } from "./declared-funnels.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
+import { mapWithConcurrency } from "./concurrency.js";
 
 /**
  * How the rows were ordered.
@@ -260,6 +261,20 @@ function buildHeaders(
 function audienceIdFromDimensions(dimensions: Record<string, string | null> | undefined): string | null {
   const id = dimensions?.audienceId;
   return id && id !== "__total__" ? id : null;
+}
+
+/** The earlier of two ISO instants, either of which may be absent. Null only when both are. */
+function earliest(a: string | null, b: string | null): string | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return a < b ? a : b;
+}
+
+/** The later of two ISO instants, either of which may be absent. Null only when both are. */
+function latest(a: string | null, b: string | null): string | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return a > b ? a : b;
 }
 
 function emptyCost(): AudienceCostEvidence {
@@ -568,9 +583,11 @@ async function fetchAudienceCosts(
   // Every per-audience cpc/cppr/cpfs + the brand-parent cascade derives from these cents, so the whole
   // ranking comes out net + coherent by construction.
   pricing: Pricing = "gross",
-  // Optional CAMPAIGN scope: when present, add a runs `campaignId` filter so the cost numerator counts
-  // only spend tagged to that campaign (still grouped by audienceId). Omitted → brand-wide (byte-identical).
-  scopeCampaignId?: string,
+  // Optional CAMPAIGN scope: when present, the cost numerator counts only spend tagged to these
+  // campaigns (still grouped by audienceId). ONE campaign takes the original `campaignId` filter byte
+  // for byte; SEVERAL — an OFFER's campaigns — co-group `campaignId` and keep the members here,
+  // because runs-service takes no campaign LIST. Omitted → brand-wide (byte-identical).
+  scopeCampaignIds?: string[],
 ): Promise<Map<string, AudienceCostEvidence>> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -583,14 +600,18 @@ async function fetchAudienceCosts(
   // audience is not partitioned by goal (goal only selects the DENOMINATOR/sort-metric — clicks vs
   // replies), and runs/cost rows are not tagged with goal/brandProfileId today, so filtering on
   // them would drop every real cost row → false $0.00 CPC.
+  const singleScopeCampaignId = scopeCampaignIds?.length === 1 ? scopeCampaignIds[0] : undefined;
+  const scopeMembers = (scopeCampaignIds?.length ?? 0) > 1 ? new Set(scopeCampaignIds) : null;
   const params = new URLSearchParams({
-    groupBy: "audienceId",
+    // A multi-campaign scope co-groups the campaign so the members can be kept below — the same shape
+    // `fetchRunsCostCents` uses for a campaign family. One campaign keeps the original single grouping.
+    groupBy: scopeMembers ? "audienceId,campaignId" : "audienceId",
     brandId,
     featureSlugs: featureSlug,
   });
   // Campaign scope narrows the numerator to spend tagged to this campaign (runs supports a campaignId
   // filter alongside groupBy=audienceId). brandId stays so the query remains brand-bounded.
-  if (scopeCampaignId) params.set("campaignId", scopeCampaignId);
+  if (singleScopeCampaignId) params.set("campaignId", singleScopeCampaignId);
 
   const response = await fetchWithRetry(`${baseUrl}/v1/stats/costs?${params}`, {
     headers: buildHeaders(apiKey, identity.orgId, { ...identity, brandId }),
@@ -619,11 +640,19 @@ async function fetchAudienceCosts(
   for (const group of data.groups) {
     const audienceId = audienceIdFromDimensions(group.dimensions);
     if (!audienceId) continue;
+    // A co-grouped read returns one row per (audience, campaign); rows outside the scope are dropped
+    // and the scope's rows are summed, so an audience reached by two of the offer's campaigns reads
+    // one figure. Single-scope and brand-wide reads never enter this branch.
+    if (scopeMembers) {
+      const cid = group.dimensions?.campaignId;
+      if (!cid || !scopeMembers.has(cid)) continue;
+    }
+    const prev = result.get(audienceId);
     result.set(audienceId, {
-      totalCostInUsdCents: Math.round(selectCostCents(group, "totalCostInUsdCents", pricing)),
-      completedRuns: readFiniteNumber(group.runCount, "runCount"),
-      firstRunAt: group.minStartedAt ?? null,
-      lastRunAt: group.maxStartedAt ?? null,
+      totalCostInUsdCents: (prev?.totalCostInUsdCents ?? 0) + Math.round(selectCostCents(group, "totalCostInUsdCents", pricing)),
+      completedRuns: (prev?.completedRuns ?? 0) + readFiniteNumber(group.runCount, "runCount"),
+      firstRunAt: earliest(prev?.firstRunAt ?? null, group.minStartedAt ?? null),
+      lastRunAt: latest(prev?.lastRunAt ?? null, group.maxStartedAt ?? null),
     });
   }
   return result;
@@ -653,43 +682,58 @@ async function fetchAudienceSendTagEngagement(
   brandId: string,
   featureSlug: string,
   identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
-  scopeCampaignId?: string,
+  // ONE campaign takes the original single `campaignId` filter byte for byte. SEVERAL — an OFFER's
+  // campaigns — take ONE READ PER CAMPAIGN, summed: email-gateway's `groupBy` is a SINGLE dimension
+  // (verified against its published schema), so the campaign cannot be co-grouped the way runs-service
+  // co-groups it, and there is no campaign LIST filter either. Summing does not double-count: a send is
+  // tagged to ONE campaign, the same property that lets the per-audience figures be summed to the brand
+  // grain below. Bounded concurrency so a wide offer cannot burst sockets at a cold sibling.
+  scopeCampaignIds?: string[],
 ): Promise<{ perAudience: Map<string, SendTagEngagement>; brandGrain: SendTagEngagement }> {
   const baseUrl = process.env.EMAIL_GATEWAY_SERVICE_URL;
   const apiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
   if (!baseUrl || !apiKey) {
     throw new Error("EMAIL_GATEWAY_SERVICE_URL or EMAIL_GATEWAY_SERVICE_API_KEY not configured");
   }
-  const params = new URLSearchParams({ type: "broadcast", groupBy: "audienceId", brandId, featureSlugs: featureSlug });
-  if (scopeCampaignId) params.set("campaignId", scopeCampaignId);
-  const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, {
-    headers: buildHeaders(apiKey, identity.orgId, { ...identity, brandId }),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`email-gateway audience engagement failed (${response.status}): ${text}`);
-  }
-  const data = (await response.json()) as { groups?: Array<Record<string, unknown>> };
   const perAudience = new Map<string, SendTagEngagement>();
   const brandGrain = emptyEngagement();
-  if (Array.isArray(data.groups)) {
+
+  const readOne = async (scopeCampaignId?: string): Promise<void> => {
+    const params = new URLSearchParams({ type: "broadcast", groupBy: "audienceId", brandId, featureSlugs: featureSlug });
+    if (scopeCampaignId) params.set("campaignId", scopeCampaignId);
+    const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, {
+      headers: buildHeaders(apiKey, identity.orgId, { ...identity, brandId }),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`email-gateway audience engagement failed (${response.status}): ${text}`);
+    }
+    const data = (await response.json()) as { groups?: Array<Record<string, unknown>> };
+    if (!Array.isArray(data.groups)) return;
     for (const group of data.groups) {
       const audienceId = String(group.key ?? "__total__");
       if (audienceId === "__total__") continue;
       const broadcast = group.broadcast as Record<string, unknown> | undefined;
       const rs = (broadcast?.recipientStats as Record<string, number> | undefined) ?? {};
+      const prev = perAudience.get(audienceId) ?? emptyEngagement();
       const engagement: SendTagEngagement = {
-        contacted: rs.contacted ?? 0,
-        opened: rs.opened ?? 0,
-        websiteClicks: rs.clicked ?? 0,
-        positiveReplies: rs.repliesPositive ?? 0,
+        contacted: prev.contacted + (rs.contacted ?? 0),
+        opened: prev.opened + (rs.opened ?? 0),
+        websiteClicks: prev.websiteClicks + (rs.clicked ?? 0),
+        positiveReplies: prev.positiveReplies + (rs.repliesPositive ?? 0),
       };
       perAudience.set(audienceId, engagement);
-      brandGrain.contacted += engagement.contacted;
-      brandGrain.opened += engagement.opened;
-      brandGrain.websiteClicks += engagement.websiteClicks;
-      brandGrain.positiveReplies += engagement.positiveReplies;
+      brandGrain.contacted += rs.contacted ?? 0;
+      brandGrain.opened += rs.opened ?? 0;
+      brandGrain.websiteClicks += rs.clicked ?? 0;
+      brandGrain.positiveReplies += rs.repliesPositive ?? 0;
     }
+  };
+
+  if ((scopeCampaignIds?.length ?? 0) > 1) {
+    await mapWithConcurrency(scopeCampaignIds!, 4, (cid) => readOne(cid));
+  } else {
+    await readOne(scopeCampaignIds?.[0]);
   }
   return { perAudience, brandGrain };
 }
@@ -870,7 +914,14 @@ export function validateAudienceStatsQuery(req: Request):
   };
 }
 
-export async function computeAudienceStats(req: Request, pricing: Pricing = "gross"): Promise<ComputeResult> {
+export async function computeAudienceStats(
+  req: Request,
+  pricing: Pricing = "gross",
+  // The campaigns ONE OFFER is sold through, resolved by the route (it needs them for the cache key
+  // too, so they are passed in rather than read twice). Present → every cost and engagement numerator
+  // narrows to those campaigns. Absent → the single `?campaignId=` scope, or brand-wide, unchanged.
+  offerCampaignIds?: string[],
+): Promise<ComputeResult> {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
   const explicitBrandProfileId = req.query.brandProfileId as string | undefined;
@@ -878,6 +929,9 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
   // brand-wide numbers, byte-identical to today. Present → cost + outcome numerators narrow to this
   // campaign (runs campaignId filter + email-gateway campaign scope).
   const scopeCampaignId = (req.query.campaignId as string | undefined)?.trim() || undefined;
+  // An OFFER is a campaign scope of one or more members; a single `?campaignId=` is the one-member
+  // case, and it takes the identical downstream path it always did.
+  const scopeCampaignIds = offerCampaignIds ?? (scopeCampaignId ? [scopeCampaignId] : undefined);
 
   const validated = validateAudienceStatsQuery(req);
   if (!validated.ok) return validated;
@@ -919,9 +973,9 @@ export async function computeAudienceStats(req: Request, pricing: Pricing = "gro
   const audienceIds = audiences.map((audience) => audience.id);
 
   const [costs, membershipResult, engagementResult, projected] = await Promise.all([
-    fetchAudienceCosts(brandId, featureSlug, identity, pricing, scopeCampaignId),
+    fetchAudienceCosts(brandId, featureSlug, identity, pricing, scopeCampaignIds),
     fetchAudienceMembership(brandId, audiences, identity, formSubmissionEmails, signupEmails, saleEmails),
-    fetchAudienceSendTagEngagement(brandId, featureSlug, identity, scopeCampaignId),
+    fetchAudienceSendTagEngagement(brandId, featureSlug, identity, scopeCampaignIds),
     // FLEET-BACKED brand parent for the FLOOR cascade (audience → brand): the SAME cross-org → brand
     // projected cost-per-outcome that workflow-projection.resolved produces (fleet benchmark cascaded with
     // the brand's effective economics), NOT a brand-own raw-spend aggregate. So a 0-outcome audience's

@@ -50,6 +50,7 @@ import { fetchBrandCommittedSpendByDay } from "../lib/brand-spend-by-day-client.
 import { buildCostEconomics, type CostEconomics } from "../lib/cost-economics.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
+import { fetchOfferCampaigns, resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 
 const router = Router();
 
@@ -1077,12 +1078,23 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
   const brandId = req.query.brandId as string | undefined;
   const campaignId = req.query.campaignId as string | undefined;
+  // `?offerId=` narrows every figure to the ONE offer a brand sells — the grain between the brand and
+  // its campaigns (see lib/offer-scope.ts). It resolves to the offer's campaign ids and then takes the
+  // campaign-family path this route already has, so nothing about how a figure is computed changes.
+  // Absent → dropped everywhere → byte-identical to today.
+  const offerId = ((req.query.offerId as string | undefined) ?? "").trim() || undefined;
   const groupBy = req.query.groupBy as string | undefined;
   const lensParam = req.query.lens as string | undefined;
   const funnelParam = req.query.funnel as string | undefined;
 
   if (!brandId) {
     return res.status(400).json({ error: "brandId query parameter is required" });
+  }
+
+  // A campaign sells exactly one offer, so naming both is two scopes for one read and there is no
+  // honest way to pick between them — 400 rather than silently letting one win.
+  if (offerId && campaignId) {
+    return res.status(400).json({ error: "offerId and campaignId are mutually exclusive: a campaign already sells exactly one offer" });
   }
 
   // `?funnel=` names the SALES FUNNEL the spend block's cost-per-outcome columns are priced on — the
@@ -1203,6 +1215,56 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       return res.json(payload);
     }
 
+    // ── Grouped: one lean group per OFFER the brand sells (brand Overview offers row) ──
+    //
+    // The same realized-money question this endpoint answers for a brand, for its campaigns and for
+    // its workflows, at the grain of the OFFER — one distinct thing the brand sells. A brand runs
+    // several offers at once and they perform differently, so the Overview ranks them on what each
+    // one returns while the brand's own headline stays the sum across them.
+    //
+    // An offer's campaigns are the SCOPE, never a re-attribution: each group is one
+    // `computeFeatureRevenue` over the offer's campaign ids, so a group is byte-equal to the
+    // standalone `?offerId=` call, and a brand selling ONE offer through every campaign that has runs
+    // reads the brand's own figures here — same request, same engine, same economics.
+    //
+    // A campaign stating no offer is in NO group (its spend and its leads with it), and the groups
+    // therefore do not sum to the brand — the property the per-campaign and per-workflow grains
+    // already have, for the same reason. See lib/offer-scope.ts.
+    if (groupBy === "offerId") {
+      const payload = await servedCached({
+        view: "revenue-by-offer",
+        // No `campaignId` and no `funnel`: the grain is the brand's whole spend, priced on the brand's
+        // own declared chains (this service knows which campaigns sell an offer, never which funnels
+        // the offer itself states — brand-service owns that, and inventing it here would price a chain
+        // the offer never declared). `econ` + `decl` carry the economics + declaration exactly as the
+        // sibling grains do.
+        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "offerId", pricing, econ, decl }),
+        orgId,
+        compute: async () => {
+          const offers = await fetchOfferCampaigns(brandId, featureSlug, headers);
+
+          traceEvent(runId, { service: "features-service", event: "feature-revenue-by-offer-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, offers=${offers.offerIds.length}` }, req.headers).catch(() => {});
+
+          const groups = await Promise.all(
+            offers.offerIds.map(async (id) => {
+              const campaignIds = offers.campaignIdsOf(id);
+              // `pricingForIdentity(null)` is the BRAND's pick, deliberately: an offer states no funnel
+              // to this service, and its campaigns may state several, so pricing on one member's chain
+              // would answer for the offer with one campaign's vocabulary.
+              const body = await computeFeatureRevenue(featureSlug, brandId, campaignIds, funnel, headers, undefined, pricingForIdentity(null), false, pricing, requestedFunnel);
+              return { offerId: id, campaignIds, headline: body.headline, costEconomics: body.costEconomics };
+            }),
+          );
+
+          traceEvent(runId, { service: "features-service", event: "feature-revenue-by-offer-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}` }, req.headers).catch(() => {});
+
+          return { featureSlug, groupBy: "offerId", groups };
+        },
+      });
+
+      return res.json(payload);
+    }
+
     // ── Grouped: one lean group per campaign (dashboard campaigns list) ──────────
     // Served through the Gold snapshot cache (O(1) read; the fan-out recomputes off-path ~per TTL).
     if (groupBy === "campaignId") {
@@ -1263,10 +1325,17 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     // — the live row or one of its stopped ancestors — returns the same, complete campaign. Every
     // member therefore lands on ONE cache cell (keyed by the identity), instead of the dashboard
     // firing a separate full compute per rendered row.
+    //
+    // An OFFER-scoped read takes the SAME path with the offer's campaign ids as the scope: an offer
+    // holds one or more campaigns, so it is a campaign family in every respect the clients care about
+    // (no producer takes a campaign LIST, so each one groups by campaign over the brand and keeps the
+    // members — the machinery a multi-row campaign identity already uses). Nothing about how a figure
+    // is computed changes; only which campaigns it is computed over.
     const identity = campaignId
       ? (await fetchCampaignFamiliesSoft(brandId, featureSlug, headers)).identityOf(campaignId)
       : null;
-    const campaignScope: CampaignFilter = identity?.campaignIds ?? campaignId;
+    const offerCampaignIds = offerId ? await resolveOfferCampaignIds(offerId, brandId, featureSlug, headers) : null;
+    const campaignScope: CampaignFilter = offerCampaignIds ?? identity?.campaignIds ?? campaignId;
 
     const payload = await servedCached({
       view: lens ? "revenue-lens" : "revenue",
@@ -1274,6 +1343,9 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         orgId,
         brandId,
         campaignId: identity?.key ?? campaignId,
+        // The offer narrows every figure, so it MUST be in the key or an offer-scoped body and the
+        // brand-wide one would share a cell. Absent → dropped by buildScopeKey → byte-identical key.
+        offerId,
         lens,
         // The funnel changes the cost basis of every cost-per-outcome column in the spend block, so it
         // MUST be in the key — keyed on the CANONICAL value the validator resolved, so a legacy spelling
@@ -1300,6 +1372,11 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
 
     res.json(payload);
   } catch (error) {
+    // An offer no campaign of this brand sells has no evidence to answer with — a 404 naming the
+    // reason, never the brand's own numbers under the offer's label, and never a fabricated zero.
+    if (error instanceof OfferHasNoCampaignsError) {
+      return res.status(404).json({ error: error.message, reason: "offer_has_no_campaigns", offerId: error.offerId });
+    }
     console.error("[features-service] Feature revenue error:", error);
     if (runId) {
       traceEvent(runId, { service: "features-service", event: "feature-revenue-error", detail: error instanceof Error ? error.message : "Unknown error", level: "error" }, req.headers).catch(() => {});
