@@ -80,6 +80,16 @@ export interface SeedFeatureDef {
    * Carries the commercial terms a buyer needs before booking and the steps the channel can produce.
    */
   acquisitionChannel: AcquisitionChannel | null;
+  /**
+   * THE SLUG THAT REPLACED THIS ONE, or `null` said out loud when this slug is the current one.
+   *
+   * A retired slug is not deleted and not renamed — live campaigns, live budgets and the cost ledger
+   * reference it, so the row and every authenticated read of it keep working exactly as before. The
+   * one thing retirement changes is that the slug stops being PUBLISHED: the public catalogue skips
+   * it, so the offering is listed once, under the spelling that is current. Stated on every row so a
+   * missing answer can never be mistaken for a retirement nobody declared.
+   */
+  supersededBySlug: string | null;
   inputs: unknown[];
   outputs: unknown[];
   charts: unknown[];
@@ -101,6 +111,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 1,
     status: "active",
     acquisitionChannel: { family: "outbound_one_to_one", producibleSteps: CONVERSATION_AND_VISIT, terms: terms(800, 30, 14) },
+    supersededBySlug: null,
     inputs: [
       // NO free-text ICP input. Recipients come from the AUDIENCE BANDIT (a saved human-service
       // audience picked per run), so a static ICP typed here would describe a different set of people
@@ -164,6 +175,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 12,
     status: "active",
     acquisitionChannel: { family: "outbound_one_to_one", producibleSteps: CONVERSATION_ONLY, terms: terms(800, 30, 14) },
+    supersededBySlug: null,
     // THE OFFER HAS TWO HALVES, AND THE CUSTOMER STATES BOTH.
     //
     // This channel does not pitch. It gives something away (a gift) and asks for feedback in return,
@@ -231,6 +243,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 11,
     status: "active",
     acquisitionChannel: { family: "outbound_one_to_one", producibleSteps: CONVERSATION_AND_VISIT, terms: terms(800, 30, 7) },
+    supersededBySlug: null,
     inputs: [
       { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who the campaign targets — ICP description (role, company size, industry). Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize outreach.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
       { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "callToAction", description: "The desired action from the recipient (book a call, sign up, reply, etc.). Should be a single, clear call-to-action. Examples: 'Book a 15-min demo call', 'Start a free trial', 'Schedule a discovery call'. The LLM uses this to craft the email CTA.", placeholder: "Book sales demos" },
@@ -279,6 +292,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 2,
     status: "active",
     acquisitionChannel: { family: "earned", producibleSteps: VISIT_ONLY, terms: terms(800, 30, 21) },
+    supersededBySlug: null,
     inputs: [
       { key: "targetOutlets", type: "text", label: "Target Outlets", extractKey: "targetOutlets", description: "Types of media outlets or specific publications to target. Be specific about outlet tier, beat, and format (online, print, podcast). Examples: 'Top-tier tech blogs (TechCrunch, The Verge)', 'B2B SaaS trade publications', 'Fintech newsletters with 10k+ subscribers'. The LLM uses this to find and prioritize matching journalists.", placeholder: "TechCrunch, Forbes, industry trade publications..." },
       { key: "prAngle", type: "text", label: "PR Angle", extractKey: "suggestedAngles", description: "The editorial hook or story angle to pitch. Should be newsworthy and specific. Examples: 'Series B funding of $25M led by Sequoia', 'Launch of AI-powered compliance platform', 'Industry report on developer productivity trends'. The LLM uses this as the core pitch in the outreach email.", placeholder: "Series B funding announcement, product launch..." },
@@ -322,6 +336,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 3,
     status: "active",
     acquisitionChannel: null,
+    supersededBySlug: null,
     inputs: [
       // No candidate-profile input: recipients come from the audience bandit (AUDIENCE_BANDIT_NOTE).
       { key: "targetOutcome", type: "text", label: "Target Outcome", extractKey: "target_outcome", description: "The desired action from the candidate — should be a single, clear call-to-action. Examples: 'Book a 30-min intro call', 'Apply to the role', 'Schedule a discovery conversation'.", placeholder: "e.g. Book a 30-min intro call" },
@@ -370,6 +385,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 4,
     status: "active",
     acquisitionChannel: null,
+    supersededBySlug: null,
     inputs: [
       { key: "industry", type: "text", label: "Industry", extractKey: "industry", description: "The industry vertical to target for discovery. Be specific — this drives which media outlets are searched. Examples: 'Enterprise cybersecurity', 'Consumer fintech', 'Climate tech / clean energy'. The discovery engine uses this to generate targeted search queries.", placeholder: "SaaS, AI, Fintech, Healthcare..." },
       { key: "angles", type: "text", label: "PR Angles", extractKey: "suggestedAngles", description: "Story hooks or editorial angles the outreach should pitch. Comma-separated. Examples: 'Series B funding announcement', 'New product launch for SMBs', 'Thought leadership on AI regulation'. Helps match outlets that cover these topics.", placeholder: "Fundraising announcement, product launch, thought leadership..." },
@@ -399,6 +415,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 5,
     status: "active",
     acquisitionChannel: null,
+    supersededBySlug: null,
     inputs: [
       { key: "prAngle", type: "text", label: "PR Angle", extractKey: "suggestedAngles", description: "The editorial hook or story angle for the press kit. Should be newsworthy and specific. Examples: 'Series B funding of $25M led by Sequoia', 'Launch of AI-powered compliance platform'. The LLM uses this as the core narrative for the press kit.", placeholder: "Series B funding announcement, product launch..." },
       { key: "companyContext", type: "text", label: "Company Context", extractKey: "companyDescription", description: "Brief background on the company. Include founding date, traction metrics, notable customers, or market position. Examples: 'Founded 2022, 500+ enterprise customers', 'Only platform certified for EU AI Act compliance'. Gives the LLM credibility context for the press kit content.", placeholder: "What does your company do and why is this relevant now?" },
@@ -429,6 +446,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 6,
     status: "active",
     acquisitionChannel: { family: "earned", producibleSteps: VISIT_ONLY, terms: terms(800, 30, 21) },
+    supersededBySlug: null,
     inputs: [
       { key: "expertName", type: "text", label: "Expert Name", extractKey: "spokespersonName", description: "Full name of the brand's primary public spokesperson — the founder, CEO, or designated expert who will be quoted. Auto-extracted from the brand's site (about / team / leadership pages); edit if the wrong person is picked. Featured.com journalists attribute the published quote to this name verbatim.", placeholder: "Jane Doe" },
       { key: "expertTitle", type: "text", label: "Title / Role", extractKey: "spokespersonTitle", description: "Job title or role of the spokesperson at the company (e.g. 'CEO', 'CTO', 'Head of Research'). Printed next to the quote to establish authority. Auto-extracted from the brand's about / team page.", placeholder: "CEO" },
@@ -463,6 +481,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 7,
     status: "active",
     acquisitionChannel: null,
+    supersededBySlug: null,
     inputs: [
       { key: "brandName", type: "text", label: "Brand Name", extractKey: "brandName", description: "The brand or company name to audit. Used as the primary entity to detect in LLM answers. Examples: 'Stripe', 'Linear', 'Vercel'. Detection is exact-match plus close variants (case-insensitive, common suffix stripping).", placeholder: "Stripe" },
       { key: "competitors", type: "textarea", label: "Competitors", extractKey: "competitors", description: "Competitor brands to score against. Comma- or newline-separated. Used to compute share-of-voice and ranking comparisons. Examples: 'Adyen, Checkout.com, Braintree'. Aim for 3-7 direct competitors for meaningful share-of-voice metrics.", placeholder: "Adyen, Checkout.com, Braintree" },
@@ -509,6 +528,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 8,
     status: "active",
     acquisitionChannel: null,
+    supersededBySlug: null,
     inputs: [
       // No investor-profile input: recipients come from the audience bandit (AUDIENCE_BANDIT_NOTE).
       { key: "fundingAsk", type: "text", label: "Funding Ask", extractKey: "fundingAsk", description: "Round size, instrument, and headline terms. Should be specific and clear. Examples: 'Raising $3M seed on SAFE post-money cap $25M', 'Series A $10M priced round, 20% allocation for lead'. The LLM uses this as the core ask in the email body.", placeholder: "Raising $3M seed on SAFE, $25M post-money cap" },
@@ -558,6 +578,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 9,
     status: "active",
     acquisitionChannel: null,
+    supersededBySlug: null,
     inputs: [
       // No accelerator-profile input: recipients come from the audience bandit (AUDIENCE_BANDIT_NOTE).
       { key: "programAsk", type: "text", label: "Program Ask", extractKey: "programAsk", description: "What you want from the accelerator and which batch/cohort you're targeting. Should be specific. Examples: 'Applying to W26 batch, seeking $500k + mentorship + network', 'Rolling admission, looking for sector-specific mentors and US market entry support'. The LLM uses this as the core ask in the email body.", placeholder: "Applying to W26 batch, seeking $500k + mentor network" },
@@ -607,6 +628,12 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     displayOrder: 10,
     status: "active",
     acquisitionChannel: { family: "earned", producibleSteps: VISIT_ONLY, terms: terms(800, 30, 21) },
+    // RETIRED SPELLING of the expert-quote channel — the same offering, on byte-identical terms, is
+    // sold as `pr-expert-quote-outreach`. The row stays, because live campaigns, live budgets and the
+    // cost ledger reference this slug and every authenticated read of it must keep answering; what
+    // this states is only that it is no longer PUBLISHED, so the public catalogue lists the offering
+    // once and nobody can book the dead spelling.
+    supersededBySlug: "pr-expert-quote-outreach",
     inputs: [
       { key: "expertName", type: "text", label: "Expert Name", extractKey: "spokespersonName", description: "Full name of the brand's primary public spokesperson — the founder, CEO, or designated expert who will be quoted. Auto-extracted from the brand's site (about / team / leadership pages); edit if the wrong person is picked. Featured.com journalists attribute the published quote to this name verbatim.", placeholder: "Jane Doe" },
       { key: "expertTitle", type: "text", label: "Title / Role", extractKey: "spokespersonTitle", description: "Job title or role of the spokesperson at the company (e.g. 'CEO', 'CTO', 'Head of Research'). Printed next to the quote to establish authority. Auto-extracted from the brand's about / team page.", placeholder: "CEO" },
@@ -841,6 +868,9 @@ for (const channel of PUBLISHED_CHANNELS) {
       producibleSteps: channel.producibleSteps,
       terms: channel.terms,
     },
+    // Every slug published here is the current one — a channel introduced by this catalogue has no
+    // earlier spelling to retire.
+    supersededBySlug: null,
     inputs: channel.inputs,
     // Empty on purpose — see the block above. This service measures email today, and a stat family a
     // channel cannot produce would report a measured-looking zero for ever.

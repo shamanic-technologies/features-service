@@ -43,6 +43,23 @@ export const features = pgTable(
      * bookable; a channel we are slower to deliver says so through these very terms.
      */
     acquisitionChannel: jsonb("acquisition_channel"),
+    /**
+     * THE SLUG THAT REPLACED THIS ONE — set when this feature's slug is RETIRED and the same offering
+     * is now sold under a different spelling. NULL means "this slug is current", which is every row
+     * but the retired ones.
+     *
+     * It exists because a retired slug cannot simply be deleted: live campaigns, live budgets and the
+     * cost ledger reference it, so its row, its stats and everything attributing spend or outcomes to
+     * it must keep working exactly as before. What retirement changes is one thing only — whether the
+     * slug is PUBLISHED. A row that names a successor is skipped by the public acquisition-channel
+     * catalogue (and therefore by the per-pair economics built from it), so an anonymous reader sees
+     * the offering exactly once, under the spelling that is current, and cannot book the dead one.
+     *
+     * This is deliberately a general marker rather than an exclusion list: the next retirement states
+     * its own successor here and needs no code change. Naming the successor rather than carrying a
+     * bare boolean is what lets a consumer send a reader to where the offering actually lives.
+     */
+    supersededBySlug: text("superseded_by_slug"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

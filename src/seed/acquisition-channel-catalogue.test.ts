@@ -19,7 +19,12 @@ import { CHANNEL_FAMILIES, PRODUCIBLE_STEP_KEYS, sellableFunnelsFor } from "../l
 import { coldEmailOutreachSlugs } from "../lib/send-forecast-compute.js";
 
 const bySlug = (slug: string) => SEED_FEATURES.find((f) => f.slug === slug);
-const channels = SEED_FEATURES.filter((f) => f.acquisitionChannel != null);
+/**
+ * THE PUBLISHED channels — a channel whose slug is RETIRED (`supersededBySlug`) is still a feature row
+ * and still measured, but it is not something a stranger can read or book, so the properties below are
+ * asserted of the published set.
+ */
+const channels = SEED_FEATURES.filter((f) => f.acquisitionChannel != null && f.supersededBySlug == null);
 
 /** The slugs live campaigns, live budgets and the cost ledger already reference. They must not move. */
 const PRE_EXISTING_SLUGS = [
@@ -78,7 +83,6 @@ describe("the published acquisition-channel catalogue", () => {
       "press-placements",
       "pr-cold-email-outreach",
       "pr-expert-quote-outreach",
-      "pr-expert-quote-opportunities",
       "podcast-guesting",
       "affiliate-programme",
       "organic-linkedin-publishing",
@@ -118,6 +122,43 @@ describe("the published acquisition-channel catalogue", () => {
         "vc-cold-email-outreach",
       ].sort(),
     );
+  });
+});
+
+describe("a RETIRED slug keeps working but is never published", () => {
+  const retired = SEED_FEATURES.filter((f) => f.supersededBySlug != null);
+
+  it("EVERY feature states whether its slug is retired — absence can never be mistaken for a retirement", () => {
+    for (const feature of SEED_FEATURES) {
+      expect(feature, feature.slug).toHaveProperty("supersededBySlug");
+      const stated = feature.supersededBySlug === null || typeof feature.supersededBySlug === "string";
+      expect(stated, feature.slug).toBe(true);
+    }
+  });
+
+  it("the expert-quote offering is published EXACTLY ONCE, under the current spelling", () => {
+    const published = channels.filter((c) => c.slug.includes("expert-quote"));
+    expect(published.map((c) => c.slug)).toEqual(["pr-expert-quote-outreach"]);
+
+    // The retired spelling keeps its row, its terms and its measurement — live campaigns, live budgets
+    // and the cost ledger reference it, so nothing about it moves except that it is not published.
+    const dead = bySlug("pr-expert-quote-opportunities")!;
+    expect(dead.supersededBySlug).toBe("pr-expert-quote-outreach");
+    expect(dead.acquisitionChannel).not.toBeNull();
+    expect(dead.acquisitionChannel!.terms).toEqual(bySlug("pr-expert-quote-outreach")!.acquisitionChannel!.terms);
+  });
+
+  it("every retired slug names a successor that is itself PUBLISHED and current", () => {
+    for (const feature of retired) {
+      const successor = bySlug(feature.supersededBySlug!);
+      expect(successor, `${feature.slug} → ${feature.supersededBySlug}`).toBeDefined();
+      expect(successor!.supersededBySlug, successor!.slug).toBeNull();
+      expect(channels.map((c) => c.slug)).toContain(successor!.slug);
+    }
+  });
+
+  it("no slug is retired in favour of itself", () => {
+    for (const feature of retired) expect(feature.supersededBySlug, feature.slug).not.toBe(feature.slug);
   });
 });
 
