@@ -49,6 +49,7 @@ export async function registerSeedFeatures(): Promise<void> {
           entities: seed.entities,
           salesFunnels: [...seed.salesFunnels],
           acquisitionChannel: seed.acquisitionChannel,
+          supersededBySlug: seed.supersededBySlug,
           updatedAt: new Date(),
         })
         .where(eq(features.slug, seed.slug));
@@ -69,6 +70,7 @@ export async function registerSeedFeatures(): Promise<void> {
         entities: seed.entities,
         salesFunnels: [...seed.salesFunnels],
         acquisitionChannel: seed.acquisitionChannel,
+        supersededBySlug: seed.supersededBySlug,
       });
 
       console.log(`[features-service] Inserted feature: ${seed.slug}`);

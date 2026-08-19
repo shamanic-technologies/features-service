@@ -111,6 +111,29 @@ describe("building the public catalogue", () => {
     ).toThrow(MalformedAcquisitionChannelError);
   });
 
+  it("a RETIRED slug is not published — the offering is listed once, under the spelling that is current", () => {
+    const catalogue = buildChannelCatalogue([
+      row({ slug: "expert-quote-outreach", name: "Current", displayOrder: 1 }),
+      // Same offering, same terms, older spelling. Publishing it would render a second identical page
+      // and let a stranger book a slug we no longer sell.
+      row({
+        slug: "expert-quote-opportunities",
+        name: "Retired",
+        displayOrder: 2,
+        supersededBySlug: "expert-quote-outreach",
+      }),
+    ]);
+    expect(catalogue.map((c) => c.slug)).toEqual(["expert-quote-outreach"]);
+  });
+
+  it("retirement is read off the MARKER, not off any particular slug — the next one needs no code here", () => {
+    const catalogue = buildChannelCatalogue([
+      row({ slug: "some-other-channel", supersededBySlug: "its-successor" }),
+      row({ slug: "still-current", name: "Still", supersededBySlug: null }),
+    ]);
+    expect(catalogue.map((c) => c.slug)).toEqual(["still-current"]);
+  });
+
   it("publishes the step vocabulary itself, so a consumer never hardcodes it", () => {
     expect(producibleStepCatalogue().map((s) => s.key)).toEqual([...PRODUCIBLE_STEP_KEYS]);
   });

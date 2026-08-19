@@ -52,6 +52,25 @@ channels are published, all bookable from day one, and a public marketing site i
 - **No new channel carries a free-text ICP input** — same rule as the audience-bandit note below: who a
   channel addresses is the audience entity, and a static "who we target" string would contradict it.
 
+- **A RETIRED SLUG IS UNPUBLISHED, NEVER RENAMED OR DELETED — `features.superseded_by_slug` names its
+  successor.** Live campaigns, live budgets and the cost ledger reference a retired slug, so its row,
+  its stats and every authenticated per-brand / per-campaign read of it keep answering exactly as
+  before. The ONE thing retirement changes is whether an anonymous caller can see it:
+  `buildChannelCatalogue` skips any row whose `supersededBySlug` is non-null, and the per-pair
+  economics is built from that catalogue, so an unlisted slug returns no pair (and 404s on
+  `?channelSlug=`) by construction rather than by a second rule. `pr-expert-quote-opportunities` is
+  the first one — the same offering on byte-identical terms is sold as `pr-expert-quote-outreach`, and
+  publishing both rendered two identical channel pages, split one offering's measured evidence across
+  two identities, and let a stranger book the dead spelling. **It is a general MARKER, not an
+  exclusion list**: the next retirement states its own successor on its seed row and needs no code
+  change here. Naming the successor rather than a bare boolean is what lets a consumer send a reader
+  where the offering actually lives. Stated on EVERY seed row (`null` = current), so a missing answer
+  can never read as a retirement nobody declared. Guards: the retirement cases in
+  `src/lib/channel-catalogue.test.ts` (the marker, not the slug, is what excludes) and the
+  `a RETIRED slug keeps working but is never published` suite in
+  `src/seed/acquisition-channel-catalogue.test.ts` (published exactly once, the dead row keeps its
+  terms, every successor is itself published and current). (Set 2026-08-19.)
+
 ### `GET /public/channels` + `GET /public/channel-funnel-economics` — NO AUTH, because the marketing site is generated from them
 
 Both are public and identity-free by design: a site that restates the terms is a site that can drift
