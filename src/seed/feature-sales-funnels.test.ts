@@ -132,14 +132,92 @@ describe("the feedback-request cold email feature", () => {
     expect(seed!.entities).toEqual(pitch!.entities);
   });
 
-  it("asks for feedback rather than pitching — it carries its own problem-to-validate input", () => {
+  /**
+   * THE OFFER HAS TWO HALVES, AND THE PRICE IS THE FORM OF FEEDBACK.
+   *
+   * The channel gives a gift and asks for feedback in return, so the prospect pays in effort rather
+   * than money. What is asked for IS the price tag (a public video testimonial and a Google Maps
+   * rating are wildly different prices), which is why the eight inputs are the two halves of the
+   * offer plus the four persuasion levers, and why the ones copied from the pitch are gone.
+   */
+  it("states the gift, its anchored value, the price and the effort — exactly eight inputs", () => {
     const keys = (seed!.inputs as Array<{ key: string }>).map((i) => i.key);
-    expect(keys).toContain("problemToValidate");
-    expect((pitch!.inputs as Array<{ key: string }>).map((i) => i.key)).not.toContain("problemToValidate");
+    expect(keys).toEqual([
+      "gift",
+      "giftValue",
+      "feedbackForm",
+      "feedbackEffort",
+      "socialProof",
+      "scarcity",
+      "urgency",
+      "riskReversal",
+    ]);
+  });
+
+  it("no longer asks the four questions copied from the pitch", () => {
+    const keys = (seed!.inputs as Array<{ key: string }>).map((i) => i.key);
+    for (const dead of ["targetAudience", "problemToValidate", "targetOutcome", "valueForTarget"]) {
+      expect(keys, dead).not.toContain(dead);
+    }
+  });
+
+  /**
+   * A decision was taken NOT to introduce a new input type for this. The form of feedback is plain
+   * text whose PLACEHOLDER enumerates the options, so a select / multi-select must not appear here.
+   */
+  it("prices the offer in a plain text field whose placeholder names the options", () => {
+    const form = (seed!.inputs as Array<{ key: string; type: string; placeholder?: string }>).find((i) => i.key === "feedbackForm")!;
+    expect(form.type).toBe("text");
+    for (const option of ["written", "video", "private", "public", "call", "G2", "Google Maps", "Trustpilot", "Capterra"]) {
+      expect(form.placeholder?.toLowerCase(), option).toContain(option.toLowerCase());
+    }
+    const types = new Set(SEED_FEATURES.flatMap((f) => (f.inputs as Array<{ type: string }>).map((i) => i.type)));
+    expect([...types].sort()).toEqual(["text", "textarea"]);
   });
 
   it("carries no em-dash in customer-facing copy", () => {
-    const copy = [seed!.name, seed!.description, ...(seed!.inputs as Array<{ label: string; placeholder?: string }>).flatMap((i) => [i.label, i.placeholder ?? ""])];
+    const copy = [seed!.name, seed!.description, ...(seed!.inputs as Array<{ label: string; placeholder?: string; description: string }>).flatMap((i) => [i.label, i.placeholder ?? "", i.description])];
     for (const text of copy) expect(text).not.toContain("—");
+  });
+});
+
+/**
+ * A FREE-TEXT ICP CONTRADICTS THE AUDIENCE BANDIT — it is not a duplicate of it.
+ *
+ * A campaign points at saved audiences and a bandit picks ONE per run, so a static "who we target"
+ * typed on the feature form describes a different set of people than the run is addressing. It is kept
+ * on the two features where nothing else answers the question: ai-visibility-scoring contacts nobody
+ * (its audience frames the questions put to the LLMs), and the PR channel takes its recipients from
+ * journalists-service rather than from the audience entity.
+ */
+describe("free-text ICP vs the audience bandit", () => {
+  const inputKeys = (slug: string) => (bySlug(slug)!.inputs as Array<{ key: string; label: string }>);
+
+  it.each([
+    ["sales-cold-email-outreach"],
+    ["feedback-request-cold-email-outreach"],
+    ["vc-cold-email-outreach"],
+    ["accelerators-cold-email-outreach"],
+    ["hiring-cold-email-outreach"],
+  ])("%s takes its recipients from the bandit, so it asks for no ICP", (slug) => {
+    for (const input of inputKeys(slug)) {
+      expect(input.key, `${slug}.${input.key}`).not.toMatch(/^(targetAudience|targetProfile|targetInvestorProfile|targetAcceleratorProfile)$/);
+      expect(input.label.toLowerCase(), `${slug}.${input.key}`).not.toContain("profile");
+    }
+  });
+
+  it("ai-visibility-scoring keeps its audience — it contacts nobody, the field frames the LLM prompts", () => {
+    const audience = inputKeys("ai-visibility-scoring").find((i) => i.key === "audienceProfile");
+    expect(audience?.label).toBe("Audience Profile");
+  });
+
+  it("the PR channel is untouched — its recipients come from journalists-service", () => {
+    expect(inputKeys("pr-cold-email-outreach").map((i) => i.key)).toEqual([
+      "targetOutlets",
+      "prAngle",
+      "companyContext",
+      "newsHook",
+      "spokesperson",
+    ]);
   });
 });
