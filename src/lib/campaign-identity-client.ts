@@ -17,11 +17,19 @@ import {
   type CampaignIdentityRow,
 } from "./campaign-identity.js";
 
-export async function fetchCampaignFamilies(
+/**
+ * The brand's campaign ROWS as campaign-service serves them, before any grouping.
+ *
+ * Extracted so the two grains built on the campaign row — the campaign IDENTITY families below, and
+ * the OFFER partition in `offer-scope.ts` — issue the byte-same read instead of drifting into two
+ * spellings of one question. FAIL-LOUD; each caller wraps it with the posture its own answer needs
+ * (soft for the families, loud for the offer partition — see each module's doc for why).
+ */
+export async function fetchBrandCampaignRows(
   brandId: string,
   featureSlug: string,
   headers: { orgId: string; userId?: string; runId?: string },
-): Promise<CampaignFamilies> {
+): Promise<CampaignIdentityRow[]> {
   const url = process.env.CAMPAIGN_SERVICE_URL;
   const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
   if (!url || !apiKey) {
@@ -49,7 +57,15 @@ export async function fetchCampaignFamilies(
   if (!Array.isArray(data.campaigns)) {
     throw new Error("[features-service] campaign-service /campaigns returned no campaigns array");
   }
-  return buildCampaignFamilies(data.campaigns);
+  return data.campaigns;
+}
+
+export async function fetchCampaignFamilies(
+  brandId: string,
+  featureSlug: string,
+  headers: { orgId: string; userId?: string; runId?: string },
+): Promise<CampaignFamilies> {
+  return buildCampaignFamilies(await fetchBrandCampaignRows(brandId, featureSlug, headers));
 }
 
 /** The fail-soft wrapper every stats surface uses. See the module doc for why it degrades. */

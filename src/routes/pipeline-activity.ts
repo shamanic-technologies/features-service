@@ -22,6 +22,8 @@ import {
   type ConversionCountsByDay,
 } from "../lib/conversion-counts-by-day-client.js";
 import { aggregateAcrossChains, buildUpgradeChains } from "./public.js";
+import { mapWithConcurrency } from "../lib/concurrency.js";
+import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 
 const router = Router();
 
@@ -307,6 +309,11 @@ async function fetchDailyBroadcastActivity(
   featureSlug: string,
   timezone: string,
   headers: { orgId: string; userId: string; runId: string },
+  // ONE campaign of an OFFER's scope. email-gateway's `groupBy` is a single dimension and it takes no
+  // campaign LIST, so an offer spanning several campaigns is read once per campaign and the day maps
+  // are merged by the caller — a send is tagged to ONE campaign, so the merge cannot double-count.
+  // Omitted → brand-wide, byte-identical to today.
+  scopeCampaignId?: string,
 ): Promise<Map<string, ActualActivity>> {
   const url = process.env.EMAIL_GATEWAY_SERVICE_URL;
   const apiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
@@ -321,6 +328,7 @@ async function fetchDailyBroadcastActivity(
       brandId,
       featureSlugs: featureSlug,
       timezone: tz,
+      ...(scopeCampaignId ? { campaignId: scopeCampaignId } : {}),
     })}`;
   const requestHeaders = getEmailGatewayHeaders(apiKey, { ...headers, brandId, featureSlug });
 
@@ -362,6 +370,38 @@ async function fetchDailyBroadcastActivity(
   }
 
   return result;
+}
+
+/**
+ * The day series for an OFFER: one read per campaign it is sold through, added per day.
+ *
+ * Adding is safe for the same reason the per-audience send-tag figures are summed to a brand grain —
+ * a broadcast send is tagged to exactly ONE campaign, so no day counts a send twice. A single-campaign
+ * offer takes the ordinary single read. Fail-loud on every member, like the brand-wide read: a
+ * swallowed failure would draw a bar chart missing whichever campaign happened to be down.
+ */
+async function fetchOfferDailyBroadcastActivity(
+  brandId: string,
+  featureSlug: string,
+  timezone: string,
+  headers: { orgId: string; userId: string; runId: string },
+  campaignIds: string[],
+): Promise<Map<string, ActualActivity>> {
+  const perCampaign = await mapWithConcurrency(campaignIds, 4, (cid) =>
+    fetchDailyBroadcastActivity(brandId, featureSlug, timezone, headers, cid),
+  );
+  const merged = new Map<string, ActualActivity>();
+  for (const days of perCampaign) {
+    for (const [date, activity] of days) {
+      const prev = merged.get(date);
+      merged.set(date, {
+        outreach: (prev?.outreach ?? 0) + activity.outreach,
+        opens: (prev?.opens ?? 0) + activity.opens,
+        clicks: (prev?.clicks ?? 0) + activity.clicks,
+      });
+    }
+  }
+  return merged;
 }
 
 function economicsToProjectionInputs(economics: SalesEconomics): {
@@ -802,6 +842,9 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
   const brandId = req.query.brandId as string | undefined;
   const timezone = req.query.timezone as string | undefined;
   const days = parseDays(req.query.days);
+  // `?offerId=` narrows the day series to the ONE offer a brand sells — the grain between the brand
+  // and its campaigns (see lib/offer-scope.ts). Absent → byte-identical to today, key included.
+  const offerId = ((req.query.offerId as string | undefined) ?? "").trim() || undefined;
 
   if (!brandId) return res.status(400).json({ error: "brandId query parameter is required" });
   if (!timezone) return res.status(400).json({ error: "timezone query parameter is required" });
@@ -831,6 +874,12 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
       featureSlug,
     });
 
+    // Fail-loud: the partition IS the scope, so serving without it would draw the whole brand's
+    // activity under one offer's name.
+    const offerCampaignIds = offerId
+      ? await resolveOfferCampaignIds(offerId, brandId, featureSlug, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId })
+      : null;
+
     // Gold SWR: the ~7-read fan-out (budget, cost, audiences, membership, forecast) runs off the
     // request path ~once per TTL, keyed on the inputs that shape the body (orgId + brand + timezone +
     // days + economics). `generatedAt` is frozen to the snapshot's compute time — the as-of semantic.
@@ -844,16 +893,37 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
         // In the key so a gross and a net request never share a cached body (the money-derived
         // expected series differ) — same rule as every other pricing-aware view.
         pricing,
+        // The offer narrows the whole body, so it MUST be in the key or an offer-scoped chart and the
+        // brand-wide one would share a cell. Absent → dropped by buildScopeKey → key unchanged.
+        offerId,
         econ: economicsFingerprint(effectiveEconomics),
       }),
       orgId: auth.orgId,
       compute: async (): Promise<PipelineActivityResponse> => {
     const today = dateInTimeZone(new Date(), timezone);
     const dates = Array.from({ length: days }, (_, index) => addDays(today, index));
+    // An OFFER-scoped chart states its ACTUAL activity and NOTHING it cannot measure at that grain.
+    //
+    // The FORECAST is what a daily BUDGET buys, and a budget is funded per brand (and, in billing, per
+    // sales funnel) — there is no per-offer ceiling to divide, and apportioning the brand's would be a
+    // number nobody set. The OBSERVED conversions come from the brand-keyed conversion tracker, which
+    // carries no campaign and therefore no offer. Drawing either brand-wide beside offer-only bars
+    // would put two grains on one chart under one label, so both are null here and the consumer renders
+    // "we could not measure this" — never a share, never a zero. The two rates survive because they are
+    // the brand's economics, which the offer does not change.
     const [expected, actualByDate, observed] = await Promise.all([
-      computeExpectedActivity(featureSlug, brandId, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }, effectiveEconomics, pricing),
-      fetchDailyBroadcastActivity(brandId, featureSlug, timezone, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }),
-      fetchConversionCountsByDaySoft(brandId),
+      offerCampaignIds
+        ? Promise.resolve(
+            emptyExpected(
+              effectiveEconomics.economics?.visitToSignupPct ?? null,
+              effectiveEconomics.economics?.visitToFormSubmissionPct ?? null,
+            ),
+          )
+        : computeExpectedActivity(featureSlug, brandId, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }, effectiveEconomics, pricing),
+      offerCampaignIds
+        ? fetchOfferDailyBroadcastActivity(brandId, featureSlug, timezone, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }, offerCampaignIds)
+        : fetchDailyBroadcastActivity(brandId, featureSlug, timezone, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }),
+      offerCampaignIds ? Promise.resolve(null) : fetchConversionCountsByDaySoft(brandId),
     ]);
 
     return {
@@ -876,6 +946,11 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
 
     res.json(response);
   } catch (error) {
+    // An offer no campaign of this brand sells has no activity to chart — named, never the brand's
+    // own series under the offer's label and never a chart of fabricated zeroes.
+    if (error instanceof OfferHasNoCampaignsError) {
+      return res.status(404).json({ error: error.message, reason: "offer_has_no_campaigns", offerId: error.offerId });
+    }
     console.error("[features-service] Pipeline activity error:", error);
 
     // A timezone we accepted as valid but cannot actually serve is a REQUEST problem, and it is named as
