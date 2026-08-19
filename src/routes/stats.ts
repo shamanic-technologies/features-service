@@ -17,6 +17,7 @@ import {
 } from "../lib/engagement-snapshot.js";
 import { observedCostPerOutcome } from "../lib/cost-engine.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
+import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 import { describeIdentity, EMPTY_CAMPAIGN_FAMILIES, type CampaignIdentityView } from "../lib/campaign-identity.js";
 
 const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL!;
@@ -1107,6 +1108,12 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     const groupByParam = req.query.groupBy as string | undefined;
     const groupBy = (groupByParam && VALID_GROUP_BY.has(groupByParam) ? groupByParam : null) as GroupByDimension | null;
 
+    // `?offerId=` narrows every stat to the ONE offer a brand sells — the grain between the brand and
+    // its campaigns (see lib/offer-scope.ts). It is NOT a downstream filter (no producer carries an
+    // offer dimension): it resolves to the offer's campaign ids and takes the same group-by-campaign
+    // and fold path a multi-row campaign identity already takes. Absent → byte-identical to today.
+    const offerId = ((req.query.offerId as string | undefined) ?? "").trim() || undefined;
+
     const filters: Record<string, string> = {};
     if (req.query.brandId) filters.brandId = req.query.brandId as string;
     if (req.query.campaignId) filters.campaignId = req.query.campaignId as string;
@@ -1144,6 +1151,27 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         : EMPTY_CAMPAIGN_FAMILIES;
     const requestedIdentity = filters.campaignId ? families.identityOf(filters.campaignId) : null;
 
+    // ── Offer scope ──────────────────────────────────────────────────────────
+    // Three refusals, each because the alternative is a number that answers a question nobody asked:
+    // an offer belongs to a brand, so it cannot be resolved without one; a campaign already sells
+    // exactly one offer, so naming both is two scopes for one read; and the fold below consumes the
+    // campaign grain, so it cannot also be spent on a caller's `groupBy`.
+    if (offerId && !filters.brandId) {
+      return res.status(400).json({ error: "brandId query parameter is required alongside offerId: an offer belongs to a brand" });
+    }
+    if (offerId && filters.campaignId) {
+      return res.status(400).json({ error: "offerId and campaignId are mutually exclusive: a campaign already sells exactly one offer" });
+    }
+    if (offerId && groupBy) {
+      return res.status(400).json({ error: "offerId cannot be combined with groupBy: an offer-scoped read is totalled over the offer's campaigns" });
+    }
+    // Fail-loud (unlike the identity read above): the partition IS the scope here, so serving without
+    // it would print the whole brand's stats under one offer's name.
+    const offerCampaignIds = offerId
+      ? await resolveOfferCampaignIds(offerId, filters.brandId!, featureSlug, { orgId, userId, runId })
+      : null;
+    const offerMembers = offerCampaignIds ? new Set(offerCampaignIds) : null;
+
     // Served through the Gold snapshot cache (O(1) read; the 10-source fan-out recomputes a viewed
     // cell off the request path ~per TTL). Scope key spans org + every query param that changes the
     // body — with the campaign REPLACED by its identity, so every member of one family shares one
@@ -1155,6 +1183,9 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         groupBy: groupByParam,
         ...filters,
         campaignId: requestedIdentity?.key ?? filters.campaignId,
+        // The offer narrows every stat, so it MUST be in the key or an offer-scoped body and the
+        // brand-wide one would share a cell. Absent → dropped by buildScopeKey → key unchanged.
+        offerId,
         pricing,
       }),
       orgId,
@@ -1168,7 +1199,16 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     // takes a campaign LIST, so the fan-out runs GROUPED by campaign over the brand and the family's
     // groups are folded back into the flat body — one call per source, never one per member.
     const foldSingleIntoTotal = Boolean(requestedIdentity && requestedIdentity.campaignIds.length > 1);
-    const fanOutGroupBy: GroupByDimension | null = foldSingleIntoTotal ? "campaignId" : groupBy;
+    // An OFFER-scoped read is the SAME fold over a different membership: the offer's campaigns rather
+    // than one identity's. Every campaign the fan-out returns is mapped to one of two buckets — in the
+    // offer or outside it — and only the first is kept, so the flat body totals exactly the offer.
+    const OFFER_TOTAL_KEY = "__offer__";
+    const scopeKeyOfCampaign = offerMembers
+      ? (cid: string): string => (offerMembers.has(cid) ? OFFER_TOTAL_KEY : `outside-offer:${cid}`)
+      : identityKeyOfCampaign;
+    const scopeTotalKey = offerMembers ? OFFER_TOTAL_KEY : requestedIdentity?.key;
+    const foldScopeIntoTotal = foldSingleIntoTotal || Boolean(offerMembers);
+    const fanOutGroupBy: GroupByDimension | null = foldScopeIntoTotal ? "campaignId" : groupBy;
     // The campaign-groupable sources drop the campaign filter (the family narrows them locally) and
     // gain the brand. The sources that cannot group by campaign keep the caller's filters untouched,
     // so their scope is unchanged.
@@ -1216,7 +1256,9 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       neededSources.has("ai-visibility") ? fetchAiVisibilityStats(orgId, filters, identity) : skip(),
       fetchActiveCampaigns(orgId, filters, identity),
       wantEngagementSnapshot
-        ? fetchEngagementSnapshotCounts(snapshotBrandId!, requestedIdentity?.campaignIds ?? filters.campaignId, { orgId, userId, runId, featureSlug })
+        // The offer's campaigns are a campaign SCOPE like any other here — the snapshot already
+        // counts distinct leads over a campaign list, which is exactly what an offer's people are.
+        ? fetchEngagementSnapshotCounts(snapshotBrandId!, offerCampaignIds ?? requestedIdentity?.campaignIds ?? filters.campaignId, { orgId, userId, runId, featureSlug })
         : Promise.resolve(null),
       wantIdentityEngagement
         ? fetchEngagementSnapshotByIdentity(snapshotBrandId!, identityKeyOfCampaign, { orgId, userId, runId, featureSlug })
@@ -1227,11 +1269,11 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     // onto identity keys; on the single-campaign path the requested family's folded entry becomes the
     // flat body's `__total__`. Both are no-ops when every campaign is its own family.
     const asTotal = <T>(m: Map<string, T>): Map<string, T> => {
-      const entry = m.get(requestedIdentity!.key);
+      const entry = m.get(scopeTotalKey!);
       return new Map(entry === undefined ? [] : [["__total__", entry]]);
     };
     const scopeMap = <T>(m: Map<string, T>, add: (a: T, b: T) => T): Map<string, T> => {
-      if (foldSingleIntoTotal) return asTotal(foldMapByIdentity(m, identityKeyOfCampaign, add));
+      if (foldScopeIntoTotal) return asTotal(foldMapByIdentity(m, scopeKeyOfCampaign, add));
       return groupBy === "campaignId" ? foldMapByIdentity(m, identityKeyOfCampaign, add) : m;
     };
     const emailStatsMap = scopeMap(rawEmailStatsMap, addRawStats);
@@ -1264,7 +1306,9 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       // A single-campaign read of a MULTI-MEMBER identity is the same fold as a group, flattened:
       // the members' auto-reply aggregates would be added, counting a person once per member. Say
       // "could not count" instead. (The nine snapshot keys above are already identity-deduped.)
-      if (engagementSnapshot && foldSingleIntoTotal) delete rawStats[UNOWNED_ENGAGEMENT_KEY];
+      // Same for an OFFER holding more than one campaign: the members' auto-reply aggregates would be
+      // added, counting a person once per campaign they were served under.
+      if (engagementSnapshot && (foldSingleIntoTotal || (offerCampaignIds?.length ?? 0) > 1)) delete rawStats[UNOWNED_ENGAGEMENT_KEY];
 
       return {
         featureSlug,
@@ -1350,6 +1394,11 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
 
     res.json(payload);
   } catch (error) {
+    // An offer no campaign of this brand sells has no evidence to answer with — named, never
+    // substituted with the brand's own stats and never with a fabricated zero.
+    if (error instanceof OfferHasNoCampaignsError) {
+      return res.status(404).json({ error: error.message, reason: "offer_has_no_campaigns", offerId: error.offerId });
+    }
     console.error("[features-service] Feature stats error:", error);
     const auth = req as AuthenticatedRequest;
     if (auth.runId) {

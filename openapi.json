@@ -2108,6 +2108,117 @@
           "groups"
         ]
       },
+      "FeatureRevenueByOfferResponse": {
+        "type": "object",
+        "properties": {
+          "featureSlug": {
+            "type": "string"
+          },
+          "groupBy": {
+            "type": "string",
+            "enum": [
+              "offerId"
+            ]
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "offerId": {
+                  "type": "string",
+                  "description": "The offer's UUID, as brand-service exposes it and campaign-service stores it on the campaign. features-service does not validate it against brand-service: it partitions the brand's campaigns by what the producer states, and an offer no campaign sells simply has no group."
+                },
+                "campaignIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The campaigns selling this offer, ascending — the exact scope every figure in this group was computed over. Deterministic, so the same offer always lands on the same cache cell."
+                },
+                "headline": {
+                  "type": "object",
+                  "properties": {
+                    "totalPipelineUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Org-deduped expected pipeline for the leads this offer's campaigns served. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start) — null is 'we could not price this', never 'it returned nothing'."
+                    },
+                    "economicsSource": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "sales-economics",
+                        "cross-brand-average"
+                      ],
+                      "description": "Provenance of the economics used, as on the brand read. Null when the pipeline is null."
+                    }
+                  },
+                  "required": [
+                    "totalPipelineUsd",
+                    "economicsSource"
+                  ]
+                },
+                "costEconomics": {
+                  "type": "object",
+                  "properties": {
+                    "committedCostUsd": {
+                      "type": "number",
+                      "description": "COMMITTED run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0) — billed `actual` PLUS the open `provisioned` holds. THE spend basis: every money figure below divides by it, and it is byte the same total the `spend` block reports as totalSpentCents, so the ROI a campaign row shows and the 'Total spent' the Overview shows can never describe different money. This is the field a consumer renders as '$ Invested'. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
+                    },
+                    "actualCostUsd": {
+                      "type": "number",
+                      "description": "Billed-only run spend for the same scope, in dollars (>= 0) — EXCLUDES the open provisioned holds. TRANSITIONAL AND REPORTED ONLY: it is kept populated (and still honestly billed-only, because a field whose name asserts 'actual' must never start carrying a committed value) so a consumer rendering money off this field has a gap-free path onto committedCostUsd. NOTHING divides by it any more — ROI, %CAC, cost per acquisition and cost per conversion all ride committedCostUsd. (features-service#396, naming features-service#402, single basis features-service#779)"
+                    },
+                    "costOfAcquisitionPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                    },
+                    "roiMultiple": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                    },
+                    "costPerAcquisitionUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
+                    },
+                    "expectedConversions": {
+                      "type": "number",
+                      "description": "LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "costPerConversionUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    }
+                  },
+                  "required": [
+                    "committedCostUsd",
+                    "actualCostUsd",
+                    "costOfAcquisitionPct",
+                    "roiMultiple",
+                    "costPerAcquisitionUsd"
+                  ]
+                }
+              },
+              "required": [
+                "offerId",
+                "campaignIds",
+                "headline",
+                "costEconomics"
+              ]
+            }
+          }
+        },
+        "required": [
+          "featureSlug",
+          "groupBy",
+          "groups"
+        ]
+      },
       "WorkflowProjectionResponse": {
         "type": "object",
         "properties": {
@@ -6872,6 +6983,16 @@
           },
           {
             "schema": {
+              "type": "string",
+              "description": "Optional OFFER scope — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Resolves to the campaigns selling the offer and totals every stat over exactly those, using the same group-by-campaign fold a multi-row campaign identity already uses; no producer carries an offer dimension, so this is a scope, never a downstream filter. Requires brandId (an offer belongs to a brand). Mutually exclusive with campaignId and with groupBy — all three are 400s. Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns'."
+            },
+            "required": false,
+            "description": "Optional OFFER scope — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Resolves to the campaigns selling the offer and totals every stat over exactly those, using the same group-by-campaign fold a multi-row campaign identity already uses; no producer carries an offer dimension, so this is a scope, never a downstream filter. Requires brandId (an offer belongs to a brand). Mutually exclusive with campaignId and with groupBy — all three are 400s. Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns'.",
+            "name": "offerId",
+            "in": "query"
+          },
+          {
+            "schema": {
               "type": "string"
             },
             "required": false,
@@ -7183,11 +7304,21 @@
           {
             "schema": {
               "type": "string",
-              "description": "Optional campaign drill-down (ignored when groupBy=campaignId)."
+              "description": "Optional campaign drill-down (ignored when groupBy=campaignId). Mutually exclusive with offerId — a campaign already sells exactly one offer (400)."
             },
             "required": false,
-            "description": "Optional campaign drill-down (ignored when groupBy=campaignId).",
+            "description": "Optional campaign drill-down (ignored when groupBy=campaignId). Mutually exclusive with offerId — a campaign already sells exactly one offer (400).",
             "name": "campaignId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Optional OFFER drill-down — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). An offer is one distinct thing the brand sells; brand-service owns the entity and campaign-service stores it on the campaign, so this resolves to the campaigns selling the offer and every figure is computed over exactly those. Nothing is re-attributed: the campaign is what runs-service and lead-service froze, and the offer only decides which campaigns answer together. Omitted → the whole brand, byte-identical to today. Mutually exclusive with campaignId (400). An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns' — never the brand's own numbers under the offer's label, and never a fabricated zero."
+            },
+            "required": false,
+            "description": "Optional OFFER drill-down — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). An offer is one distinct thing the brand sells; brand-service owns the entity and campaign-service stores it on the campaign, so this resolves to the campaigns selling the offer and every figure is computed over exactly those. Nothing is re-attributed: the campaign is what runs-service and lead-service froze, and the offer only decides which campaigns answer together. Omitted → the whole brand, byte-identical to today. Mutually exclusive with campaignId (400). An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns' — never the brand's own numbers under the offer's label, and never a fabricated zero.",
+            "name": "offerId",
             "in": "query"
           },
           {
@@ -7195,12 +7326,13 @@
               "type": "string",
               "enum": [
                 "campaignId",
-                "workflow"
+                "workflow",
+                "offerId"
               ],
-              "description": "When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview. When 'workflow', return one lean group per WORKFLOW DYNASTY the brand has run for the feature, carrying the same four money figures (pipeline revenue, ROI, cost-of-acquisition %, $ per acquisition), on the same single COMMITTED spend basis. Both legs are attributed by the producer that froze them — runs-service's per-workflow spend and the workflowSlug lead-service froze on each served lead — never inferred from the campaign row's current workflow (a campaign switches workflow while keeping its id). A brand whose spend all sits on one workflow reads the same figures at both grains; across several workflows the groups do NOT sum to the brand, because a lead served under two workflows is one lead to the brand and belongs to both."
+              "description": "When 'offerId', return one lean group per OFFER the brand sells (offerId + campaignIds + headline.totalPipelineUsd + costEconomics), each byte-equal to the standalone ?offerId= call, so the brand Overview can rank a brand's offers by what each returns while the brand's headline stays the sum across them. A brand selling ONE offer reads the same figures at both grains; across several the groups do NOT sum to the brand, and a campaign stating no offer is in no group at all (with its spend and its leads) — the same counting-people property the per-campaign and per-workflow grains carry. When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview. When 'workflow', return one lean group per WORKFLOW DYNASTY the brand has run for the feature, carrying the same four money figures (pipeline revenue, ROI, cost-of-acquisition %, $ per acquisition), on the same single COMMITTED spend basis. Both legs are attributed by the producer that froze them — runs-service's per-workflow spend and the workflowSlug lead-service froze on each served lead — never inferred from the campaign row's current workflow (a campaign switches workflow while keeping its id). A brand whose spend all sits on one workflow reads the same figures at both grains; across several workflows the groups do NOT sum to the brand, because a lead served under two workflows is one lead to the brand and belongs to both."
             },
             "required": false,
-            "description": "When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview. When 'workflow', return one lean group per WORKFLOW DYNASTY the brand has run for the feature, carrying the same four money figures (pipeline revenue, ROI, cost-of-acquisition %, $ per acquisition), on the same single COMMITTED spend basis. Both legs are attributed by the producer that froze them — runs-service's per-workflow spend and the workflowSlug lead-service froze on each served lead — never inferred from the campaign row's current workflow (a campaign switches workflow while keeping its id). A brand whose spend all sits on one workflow reads the same figures at both grains; across several workflows the groups do NOT sum to the brand, because a lead served under two workflows is one lead to the brand and belongs to both.",
+            "description": "When 'offerId', return one lean group per OFFER the brand sells (offerId + campaignIds + headline.totalPipelineUsd + costEconomics), each byte-equal to the standalone ?offerId= call, so the brand Overview can rank a brand's offers by what each returns while the brand's headline stays the sum across them. A brand selling ONE offer reads the same figures at both grains; across several the groups do NOT sum to the brand, and a campaign stating no offer is in no group at all (with its spend and its leads) — the same counting-people property the per-campaign and per-workflow grains carry. When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview. When 'workflow', return one lean group per WORKFLOW DYNASTY the brand has run for the feature, carrying the same four money figures (pipeline revenue, ROI, cost-of-acquisition %, $ per acquisition), on the same single COMMITTED spend basis. Both legs are attributed by the producer that froze them — runs-service's per-workflow spend and the workflowSlug lead-service froze on each served lead — never inferred from the campaign row's current workflow (a campaign switches workflow while keeping its id). A brand whose spend all sits on one workflow reads the same figures at both grains; across several workflows the groups do NOT sum to the brand, because a lead served under two workflows is one lead to the brand and belongs to both.",
             "name": "groupBy",
             "in": "query"
           },
@@ -7292,7 +7424,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Feature revenue (overview, or grouped when groupBy=campaignId / groupBy=workflow; lensed when ?lens= is set)",
+            "description": "Feature revenue (overview, or grouped when groupBy=campaignId / groupBy=workflow / groupBy=offerId; lensed when ?lens= is set)",
             "content": {
               "application/json": {
                 "schema": {
@@ -7305,6 +7437,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/FeatureRevenueByWorkflowResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FeatureRevenueByOfferResponse"
                     }
                   ]
                 }
@@ -7312,7 +7447,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId, invalid lens, invalid funnel, or invalid pricing value",
+            "description": "Missing brandId, invalid lens, invalid funnel, invalid pricing value, or offerId sent beside campaignId",
             "content": {
               "application/json": {
                 "schema": {
@@ -7330,7 +7465,7 @@
             }
           },
           "404": {
-            "description": "Feature not found",
+            "description": "Feature not found, or an offer no campaign of this brand sells (reason: offer_has_no_campaigns)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9046,6 +9181,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "Optional OFFER scope — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Narrows the ACTUAL day series to the campaigns selling the offer (read once per campaign and merged; a send is tagged to exactly one campaign, so no day is counted twice). The EXPECTED series and summary.dailyBudgetUsd are NULL under an offer scope, and so are the observed signup / form-submission actuals: a daily budget is funded per brand (and per sales funnel in billing) with no per-offer ceiling to divide, and the conversion tracker is brand-keyed with no campaign on it — so both would be brand-wide figures drawn beside offer-only bars, two grains on one chart. Null is 'we could not measure this at this grain', never a share and never a zero. Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns'."
+            },
+            "required": false,
+            "description": "Optional OFFER scope — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Narrows the ACTUAL day series to the campaigns selling the offer (read once per campaign and merged; a send is tagged to exactly one campaign, so no day is counted twice). The EXPECTED series and summary.dailyBudgetUsd are NULL under an offer scope, and so are the observed signup / form-submission actuals: a daily budget is funded per brand (and per sales funnel in billing) with no per-offer ceiling to divide, and the conversion tracker is brand-keyed with no campaign on it — so both would be brand-wide figures drawn beside offer-only bars, two grains on one chart. Null is 'we could not measure this at this grain', never a share and never a zero. Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns'.",
+            "name": "offerId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "Number of days to return. Defaults to 7."
             },
             "required": false,
@@ -9473,6 +9618,16 @@
             "required": false,
             "description": "Optional brand-profile version to scope evidence, echoed back on the response. Null when omitted (brand-service retired versioned brand-profile storage — no current-profile lookup).",
             "name": "brandProfileId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Optional OFFER scope for the STATS — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Resolves to the campaigns selling the offer and narrows every per-audience cost and engagement numerator to exactly those; the campaignId scope below is the one-member case of the same thing. AUDIENCES themselves stay brand-wide, as they do under a campaign scope: an audience is a brand-level entity several offers may address, and hiding one this offer has not reached yet would answer a question about the audience list with one about the spend. Mutually exclusive with campaignId (400). Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns'."
+            },
+            "required": false,
+            "description": "Optional OFFER scope for the STATS — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Resolves to the campaigns selling the offer and narrows every per-audience cost and engagement numerator to exactly those; the campaignId scope below is the one-member case of the same thing. AUDIENCES themselves stay brand-wide, as they do under a campaign scope: an audience is a brand-level entity several offers may address, and hiding one this offer has not reached yet would answer a question about the audience list with one about the spend. Mutually exclusive with campaignId (400). Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns'.",
+            "name": "offerId",
             "in": "query"
           },
           {
