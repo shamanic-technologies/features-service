@@ -1,5 +1,67 @@
 # Features Service — CLAUDE.md
 
+## A FREE-TEXT ICP INPUT CONTRADICTS THE AUDIENCE BANDIT — it is GONE from every bandit-fed channel, and KEPT on the two features where nothing else answers the question
+
+Audiences are first-class: they are saved entities owned by human-service, a campaign points at them,
+and a bandit picks ONE audience per run. A free-text "who we target" field typed once on the feature
+form is therefore not merely REDUNDANT with the audience, it CONTRADICTS it — the run is addressing
+the bandit-selected audience while the prompt carries a single static ICP describing different people.
+
+- **Removed** from `sales-`, `feedback-request-`, `vc-`, `accelerators-` and `hiring-cold-email-outreach`
+  (`targetAudience` / `targetInvestorProfile` / `targetAcceleratorProfile` / `targetProfile`). Removed
+  means removed: no dead field left in place, no alias.
+- **Kept, and it is not a duplicate of anything:** `ai-visibility-scoring`'s `audienceProfile` (that
+  feature contacts NOBODY — the field frames the questions put to the LLMs from a realistic buyer's
+  point of view, so there is no audience entity and no lead in play) and the whole
+  `pr-cold-email-outreach` input set (its recipients come from journalists-service, a different
+  mechanism with no audience entity to contradict).
+- **Removing an input does NOT strip the key from brand extraction.** The extracted brand blob is
+  assembled from field keys the workflow DAG asks brand-service for, independently of this catalogue,
+  and of the 93 content-generation templates only three name a target-audience variable (one dead
+  blind-discovery variant, two PR templates). So the blast radius is the customer-facing form and its
+  prefill, not the generated emails.
+- **No stored-value cleanup.** A campaign's stored `featureInputs` may still carry a removed key; it
+  is simply never read again. Nothing 500s, nothing needs a migration.
+- Guard: the `free-text ICP vs the audience bandit` suite in `src/seed/feature-sales-funnels.test.ts`
+  (each bandit-fed slug exposes no ICP key and no "profile" label; the two keepers are pinned by
+  exact key / exact input list). (Set 2026-08-19.)
+
+## THE FEEDBACK REQUEST OFFERS A GIFT AND CHARGES IN FEEDBACK — the FORM of feedback is the PRICE TAG, and its eight inputs are the two halves of the offer plus the four levers
+
+This channel does not pitch. It gives something away (free trial, product at cost, a service done for
+them, early access) and asks for feedback in return, so Hormozi's value equation runs on BOTH sides at
+once: the prospect pays in EFFORT rather than money.
+
+```
+(value of the GIFT) x (credibility they will actually get it)
+-------------------------------------------------------------
+(delay before they get it) x (effort of the FEEDBACK asked)
+```
+
+The inputs it shipped with were copied from the sales pitch and described neither half of that offer.
+It now states exactly eight things and nothing else: `gift`, `giftValue`, `feedbackForm`,
+`feedbackEffort`, `socialProof`, `scarcity`, `urgency`, `riskReversal`.
+
+- **`feedbackForm` is the single most important field, because it IS the price.** A public video
+  testimonial and a Google Maps rating are wildly different prices, so the email must ask for one
+  specific thing: written testimonial (private or public), video testimonial (private or public), a
+  call, or a review on a public platform (G2, Google Maps, Trustpilot, Capterra).
+- **It is PLAIN TEXT whose placeholder enumerates the options, deliberately.** A multiple choice would
+  fit it better, and the decision was taken NOT to introduce a new input type for this iteration. Do
+  NOT add a select / multi-select / checkbox group. Guarded: the catalogue's whole input-type set is
+  pinned to `text` + `textarea`.
+- **`giftValue` anchors the gift to a real price AND covers what the relationship becomes afterwards**,
+  which is why there is no separate follow-on-outcome field. Free is worth nothing without a number
+  next to it.
+- **`riskReversal` is the load-bearing lever here**, not an afterthought: a gift invites suspicion, and
+  when the gift is a trial "no commitment, no credit card" is what answers it. `scarcity` is naturally
+  strong for the same reason (giving the product away costs something, so tester seats are limited).
+- **The four pitch questions are GONE** — `targetAudience` (the bandit owns it, see above),
+  `problemToValidate` and `targetOutcome` and `valueForTarget` (redundant with the gift and its value).
+- Guards: the eight-input list, the dead-key list, the plain-text-price case and the em-dash sweep (now
+  covering descriptions, not only labels and placeholders) in `src/seed/feature-sales-funnels.test.ts`.
+  (Set 2026-08-19.)
+
 ## A CHANNEL IS A FEATURE SLUG, and the catalogue states per feature WHICH SALES FUNNELS IT MAY BE SOLD THROUGH — `[]` and all four are two written statements, never an absence
 
 distribute acquires through more than one channel, and a channel in this fleet's vocabulary IS a
