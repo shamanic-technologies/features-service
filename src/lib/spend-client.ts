@@ -31,6 +31,7 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
+import { featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
 export interface SpendSource {
   /** runs-service cost name (the billable line item, e.g. "apollo people-search", "email-send-step-1"). */
@@ -169,7 +170,9 @@ export async function fetchSpendBreakdown(
   // co-groups campaignId and re-aggregates by costName here, so the whole family still costs the
   // same TWO runs calls a single campaign does.
   campaignScope: CampaignFilter,
-  featureSlug: string,
+  // ONE channel, or the SET an offer is sold through (lib/feature-scope.ts). runs comma-splits
+  // `featureSlugs`, so a multi-channel offer still costs the same TWO calls.
+  featureScope: FeatureScope,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
   now: Date = new Date(),
   // NET pricing: read runs#179's FROZEN net cents (netTotal/netActual per source) instead of the gross
@@ -193,11 +196,12 @@ export async function fetchSpendBreakdown(
   // By-source (groupBy=costName): the per-line-item rows carrying committed + actual. The totals are
   // Σ of these, so "Total spent" == sum of the source list the dashboard renders (coherent by
   // construction) for each of committed / actual / provisioned.
-  const sourceParams = new URLSearchParams({ groupBy, brandId, featureSlugs: featureSlug });
+  const featureSlugs = featureSlugsParam(featureScope);
+  const sourceParams = new URLSearchParams({ groupBy, brandId, featureSlugs });
   if (campaignId) sourceParams.set("campaignId", campaignId);
 
   // Today: the same feature-scoped population restricted to runs started since 00:00 UTC.
-  const todayParams = new URLSearchParams({ groupBy, brandId, featureSlugs: featureSlug, startedAfter: startOfUtcDay(now) });
+  const todayParams = new URLSearchParams({ groupBy, brandId, featureSlugs, startedAfter: startOfUtcDay(now) });
   if (campaignId) todayParams.set("campaignId", campaignId);
 
   const [rawSourceGroups, rawTodayGroups] = await Promise.all([

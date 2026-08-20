@@ -27,7 +27,11 @@ import {
  */
 export async function fetchBrandCampaignRows(
   brandId: string,
-  featureSlug: string,
+  // The channel to narrow to, or `undefined` for EVERY channel the brand runs. Undefined is what the
+  // offer grain needs: an offer is sold through several acquisition channels at once, and which ones
+  // is exactly what the caller is asking — narrowing by a slug it would have to guess first is the
+  // enumerate-then-ask-N-times shape the offer read exists to remove.
+  featureSlug: string | undefined,
   headers: { orgId: string; userId?: string; runId?: string },
 ): Promise<CampaignIdentityRow[]> {
   const url = process.env.CAMPAIGN_SERVICE_URL;
@@ -38,7 +42,8 @@ export async function fetchBrandCampaignRows(
 
   // brandId filters on the legacy `brand_ids` array server-side, which is what every historical row
   // still carries; featureSlug narrows to the feature whose campaigns are being totalled.
-  const params = new URLSearchParams({ brandId, featureSlug });
+  const params = new URLSearchParams({ brandId });
+  if (featureSlug) params.set("featureSlug", featureSlug);
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
     "x-org-id": headers.orgId,

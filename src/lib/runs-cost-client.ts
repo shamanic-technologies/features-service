@@ -26,6 +26,7 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
+import { featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
 /**
  * One scope's run spend on both bases. `committedCents` is THE basis (see the module header);
@@ -44,7 +45,10 @@ export async function fetchRunsCostCents(
   // the original `campaignId=` filter; a family co-groups on campaignId and sums its members, so
   // the whole family costs ONE runs call regardless of how many stopped rows it carries.
   campaignScope: CampaignFilter,
-  featureSlug: string,
+  // ONE channel, or the SET of channels an offer is sold through (see lib/feature-scope.ts).
+  // runs-service comma-splits `featureSlugs`, so several channels cost one call and a run — which
+  // carries exactly one `feature_slug` — can never be counted twice.
+  featureScope: FeatureScope,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
   // NET pricing: read runs-service's FROZEN net twins (`netTotalCostInUsdCents` /
   // `netActualCostInUsdCents`) instead of the gross fields (runs#179 freezes each row's discount at
@@ -67,7 +71,7 @@ export async function fetchRunsCostCents(
   const params = new URLSearchParams({
     groupBy: family ? "workflowSlug,campaignId" : "workflowSlug",
     brandId,
-    featureSlugs: featureSlug,
+    featureSlugs: featureSlugsParam(featureScope),
   });
   if (campaignId) params.set("campaignId", campaignId);
 

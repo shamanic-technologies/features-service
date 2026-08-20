@@ -27,6 +27,7 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import type { Pricing } from "./pricing.js";
 import { singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
+import { featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
 /**
  * @returns Map<YYYY-MM-DD, committed spend in USD for that day>. Days with no runs are ABSENT (runs
@@ -35,7 +36,10 @@ import { singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 export async function fetchBrandCommittedSpendByDay(
   brandId: string,
   campaignScope: CampaignFilter,
-  featureSlug: string,
+  // ONE channel, or the SET an offer is sold through (lib/feature-scope.ts). The timeseries route
+  // comma-splits `featureSlugs` exactly as the untimed cost read does, so the sum-equals-total
+  // invariant holds across a multi-channel scope too.
+  featureScope: FeatureScope,
   headers: { orgId: string },
   pricing: Pricing = "gross",
 ): Promise<Map<string, number>> {
@@ -47,7 +51,7 @@ export async function fetchBrandCommittedSpendByDay(
 
   const params = new URLSearchParams({
     interval: "day",
-    featureSlug,
+    featureSlugs: featureSlugsParam(featureScope),
     orgId: headers.orgId,
     brandId,
   });
