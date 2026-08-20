@@ -50,8 +50,15 @@ Prod 2026-08-20, brand `75d7e3e8…` offer `d5ecba00…`: months of `sales-cold-
 - **THE BREAKDOWN SHIPS IN THE SAME RESPONSE** (`channels[]`), because the consumer does not own which
   channels an offer sells through — the campaign row does, here — and an answer it assembled from N calls
   would be the browser-side re-derivation this grain exists to prevent. Each `/offers/:id/revenue` channel
-  row is byte-equal to that channel's own `/features/:slug/revenue?offerId=` `headline` +
-  `costEconomics`, so a row and the total above it are one statement at two grains.
+  row carries the same figures that channel's own `/features/:slug/revenue?offerId=` read carries — same
+  campaign scope, same brand pricing, same engine — so a row and the total above it are one statement at
+  two grains. **Not to the cent, and for the reason the workflow grain already documents: a channel row
+  reads its spend through `fetchRunsCostCents` (grouped by workflow) while the standalone read builds the
+  `spend` block through `fetchSpendBreakdown` (grouped by cost name), and runs-service returns FRACTIONAL
+  cents per group, so each rounds once per its own grouping.** Same ledger, different grouping. Prod
+  2026-08-20, offer `d5ecba00…`: the pitch channel reads $2,506.50 in the breakdown against $2,506.37 on
+  its own endpoint, and Σ channels is $2,516.46 against the offer's $2,516.33. Do NOT "fix" it by
+  re-basing either side — the standalone read is the customer's number.
 - **A CHANNEL THIS SERVICE CANNOT MEASURE STILL COSTS MONEY.** Several published channels declare no
   funnel (we measure email today; a channel declaring measurements it cannot make would report a
   fabricated zero). Their campaigns are in the offer's scope, so their SPEND counts — the customer paid

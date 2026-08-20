@@ -277,7 +277,11 @@ describe("GET /offers/:offerId/revenue — an offer's money, across every channe
     expect(res.body.costEconomics.committedCostUsd).toBeLessThan(70);
   });
 
-  it("a channel row is byte-equal to that channel's own per-feature read of the same offer", async () => {
+  // Not byte-equality in PROD, and the assertion says only what the fixture can prove: a channel row
+  // reads its spend grouped by workflow while the standalone read groups by cost name, and runs-service
+  // returns fractional cents per group, so each rounds once per its own grouping. Same ledger, same
+  // scope, same engine — sub-cent apart on real data (see CLAUDE.md).
+  it("a channel row reports what that channel's own per-feature read of the same offer reports", async () => {
     mockFetch(TWO_CHANNELS);
     const offer = await request(app).get(`/offers/${OFFER}/revenue?brandId=b1`).set(AUTH);
     expect(offer.status).toBe(200);
