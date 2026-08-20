@@ -22,6 +22,9 @@ import { fetchDeclaredSalesFunnels } from "./sales-funnels-client.js";
 import { declaredEconomicsForFunnel, declaredFunnelsToRank } from "./declared-funnels.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 import { mapWithConcurrency } from "./concurrency.js";
+import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
+import { pickBestChannel } from "./offer-parents.js";
+import type { OfferChannel } from "./offer-channels.js";
 
 /**
  * How the rows were ordered.
@@ -576,7 +579,10 @@ function compareByMetric(metric: SortMetric, a: AudienceStatsRow, b: AudienceSta
 
 async function fetchAudienceCosts(
   brandId: string,
-  featureSlug: string,
+  // ONE channel, or the SET an OFFER is sold through. runs-service comma-splits `featureSlugs`, and a
+  // run carries exactly one `feature_slug`, so several channels are ONE read with nothing counted
+  // twice — the producer does the adding, which is the only kind of adding money admits here.
+  featureScope: FeatureScope,
   identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
   // NET pricing: read runs#179's FROZEN per-audience net cost cents (netTotalCostInUsdCents) instead of
   // the gross field (no read-time multiply). GROSS (the default) reads the gross field → byte-identical.
@@ -607,7 +613,7 @@ async function fetchAudienceCosts(
     // `fetchRunsCostCents` uses for a campaign family. One campaign keeps the original single grouping.
     groupBy: scopeMembers ? "audienceId,campaignId" : "audienceId",
     brandId,
-    featureSlugs: featureSlug,
+    featureSlugs: featureSlugsParam(featureScope),
   });
   // Campaign scope narrows the numerator to spend tagged to this campaign (runs supports a campaignId
   // filter alongside groupBy=audienceId). brandId stays so the query remains brand-bounded.
@@ -680,15 +686,21 @@ function emptyEngagement(): SendTagEngagement {
  */
 async function fetchAudienceSendTagEngagement(
   brandId: string,
-  featureSlug: string,
-  identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
+  // EVERY read to make, already paired: one entry per (channel × campaign) the caller wants counted.
+  //
   // ONE campaign takes the original single `campaignId` filter byte for byte. SEVERAL — an OFFER's
   // campaigns — take ONE READ PER CAMPAIGN, summed: email-gateway's `groupBy` is a SINGLE dimension
   // (verified against its published schema), so the campaign cannot be co-grouped the way runs-service
   // co-groups it, and there is no campaign LIST filter either. Summing does not double-count: a send is
   // tagged to ONE campaign, the same property that lets the per-audience figures be summed to the brand
   // grain below. Bounded concurrency so a wide offer cannot burst sockets at a cold sibling.
-  scopeCampaignIds?: string[],
+  //
+  // The CHANNEL rides each entry rather than a comma-joined `featureSlugs`, because this producer's
+  // plural has not been verified to comma-split — and a filter that silently matched nothing would rank
+  // every audience on zero engagement rather than fail. A send carries one channel, so per-channel
+  // reads add exactly.
+  reads: Array<{ featureSlug: string; campaignId?: string }>,
+  identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
 ): Promise<{ perAudience: Map<string, SendTagEngagement>; brandGrain: SendTagEngagement }> {
   const baseUrl = process.env.EMAIL_GATEWAY_SERVICE_URL;
   const apiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
@@ -698,9 +710,9 @@ async function fetchAudienceSendTagEngagement(
   const perAudience = new Map<string, SendTagEngagement>();
   const brandGrain = emptyEngagement();
 
-  const readOne = async (scopeCampaignId?: string): Promise<void> => {
-    const params = new URLSearchParams({ type: "broadcast", groupBy: "audienceId", brandId, featureSlugs: featureSlug });
-    if (scopeCampaignId) params.set("campaignId", scopeCampaignId);
+  const readOne = async (read: { featureSlug: string; campaignId?: string }): Promise<void> => {
+    const params = new URLSearchParams({ type: "broadcast", groupBy: "audienceId", brandId, featureSlugs: read.featureSlug });
+    if (read.campaignId) params.set("campaignId", read.campaignId);
     const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, {
       headers: buildHeaders(apiKey, identity.orgId, { ...identity, brandId }),
     });
@@ -730,10 +742,10 @@ async function fetchAudienceSendTagEngagement(
     }
   };
 
-  if ((scopeCampaignIds?.length ?? 0) > 1) {
-    await mapWithConcurrency(scopeCampaignIds!, 4, (cid) => readOne(cid));
+  if (reads.length > 1) {
+    await mapWithConcurrency(reads, 4, (read) => readOne(read));
   } else {
-    await readOne(scopeCampaignIds?.[0]);
+    await readOne(reads[0]);
   }
   return { perAudience, brandGrain };
 }
@@ -921,8 +933,13 @@ export async function computeAudienceStats(
   // too, so they are passed in rather than read twice). Present → every cost and engagement numerator
   // narrows to those campaigns. Absent → the single `?campaignId=` scope, or brand-wide, unchanged.
   offerCampaignIds?: string[],
+  // The CHANNELS those campaigns run through, when the read is at the OFFER grain (an offer is sold
+  // through several at once). Absent → the ONE channel the route path names, which is every existing
+  // caller. A one-channel offer therefore produces the identical scope its own channel read produces.
+  offerChannels?: OfferChannel[],
 ): Promise<ComputeResult> {
-  const { featureSlug } = req.params;
+  const featureSlug = req.params.featureSlug;
+  const featureScope: FeatureScope = offerChannels ? offerChannels.map((c) => c.featureSlug) : featureSlug;
   const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
   const explicitBrandProfileId = req.query.brandProfileId as string | undefined;
   // Optional single-campaign scope for the STATS (audiences themselves stay brand-wide). Absent →
@@ -938,8 +955,14 @@ export async function computeAudienceStats(
   const { brandId, goal: normalizedGoal, funnelKey, limit: parsedLimit } = validated;
   const parsedStatuses = { ok: true as const, statuses: validated.statuses };
 
-  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
-  if (!feature) {
+  // An offer read names no feature in its path; the channels come from the campaign rows, and every one
+  // of them must be a feature this service knows or the scope would silently narrow to fewer channels
+  // than the offer is actually sold through.
+  const scopeSlugs = featureSlugList(featureScope);
+  const known = await Promise.all(
+    scopeSlugs.map((slug) => db.query.features.findFirst({ where: eq(features.slug, slug) })),
+  );
+  if (known.some((row) => !row)) {
     return { ok: false, status: 404, error: "Feature not found" };
   }
 
@@ -972,10 +995,18 @@ export async function computeAudienceStats(
 
   const audienceIds = audiences.map((audience) => audience.id);
 
+  // One (channel × campaign) read per campaign of the offer, each under its OWN channel — which for a
+  // single-channel read is exactly the per-campaign fan-out this endpoint already did.
+  const engagementReads: Array<{ featureSlug: string; campaignId?: string }> = offerChannels
+    ? offerChannels.flatMap((channel) => channel.campaignIds.map((campaignId) => ({ featureSlug: channel.featureSlug, campaignId })))
+    : (scopeCampaignIds?.length ?? 0) > 0
+      ? scopeCampaignIds!.map((campaignId) => ({ featureSlug, campaignId }))
+      : [{ featureSlug }];
+
   const [costs, membershipResult, engagementResult, projected] = await Promise.all([
-    fetchAudienceCosts(brandId, featureSlug, identity, pricing, scopeCampaignIds),
+    fetchAudienceCosts(brandId, featureScope, identity, pricing, scopeCampaignIds),
     fetchAudienceMembership(brandId, audiences, identity, formSubmissionEmails, signupEmails, saleEmails),
-    fetchAudienceSendTagEngagement(brandId, featureSlug, identity, scopeCampaignIds),
+    fetchAudienceSendTagEngagement(brandId, engagementReads, identity),
     // FLEET-BACKED brand parent for the FLOOR cascade (audience → brand): the SAME cross-org → brand
     // projected cost-per-outcome that workflow-projection.resolved produces (fleet benchmark cascaded with
     // the brand's effective economics), NOT a brand-own raw-spend aggregate. So a 0-outcome audience's
@@ -986,21 +1017,32 @@ export async function computeAudienceStats(
     // as the best-returning chain. The fan-out is paid ONCE (`fetchBrandProjectionEvidence`) and the N
     // projections are pure — exactly how /funnel-ranking ranks N funnels off one evidence set — so
     // answering the brand-level question costs no more IO than answering a single-funnel one.
-    normalizedGoal === null
-      ? projectDeclaredFunnels(brandId, featureSlug, orgId, identity, pricing, audienceIds)
-      : fetchBrandProjectedParents(
-          brandId,
-          featureSlug,
-          normalizedGoal,
-          identity,
-          pricing,
-          audienceIds,
-          // When the caller named a funnel, the floor parent is priced on THAT chain AND on that funnel's
-          // own declared terms — same overrides the per-row projection takes, so the two can never disagree
-          // for one audience.
-          funnelKey,
-          funnelEconomics,
-        ).then((parents) => ({ parents, priced: null, coverage: undefined }) as DeclaredFunnelProjection),
+    // A BENCHMARK IS A CHANNEL'S BENCHMARK. When the read spans several channels it is resolved once per
+    // channel and the BEST-RETURNING channel's is taken WHOLE — never blended field by field, which would
+    // make a cross-org PLUS cross-workflow pooled estimate and would leave the object incoherent (its cost
+    // per click from one channel, its cost per paid client from another). See lib/offer-parents.ts. A
+    // one-channel read picks that channel, so it is byte-identical to today.
+    mapWithConcurrency(scopeSlugs, 4, async (slug): Promise<DeclaredFunnelProjection & { featureSlug: string }> => {
+      const projection =
+        normalizedGoal === null
+          ? await projectDeclaredFunnels(brandId, slug, orgId, identity, pricing, audienceIds)
+          : await fetchBrandProjectedParents(
+              brandId,
+              slug,
+              normalizedGoal,
+              identity,
+              pricing,
+              audienceIds,
+              // When the caller named a funnel, the floor parent is priced on THAT chain AND on that funnel's
+              // own declared terms — same overrides the per-row projection takes, so the two can never disagree
+              // for one audience.
+              funnelKey,
+              funnelEconomics,
+            ).then((parents) => ({ parents, priced: null, coverage: undefined }) as DeclaredFunnelProjection);
+      return { ...projection, featureSlug: slug };
+      // Never empty: `scopeSlugs` always holds at least the channel the read is about, and every entry
+      // carries a (non-null) parents object, so a winner always exists.
+    }).then((byChannel) => pickBestChannel(byChannel)!),
   ]);
   const membership = membershipResult.perAudience;
   const engagement = engagementResult.perAudience;

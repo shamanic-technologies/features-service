@@ -12,6 +12,7 @@ import revenueRoutes from "./routes/revenue.js";
 import workflowProjectionRoutes from "./routes/workflow-projection.js";
 import funnelRankingRoutes from "./routes/funnel-ranking.js";
 import pipelineActivityRoutes from "./routes/pipeline-activity.js";
+import offerEconomicsRoutes from "./routes/offer-economics.js";
 import audienceStatsRoutes from "./routes/audience-stats.js";
 import publicRoutes from "./routes/public.js";
 import { registerSeedFeatures } from "./seed/register.js";
@@ -46,6 +47,7 @@ app.use(workflowProjectionRoutes);
 app.use(funnelRankingRoutes);
 app.use(pipelineActivityRoutes);
 app.use(audienceStatsRoutes);
+app.use(offerEconomicsRoutes);
 
 // 404 handler
 app.use((req, res) => {

@@ -2,6 +2,20 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import type { SignalSeries } from "./revenue-engine.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
+import { featureSlugList, type FeatureScope } from "./feature-scope.js";
+
+/** Add day-bucketed series. Exact wherever each series counts events tagged to one campaign+channel. */
+function sumSeries(parts: SignalSeries[]): SignalSeries {
+  const byDate = new Map<string, number>();
+  for (const series of parts) {
+    for (const point of series.daily) byDate.set(point.date, (byDate.get(point.date) ?? 0) + point.count);
+  }
+  const daily = [...byDate]
+    .map(([date, count]) => ({ date, count }))
+    .filter((point) => point.count > 0)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return { total: daily.reduce((sum, p) => sum + p.count, 0), daily, undatedCount: 0 };
+}
 
 /**
  * Per-day OUTREACH ACTIVITY series for the Overview graph — sourced from instantly's campaign-created
@@ -33,23 +47,26 @@ export async function fetchSequencesByDay(
   // its members are read separately (capped concurrency) and their day buckets summed. Summing is
   // exact here — the series counts SENDS, and a send belongs to exactly one campaign.
   campaignScope: CampaignFilter,
-  featureSlug: string,
+  // ONE channel, or the SET an offer is sold through (lib/feature-scope.ts). A multi-channel scope is
+  // read ONCE PER CHANNEL and the day buckets are added — deliberately NOT a comma-joined
+  // `featureSlugs`, because unlike runs-service that plural has not been verified to comma-split here,
+  // and a filter that silently matched nothing would draw an empty graph rather than fail. Adding is
+  // exact for the same reason the family path adds: a send carries exactly one feature slug.
+  featureScope: FeatureScope,
   headers: { orgId: string; userId?: string; runId?: string },
 ): Promise<SignalSeries> {
+  const slugs = featureSlugList(featureScope);
+  if (slugs.length > 1) {
+    return sumSeries(
+      await mapWithConcurrency(slugs, 4, (slug) => fetchSequencesByDay(brandId, campaignScope, slug, headers)),
+    );
+  }
+  const featureSlug = slugs[0];
   const family = campaignFamilySet(campaignScope);
   if (family) {
-    const perMember = await mapWithConcurrency([...family], 6, (id) =>
-      fetchSequencesByDay(brandId, id, featureSlug, headers),
+    return sumSeries(
+      await mapWithConcurrency([...family], 6, (id) => fetchSequencesByDay(brandId, id, featureSlug, headers)),
     );
-    const byDate = new Map<string, number>();
-    for (const series of perMember) {
-      for (const point of series.daily) byDate.set(point.date, (byDate.get(point.date) ?? 0) + point.count);
-    }
-    const daily = [...byDate]
-      .map(([date, count]) => ({ date, count }))
-      .filter((point) => point.count > 0)
-      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-    return { total: daily.reduce((sum, p) => sum + p.count, 0), daily, undatedCount: 0 };
   }
   const campaignId = singleCampaignId(campaignScope);
 
