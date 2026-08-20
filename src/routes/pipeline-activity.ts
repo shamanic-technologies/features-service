@@ -382,13 +382,16 @@ async function fetchDailyBroadcastActivity(
  */
 async function fetchOfferDailyBroadcastActivity(
   brandId: string,
-  featureSlug: string,
+  // One (channel × campaign) read per campaign of the offer, each under its OWN channel. An offer sold
+  // through several channels therefore needs no comma-joined `featureSlugs` (a plural this producer has
+  // not been verified to split, whose silent miss would draw an empty chart) — and the merge stays exact
+  // for the reason below: a send is tagged to one campaign, and a campaign runs through one channel.
+  reads: Array<{ featureSlug: string; campaignId: string }>,
   timezone: string,
   headers: { orgId: string; userId: string; runId: string },
-  campaignIds: string[],
 ): Promise<Map<string, ActualActivity>> {
-  const perCampaign = await mapWithConcurrency(campaignIds, 4, (cid) =>
-    fetchDailyBroadcastActivity(brandId, featureSlug, timezone, headers, cid),
+  const perCampaign = await mapWithConcurrency(reads, 4, (read) =>
+    fetchDailyBroadcastActivity(brandId, read.featureSlug, timezone, headers, read.campaignId),
   );
   const merged = new Map<string, ActualActivity>();
   for (const days of perCampaign) {
@@ -836,6 +839,99 @@ function buildDayBuckets(
   });
 }
 
+/**
+ * THE OFFER-GRAIN DAY CHART — the same actual series, across every channel the offer is sold through.
+ *
+ * Everything drawn here is an EVENT COUNT tagged to one campaign (an outreach, an open, a click), so
+ * the channels ADD with nothing counted twice — and they are added by reading each channel under its
+ * OWN slug and merging the day buckets, never by trusting a plural filter on a producer that has not
+ * been verified to split one.
+ *
+ * The EXPECTED series, the daily budget and the observed conversion actuals are null for exactly the
+ * reasons the per-feature offer-scoped read already states: a budget is funded per brand with no
+ * per-offer ceiling to divide, and the conversion tracker is brand-keyed with no campaign on it.
+ * Drawing either brand-wide beside offer-only bars would put two grains on one chart under one label.
+ * The two RATES survive, because they are the brand's economics and the offer does not change them.
+ *
+ * A one-channel offer produces exactly the reads the per-feature offer-scoped path produces, so it
+ * answers identically.
+ */
+export async function computeOfferPipelineActivity(
+  req: { query: Record<string, unknown> },
+  input: {
+    offerId: string;
+    brandId: string;
+    pricing: Pricing;
+    channels: Array<{ featureSlug: string; campaignIds: string[] }>;
+    headers: { orgId: string; userId: string; runId: string };
+  },
+): Promise<{ ok: true; body: PipelineActivityResponse } | { ok: false; status: number; body: Record<string, unknown> }> {
+  const timezone = req.query.timezone as string | undefined;
+  const days = parseDays(req.query.days);
+  if (!timezone) return { ok: false, status: 400, body: { error: "timezone query parameter is required" } };
+  if (!isValidTimeZone(timezone)) return { ok: false, status: 400, body: { error: "timezone must be a valid IANA time zone" } };
+  if (days === null) return { ok: false, status: 400, body: { error: "days must be a positive integer" } };
+
+  const featureSlugs = input.channels.map((channel) => channel.featureSlug);
+  const effectiveEconomics = await fetchEffectiveEconomics(input.brandId, {
+    orgId: input.headers.orgId,
+    userId: input.headers.userId,
+    runId: input.headers.runId,
+    // Not one of the channels: this read is about several, and naming one would attribute it to that one.
+    featureSlug: undefined,
+  });
+
+  const body = await servedCached({
+    view: "offer-pipeline-activity",
+    // Keyed on the offer, and on the CHANNEL SET — a newly funded channel changes every bar while no
+    // other key part moves.
+    scopeKey: buildScopeKey(input.offerId, {
+      orgId: input.headers.orgId,
+      brandId: input.brandId,
+      channels: featureSlugs.join("+"),
+      timezone,
+      days,
+      pricing: input.pricing,
+      econ: economicsFingerprint(effectiveEconomics),
+    }),
+    orgId: input.headers.orgId,
+    compute: async (): Promise<PipelineActivityResponse> => {
+      const today = dateInTimeZone(new Date(), timezone);
+      const dates = Array.from({ length: days }, (_, index) => addDays(today, index));
+      const expected = emptyExpected(
+        effectiveEconomics.economics?.visitToSignupPct ?? null,
+        effectiveEconomics.economics?.visitToFormSubmissionPct ?? null,
+      );
+      const actualByDate = await fetchOfferDailyBroadcastActivity(
+        input.brandId,
+        input.channels.flatMap((channel) =>
+          channel.campaignIds.map((campaignId) => ({ featureSlug: channel.featureSlug, campaignId })),
+        ),
+        timezone,
+        input.headers,
+      );
+      return {
+        // The channels this covers ride the envelope the route builds; `featureSlug` on the body would
+        // have to name one of several, so it names the offer's whole channel set instead.
+        featureSlug: featureSlugs.join(","),
+        brandId: input.brandId,
+        timezone,
+        generatedAt: new Date().toISOString(),
+        days: buildDayBuckets(dates, today, actualByDate, expected, null),
+        summary: {
+          dailyBudgetUsd: expected.dailyBudgetUsd,
+          openRatePct: expected.openRatePct,
+          clickToSignupPct: expected.clickToSignupPct,
+          clickToFormSubmissionPct: expected.clickToFormSubmissionPct,
+          undatedSignups: null,
+          undatedFormSubmissions: null,
+        },
+      };
+    },
+  });
+  return { ok: true, body };
+}
+
 router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, res) => {
   const { featureSlug } = req.params;
   const auth = req as AuthenticatedRequest;
@@ -921,7 +1017,12 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
           )
         : computeExpectedActivity(featureSlug, brandId, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }, effectiveEconomics, pricing),
       offerCampaignIds
-        ? fetchOfferDailyBroadcastActivity(brandId, featureSlug, timezone, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }, offerCampaignIds)
+        ? fetchOfferDailyBroadcastActivity(
+            brandId,
+            offerCampaignIds.map((campaignId) => ({ featureSlug, campaignId })),
+            timezone,
+            { orgId: auth.orgId, userId: auth.userId, runId: auth.runId },
+          )
         : fetchDailyBroadcastActivity(brandId, featureSlug, timezone, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }),
       offerCampaignIds ? Promise.resolve(null) : fetchConversionCountsByDaySoft(brandId),
     ]);

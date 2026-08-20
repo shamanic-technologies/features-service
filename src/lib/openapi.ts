@@ -970,6 +970,150 @@ registry.registerPath({
   },
 });
 
+// ── GET /offers/:offerId/* — the OFFER grain, across every channel it is sold through ──────
+//
+// A brand sells one OFFER through several acquisition CHANNELS at once (a channel is a feature slug),
+// each funded and paced on its own money. Every read above names ONE channel in its path, so each one
+// answers "what did this offer return THROUGH THIS ONE CHANNEL" — which stopped being the same question
+// the day a second channel was funded, and stopped silently. These three answer at the offer grain.
+//
+// WHICH FIGURES COMBINE HOW, stated once here because a consumer needs it to read any of the three:
+//   ADDITIVE — MONEY only. A cost row carries exactly one feature slug and one campaign, so spend adds
+//     across channels with nothing counted twice (and runs-service does the adding, from its plural
+//     `featureSlugs` filter). Same for run counts and any per-day SEND count.
+//   NOT ADDITIVE — PEOPLE. A lead worked through two channels is ONE lead to the offer and belongs to
+//     both, so the offer's recipient counts are BELOW the sum of its channels'. Never summed here: one
+//     brand-scoped lead read covers every channel and the duplicate is deduped before the engine.
+//   NOT ADDITIVE — PIPELINE. The engine combines a lead's paths per organisation, which is not additive
+//     across partitions. Answered by ONE engine pass over the offer's whole evidence set.
+//   NOT ADDITIVE — EVERY RATIO (ROI, %CAC, $CAC, cost per click / reply). A ratio of sums is neither the
+//     sum nor the average of the ratios; each is recomputed from the combined numerator and denominator.
+//   NOT COMBINABLE — A BENCHMARK. The cross-org best-workflow floor belongs to one channel; the
+//     best-RETURNING channel's is taken whole, never blended (that would be a cross-workflow pooled
+//     estimate this service does not publish).
+//
+// An offer sold through ONE channel answers identically to that channel's own `?offerId=` read.
+
+const offerChannelSchema = z.object({
+  featureSlug: z.string().describe("The acquisition channel — a feature slug, this fleet's only name for one."),
+  campaignIds: z.array(z.string()).describe("The campaigns of this brand selling this offer through this channel, ascending."),
+});
+
+const offerRevenueChannelGroupSchema = offerChannelSchema.extend({
+  headline: featureRevenueResponseSchema.shape.headline,
+  costEconomics: featureRevenueResponseSchema.shape.costEconomics,
+});
+
+const offerRevenueResponseSchema = featureRevenueResponseSchema
+  .omit({ featureSlug: true })
+  .extend({
+    offerId: z.string(),
+    brandId: z.string(),
+    channels: z
+      .array(offerRevenueChannelGroupSchema)
+      .describe(
+        "The per-channel breakdown, in the SAME response as the total — so a caller states the offer's figures without naming a channel AND shows the rows beside them, without asking N times (it does not own which channels an offer sells through). Each row is byte-equal to that channel's own /features/{slug}/revenue?offerId= headline and costEconomics: same campaign scope, same brand pricing, same engine. Ascending by slug. A channel this service cannot measure (no funnel wired — it measures email today) appears here with its REAL spend and a null pipeline, exactly as its own read reports it, so an unmeasured leg is visible rather than buried in the total.",
+      ),
+  });
+
+const offerRevenueResponseRef = registry.register("OfferRevenueResponse", offerRevenueResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/revenue",
+  summary: "An offer's money, across every acquisition channel it is sold through",
+  description:
+    "The same realized-money answer /features/{featureSlug}/revenue gives, at the grain a customer's offer screen actually asks about: the OFFER, across every channel it sells through, in ONE request, with the per-channel breakdown beside it. " +
+    "Money adds across channels; people, pipeline and every ratio do not — see the offer-grain note on the schema. Nothing is re-attributed: the campaign is what runs-service and lead-service froze, and the offer only decides which campaigns answer together. " +
+    "An offer sold through ONE channel answers identically to that channel's own ?offerId= read. " +
+    "No ?lens= and no ?groupBy=: a lens narrows to a subset of LEADS while its spend leg would still be the whole offer's, and the only grouping at this grain is the channel breakdown, which ships unconditionally. Both remain available per channel on /features/{featureSlug}/revenue.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ offerId: z.string() }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required) — an offer belongs to a brand."),
+      funnel: z.string().optional().describe("The SALES FUNNEL the spend block's cost-per-outcome columns are priced on, with the same vocabulary, the same default (the brand's first declared funnel) and the same fail-loud parse as the per-feature read."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
+    }),
+  },
+  responses: {
+    200: { description: "The offer's money plus its per-channel breakdown", content: { "application/json": { schema: offerRevenueResponseRef } } },
+    400: { description: "Missing brandId, or an invalid funnel / pricing value", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels) — never the brand's own numbers under the offer's label, and never a fabricated zero", content: { "application/json": { schema: errorResponse } } },
+    409: { description: "The offer is sold through channels that price on different funnels (reason: offer_channels_price_differently), so its money cannot honestly be answered as one figure", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+const offerAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
+  offerId: z.string(),
+  channels: z.array(offerChannelSchema).describe("The channels combined into every row below, ascending by slug."),
+});
+const offerAudienceStatsResponseRef = registry.register("OfferAudienceStatsResponse", offerAudienceStatsResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/audience-stats",
+  summary: "An offer's per-audience economics, across every channel it is sold through",
+  description:
+    "The same per-audience ranking /features/{featureSlug}/audience-stats serves, for the OFFER rather than one of its channels. " +
+    "Audiences are BRAND entities (human-service owns them, and several offers may address the same one), so the audience LIST is unchanged; what narrows is the money and the engagement behind each row. Both are per-audience SEND-TAG figures and a send carries exactly one campaign and one channel, so they add across channels with nothing counted twice — and each row's ratios are then recomputed from those combined numerators, never averaged. " +
+    "The cross-org benchmark each column floors against is a property of ONE channel, so the BEST-RETURNING channel's is taken whole rather than blended. An offer sold through one channel answers identically to that channel's own ?offerId= read.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ offerId: z.string() }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required)."),
+      goal: z.string().optional().describe("Same vocabulary and same meaning as the per-feature read. Omitting both goal and funnel is the brand-level read, not an error."),
+      funnel: z.string().optional().describe("Same vocabulary and same meaning as the per-feature read."),
+      statuses: z.string().optional().describe("Comma-separated audience statuses. Same meaning as the per-feature read."),
+      limit: z.string().optional().describe("Maximum number of audience rows. Same meaning as the per-feature read."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Same gross/net selector, same fail-loud NET rule, as the per-feature read."),
+    }),
+  },
+  responses: {
+    200: { description: "The offer's per-audience evidence and metrics", content: { "application/json": { schema: offerAudienceStatsResponseRef } } },
+    400: { description: "Missing/invalid brandId, or an unrecognised goal / funnel / limit / statuses / pricing", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels), or a channel it is sold through is not a feature this service knows", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+const offerPipelineActivityResponseSchema = pipelineActivityResponseSchema.extend({
+  offerId: z.string(),
+  channels: z.array(offerChannelSchema).describe("The channels merged into the day series below, ascending by slug."),
+});
+const offerPipelineActivityResponseRef = registry.register("OfferPipelineActivityResponse", offerPipelineActivityResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/pipeline-activity",
+  summary: "An offer's per-day activity, across every acquisition channel it is sold through",
+  description:
+    "The ACTUAL day series of /features/{featureSlug}/pipeline-activity, for the OFFER rather than one of its channels. Every series here is an EVENT count tagged to one campaign, so the channels add exactly — each is read under its OWN channel and the day buckets merged. " +
+    "The EXPECTED series, summary.dailyBudgetUsd and the observed signup / form-submission actuals are NULL at this grain, for the same reasons the per-feature offer-scoped read states them null: a daily budget is funded per brand with no per-offer ceiling to divide, and the conversion tracker is brand-keyed with no campaign on it — drawing either brand-wide beside offer-only bars would put two grains on one chart. Null is 'we could not measure this at this grain', never a share and never a zero. The two conversion RATES survive, because they are the brand's economics and the offer does not change them. " +
+    "`featureSlug` on the body carries the offer's whole channel set (comma-joined) rather than naming one of several; the `channels` array is the structured form.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ offerId: z.string() }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required)."),
+      days: z.string().optional().describe("Number of days to return. Defaults to 7."),
+      timezone: z.string().describe("IANA timezone used for calendar day ordering. Same acceptance and same 400-naming-the-parameter behaviour as the per-feature read."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Accepted for parity with the sibling reads and folded into the cache key. Every series answered at this grain is an event count, so neither basis changes a number here."),
+    }),
+  },
+  responses: {
+    200: { description: "The offer's day buckets", content: { "application/json": { schema: offerPipelineActivityResponseRef } } },
+    400: { description: "Missing/invalid brandId, days, timezone or pricing", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels)", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /stats ──────────────────────────────────────────────────────────
 
 registry.registerPath({

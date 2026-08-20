@@ -51,6 +51,9 @@ import { buildCostEconomics, type CostEconomics } from "../lib/cost-economics.js
 import { applySignalOverlays } from "../lib/signal-overlays.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
 import { fetchOfferCampaigns, resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
+import { featureSlugList, type FeatureScope } from "../lib/feature-scope.js";
+import { pickBestChannelParents } from "../lib/offer-parents.js";
+import { mapWithConcurrency } from "../lib/concurrency.js";
 
 const router = Router();
 
@@ -182,7 +185,10 @@ type SpendCostParents = BrandProjectedParentsUsd | null;
  */
 function fetchSpendCostParentsSoft(
   brandId: string,
-  featureSlug: string,
+  // ONE channel, or the SET an offer is sold through. A benchmark belongs to one channel, so a
+  // multi-channel scope resolves one PER CHANNEL and takes the best-returning channel's whole —
+  // never a field-by-field blend. See lib/offer-parents.ts for why that is the only honest combine.
+  featureScope: FeatureScope,
   headers: DownstreamHeaders,
   campaignId: string | undefined,
   pricing: Pricing,
@@ -191,7 +197,7 @@ function fetchSpendCostParentsSoft(
   // The caller's own org names whose configuration we want — a brand id alone is shared across every
   // org claiming the same domain, so what it sells through is the (org, brand) pair's data.
   return fetchDeclaredSalesFunnels(brandId, headers.orgId)
-    .then((declared) => {
+    .then(async (declared) => {
       const declaredKeys = declared.map((f) => f.funnelKey).sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
       // An explicit `?funnel=` is honoured only when the brand actually declared it — pricing a brand on
       // a chain it never said it sells through would be the same fiction the goal default produced.
@@ -200,18 +206,23 @@ function fetchSpendCostParentsSoft(
           ? requestedFunnel
           : primaryDeclaredFunnel(declaredKeys);
       if (!funnelKey) return null;
-      return fetchBrandProjectedParents(
-        brandId,
-        featureSlug,
-        // The goal ECHO, derived FROM the funnel purely because the projection's internal routing still
-        // speaks it. The funnel key below OVERRIDES it, so the two meeting chains stay priced apart.
-        SALES_FUNNEL_GOAL_ECHO[funnelKey],
-        { orgId: headers.orgId, userId: headers.userId, runId: headers.runId, campaignId, featureSlug: headers.featureSlug },
-        pricing,
-        [],
-        funnelKey,
-        declaredEconomicsForFunnel(declared, funnelKey),
-      );
+      const slugs = featureSlugList(featureScope);
+      const byChannel = await mapWithConcurrency(slugs, 4, async (slug) => ({
+        featureSlug: slug,
+        parents: await fetchBrandProjectedParents(
+          brandId,
+          slug,
+          // The goal ECHO, derived FROM the funnel purely because the projection's internal routing still
+          // speaks it. The funnel key below OVERRIDES it, so the two meeting chains stay priced apart.
+          SALES_FUNNEL_GOAL_ECHO[funnelKey],
+          { orgId: headers.orgId, userId: headers.userId, runId: headers.runId, campaignId, featureSlug: headers.featureSlug },
+          pricing,
+          [],
+          funnelKey,
+          declaredEconomicsForFunnel(declared, funnelKey),
+        ),
+      }));
+      return pickBestChannelParents(byChannel);
     })
     .catch((err) => {
       const what =
@@ -282,7 +293,7 @@ export interface FunnelPricedEconomics {
  * THROWS at the client (a producer gap, not "sells through nothing") and lands here as that same
  * degrade, which IS the required no-declared-funnel behaviour.
  */
-async function fetchDeclaredFunnelsSoft(brandId: string, orgId: string): Promise<DeclaredSalesFunnel[]> {
+export async function fetchDeclaredFunnelsSoft(brandId: string, orgId: string): Promise<DeclaredSalesFunnel[]> {
   try {
     // The caller's own org names whose configuration we want: a brand id alone is shared across every
     // org claiming the same domain, so what it sells through is the (org, brand) pair's data.
@@ -571,10 +582,10 @@ function emptyBody(
 function fetchSequencesSoft(
   brandId: string,
   campaignScope: CampaignFilter,
-  featureSlug: string,
+  featureScope: FeatureScope,
   headers: DownstreamHeaders,
 ): Promise<SignalSeries | null> {
-  return fetchSequencesByDay(brandId, campaignScope, featureSlug, headers).catch((err) => {
+  return fetchSequencesByDay(brandId, campaignScope, featureScope, headers).catch((err) => {
     console.warn(
       `[features-service] sequences enrichment failed (degrading to null): ${(err as Error).message}`,
     );
@@ -600,11 +611,11 @@ function fetchSequencesSoft(
 function fetchSpendByDaySoft(
   brandId: string,
   campaignScope: CampaignFilter,
-  featureSlug: string,
+  featureScope: FeatureScope,
   headers: DownstreamHeaders,
   pricing: Pricing,
 ): Promise<Map<string, number> | null> {
-  return fetchBrandCommittedSpendByDay(brandId, campaignScope, featureSlug, headers, pricing).catch((err) => {
+  return fetchBrandCommittedSpendByDay(brandId, campaignScope, featureScope, headers, pricing).catch((err) => {
     console.warn(
       `[features-service] dated-spend enrichment failed (degrading roiHistory to null): ${(err as Error).message}`,
     );
@@ -845,7 +856,14 @@ function buildLensBody(
  * degrade (the pipeline total, orgs and leads stay correct) rather than failing the whole endpoint.
  */
 export async function computeFeatureRevenue(
-  featureSlug: string,
+  // ONE acquisition channel, or the SET an OFFER is sold through (lib/feature-scope.ts). Only WHICH
+  // spend is read changes: the leads, the economics and the engine are already channel-independent
+  // (lead-service and brand-service are read per brand + campaign, never per feature), so a
+  // multi-channel scope is the SAME single engine pass over a wider evidence set — never N passes
+  // added up. What is not additive therefore never gets added: a lead worked through two channels is
+  // deduped once by `dedupPersonsByLead` before the engine ever sees it, and every ratio is
+  // recomputed from the combined numerator and denominator rather than averaged.
+  featureScope: FeatureScope,
   brandId: string,
   // One campaign, or the FAMILY of campaigns sharing one identity — (org, brand, sales funnel,
   // acquisition channel), campaign-service's own key. A family totals as ONE campaign: its stopped
@@ -892,10 +910,10 @@ export async function computeFeatureRevenue(
       // Overview: fetch spend (fail-loud) + sequences (fail-soft) in parallel. Outreach activity
       // is independent of the funnel — a no-funnel feature still launches campaigns worth graphing.
       const [breakdown, sequences, counts, parents] = await Promise.all([
-        fetchSpendBreakdown(brandId, campaignScope, featureSlug, headers, new Date(), pricing),
-        fetchSequencesSoft(brandId, campaignScope, featureSlug, headers),
+        fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing),
+        fetchSequencesSoft(brandId, campaignScope, featureScope, headers),
         fetchConversionCountsSoft(brandId),
-        fetchSpendCostParentsSoft(brandId, featureSlug, headers, campaignId, pricing, requestedFunnel),
+        fetchSpendCostParentsSoft(brandId, featureScope, headers, campaignId, pricing, requestedFunnel),
       ]);
       // ONE basis: ROI/CAC ride the SAME committed total the `spend` block reports.
       return emptyBody(
@@ -905,7 +923,7 @@ export async function computeFeatureRevenue(
         sequences,
       );
     }
-    const cost = await fetchRunsCostCents(brandId, campaignScope, featureSlug, headers, pricing);
+    const cost = await fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing);
     return emptyBody(null, cost, null);
   }
 
@@ -920,8 +938,8 @@ export async function computeFeatureRevenue(
   // economics===null cold-start path below over-fetches leads — accepted for the common-path win.
   const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay] = await Promise.all([
     includeSpend
-      ? fetchSpendBreakdown(brandId, campaignScope, featureSlug, headers, new Date(), pricing)
-      : fetchRunsCostCents(brandId, campaignScope, featureSlug, headers, pricing),
+      ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing)
+      : fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing),
     // Priced on the brand's DECLARED funnel, falling through to the brand-wide record for every term
     // the funnel does not state (the route resolves this once and passes it as the override).
     economicsOverride ??
@@ -932,7 +950,7 @@ export async function computeFeatureRevenue(
     // Overview-only sequences day series (email-gateway groupBy=day). Pre-caught → resolves to
     // null on failure, so it never rejects fail-loud Wave A. Off-overview it's null (not fetched).
     includeSpend
-      ? fetchSequencesSoft(brandId, campaignScope, featureSlug, headers)
+      ? fetchSequencesSoft(brandId, campaignScope, featureScope, headers)
       : Promise.resolve<SignalSeries | null>(null),
     // Overview-only REAL conversion counts (lead-service) for the Signups / Sales Meetings tiles +
     // cost-per-conversion. Pre-caught → null on failure (never rejects fail-loud Wave A). Off-overview null.
@@ -945,13 +963,13 @@ export async function computeFeatureRevenue(
     // /audience-stats floors each audience against. Pre-caught → null on failure (never rejects
     // fail-loud Wave A; the columns then degrade to observed). Off-overview null (no spend block).
     includeSpend
-      ? fetchSpendCostParentsSoft(brandId, featureSlug, headers, campaignId, pricing, requestedFunnel)
+      ? fetchSpendCostParentsSoft(brandId, featureScope, headers, campaignId, pricing, requestedFunnel)
       : Promise.resolve<SpendCostParents>(null),
     // Overview-only DATED spend (runs-service cost timeseries) — the spend leg of the return-on-spend
     // curve. Pre-caught → null on failure (never rejects fail-loud Wave A; roiHistory then degrades to
     // null). Off-overview null: the lens and the per-campaign groups do not carry the curve.
     includeSpend
-      ? fetchSpendByDaySoft(brandId, campaignScope, featureSlug, headers, pricing)
+      ? fetchSpendByDaySoft(brandId, campaignScope, featureScope, headers, pricing)
       : Promise.resolve<Map<string, number> | null>(null),
   ]);
   const { economics, source } = priced.economics;

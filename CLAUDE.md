@@ -1,5 +1,87 @@
 # Features Service — CLAUDE.md
 
+## AN OFFER IS SOLD THROUGH SEVERAL CHANNELS AT ONCE — `GET /offers/:offerId/{revenue,audience-stats,pipeline-activity}` answers for the OFFER; MONEY is the only thing that adds
+
+A brand sells one OFFER through several ACQUISITION CHANNELS at once. A channel IS a feature slug (this
+fleet has no other name for one), each is funded and paced on its own money, each runs its own campaigns
+against the same offer, the same funnel and the same audiences — and the customer looks at the offer as
+one thing. Every read this service had names ONE feature slug in its path, so each one answers "what did
+this offer return THROUGH THIS ONE CHANNEL" while the offer screen presents it as what the offer returned.
+
+While a brand had exactly one channel those were the same answer. **The moment a second is funded they
+diverge, and they diverge SILENTLY** — nothing errors, the figures are simply about less than they claim.
+Prod 2026-08-20, brand `75d7e3e8…` offer `d5ecba00…`: months of `sales-cold-email-outreach` history, plus
+`feedback-request-cold-email-outreach` funded 2026-08-19 and serving from 2026-08-20 12:45, plus
+`ai-visibility-scoring` and `pr-expert-quote-opportunities`. Four channels, one offer, one screen.
+
+- **WHICH FIGURES ADD, AND WHICH DO NOT — this is the whole design, and it is why the grain cannot live
+  in the browser.**
+  - **ADDITIVE — MONEY, and only money.** A run carries exactly one `feature_slug` and one `campaign_id`,
+    so every cost row belongs to exactly one channel of one offer. Spend adds with nothing counted twice
+    — and it is not added HERE either: the offer's feature scope goes to runs-service as its plural
+    `featureSlugs` filter (comma-split server-side, verified in `runs-service/src/routes/stats.ts`), so
+    the producer sums the same rows it would have returned per channel. Same for run counts and for any
+    per-day SEND count.
+  - **NOT ADDITIVE — PEOPLE.** A lead worked through two channels is ONE lead to the offer and belongs to
+    both. Handled by never summing: the lead read is brand-scoped and campaign-filtered (it has NEVER
+    been feature-scoped), so one read covers every channel and `dedupPersonsByLead` collapses the
+    duplicate before the engine sees it. Same property that already makes the per-campaign and
+    per-workflow groups not sum to their brand.
+  - **NOT ADDITIVE — PIPELINE.** The engine combines a lead's paths per ORGANISATION, which is not
+    additive across partitions. Handled by ONE engine pass over the offer's whole evidence set.
+  - **NOT ADDITIVE — EVERY RATIO** (ROI, %CAC, $CAC, cost per click, cost per reply). A ratio of sums is
+    neither the sum nor the average of the ratios; each is recomputed from the combined numerator and
+    denominator, which the single pass already does.
+  - **NOT COMBINABLE AT ALL — A BENCHMARK.** `fetchBrandProjectedParents` is a property of ONE channel.
+    Several channels have several benchmarks and there is no benchmark of a mix; blending two would be
+    the cross-org PLUS cross-workflow pooled estimate this service refuses to publish, and the blended
+    object would stop being coherent (cost per click from one channel, cost per paid client from
+    another). So the BEST-RETURNING channel's is taken WHOLE — `pickBestChannel` in `lib/offer-parents.ts`,
+    ranking on `costPerPaidClientUsd` because it is the one figure every channel denominates the same
+    way. Same doctrine as the combined-`sales` `min` over routes and the brand-level `max` over declared
+    funnels' returns: a dollar buys the outcome through whichever route converts it best.
+- **THE PER-FEATURE READS ARE UNTOUCHED AND STILL MEAN WHAT THEY MEAN.** A campaign row IS a channel and
+  is priced on its own channel's money; live consumers rank real spend on those numbers. `?offerId=` on
+  `/features/:slug/*` still narrows to that ONE channel — it is a different question, not a broken one.
+- **AN OFFER SOLD THROUGH ONE CHANNEL ANSWERS IDENTICALLY TO THAT CHANNEL'S OWN READ**, by construction:
+  one slug in the feature scope produces the byte-same `featureSlugs` value, the same campaign scope, the
+  same brand pricing and the same engine, and `pickBestChannel` over one channel picks it. So every brand
+  on one channel today sees no change whatsoever. Guarded in `routes/offer-cross-channel.test.ts`.
+- **THE BREAKDOWN SHIPS IN THE SAME RESPONSE** (`channels[]`), because the consumer does not own which
+  channels an offer sells through — the campaign row does, here — and an answer it assembled from N calls
+  would be the browser-side re-derivation this grain exists to prevent. Each `/offers/:id/revenue` channel
+  row is byte-equal to that channel's own `/features/:slug/revenue?offerId=` `headline` +
+  `costEconomics`, so a row and the total above it are one statement at two grains.
+- **A CHANNEL THIS SERVICE CANNOT MEASURE STILL COSTS MONEY.** Several published channels declare no
+  funnel (we measure email today; a channel declaring measurements it cannot make would report a
+  fabricated zero). Their campaigns are in the offer's scope, so their SPEND counts — the customer paid
+  it — and they contribute no pipeline, exactly as their own read reports them. Nothing special-cases
+  them: the engine prices SIGNALS and a channel that sends no email produces none. The breakdown shows
+  each with real spend and a null pipeline, so the caveat is visible rather than buried.
+- **THE FUNNEL IS THE ONE EVERY FUNNEL-BEARING CHANNEL SHARES.** Two channels pointing at different
+  `FUNNEL_REGISTRY` definitions would price one lead two ways in a single pass, so that is a **409
+  `offer_channels_price_differently`** rather than a silent pick. It cannot happen today (both registered
+  channels price on `salesFunnel`). No channel with a funnel ⇒ null pipeline, spend still reported.
+- **`x-feature-slug` IS NOT FORWARDED on an offer read**, and neither is a single slug picked for the
+  economics read: attributing a several-channel question to one of them would name a channel the caller
+  never asked about.
+- **THE CHANNEL SET RIDES EVERY CACHE `scope_key`** (`channels=a+b`). A newly funded channel changes every
+  figure while no other key part moves, so without it the offer would keep replaying its pre-funding
+  answer until the hard-stale cap — the same reasoning as the economics fingerprint beside it.
+- **`fetchBrandCampaignRows` takes an OPTIONAL feature slug** so the offer read can ask for EVERY channel;
+  narrowing by a slug it would have to guess first is the enumerate-then-ask-N-times shape being removed.
+- **NOT SERVED AT THIS GRAIN, on purpose:** `?lens=` (a lens narrows to a subset of LEADS while its spend
+  leg would still be the whole offer's) and `?groupBy=` (the only grouping here is the channel breakdown,
+  which is unconditional). Both stay available per channel. On `pipeline-activity` the EXPECTED series,
+  the daily budget and the conversion actuals are null for the reasons the per-feature offer read already
+  states (a budget is funded per brand with no per-offer ceiling; the conversion tracker is brand-keyed).
+- **The api-service gateway does NOT proxy `/offers/*` yet** — it needs an explicit per-route proxy there,
+  so a consumer outside the cluster needs that follow-up.
+- Guards: `src/routes/offer-cross-channel.test.ts` (both channels accounted for; money adds while a
+  shared lead counts once; a channel row byte-equal to its own read; the one-channel identity; the
+  per-feature read unchanged; the named 404), `src/lib/offer-channels.ts` + `src/lib/offer-parents.ts` +
+  `src/lib/feature-scope.ts` for the rules themselves. (Set 2026-08-20.)
+
 ## A CHANNEL PUBLISHES ITS COMMERCIAL TERMS AND WHAT IT CAN PRODUCE; WHICH FUNNELS IT SELLS THROUGH IS DERIVED, NEVER A SECOND LIST
 
 An acquisition channel IS a feature slug — still no channel table, still no channel concept, and none
