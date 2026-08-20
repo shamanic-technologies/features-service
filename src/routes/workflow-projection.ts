@@ -84,8 +84,13 @@ interface GrainBlock {
 }
 
 interface ResolvedBlock {
-  grain: GrainName;
-  costPerClickUsd: number;
+  /**
+   * The grain the number came from. NULL on an UNMEASURED row — a channel that has spent nothing has
+   * no grain, so there is nothing to label. Never a borrowed label.
+   */
+  grain: GrainName | null;
+  /** NULL on an UNMEASURED row: no spend, so no unit cost. Never 0, which would say a click is free. */
+  costPerClickUsd: number | null;
   costPerOutcomeUsd: number | null;
   costPerPaidClientUsd: number | null;
   costPerMeetingBookedUsd: number | null;
@@ -98,7 +103,34 @@ export interface ProjectionRow {
   workflow: { workflowDynastySlug: string; workflowDynastyName: string | null };
   estimatesByGrain: Partial<Record<GrainName, GrainBlock>>;
   resolved: ResolvedBlock;
+  /**
+   * TRUE ⟺ this row rests on real evidence (at least one grain with spend) — every row an established
+   * channel serves. FALSE marks a row this channel has measured NOTHING for: `estimatesByGrain` is
+   * empty and every `resolved` figure is null, so a consumer that RANKS on `resolved.costPerOutcomeUsd`
+   * skips it by construction and can also tell it apart outright rather than by a null probe.
+   * A row is never half-measured: the two states are what the row rests on, not how much it has.
+   */
+  measured: boolean;
 }
+
+/**
+ * Why a projection carries no measured row. Named rather than left to a bare empty `rows`, because a
+ * caller acts very differently on each: "this brand has no active audiences" is a brand fact it cannot
+ * work around, while "this channel has nothing measured yet" is a channel that is ready to be served and
+ * is simply waiting for its first run.
+ */
+export type UnmeasuredProjectionReason = "no_active_audiences" | "no_active_workflows" | "no_spend_recorded";
+
+/** The `resolved` block of an UNMEASURED row — every figure absent, nothing borrowed, nothing invented. */
+const UNMEASURED_RESOLVED: ResolvedBlock = {
+  grain: null,
+  costPerClickUsd: null,
+  costPerOutcomeUsd: null,
+  costPerPaidClientUsd: null,
+  costPerMeetingBookedUsd: null,
+  roiMultiple: null,
+  cacPct: null,
+};
 
 interface EconomicsEcho {
   lifetimeRevenueUsd: number;
@@ -128,6 +160,14 @@ export interface WorkflowProjectionResponse {
   rows: ProjectionRow[];
   recommendedWorkflowDynastySlug: string | null;
   recommendedBudgetUsd: number | null;
+  /**
+   * TRUE ⟺ at least one row rests on real evidence — every answer an established channel gives.
+   * FALSE says this channel has measured nothing for this brand yet; `unmeasuredReason` then names
+   * what is missing, so an empty `rows` can never be read as "this brand has nobody to contact".
+   */
+  measured: boolean;
+  /** Present ⟺ `measured` is false. */
+  unmeasuredReason?: UnmeasuredProjectionReason;
 }
 
 /**
@@ -875,6 +915,13 @@ export function projectFromEvidence(input: {
 
     const rows: ProjectionRow[] = [];
 
+    // Map dynastySlug → active workflow slug. Needed by the audience rows below AND by the unmeasured
+    // enumeration at the bottom, so it is resolved once here.
+    const activeSlugByDynasty = new Map<string, string>();
+    for (const [activeSlug, wf] of workflowBySlug) {
+      if (wf.status === "active") activeSlugByDynasty.set(wf.workflowDynastySlug, activeSlug);
+    }
+
     // ── Brand-level rows (audienceId: null), one per active workflow dynasty ────────────────────
     // Keyed by the dynasty's active slug. crossOrg grain always present (real fleet spend); brand grain
     // added only when the brand spent on the dynasty (spentUsd > 0).
@@ -910,6 +957,7 @@ export function projectFromEvidence(input: {
         },
         estimatesByGrain,
         resolved: resolve(estimatesByGrain),
+        measured: true,
       });
     }
 
@@ -921,12 +969,6 @@ export function projectFromEvidence(input: {
     // audience data has no audience grain → it resolves via the cascade to brand→crossOrg (a projected
     // estimate, never absent, never a false $0). Precedence audience > brand > crossOrg → a couple with
     // real audience spend resolves at the audience grain against THIS dynasty's brand/crossOrg parent.
-    // Map dynastySlug → active workflow slug (for crossOrg/brand grain lookup keyed on active slug).
-    const activeSlugByDynasty = new Map<string, string>();
-    for (const [activeSlug, wf] of workflowBySlug) {
-      if (wf.status === "active") activeSlugByDynasty.set(wf.workflowDynastySlug, activeSlug);
-    }
-
     for (const ev of audienceEvidence) {
       for (const [dynastySlug, activeSlug] of activeSlugByDynasty) {
         // Cascade: crossOrg (no parent) → brand (parent crossOrg) → audience (parent brand ?? crossOrg).
@@ -961,7 +1003,45 @@ export function projectFromEvidence(input: {
           },
           estimatesByGrain,
           resolved: resolve(estimatesByGrain),
+          measured: true,
         });
+      }
+    }
+
+    // ── A channel with NO history still answers WHO it could be served to ───────────────────────
+    //
+    // Every row above rests on spend: a couple with no grain anywhere has nothing to project, so it is
+    // skipped. For a channel the brand has just funded that skips EVERYTHING — no fleet spend, no brand
+    // spend, no audience spend — and an empty `rows` reads downstream as "this brand has no serveable
+    // audience", which stops the channel from ever making the first run that would give it a history.
+    // It cannot start because it has not started.
+    //
+    // Audience membership is a property of the BRAND, not of what a channel has already spent, so the
+    // answer is the brand's active audiences under this channel's active workflows — stated UNMEASURED.
+    // No cost, no return, no rank, nothing borrowed from the channel that does have a history.
+    //
+    // It fires ONLY when nothing measured survived, which is exactly the first-day case: a channel with
+    // ANY spend already enumerates every active audience under every dynasty it has evidence for, so an
+    // established channel never reaches here and its rows are untouched.
+    const unmeasuredReason: UnmeasuredProjectionReason | null =
+      rows.length > 0
+        ? null
+        : audienceEvidence.length === 0
+          ? "no_active_audiences"
+          : activeSlugByDynasty.size === 0
+            ? "no_active_workflows"
+            : "no_spend_recorded";
+
+    if (unmeasuredReason === "no_spend_recorded") {
+      for (const [dynastySlug] of activeSlugByDynasty) {
+        const workflow = {
+          workflowDynastySlug: dynastySlug,
+          workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null,
+        };
+        rows.push({ audienceId: null, workflow, estimatesByGrain: {}, resolved: UNMEASURED_RESOLVED, measured: false });
+        for (const ev of audienceEvidence) {
+          rows.push({ audienceId: ev.audienceId, workflow, estimatesByGrain: {}, resolved: UNMEASURED_RESOLVED, measured: false });
+        }
       }
     }
 
@@ -984,6 +1064,8 @@ export function projectFromEvidence(input: {
       rows,
       recommendedWorkflowDynastySlug: recommended?.workflow.workflowDynastySlug ?? null,
       recommendedBudgetUsd: recommendedCost != null ? TARGET_OUTCOMES_PER_MONTH * recommendedCost : null,
+      measured: unmeasuredReason === null,
+      ...(unmeasuredReason ? { unmeasuredReason } : {}),
     };
 }
 
