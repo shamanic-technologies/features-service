@@ -251,7 +251,10 @@ function getRunsServiceHeaders(
 
 export async function fetchBrandDailyBudgetUsd(
   brandId: string,
-  featureSlug: string,
+  // Attribution only — the budget itself is funded PER BRAND and the slug never reaches the path. Pass
+  // `undefined` at a grain that spans several channels: naming one of them on the wire would attribute
+  // the whole read to a channel the caller did not ask about.
+  featureSlug: string | undefined,
   headers: { orgId: string; userId?: string; runId?: string },
 ): Promise<number | null> {
   const url = process.env.BILLING_SERVICE_URL;
@@ -373,20 +376,24 @@ async function fetchDailyBroadcastActivity(
 }
 
 /**
- * The day series for an OFFER: one read per campaign it is sold through, added per day.
+ * The day series for a read that spans SEVERAL channels: one read per member, added per day.
  *
  * Adding is safe for the same reason the per-audience send-tag figures are summed to a brand grain —
- * a broadcast send is tagged to exactly ONE campaign, so no day counts a send twice. A single-campaign
- * offer takes the ordinary single read. Fail-loud on every member, like the brand-wide read: a
- * swallowed failure would draw a bar chart missing whichever campaign happened to be down.
+ * a broadcast send is tagged to exactly ONE campaign, and a campaign runs through exactly ONE channel,
+ * so no day counts a send twice under either shape below. A single-member scope takes the ordinary
+ * single read. Fail-loud on every member, like the brand-wide read: a swallowed failure would draw a
+ * bar chart missing whichever member happened to be down.
  */
 async function fetchOfferDailyBroadcastActivity(
   brandId: string,
-  // One (channel × campaign) read per campaign of the offer, each under its OWN channel. An offer sold
-  // through several channels therefore needs no comma-joined `featureSlugs` (a plural this producer has
-  // not been verified to split, whose silent miss would draw an empty chart) — and the merge stays exact
-  // for the reason below: a send is tagged to one campaign, and a campaign runs through one channel.
-  reads: Array<{ featureSlug: string; campaignId: string }>,
+  // Either one (channel × campaign) read per campaign — the OFFER grain, where the campaign is the
+  // frozen link to the offer — or one BRAND-WIDE read per channel (`campaignId` omitted), which is the
+  // BRAND grain: `brandId` is already the producer's filter there, so narrowing to an enumerated
+  // campaign list could only drop a campaign campaign-service does not list.
+  //
+  // Either way the channel rides each entry rather than a comma-joined `featureSlugs` — a plural this
+  // producer has not been verified to split, whose silent miss would draw an empty chart.
+  reads: Array<{ featureSlug: string; campaignId?: string }>,
   timezone: string,
   headers: { orgId: string; userId: string; runId: string },
 ): Promise<Map<string, ActualActivity>> {
@@ -925,6 +932,119 @@ export async function computeOfferPipelineActivity(
           clickToFormSubmissionPct: expected.clickToFormSubmissionPct,
           undatedSignups: null,
           undatedFormSubmissions: null,
+        },
+      };
+    },
+  });
+  return { ok: true, body };
+}
+
+/**
+ * THE BRAND-GRAIN DAY CHART — the same actual series, across every channel the brand runs.
+ *
+ * The actual bars combine exactly as the offer's do, and for the same reason: every one of them is an
+ * EVENT COUNT tagged to one campaign, and a campaign runs through one channel. The reads are made per
+ * channel BRAND-WIDE (no campaign narrowing), so a campaign campaign-service does not list is still
+ * drawn, and a brand on ONE channel issues the byte-same request its per-feature read issues today.
+ *
+ * What differs from the offer grain is what CAN be measured here:
+ *
+ *   - THE DAILY BUDGET IS THE BRAND'S. billing funds it per brand, so at this grain it is not a share
+ *     of anything — it is the number itself, and it is the one the customer sees the day's spend
+ *     against. Stating it here is what makes that fraction one statement instead of two grains
+ *     ("$40 of one channel / $50 of every channel" was the bug).
+ *   - THE OBSERVED CONVERSIONS ARE THE BRAND'S. The conversion tracker is brand-keyed and carries no
+ *     campaign, so brand-wide is exactly its grain — unlike the offer read, which must null it.
+ *   - THE FORECAST IS NOT COMBINABLE ACROSS CHANNELS, so with several it is null. `expected.outreach`
+ *     is `dailyBudgetUsd / effectiveOutreachUsd`, and that divisor is a PROPERTY OF ONE CHANNEL (its
+ *     cross-org best workflow, floored by that channel's own observed cost per outreach). Several
+ *     channels have several divisors and no per-channel ceiling exists to split the budget by, so the
+ *     honest answers are "the brand's budget" and "we could not project the volume it buys" — never a
+ *     brand budget divided by one channel's price, which is the very pairing this grain removes. With
+ *     exactly ONE channel there is nothing to combine and the ordinary forecast is computed, so a
+ *     one-channel brand's chart is unchanged.
+ */
+export async function computeBrandPipelineActivity(
+  req: { query: Record<string, unknown> },
+  input: {
+    brandId: string;
+    pricing: Pricing;
+    channels: Array<{ featureSlug: string; campaignIds: string[] }>;
+    headers: { orgId: string; userId: string; runId: string };
+  },
+): Promise<{ ok: true; body: PipelineActivityResponse } | { ok: false; status: number; body: Record<string, unknown> }> {
+  const timezone = req.query.timezone as string | undefined;
+  const days = parseDays(req.query.days);
+  if (!timezone) return { ok: false, status: 400, body: { error: "timezone query parameter is required" } };
+  if (!isValidTimeZone(timezone)) return { ok: false, status: 400, body: { error: "timezone must be a valid IANA time zone" } };
+  if (days === null) return { ok: false, status: 400, body: { error: "days must be a positive integer" } };
+
+  const featureSlugs = input.channels.map((channel) => channel.featureSlug);
+  const soleChannel = featureSlugs.length === 1 ? featureSlugs[0] : undefined;
+  const effectiveEconomics = await fetchEffectiveEconomics(input.brandId, {
+    orgId: input.headers.orgId,
+    userId: input.headers.userId,
+    runId: input.headers.runId,
+    // Named only when there IS one: attributing a several-channel read to one of them would name a
+    // channel the caller never asked about.
+    featureSlug: soleChannel,
+  });
+
+  const body = await servedCached({
+    view: "brand-pipeline-activity",
+    // Keyed on the brand, and on the CHANNEL SET — a newly funded channel changes the bars while no
+    // other key part moves, so without it the brand would replay its pre-funding chart.
+    scopeKey: buildScopeKey(input.brandId, {
+      orgId: input.headers.orgId,
+      channels: featureSlugs.join("+"),
+      timezone,
+      days,
+      pricing: input.pricing,
+      econ: economicsFingerprint(effectiveEconomics),
+    }),
+    orgId: input.headers.orgId,
+    compute: async (): Promise<PipelineActivityResponse> => {
+      const today = dateInTimeZone(new Date(), timezone);
+      const dates = Array.from({ length: days }, (_, index) => addDays(today, index));
+      const [expected, dailyBudgetUsd, actualByDate, observed] = await Promise.all([
+        soleChannel
+          ? computeExpectedActivity(soleChannel, input.brandId, input.headers, effectiveEconomics, input.pricing)
+          : Promise.resolve(
+              emptyExpected(
+                effectiveEconomics.economics?.visitToSignupPct ?? null,
+                effectiveEconomics.economics?.visitToFormSubmissionPct ?? null,
+              ),
+            ),
+        // Read on its own at this grain rather than taken off the forecast: the budget is a fact about
+        // the brand and stays true whether or not the volume it buys can be projected — the forecast
+        // nulls its own copy the moment it cannot price an outreach, which is exactly the case where
+        // the customer still needs the ceiling their day's spend is read against.
+        fetchBrandDailyBudgetUsd(input.brandId, soleChannel, input.headers),
+        fetchOfferDailyBroadcastActivity(
+          input.brandId,
+          // Brand-wide per channel — no campaign narrowing, so nothing depends on campaign-service
+          // having listed every campaign.
+          input.channels.map((channel) => ({ featureSlug: channel.featureSlug })),
+          timezone,
+          input.headers,
+        ),
+        fetchConversionCountsByDaySoft(input.brandId),
+      ]);
+      return {
+        // A body field cannot name one of several channels, so it names the whole set; the structured
+        // breakdown rides the envelope the route builds.
+        featureSlug: featureSlugs.join(","),
+        brandId: input.brandId,
+        timezone,
+        generatedAt: new Date().toISOString(),
+        days: buildDayBuckets(dates, today, actualByDate, expected, observed),
+        summary: {
+          dailyBudgetUsd: expected.dailyBudgetUsd ?? dailyBudgetUsd,
+          openRatePct: expected.openRatePct,
+          clickToSignupPct: expected.clickToSignupPct,
+          clickToFormSubmissionPct: expected.clickToFormSubmissionPct,
+          undatedSignups: observed ? observed.undated.signup : null,
+          undatedFormSubmissions: observed ? observed.undated.form_submission : null,
         },
       };
     },

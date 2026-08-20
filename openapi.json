@@ -5999,6 +5999,1805 @@
           "channels"
         ]
       },
+      "BrandRevenueResponse": {
+        "type": "object",
+        "properties": {
+          "campaignIdentity": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "Stable identity key. Opaque — compare it, do not parse it."
+              },
+              "funnelKey": {
+                "type": "string",
+                "nullable": true,
+                "description": "The sales funnel the campaign states, or null when it states none."
+              },
+              "acquisitionChannel": {
+                "type": "string",
+                "nullable": true,
+                "description": "The channel it acquires through, e.g. cold_email."
+              },
+              "campaignIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Every campaign id answering to this identity, this one included."
+              },
+              "liveCampaignIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The members still ongoing — at most one."
+              },
+              "representativeId": {
+                "type": "string",
+                "description": "The member to render the identity's line on: the live campaign when there is one, else the most recently created member."
+              }
+            },
+            "required": [
+              "key",
+              "funnelKey",
+              "acquisitionChannel",
+              "campaignIds",
+              "liveCampaignIds",
+              "representativeId"
+            ],
+            "description": "Present only on a ?campaignId= read: the identity the figures were totalled over. A campaign-scoped read answers for the campaign's whole identity — its stopped ancestors included — so asking about any member returns the same, complete campaign."
+          },
+          "spend": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "totalSpentCents": {
+                "type": "integer",
+                "description": "'Total spent' (COMMITTED, USD cents) = ACTUAL + PROVISIONED holds for the brand(+campaign)+feature, == Σ sources[].totalSpentCents. The reserved money the customer sees; dips when a hold releases. Reconciles with totalCpcCents by construction."
+              },
+              "actualSpentCents": {
+                "type": "integer",
+                "description": "Billed-only spend (USD cents), == Σ sources[].actualSpentCents. Same source as systemStats.actualCostInUsdCents / costEconomics.actualCostUsd. REPORTED ONLY — ROI/CAC and every cost-per-outcome column ride the COMMITTED totalSpentCents beside it."
+              },
+              "provisionedSpentCents": {
+                "type": "integer",
+                "description": "Open PROVISIONED holds only (USD cents) = totalSpentCents − actualSpentCents, == Σ sources[].provisionedSpentCents. Money reserved for scheduled follow-up sends, not yet billed."
+              },
+              "totalSpentTodayCents": {
+                "type": "integer",
+                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'."
+              },
+              "actualSpentTodayCents": {
+                "type": "integer",
+                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today."
+              },
+              "provisionedSpentTodayCents": {
+                "type": "integer",
+                "description": "Open PROVISIONED holds (USD cents) = totalSpentTodayCents − actualSpentTodayCents, for runs started since 00:00 UTC today."
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "description": "runs-service cost name (billable line item, e.g. 'apollo people-search', 'email-send-step-1')."
+                    },
+                    "totalSpentCents": {
+                      "type": "integer",
+                      "description": "COMMITTED spend attributed to this source (actual + provisioned holds), USD cents. Σ over sources == spend.totalSpentCents."
+                    },
+                    "actualSpentCents": {
+                      "type": "integer",
+                      "description": "ACTUAL (billed) spend attributed to this source, USD cents. Σ over sources == spend.actualSpentCents."
+                    },
+                    "provisionedSpentCents": {
+                      "type": "integer",
+                      "description": "Open PROVISIONED holds attributed to this source (= totalSpentCents − actualSpentCents), USD cents. Σ over sources == spend.provisionedSpentCents."
+                    },
+                    "sharePct": {
+                      "type": "number",
+                      "description": "This source's share of the COMMITTED total (spend.totalSpentCents), percent (0–100). 0 when the committed total is 0."
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "totalSpentCents",
+                    "actualSpentCents",
+                    "provisionedSpentCents",
+                    "sharePct"
+                  ]
+                },
+                "description": "Per cost-name committed/actual/provisioned spend + committed share-of-total, descending — the 'top cost sources' list pre-computed (the dashboard renders verbatim instead of summing the runs breakdown in the browser)."
+              },
+              "totalCpcCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "COMMITTED cost per website click = totalSpentCents / clicks (clicked.total). Null (renders '-'), never a false $0.00, when there are 0 clicks OR 0 committed spend."
+              },
+              "actualCpcCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "ACTUAL (billed) cost per website click = actualSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 actual spend."
+              },
+              "provisionedCpcCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "PROVISIONED cost per website click = provisionedSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 provisioned holds."
+              },
+              "signupsCount": {
+                "type": "integer",
+                "description": "REAL attributed signups (lead-service conversion tracker, deduped, excludes 'ping') for the brand — the Signups tile. 0 when none. ABSENT (undefined) on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (features-service#461)"
+              },
+              "salesMeetingsCount": {
+                "type": "integer",
+                "description": "REAL attributed sales meetings booked (lead-service conversion tracker) for the brand — the Sales Meetings tile. 0 when none. ABSENT on a cold / pre-rollout payload; never a fabricated 0."
+              },
+              "formSubmissionsCount": {
+                "type": "integer",
+                "description": "REAL attributed form submissions (lead-service conversion tracker, event=form_submission, deduped, excludes 'ping') for the brand — the Form Submissions tile for a form_submissions brand (the visit-driven sibling of signups). 0 when none. ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0."
+              },
+              "cpsCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "REAL cost per signup = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents) / signupsCount, USD cents. So cpsCents × signupsCount ≈ committed spend by construction. null when signupsCount is 0 (no denominator — never a false $0). ABSENT when signupsCount is absent. REPLACES the projected cps dropped in features-service#406 with the REAL tracked computation — no projection."
+              },
+              "cpsmCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "REAL cost per sales meeting = totalSpentCents (COMMITTED) / salesMeetingsCount, USD cents. null when salesMeetingsCount is 0. ABSENT when salesMeetingsCount is absent. Real tracked data, not a projection."
+              },
+              "cpfsCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "REAL cost per form submission = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / formSubmissionsCount, USD cents. So cpfsCents × formSubmissionsCount ≈ committed spend by construction. null when formSubmissionsCount is 0 (no denominator — never a false $0). ABSENT when formSubmissionsCount is absent. Real tracked data, not a projection."
+              },
+              "salesCount": {
+                "type": "integer",
+                "description": "REAL attributed SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase, deduped, excludes 'ping') for the brand — the Sales tile's brand-level aggregate, the terminal outcome of BOTH the website-purchase goal (multi-step close) and the combined-sales goal (paying client won via either path). Equivalent to signupsCount / salesMeetingsCount / formSubmissionsCount. 0 when none; ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (Renamed from purchasesCount — features-service combined-sales slice.)"
+              },
+              "cpSaleCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "REAL cost per sale = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / salesCount, USD cents. So cpSaleCents × salesCount ≈ committed spend by construction. null when salesCount is 0 (no denominator — never a false $0). ABSENT when salesCount is absent. Real tracked data, not a projection. (Renamed from cppCents — features-service combined-sales slice.)"
+              },
+              "positiveRepliesCount": {
+                "type": "integer",
+                "description": "REAL attributed positive replies for the brand — the single-step positive_replies goal's outcome (reply-goal sibling of signups/meetings/form-submissions), the Positive Replies tile. Deduped by lead from the SAME leads[] snapshot as recipientsRepliesPositive.total (a positive reply is an email engagement signal, NOT a lead-service conversion event), so ALWAYS present (leads are a fail-loud core input) — never absent, unlike the conversion-counts tiles. 0 when none. (features-service#482)"
+              },
+              "cpprCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "REAL cost per positive reply = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents/cpsCents) / positiveRepliesCount, USD cents. So cpprCents × positiveRepliesCount ≈ committed spend by construction. null when positiveRepliesCount is 0 (no denominator — never a false $0). Real tracked data, not a projection. (features-service#482)"
+              }
+            },
+            "required": [
+              "totalSpentCents",
+              "actualSpentCents",
+              "provisionedSpentCents",
+              "totalSpentTodayCents",
+              "actualSpentTodayCents",
+              "provisionedSpentTodayCents",
+              "sources",
+              "totalCpcCents",
+              "actualCpcCents",
+              "provisionedCpcCents",
+              "positiveRepliesCount",
+              "cpprCents"
+            ],
+            "description": "Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"
+          },
+          "recipientsContacted": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total contacted leads in scope — the Outreach stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day contacted buckets (the Outreach ACTUAL series the daily graph renders), keyed by the UTC day of each lead's contactedAt, ascending. Complete series — one entry per day with ≥1 dated contacted lead; the dashboard slices its 7-day window from it. Sums to total - undatedCount. No wall-clock dependence (buckets come only from per-lead timestamps)."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Contacted leads with a null contactedAt (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."
+          },
+          "recipientsOpened": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "Opens ACTUAL series for the Overview daily graph, server-computed from the SAME leads[] snapshot — coherent with recipientsContacted + the table (features-service#377). Replaces the pipeline-activity/instantly event-day source."
+          },
+          "recipientsClicked": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "Clicks ACTUAL series (website visits), server-computed from the SAME leads[] snapshot. ALSO the signup-goal's observed outcome — a downstream account signup is not tracked here, so the visit is the coherent signup-funnel actual; the dashboard scales it by visitToSignupPct for the projected signups line (forecast). features-service#377."
+          },
+          "recipientsRepliesPositive": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "Positive-replies ACTUAL series (email-gateway firstRepliedAt), server-computed from the SAME leads[] snapshot — coherent with the other actual series + the table. The booked-meetings lens's engagement signal (P=replyToMeeting) the meeting-goal Outcome line renders; distinct from meetingsBooked (the reply is the signal, the booked meeting its downstream outcome). features-service#390."
+          },
+          "meetingsBooked": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "Meeting-goal outcome ACTUAL series (instantly manual-qualification meetingBookedAt), server-computed from the SAME leads[] snapshot. features-service#377."
+          },
+          "purchased": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "Purchase-goal outcome ACTUAL series (instantly manual-qualification closedAt), server-computed from the SAME leads[] snapshot. features-service#377."
+          },
+          "signups": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "Signup-goal outcome ACTUAL series (lead-service conversion tracker, attributed per lead by matched email). `total` is the REAL count of leads we can confirm signed up, but `daily` is EMPTY with `undatedCount === total`: lead-service exposes WHICH lead converted, not WHEN (the conversion timestamp exists internally but no endpoint surfaces it). The per-day trend populates automatically once lead-service exposes the conversion date. Distinct from recipientsClicked (the visit PROXY the funnel EV anchors to). features-service#476."
+          },
+          "formSubmissions": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "Form-submission-goal outcome ACTUAL series (lead-service conversion tracker, event=form_submission, attributed per lead by matched email). Same shape + same date-gap caveat as `signups`: `total` real, `daily` empty / `undatedCount === total` until lead-service surfaces the conversion date. features-service#476."
+          },
+          "sequences": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Total leads in scope carrying the signal — the stat-card count. Equals sum(daily[].count) + undatedCount."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) of the contacted-lead bucket."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of leads first contacted on this UTC day."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "Per-day buckets (the ACTUAL series the daily graph renders), keyed by the UTC day of each lead's signal date, ascending. One entry per day with ≥1 dated lead; the dashboard slices its window from it. Sums to total - undatedCount. No wall-clock dependence."
+              },
+              "undatedCount": {
+                "type": "integer",
+                "description": "Leads carrying the signal with a null signal date (cannot be bucketed — no synthesis). Counted in total but in no daily bucket, so total = sum(daily[].count) + undatedCount."
+              }
+            },
+            "required": [
+              "total",
+              "daily",
+              "undatedCount"
+            ],
+            "description": "OUTREACH ACTIVITY daily series for the Overview graph — instantly campaigns-created per day (email-gateway groupBy=day), NOT the lead snapshot. Answers 'how much outreach happened each day' (re-contacts count each day, matches 'budget spent today'), whereas recipientsContacted answers 'how many DISTINCT leads have I reached' (deduped by first-ever contact). The two grains DIFFER by design and are NOT reconciled: the Outreach card renders recipientsContacted.total (unique leads); the graph's Outreach ACTUAL bars render sequences.daily (per-day actions). undatedCount is always 0. Present on the OVERVIEW response only (same gate as spend); null on the lensed (?lens=) response and absent on grouped (?groupBy=campaignId) groups. Fail-soft: null when the email-gateway read fails. features-service#415."
+          },
+          "headline": {
+            "type": "object",
+            "properties": {
+              "totalPipelineUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "Org-deduped expected pipeline. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."
+              },
+              "economicsSource": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "sales-economics",
+                  "cross-brand-average"
+                ],
+                "description": "Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no funnel wired or no economics applied)."
+              }
+            },
+            "required": [
+              "totalPipelineUsd",
+              "economicsSource"
+            ]
+          },
+          "costEconomics": {
+            "type": "object",
+            "properties": {
+              "committedCostUsd": {
+                "type": "number",
+                "description": "COMMITTED run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0) — billed `actual` PLUS the open `provisioned` holds. THE spend basis: every money figure below divides by it, and it is byte the same total the `spend` block reports as totalSpentCents, so the ROI a campaign row shows and the 'Total spent' the Overview shows can never describe different money. This is the field a consumer renders as '$ Invested'. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
+              },
+              "actualCostUsd": {
+                "type": "number",
+                "description": "Billed-only run spend for the same scope, in dollars (>= 0) — EXCLUDES the open provisioned holds. TRANSITIONAL AND REPORTED ONLY: it is kept populated (and still honestly billed-only, because a field whose name asserts 'actual' must never start carrying a committed value) so a consumer rendering money off this field has a gap-free path onto committedCostUsd. NOTHING divides by it any more — ROI, %CAC, cost per acquisition and cost per conversion all ride committedCostUsd. (features-service#396, naming features-service#402, single basis features-service#779)"
+              },
+              "costOfAcquisitionPct": {
+                "type": "number",
+                "nullable": true,
+                "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+              },
+              "roiMultiple": {
+                "type": "number",
+                "nullable": true,
+                "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+              },
+              "costPerAcquisitionUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
+              },
+              "expectedConversions": {
+                "type": "number",
+                "description": "LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+              },
+              "costPerConversionUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+              }
+            },
+            "required": [
+              "committedCostUsd",
+              "actualCostUsd",
+              "costOfAcquisitionPct",
+              "roiMultiple",
+              "costPerAcquisitionUsd"
+            ],
+            "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
+          },
+          "timeSeries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "cumulativePipelineUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "date",
+                "cumulativePipelineUsd"
+              ]
+            },
+            "description": "Cumulative pipeline ordered by event date, from the per-lead event timestamps (email-gateway + instantly manual qualifications). An org with no dated event is counted in the headline but absent here."
+          },
+          "roiHistory": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) this point describes."
+                    },
+                    "cumulativeSpendUsd": {
+                      "type": "number",
+                      "description": "COMMITTED — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, the SAME basis costEconomics.committedCostUsd rides, so the curve's last point reconciles with the headline ROI rather than charting a different currency. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                    },
+                    "cumulativePipelineUsd": {
+                      "type": "number",
+                      "description": "REALIZED — every dollar of expected pipeline earned by a DATED outcome up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
+                    },
+                    "roiMultiple": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "cumulativePipelineUsd / cumulativeSpendUsd. NULL — never 0 — on a day whose cumulative spend is still 0 (a dated outcome before a dollar was ever spent divides by nothing): null means 'could not be measured', 0 would mean 'returned nothing'."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "cumulativeSpendUsd",
+                    "cumulativePipelineUsd",
+                    "roiMultiple"
+                  ]
+                },
+                "description": "One point per UTC day that has spend or a dated outcome, ascending, spanning the brand's whole life. Days with neither are absent (never fabricated). Empty when the brand has neither spend nor a dated outcome."
+              },
+              "datedPipelineUsd": {
+                "type": "number",
+                "description": "The curve's final cumulative pipeline — the part of headline.totalPipelineUsd this curve can describe."
+              },
+              "undatedPipelineUsd": {
+                "type": "number",
+                "description": "Pipeline counted in headline.totalPipelineUsd whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === headline.totalPipelineUsd."
+              }
+            },
+            "required": [
+              "daily",
+              "datedPipelineUsd",
+              "undatedPipelineUsd"
+            ],
+            "description": "RETURN ON SPEND ACROSS THE BRAND'S WHOLE LIFE — one line a consumer charts instead of a raw cumulative signal count. BOTH legs are CUMULATIVE SINCE INCEPTION, not per-period: spend on a day buys outcomes that land days or weeks later, so a period-grain ratio oscillates and describes nothing actionable, while the cumulative form converges and its LAST roiMultiple IS costEconomics.roiMultiple for the same read (coherent by construction, not corrected). MEASURED on both legs — COMMITTED spend dated by runs-service cost buckets (the same single basis costEconomics.roiMultiple rides, which is what makes the terminal point reconcile), pipeline dated by the same per-lead event timestamps as timeSeries; nothing is modelled, spread or amortised. OVERVIEW ONLY (same gate as spend): null on the lensed (?lens=) response, absent on grouped (?groupBy=campaignId) groups. Fail-SOFT: null when the dated-spend read fails — null means 'could not be measured', never 'the return was zero'."
+          },
+          "organizations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "orgId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "orgName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "orgLogoUrl": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "orgDomain": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
+                },
+                "topPerson": {
+                  "type": "object",
+                  "properties": {
+                    "firstName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "photoUrl": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "firstName",
+                    "lastName",
+                    "photoUrl"
+                  ]
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expectedRevenueUsd": {
+                  "type": "number"
+                },
+                "mostAdvancedDate": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway)."
+                }
+              },
+              "required": [
+                "orgId",
+                "orgName",
+                "orgLogoUrl",
+                "orgDomain",
+                "topPerson",
+                "tags",
+                "expectedRevenueUsd",
+                "mostAdvancedDate"
+              ]
+            }
+          },
+          "leads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "leadId": {
+                  "type": "string"
+                },
+                "firstName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "lastName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "photoUrl": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "orgName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "orgLogoUrl": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "orgDomain": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
+                },
+                "title": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "FIRMOGRAPHIC — the person's current-employer job title (lead-service currentTitle, #336). Null when unknown; never synthesized."
+                },
+                "seniority": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "FIRMOGRAPHIC — the person's Apollo seniority band (e.g. \"vp\", \"director\", \"manager\") (lead-service seniority, #327). Null when unknown; never synthesized."
+                },
+                "orgIndustry": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "FIRMOGRAPHIC — the company's industry (lead-service organization.industry, #327). Null when unknown; never synthesized."
+                },
+                "orgEmployeeCount": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "FIRMOGRAPHIC — the company's estimated headcount (raw number from lead-service organization.estimatedNumEmployees, #327). The consumer bands it for display (e.g. \"11-50\"); NOT pre-banded here. Null when unknown; never synthesized."
+                },
+                "orgCity": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "FIRMOGRAPHIC — the company's city (lead-service organization.city, #327). Null when unknown; never synthesized."
+                },
+                "orgCountry": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "FIRMOGRAPHIC — the company's country (lead-service organization.country, #327). Null when unknown; never synthesized."
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expectedRevenueUsd": {
+                  "type": "number",
+                  "description": "Expected revenue for this lead. On a lensed (?lens=) response this is the lens's expected revenue = (conversionProbabilityPct/100) × LTR; otherwise the engine's furthest-stage EV."
+                },
+                "date": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."
+                },
+                "contacted": {
+                  "type": "boolean",
+                  "description": "True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."
+                },
+                "contactedAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
+                },
+                "opened": {
+                  "type": "boolean",
+                  "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
+                },
+                "openedAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp of first open (email-gateway firstOpenedAt). Null when not opened, or opened with no known date. No synthesis."
+                },
+                "clicked": {
+                  "type": "boolean",
+                  "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
+                },
+                "clickedAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp of first click (email-gateway firstClickedAt). Null when not clicked, or clicked with no known date. No synthesis."
+                },
+                "repliedPositive": {
+                  "type": "boolean",
+                  "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
+                },
+                "repliedPositiveAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp of the first reply, surfaced ONLY when the reply is positive-classified (matches repliedPositive; date = email-gateway firstRepliedAt). Null when there is no positive reply — INCLUDING a negative/neutral-only replier (whose firstRepliedAt is deliberately NOT surfaced) — or positive with no known date. No synthesis."
+                },
+                "meetingBooked": {
+                  "type": "boolean",
+                  "description": "True when a meeting was booked (instantly manual qualification). The meeting-goal outcome the goal daily-graph actual buckets (features-service#377)."
+                },
+                "meetingBookedAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp the meeting was booked (instantly manual-qualification meetingBookedAt). Null when no meeting, or no known date. No synthesis."
+                },
+                "purchased": {
+                  "type": "boolean",
+                  "description": "True when the lead became a paying client / closed (instantly manual qualification). The purchase-goal outcome (features-service#377)."
+                },
+                "purchasedAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
+                },
+                "signup": {
+                  "type": "boolean",
+                  "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
+                },
+                "signupAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
+                },
+                "formSubmission": {
+                  "type": "boolean",
+                  "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
+                },
+                "formSubmissionAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
+                },
+                "conversionProbabilityPct": {
+                  "type": "number",
+                  "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+                }
+              },
+              "required": [
+                "leadId",
+                "firstName",
+                "lastName",
+                "photoUrl",
+                "orgName",
+                "orgLogoUrl",
+                "orgDomain",
+                "title",
+                "seniority",
+                "orgIndustry",
+                "orgEmployeeCount",
+                "orgCity",
+                "orgCountry",
+                "tags",
+                "expectedRevenueUsd",
+                "date",
+                "contacted",
+                "contactedAt",
+                "opened",
+                "openedAt",
+                "clicked",
+                "clickedAt",
+                "repliedPositive",
+                "repliedPositiveAt",
+                "meetingBooked",
+                "meetingBookedAt",
+                "purchased",
+                "purchasedAt",
+                "signup",
+                "signupAt",
+                "formSubmission",
+                "formSubmissionAt"
+              ]
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "leadId": {
+                  "type": "string"
+                },
+                "person": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "org": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "eventType": {
+                  "type": "string"
+                },
+                "eventDate": {
+                  "type": "string"
+                },
+                "contributionUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "leadId",
+                "person",
+                "org",
+                "eventType",
+                "eventDate",
+                "contributionUsd"
+              ]
+            },
+            "description": "One row per event. Empty until per-event timestamps exist (email-gateway)."
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "featureSlug": {
+                  "type": "string",
+                  "description": "The acquisition channel — a feature slug, this fleet's only name for one."
+                },
+                "campaignIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The brand's campaigns campaign-service states run through this channel, ascending."
+                },
+                "headline": {
+                  "type": "object",
+                  "properties": {
+                    "totalPipelineUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Org-deduped expected pipeline. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."
+                    },
+                    "economicsSource": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "sales-economics",
+                        "cross-brand-average"
+                      ],
+                      "description": "Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no funnel wired or no economics applied)."
+                    }
+                  },
+                  "required": [
+                    "totalPipelineUsd",
+                    "economicsSource"
+                  ]
+                },
+                "costEconomics": {
+                  "type": "object",
+                  "properties": {
+                    "committedCostUsd": {
+                      "type": "number",
+                      "description": "COMMITTED run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0) — billed `actual` PLUS the open `provisioned` holds. THE spend basis: every money figure below divides by it, and it is byte the same total the `spend` block reports as totalSpentCents, so the ROI a campaign row shows and the 'Total spent' the Overview shows can never describe different money. This is the field a consumer renders as '$ Invested'. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
+                    },
+                    "actualCostUsd": {
+                      "type": "number",
+                      "description": "Billed-only run spend for the same scope, in dollars (>= 0) — EXCLUDES the open provisioned holds. TRANSITIONAL AND REPORTED ONLY: it is kept populated (and still honestly billed-only, because a field whose name asserts 'actual' must never start carrying a committed value) so a consumer rendering money off this field has a gap-free path onto committedCostUsd. NOTHING divides by it any more — ROI, %CAC, cost per acquisition and cost per conversion all ride committedCostUsd. (features-service#396, naming features-service#402, single basis features-service#779)"
+                    },
+                    "costOfAcquisitionPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                    },
+                    "roiMultiple": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                    },
+                    "costPerAcquisitionUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
+                    },
+                    "expectedConversions": {
+                      "type": "number",
+                      "description": "LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "costPerConversionUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    }
+                  },
+                  "required": [
+                    "committedCostUsd",
+                    "actualCostUsd",
+                    "costOfAcquisitionPct",
+                    "roiMultiple",
+                    "costPerAcquisitionUsd"
+                  ],
+                  "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
+                }
+              },
+              "required": [
+                "featureSlug",
+                "campaignIds",
+                "headline",
+                "costEconomics"
+              ]
+            },
+            "description": "The per-channel breakdown, in the SAME response as the total — so a caller states the brand's figures without naming a channel AND shows the rows beside them, without asking N times (it does not own which channels a brand runs). MONEY is what the rows are comparable on and Σ rows IS the brand's spend, though not to the cent: a row reads its spend grouped by workflow while the total's spend block groups by cost name, and runs-service returns fractional cents per group, so each rounds once per its own grouping (the same sub-cent property the per-workflow and offer grains document). A row is narrowed to its channel's own campaigns so its RETURN is its own — the lead read has never been feature-scoped, so an un-narrowed row would divide the brand's whole pipeline by one channel's spend. The rows therefore do NOT sum on the people half: a lead worked through two channels is one lead to the brand and belongs to both rows. Ascending by slug. A channel this service cannot measure (no funnel wired — it measures email today) appears with its REAL spend and a null pipeline, exactly as its own read reports it."
+          }
+        },
+        "required": [
+          "spend",
+          "recipientsContacted",
+          "recipientsOpened",
+          "recipientsClicked",
+          "recipientsRepliesPositive",
+          "meetingsBooked",
+          "purchased",
+          "signups",
+          "formSubmissions",
+          "sequences",
+          "headline",
+          "costEconomics",
+          "timeSeries",
+          "roiHistory",
+          "organizations",
+          "leads",
+          "events",
+          "brandId",
+          "channels"
+        ]
+      },
+      "BrandAudienceStatsResponse": {
+        "type": "object",
+        "properties": {
+          "featureSlug": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "signup",
+              "meetingBooked",
+              "websitePurchase",
+              "sales",
+              "websiteVisit",
+              "positiveReply",
+              "formSubmission",
+              "whatsappConversation"
+            ],
+            "description": "The chain's goal ECHO on a single-funnel read. NULL on the BRAND-LEVEL read (neither `funnel` nor `goal` sent): a brand has no goal — it sells through every funnel it declared at once — and echoing one of them there would be exactly the arbitrary pick that read exists to remove."
+          },
+          "funnelCoverage": {
+            "type": "object",
+            "properties": {
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "best_returning_declared_funnel"
+                ],
+                "description": "How the money figures were combined across the brand's declared funnels: a dollar spent buys a customer through whichever chain converts it best, so a return is the MAXIMUM over the declared set — never a blend, never a sum. Same doctrine as the combined-`sales` cost (min over channels = max over returns), and the reason this reconciles with /features/{slug}/funnel-ranking by construction: its rank-1 funnel IS this maximum, on the identical returnPerDollar definition and the identical evidence."
+              },
+              "funnels": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "funnelKey": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "priced": {
+                      "type": "boolean",
+                      "description": "True when this funnel produced a defined, positive return that competed for the best."
+                    },
+                    "reason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "no_economics",
+                        "no_workflow_evidence",
+                        "no_paid_client_path",
+                        "no_return_defined"
+                      ],
+                      "description": "Why the funnel could not be priced, when priced=false. Never a substituted number — the reason IS the answer. Same vocabulary /funnel-ranking reports per declared funnel."
+                    }
+                  },
+                  "required": [
+                    "funnelKey",
+                    "name",
+                    "priced",
+                    "reason"
+                  ]
+                },
+                "description": "EVERY funnel the brand DECLARED, and whether it went into the figures. Listed in full, never short: a reader who cannot tell what was included cannot trust the number."
+              },
+              "pricingBasisFunnelKey": {
+                "type": "string",
+                "nullable": true,
+                "description": "The funnel whose chain every cost-per-outcome COLUMN on this payload is denominated in — the brand's best-returning declared funnel, falling back to its FIRST declared funnel in catalogue order when none could be priced. A cost per outcome is denominated in a chain's own outcome, so unlike a return it cannot be combined across chains; naming the one it was priced on is the honest answer."
+              }
+            },
+            "required": [
+              "basis",
+              "funnels",
+              "pricingBasisFunnelKey"
+            ],
+            "description": "Present ONLY on the BRAND-LEVEL read (neither `funnel` nor `goal` sent) — what the money figures cover."
+          },
+          "brandProfileId": {
+            "type": "string",
+            "nullable": true
+          },
+          "sortMetric": {
+            "type": "string",
+            "enum": [
+              "cpc",
+              "cppr",
+              "returnPerDollar"
+            ],
+            "description": "Single-funnel read: signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. BRAND-LEVEL read: `returnPerDollar`, DESCENDING (best return first, unmeasurable rows last) — at brand level there is no goal, and cost per outcome would rank by cheapness, putting an audience that converts to nothing above an expensive one that pays."
+          },
+          "audiences": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "audienceId": {
+                  "type": "string",
+                  "description": "Audience ID (human-service audience.id) the row's evidence is attributed to. Rows are emitted only for real attributed producer groups."
+                },
+                "brandProfileId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Brand-profile version used to filter producer evidence, when known."
+                },
+                "audience": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "active",
+                        "paused",
+                        "archived"
+                      ]
+                    },
+                    "filters": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "titles": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "seniorities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "functions": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "locationCountries": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "locationStates": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "locationCities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "companyNames": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "companyDomains": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "industries": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "keywords": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "employeeMin": {
+                          "type": "number"
+                        },
+                        "employeeMax": {
+                          "type": "number"
+                        },
+                        "companySizes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "revenueRanges": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "fundingStages": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "technologies": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "description": "Targeting filter-set, sourced from the human-service audience."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "status",
+                    "filters"
+                  ]
+                },
+                "evidence": {
+                  "type": "object",
+                  "properties": {
+                    "totalCostInUsdCents": {
+                      "type": "number",
+                      "description": "Audience-scoped spend numerator from runs-service, in USD cents."
+                    },
+                    "completedRuns": {
+                      "type": "number",
+                      "description": "Completed runs behind this audience's cost evidence."
+                    },
+                    "firstRunAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "format": "date-time"
+                    },
+                    "lastRunAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "format": "date-time"
+                    },
+                    "memberCount": {
+                      "type": "number",
+                      "description": "Distinct MEMBER count of the audience (people served under it — human-service membership provenance). The addressable pool size; contacted ⊆ memberCount. Remaining-to-contact = memberCount − contacted; %used = contacted / memberCount. 0 when the audience has no members."
+                    },
+                    "contacted": {
+                      "type": "number",
+                      "description": "Audience-scoped contacted-recipient count from email-gateway broadcast stats."
+                    },
+                    "opened": {
+                      "type": "number",
+                      "description": "Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."
+                    },
+                    "websiteClicks": {
+                      "type": "number",
+                      "description": "Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."
+                    },
+                    "positiveReplies": {
+                      "type": "number",
+                      "description": "Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."
+                    },
+                    "formSubmissions": {
+                      "type": "number",
+                      "description": "REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions."
+                    },
+                    "signups": {
+                      "type": "number",
+                      "description": "REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups."
+                    },
+                    "sales": {
+                      "type": "number",
+                      "description": "REAL per-audience SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase), attributed by intersecting the audience's member emails with the brand's matched-lead sale conversion emails — the SAME membership join as signups/form-submissions, never a split of the brand total. Present ONLY for the website-purchase OR combined-sales goals (both terminate in a `sale`); ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per sale = totalCostInUsdCents / sales."
+                    }
+                  },
+                  "required": [
+                    "totalCostInUsdCents",
+                    "completedRuns",
+                    "firstRunAt",
+                    "lastRunAt",
+                    "memberCount",
+                    "contacted",
+                    "opened",
+                    "websiteClicks",
+                    "positiveReplies"
+                  ]
+                },
+                "metrics": {
+                  "type": "object",
+                  "properties": {
+                    "cpcCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "totalCostInUsdCents / websiteClicks. Null when websiteClicks is zero OR no spend is attributed (totalCostInUsdCents is zero) — never a false $0.00."
+                    },
+                    "cpprCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "totalCostInUsdCents / positiveReplies. Null when positiveReplies is zero OR no spend is attributed (totalCostInUsdCents is zero) — never a false $0.00."
+                    },
+                    "cpfsCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "REAL cost per form submission (OBSERVED) = totalCostInUsdCents / formSubmissions. Null when formSubmissions is 0/absent (not the form_submissions goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (form_submissions sorts on cpc)."
+                    },
+                    "cpsCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "REAL cost per signup (OBSERVED) = totalCostInUsdCents / signups. Null when signups is 0/absent (not the signup goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (signup sorts on cpc)."
+                    },
+                    "cpsaleCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "REAL cost per sale (OBSERVED) = totalCostInUsdCents / sales. Null when sales is 0/absent (not the website-purchase / combined-sales goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (both goals sort on cppr)."
+                    }
+                  },
+                  "required": [
+                    "cpcCents",
+                    "cpprCents",
+                    "cpfsCents",
+                    "cpsCents",
+                    "cpsaleCents"
+                  ]
+                },
+                "projection": {
+                  "type": "object",
+                  "properties": {
+                    "basisFunnelKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "BRAND-LEVEL read only (neither `funnel` nor `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning chain, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the chain); null when nothing could be priced."
+                    },
+                    "lifetimeRevenueUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two chains the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
+                    },
+                    "costPerPaidClientUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's chain on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the chain has no path to a paying client or at cold start."
+                    },
+                    "returnPerDollar": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "PROJECTED — dollars of lifetime revenue per dollar spent on this audience = brandProjection.lifetimeRevenueUsd / costPerPaidClientUsd. Rank a brand's audiences on THIS, not on cost per outcome: cost per outcome ranks by cheapness, so an audience that converts to nothing outranks an expensive one that pays. It is the IDENTICAL definition /features/{slug}/funnel-ranking ranks a brand's declared funnels on, so an audience's return and the brand's return are one statistic at two grains. Not the REALIZED /revenue costEconomics.roiMultiple (that divides measured pipeline by measured spend) — this is what the evidence PROJECTS. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns take). Null (never 0) when unmeasurable."
+                    },
+                    "costOfAcquisitionPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "PROJECTED — what winning a customer from this audience costs as a SHARE of what that customer is worth over their lifetime, percent = 100 x costPerPaidClientUsd / brandProjection.lifetimeRevenueUsd, which is exactly 100 / returnPerDollar. Below 100 means the audience pays for itself. Served rather than left to the consumer BECAUSE it is the reciprocal of a field already on this row: a consumer dividing one of our fields into another is how two surfaces come to print two numbers for one statistic. Same statement as returnPerDollar and costPerPaidClientUsd in a third unit, so the three can never disagree, and the identical definition one grain coarser at brandProjection.costOfAcquisitionPct. PROJECTED, NOT REALIZED: do not pair it with the realized /revenue costEconomics.costOfAcquisitionPct (measured spend / measured pipeline) as if they were the same figure — this one prices what the audience's own observed unit costs imply under the brand's declared economics. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns and returnPerDollar take). NULL (never 0) whenever it could not be measured — no lifetime revenue, no path to a paying client, cold start; a 0 would say winning a customer costs nothing."
+                    }
+                  },
+                  "required": [
+                    "costPerPaidClientUsd",
+                    "returnPerDollar",
+                    "costOfAcquisitionPct"
+                  ],
+                  "description": "PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."
+                }
+              },
+              "required": [
+                "audienceId",
+                "brandProfileId",
+                "audience",
+                "evidence",
+                "metrics",
+                "projection"
+              ]
+            },
+            "description": "Audience rows sorted by sortMetric — ascending for the cost metrics (null last), DESCENDING for returnPerDollar (null last). Rank by projection.returnPerDollar when the question is where the money should go."
+          },
+          "brandProjection": {
+            "type": "object",
+            "properties": {
+              "basisFunnelKey": {
+                "type": "string",
+                "nullable": true,
+                "description": "BRAND-LEVEL read only: the declared funnel the BRAND's own return was priced through — the head of /features/{slug}/funnel-ranking's ranking for the same brand at the same moment. Absent on a single-funnel read; null when nothing could be priced."
+              },
+              "lifetimeRevenueUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "The brand's lifetime revenue per paying client, from the resolved (declared-funnel-priced) economics this whole payload was projected on — the numerator behind every returnPerDollar here. Surfaced so a consumer can never pair a return with an LTR this projection did not use. Null at cold start."
+              },
+              "costPerPaidClientUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the chain has no path to a paying client."
+              },
+              "returnPerDollar": {
+                "type": "number",
+                "nullable": true,
+                "description": "PROJECTED brand-level return per dollar = lifetimeRevenueUsd / costPerPaidClientUsd — the same definition as each row's, one grain coarser. Read a row's return against this ('this audience beats the brand'). Null (never 0) when unmeasurable."
+              },
+              "costOfAcquisitionPct": {
+                "type": "number",
+                "nullable": true,
+                "description": "PROJECTED brand-level cost of acquisition as a share of lifetime revenue, percent = 100 / returnPerDollar — the same definition as each row's, one grain coarser, and the value a row with no measured grain inherits. Read a row's share against this ('this audience wins customers at a smaller slice of their worth than the brand does'). PROJECTED, not the realized /revenue costEconomics.costOfAcquisitionPct. Null (never 0) when unmeasurable."
+              }
+            },
+            "required": [
+              "lifetimeRevenueUsd",
+              "costPerPaidClientUsd",
+              "returnPerDollar",
+              "costOfAcquisitionPct"
+            ],
+            "description": "The BRAND-level twin of every row's projection, on the same economics and the same formula."
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "featureSlug": {
+                  "type": "string",
+                  "description": "The acquisition channel — a feature slug, this fleet's only name for one."
+                },
+                "campaignIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The brand's campaigns campaign-service states run through this channel, ascending."
+                }
+              },
+              "required": [
+                "featureSlug",
+                "campaignIds"
+              ]
+            },
+            "description": "The channels combined into every row below, ascending by slug."
+          }
+        },
+        "required": [
+          "featureSlug",
+          "brandId",
+          "goal",
+          "brandProfileId",
+          "sortMetric",
+          "audiences",
+          "brandProjection",
+          "channels"
+        ]
+      },
+      "BrandPipelineActivityResponse": {
+        "type": "object",
+        "properties": {
+          "featureSlug": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "description": "Calendar date in the requested timezone (YYYY-MM-DD)."
+                },
+                "isToday": {
+                  "type": "boolean"
+                },
+                "metrics": {
+                  "type": "object",
+                  "properties": {
+                    "outreach": {
+                      "type": "object",
+                      "properties": {
+                        "actual": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                        },
+                        "expected": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected daily value from brand daily budget, recommended workflow cost/contact, and audience/workflow evidence. Null when required producer inputs are unavailable."
+                        }
+                      },
+                      "required": [
+                        "actual",
+                        "expected"
+                      ]
+                    },
+                    "opens": {
+                      "type": "object",
+                      "properties": {
+                        "actual": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                        },
+                        "expected": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected daily value from brand daily budget, recommended workflow cost/contact, and audience/workflow evidence. Null when required producer inputs are unavailable."
+                        }
+                      },
+                      "required": [
+                        "actual",
+                        "expected"
+                      ]
+                    },
+                    "clicks": {
+                      "type": "object",
+                      "properties": {
+                        "actual": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Today: actual-so-far from dated broadcast email events. Future days: null."
+                        },
+                        "expected": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected daily value from brand daily budget, recommended workflow cost/contact, and audience/workflow evidence. Null when required producer inputs are unavailable."
+                        }
+                      },
+                      "required": [
+                        "actual",
+                        "expected"
+                      ]
+                    },
+                    "signups": {
+                      "type": "object",
+                      "properties": {
+                        "actual": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Signup ACTUAL: the REAL, deduped, attributed per-day conversion count from lead-service (NOT a clicks × rate projection). Populated for today + past days; null on future days (forecast only) and when the observed series degraded (lead-service unavailable)."
+                        },
+                        "expected": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected daily value from brand daily budget, recommended workflow cost/contact, and audience/workflow evidence. Null when required producer inputs are unavailable."
+                        },
+                        "conversionPct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "visitToSignupPct used for the signup projection in `.expected`. Null when brand economics are unavailable."
+                        }
+                      },
+                      "required": [
+                        "actual",
+                        "expected",
+                        "conversionPct"
+                      ]
+                    },
+                    "formSubmissions": {
+                      "type": "object",
+                      "properties": {
+                        "actual": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Form-submission ACTUAL: the REAL, deduped, attributed per-day conversion count from lead-service (NOT a clicks × rate projection). Populated for today + past days; null on future days (forecast only) and when the observed series degraded (lead-service unavailable)."
+                        },
+                        "expected": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected daily value from brand daily budget, recommended workflow cost/contact, and audience/workflow evidence. Null when required producer inputs are unavailable."
+                        },
+                        "conversionPct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "visitToFormSubmissionPct used for the form-submission projection in `.expected`. Null when brand economics are unavailable OR the brand does not carry a form-submission rate (non-form brand)."
+                        }
+                      },
+                      "required": [
+                        "actual",
+                        "expected",
+                        "conversionPct"
+                      ],
+                      "description": "Form-submission daily bar — the visit-driven sibling of signups. actual (today + past days) = the REAL per-day form-submission conversion count from lead-service; expected (future days) = expected clicks × visitToFormSubmissionPct/100."
+                    }
+                  },
+                  "required": [
+                    "outreach",
+                    "opens",
+                    "clicks",
+                    "signups",
+                    "formSubmissions"
+                  ]
+                }
+              },
+              "required": [
+                "date",
+                "isToday",
+                "metrics"
+              ]
+            }
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "dailyBudgetUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "Brand daily budget from billing-service. Null when no daily budget is configured for this org + brand."
+              },
+              "openRatePct": {
+                "type": "number",
+                "nullable": true,
+                "description": "Observed audience + workflow broadcast open rate used for expected opens. Null when producer evidence is unavailable."
+              },
+              "clickToSignupPct": {
+                "type": "number",
+                "nullable": true,
+                "description": "Brand effective visit-to-signup conversion percent. Null when brand economics are unavailable."
+              },
+              "clickToFormSubmissionPct": {
+                "type": "number",
+                "nullable": true,
+                "description": "Brand effective visit-to-form-submission conversion percent (the form-submission projection rate). Null when brand economics are unavailable OR the brand does not carry a form-submission rate."
+              },
+              "undatedSignups": {
+                "type": "number",
+                "nullable": true,
+                "description": "REAL attributed signup conversions whose day cannot be determined (received_at IS NULL — 0 in practice). Counted here so they are never dropped and never assigned a fabricated day in days[]. Null when the observed series degraded (lead-service unavailable)."
+              },
+              "undatedFormSubmissions": {
+                "type": "number",
+                "nullable": true,
+                "description": "REAL attributed form-submission conversions whose day cannot be determined (received_at IS NULL — 0 in practice). Counted here so they are never dropped and never assigned a fabricated day in days[]. Null when the observed series degraded (lead-service unavailable)."
+              }
+            },
+            "required": [
+              "dailyBudgetUsd",
+              "openRatePct",
+              "clickToSignupPct",
+              "clickToFormSubmissionPct",
+              "undatedSignups",
+              "undatedFormSubmissions"
+            ]
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "featureSlug": {
+                  "type": "string",
+                  "description": "The acquisition channel — a feature slug, this fleet's only name for one."
+                },
+                "campaignIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The brand's campaigns campaign-service states run through this channel, ascending."
+                }
+              },
+              "required": [
+                "featureSlug",
+                "campaignIds"
+              ]
+            },
+            "description": "The channels merged into the day series below, ascending by slug."
+          }
+        },
+        "required": [
+          "featureSlug",
+          "brandId",
+          "timezone",
+          "generatedAt",
+          "days",
+          "summary",
+          "channels"
+        ]
+      },
       "PublicRevenueResponse": {
         "type": "object",
         "properties": {
@@ -12574,6 +14373,520 @@
           },
           "404": {
             "description": "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/revenue": {
+      "get": {
+        "summary": "A brand's money, across every acquisition channel it runs",
+        "description": "The same realized-money answer /features/{featureSlug}/revenue gives, at the grain the brand Overview actually presents: the BRAND, across every channel it runs, in ONE request, with the per-channel breakdown beside it. It exists because the Overview read one channel's money and paired it with billing's BRAND daily budget, making a fraction with two grains in it — both halves real, about different things, and nothing erroring. Money adds across channels; people, pipeline and every ratio do not — see the brand-grain note on the schema. Nothing is re-attributed. A brand running ONE channel answers identically to that channel's own read. No ?lens= and no ?groupBy=: a lens narrows to a subset of LEADS while its spend leg would still be the whole brand's, and the only grouping at this grain is the channel breakdown, which ships unconditionally. Both remain available per channel on /features/{featureSlug}/revenue.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The SALES FUNNEL the spend block's cost-per-outcome columns are priced on, with the same vocabulary, the same default (the brand's first declared funnel) and the same fail-loud parse as the per-feature read."
+            },
+            "required": false,
+            "description": "The SALES FUNNEL the spend block's cost-per-outcome columns are priced on, with the same vocabulary, the same default (the brand's first declared funnel) and the same fail-loud parse as the per-feature read.",
+            "name": "funnel",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."
+            },
+            "required": false,
+            "description": "Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The brand's money plus its per-channel breakdown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandRevenueResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An invalid funnel / pricing value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "campaign-service lists no campaign for this brand, so it runs no acquisition channel (reason: brand_has_no_channels) — never a number about an unknown subset of channels",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The brand runs channels that price on different funnels (reason: brand_channels_price_differently), so its money cannot honestly be answered as one figure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/audience-stats": {
+      "get": {
+        "summary": "A brand's per-audience economics, across every acquisition channel it runs",
+        "description": "The same per-audience ranking /features/{featureSlug}/audience-stats serves, for the BRAND rather than one of its channels. Audiences are BRAND entities (human-service owns them), so the audience LIST is unchanged; what widens is the money and the engagement behind each row. Both are per-audience SEND-TAG figures and a send carries exactly one campaign and one channel, so they add across channels with nothing counted twice — and each row's ratios are then recomputed from those combined numerators, never averaged. The cross-org benchmark each column floors against is a property of ONE channel, so the BEST-RETURNING channel's is taken whole rather than blended. A brand running one channel answers identically to that channel's own read.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Same vocabulary and same meaning as the per-feature read. Omitting both goal and funnel is the brand-level read, not an error."
+            },
+            "required": false,
+            "description": "Same vocabulary and same meaning as the per-feature read. Omitting both goal and funnel is the brand-level read, not an error.",
+            "name": "goal",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Same vocabulary and same meaning as the per-feature read."
+            },
+            "required": false,
+            "description": "Same vocabulary and same meaning as the per-feature read.",
+            "name": "funnel",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated audience statuses. Same meaning as the per-feature read."
+            },
+            "required": false,
+            "description": "Comma-separated audience statuses. Same meaning as the per-feature read.",
+            "name": "statuses",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Maximum number of audience rows. Same meaning as the per-feature read."
+            },
+            "required": false,
+            "description": "Maximum number of audience rows. Same meaning as the per-feature read.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Same gross/net selector, same fail-loud NET rule, as the per-feature read."
+            },
+            "required": false,
+            "description": "Same gross/net selector, same fail-loud NET rule, as the per-feature read.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The brand's per-audience evidence and metrics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandAudienceStatsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unrecognised goal / funnel / limit / statuses / pricing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "campaign-service lists no campaign for this brand (reason: brand_has_no_channels), or a channel it runs is not a feature this service knows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/pipeline-activity": {
+      "get": {
+        "summary": "A brand's per-day activity, across every acquisition channel it runs",
+        "description": "The day series of /features/{featureSlug}/pipeline-activity, for the BRAND rather than one of its channels. Every actual series is an EVENT count tagged to one campaign and a campaign runs through one channel, so the channels add exactly — each is read under its OWN channel, brand-wide, and the day buckets merged. Unlike the offer grain, summary.dailyBudgetUsd and the observed signup / form-submission actuals ARE this grain's own figures — billing funds the budget per brand and the conversion tracker is brand-keyed — so both are stated rather than nulled. The EXPECTED series is NOT combinable across channels: expected.outreach is dailyBudgetUsd / cost-per-outreach and that divisor is a property of ONE channel, with no per-channel ceiling to split the budget by. So with several channels the expected bars are null ('we could not measure this', never a share and never a zero) while the budget itself is still stated; with exactly one channel the ordinary forecast is computed, unchanged. `featureSlug` on the body carries the brand's whole channel set (comma-joined) rather than naming one of several; the `channels` array is the structured form.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Number of days to return. Defaults to 7."
+            },
+            "required": false,
+            "description": "Number of days to return. Defaults to 7.",
+            "name": "days",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "IANA timezone used for calendar day ordering. Same acceptance and same 400-naming-the-parameter behaviour as the per-feature read."
+            },
+            "required": true,
+            "description": "IANA timezone used for calendar day ordering. Same acceptance and same 400-naming-the-parameter behaviour as the per-feature read.",
+            "name": "timezone",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Prices the forecast's cost divisor at what the org actually pays, exactly as on the per-feature read; folded into the cache key so a gross and a net request never share a body."
+            },
+            "required": false,
+            "description": "Prices the forecast's cost divisor at what the org actually pays, exactly as on the per-feature read; folded into the cache key so a gross and a net request never share a body.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The brand's day buckets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandPipelineActivityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid days, timezone or pricing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "campaign-service lists no campaign for this brand (reason: brand_has_no_channels)",
             "content": {
               "application/json": {
                 "schema": {

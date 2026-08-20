@@ -115,8 +115,23 @@ export class OfferChannelsPriceDifferentlyError extends Error {
   }
 }
 
+/**
+ * The DISTINCT funnel definitions a set of channels prices on.
+ *
+ * Shared with the brand grain, which faces the identical question one narrowing wider: a read spanning
+ * several channels can be priced as one figure only when they price one way. More than one entry means
+ * the caller must be told rather than have one silently picked; an empty one means no channel of the
+ * set has a funnel, and the read reports spend with a null pipeline — the same answer each of those
+ * channels gives on its own.
+ */
+export function distinctChannelFunnels(
+  channels: Array<{ featureSlug: string }>,
+): Array<NonNullable<ReturnType<typeof getFunnel>>> {
+  return [...new Set(channels.map((c) => getFunnel(c.featureSlug)).filter((f) => f !== null))];
+}
+
 function resolveOfferFunnel(offerId: string, channels: OfferChannel[]): ReturnType<typeof getFunnel> {
-  const distinct = [...new Set(channels.map((c) => getFunnel(c.featureSlug)).filter((f) => f !== null))];
+  const distinct = distinctChannelFunnels(channels);
   if (distinct.length > 1) throw new OfferChannelsPriceDifferentlyError(offerId);
   return distinct[0] ?? null;
 }
