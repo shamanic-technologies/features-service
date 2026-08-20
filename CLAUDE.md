@@ -1,5 +1,71 @@
 # Features Service — CLAUDE.md
 
+## A BRAND RUNS SEVERAL CHANNELS AT ONCE — `GET /brands/:brandId/{revenue,audience-stats,pipeline-activity}` answers for the BRAND; it is the offer grain ONE LEVEL UP, on the SAME code
+
+A brand holds several OFFERS and sells each of them through several ACQUISITION CHANNELS. So neither a
+per-feature read (one channel) nor an offer read (one offer's channels) can answer for the BRAND — and
+the brand is what the customer's main screen presents.
+
+**It showed up as a FRACTION with two grains in it.** The Overview read one channel's money and paired
+it with billing's BRAND daily budget. Prod 2026-08-20, brand `75d7e3e8…` (org `b645207b…`):
+`sales-cold-email-outreach` spent $40.07 today against its own $40 ceiling and
+`feedback-request-cold-email-outreach` $10.32 against its own $10 — and the page read **"$40 / 50"**.
+The denominator was right. The numerator was about one channel. Nothing errored: both numbers were
+real, they were simply about different things.
+
+- **EVERY COMBINATION RULE IS THE OFFER SECTION'S, UNCHANGED, AND IT IS THE SAME CODE** — money adds
+  (a run carries one `feature_slug`, so the channel set goes to runs-service as its plural
+  `featureSlugs` filter and the PRODUCER sums); people do not (one brand-scoped lead read, deduped
+  before the engine); pipeline does not (ONE engine pass, the per-organisation combination is not
+  additive across partitions); no ratio does (recomputed from the combined numerator and denominator);
+  a benchmark is not combinable at all (`pickBestChannel`, the best-returning channel's taken whole).
+  `computeFeatureRevenue` / `computeAudienceStats` / the day-bucket merge are the byte-same functions
+  the offer grain calls — a second implementation is what would drift.
+- **IT IS NOT THE SUM OF THE BRAND'S OFFERS AND NOT THE SUM OF ITS CHANNELS.** Only the additive half
+  could be summed at all, and it would be assembled by a consumer that owns neither list.
+- **THE SCOPE IS THE CHANNEL SET, NOT AN ENUMERATED CAMPAIGN LIST** (`lib/brand-channels.ts`, the offer
+  partition read one narrowing wider). `brandId` is already a producer filter on every read here, so
+  unlike the offer grain — where the campaign is the frozen link to the offer — nothing is narrowed by
+  campaign. Two consequences, both wanted: a campaign campaign-service does not list still has its
+  spend counted, and a brand running exactly ONE channel issues the byte-same downstream requests its
+  per-feature read issues today, so its answer cannot move. The campaign ids still ride each breakdown
+  row so a reader can see what a row is made of.
+- **A CHANNEL ROW IS NARROWED TO ITS OWN CAMPAIGNS, unlike the brand body above it — and that is not
+  an inconsistency, it is the only way its RETURN is its own.** The row's MONEY would be identical
+  either way (the feature filter already isolates a channel's cost rows), but the lead read has never
+  been feature-scoped, so an un-narrowed row would divide the BRAND's whole pipeline by ONE channel's
+  spend and print a return that channel never earned. Σ rows IS the brand's spend (to the same sub-cent
+  rounding the workflow and offer grains document: a row groups by workflow, the total's `spend` block
+  by cost name, and runs-service returns fractional cents per group). The rows do NOT sum on the people
+  half — a lead worked through two channels is one lead to the brand and belongs to both rows.
+- **`pipeline-activity` STATES WHAT THIS GRAIN OWNS AND NULLS WHAT IT CANNOT COMBINE.** The DAILY
+  BUDGET is the brand's (billing funds it per brand) and the OBSERVED conversions are the brand's (the
+  tracker is brand-keyed), so both are answered here where the offer grain must null them — the budget
+  is read on its own rather than taken off the forecast, precisely because the case where the forecast
+  nulls is the case where the customer still needs the ceiling their day's spend is read against. The
+  EXPECTED series is NOT combinable: `expected.outreach = dailyBudgetUsd / effectiveOutreachUsd` and
+  that divisor is a property of ONE channel, with no per-channel ceiling to split the budget by. So
+  with several channels the expected bars are null and the budget is still stated; with exactly one
+  channel the ordinary forecast is computed, unchanged. **Do NOT "fix" the null by dividing the brand's
+  budget by one channel's price — that IS the two-grain pairing this grain removes.**
+- **A BRAND campaign-service LISTS NO CAMPAIGN FOR IS A NAMED 404** (`brand_has_no_channels`), never a
+  figure about an unknown subset of channels. An unreadable channel set is FAIL-LOUD for the same
+  reason. Two channels pricing on different `FUNNEL_REGISTRY` definitions is a **409
+  `brand_channels_price_differently`** (it cannot happen today; both registered channels price on
+  `salesFunnel`).
+- **NOT SERVED AT THIS GRAIN, on purpose:** `?lens=` (a lens narrows to a subset of LEADS while its
+  spend leg would still be the whole brand's) and `?groupBy=` (the only grouping here is the channel
+  breakdown, which is unconditional). Both stay available per channel.
+- **THE PER-FEATURE AND PER-OFFER READS ARE UNTOUCHED** and still mean exactly what they mean. Both
+  have live consumers; nothing moves until one opts in.
+- **The api-service gateway does NOT proxy `/brands/*` yet** — same follow-up the `/offers/*` reads
+  need before a consumer outside the cluster can read them.
+- Guards: `src/routes/brand-cross-channel.test.ts` (both channels accounted for incl. TODAY's spend;
+  money adds and Σ rows is the brand's spend while a shared lead counts once; a row states its own
+  return; the one-channel identity on all three reads; the per-feature read unchanged; the named 404;
+  the budget stated beside a null forecast), `src/lib/brand-channels.ts` for the partition itself.
+  (Set 2026-08-20.)
+
 ## AN OFFER IS SOLD THROUGH SEVERAL CHANNELS AT ONCE — `GET /offers/:offerId/{revenue,audience-stats,pipeline-activity}` answers for the OFFER; MONEY is the only thing that adds
 
 A brand sells one OFFER through several ACQUISITION CHANNELS at once. A channel IS a feature slug (this

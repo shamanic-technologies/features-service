@@ -24,7 +24,15 @@ import { selectCostCents, type Pricing } from "./pricing.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 import { pickBestChannel } from "./offer-parents.js";
-import type { OfferChannel } from "./offer-channels.js";
+/**
+ * One acquisition channel a multi-channel read spans, and the campaigns of it the caller resolved.
+ * Structurally the offer grain's `OfferChannel` and the brand grain's `BrandChannel` — both are "a
+ * feature slug plus its campaign ids", and this compute needs nothing else from either.
+ */
+interface ScopeChannel {
+  featureSlug: string;
+  campaignIds: string[];
+}
 
 /**
  * How the rows were ordered.
@@ -933,13 +941,19 @@ export async function computeAudienceStats(
   // too, so they are passed in rather than read twice). Present → every cost and engagement numerator
   // narrows to those campaigns. Absent → the single `?campaignId=` scope, or brand-wide, unchanged.
   offerCampaignIds?: string[],
-  // The CHANNELS those campaigns run through, when the read is at the OFFER grain (an offer is sold
-  // through several at once). Absent → the ONE channel the route path names, which is every existing
-  // caller. A one-channel offer therefore produces the identical scope its own channel read produces.
-  offerChannels?: OfferChannel[],
+  // The CHANNELS the read spans, when it is at a grain that spans several — an OFFER (sold through
+  // several at once) or a BRAND (running several at once). Absent → the ONE channel the route path
+  // names, which is every existing caller. A one-channel scope therefore produces the identical
+  // requests that channel's own read produces.
+  //
+  // Combined with `scopeCampaignIds` it says which of two shapes the engagement fan-out takes: WITH
+  // campaign ids, one read per (channel × campaign) — the offer grain, where the campaign is the
+  // frozen link; WITHOUT them, one BRAND-WIDE read per channel — the brand grain, where `brandId` is
+  // already the producer's filter and enumerating campaigns could only narrow it wrongly.
+  scopeChannels?: ScopeChannel[],
 ): Promise<ComputeResult> {
   const featureSlug = req.params.featureSlug;
-  const featureScope: FeatureScope = offerChannels ? offerChannels.map((c) => c.featureSlug) : featureSlug;
+  const featureScope: FeatureScope = scopeChannels ? scopeChannels.map((c) => c.featureSlug) : featureSlug;
   const { orgId, userId, runId, campaignId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
   const explicitBrandProfileId = req.query.brandProfileId as string | undefined;
   // Optional single-campaign scope for the STATS (audiences themselves stay brand-wide). Absent →
@@ -996,9 +1010,13 @@ export async function computeAudienceStats(
   const audienceIds = audiences.map((audience) => audience.id);
 
   // One (channel × campaign) read per campaign of the offer, each under its OWN channel — which for a
-  // single-channel read is exactly the per-campaign fan-out this endpoint already did.
-  const engagementReads: Array<{ featureSlug: string; campaignId?: string }> = offerChannels
-    ? offerChannels.flatMap((channel) => channel.campaignIds.map((campaignId) => ({ featureSlug: channel.featureSlug, campaignId })))
+  // single-channel read is exactly the per-campaign fan-out this endpoint already did. At the BRAND
+  // grain there are no campaign ids to narrow by and none are wanted: one brand-wide read per channel
+  // covers every campaign of it, including any campaign-service does not list.
+  const engagementReads: Array<{ featureSlug: string; campaignId?: string }> = scopeChannels
+    ? scopeCampaignIds
+      ? scopeChannels.flatMap((channel) => channel.campaignIds.map((campaignId) => ({ featureSlug: channel.featureSlug, campaignId })))
+      : scopeChannels.map((channel) => ({ featureSlug: channel.featureSlug }))
     : (scopeCampaignIds?.length ?? 0) > 0
       ? scopeCampaignIds!.map((campaignId) => ({ featureSlug, campaignId }))
       : [{ featureSlug }];
