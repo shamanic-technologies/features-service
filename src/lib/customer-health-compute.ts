@@ -427,7 +427,9 @@ function pickBestWorkflow(projection: WorkflowProjectionResponse): BestWorkflow 
     const current = best?.resolved.costPerOutcomeUsd ?? null;
     if (current == null || metric < current) best = row;
   }
-  if (!best || best.resolved.costPerOutcomeUsd == null) return null;
+  // An UNMEASURED row carries no grain and no cost, so it can never be a "best workflow" — the loop
+  // above already skips it on the null cost; the grain check states it and narrows the type.
+  if (!best || best.resolved.costPerOutcomeUsd == null || best.resolved.grain == null) return null;
   return {
     workflowDynastySlug: best.workflow.workflowDynastySlug,
     name: best.workflow.workflowDynastyName,

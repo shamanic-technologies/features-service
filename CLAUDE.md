@@ -1348,6 +1348,54 @@ round-trip. Response shape unchanged → no OpenAPI regen. `computeWorkflowProje
 "best workflow by CAC") keeps its signature and now composes the two halves. Old `workflow-projection`
 snapshot rows are orphaned and harmless (the Gold layer is derived + rebuildable). (Set 2026-07-29.)
 
+## A CHANNEL WITH NO HISTORY STILL ANSWERS WHO IT COULD BE SERVED TO — `workflow-projection` enumerates the BRAND's active audiences, stated UNMEASURED, and `measured` / `unmeasuredReason` keep "no audiences" apart from "no measurements"
+
+A brand sells through several acquisition channels at once, each a feature slug, each running its own
+campaign against the SAME brand's audiences. campaign-service asks THIS service which audiences a
+campaign could be served right now — per feature, because this service owns the audience set.
+
+Every row of the ladder below rests on spend: a (audience × dynasty) couple with no grain has nothing
+to project and is skipped. The day a customer funds a SECOND channel that skips EVERYTHING, and the
+empty `rows` read downstream as "this brand has no serveable audience" — so the campaign served nobody,
+so it accumulated no history, so it kept answering with nothing. **It could not start because it had
+not started.** Prod 2026-08-19, brand `75d7e3e8…`: `sales-cold-email-outreach` answered 273 rows while
+`feedback-request-cold-email-outreach` answered 0 for the same brand, same funnel, same pricing, with
+twelve active workflows and the same active audiences behind both. The difference was history, not
+audiences.
+
+- **AUDIENCE MEMBERSHIP IS A PROPERTY OF THE BRAND**, not of what one channel has already spent. So a
+  channel that has measured nothing answers with the brand's active audiences under its OWN active
+  workflows: one row per (active audience × active dynasty), plus the brand-level row per dynasty.
+- **NOTHING IS INVENTED.** An unmeasured row carries `measured: false`, an EMPTY `estimatesByGrain`, and
+  a `resolved` whose every figure is `null` — `grain` included. No cost, no return, no rank, and nothing
+  borrowed from the channel that does have a history. `costPerClickUsd` and `grain` became NULLABLE for
+  exactly this; `0` would say a click is free and a borrowed grain label would say whose result it is.
+  `recommendedWorkflowDynastySlug` stays null (an unmeasured row can never be recommended).
+- **IT FIRES ONLY WHEN NO MEASURED ROW SURVIVED**, which IS the first-day case — and that is what keeps
+  an established channel byte-unchanged. A channel with ANY spend already enumerates every active
+  audience under every dynasty it has evidence for (prod: 12 audiences × 21 measured dynasties + 21
+  brand rows = the 273), so it never reaches this path. Do NOT "generalise" it to emit an unmeasured row
+  for every zero-spend dynasty of a channel that does have history: that brand has 93 active dynasties
+  against 21 with evidence, so the same request would answer 1,209 rows and a consumer ranking them
+  would start seeing history-less workflows mixed into a measured set.
+- **`measured` + `unmeasuredReason` ON THE RESPONSE** are what stop an empty `rows` reading as "this
+  brand has nobody to contact": `no_active_audiences` (a brand fact, true through EVERY channel),
+  `no_active_workflows` (this feature ships none), `no_spend_recorded` (audiences AND workflows exist,
+  the channel has simply never run — the enumerated case above). A caller acts very differently on each.
+  `measured` also rides each ROW, so a ranking consumer tells them apart outright instead of by a null
+  probe.
+- **No feature slug is special-cased** — the rule is stated on evidence, so the third funded channel
+  works the day it is funded, with no change here.
+- **campaign-service needs NO change**: `selectWorkflowGreedy` already skips a null `costPerOutcomeUsd`,
+  `toArm` reads a missing audience grain as a COLD arm, and `serveableAudienceIdsInProjection` collects
+  `audienceId`s — which is the whole deadlock. Two ships already went out below this one and both stand:
+  campaign-service no longer reads an empty answer as an exhausted audience, and lead-service states WHY
+  a serve came back empty.
+- Guard: `src/routes/workflow-projection-history-less.test.ts` drives all four cases from ONE mock
+  harness — the enumeration + its all-null rows, the two distinguishable empty answers, and the
+  established channel (fleet spend on ONE of two dynasties) whose row set and count are unchanged with
+  the zero-evidence dynasty still absent. (Set 2026-08-20.)
+
 ## `GET /features/:slug/workflow-projection` — 3-grain cost-per-outcome LADDER (`/candidates` DELETED, folded in; PR #449)
 
 `GET /features/:slug/workflow-projection?brandId=&audienceId?=&goal=` returns a **3-grain

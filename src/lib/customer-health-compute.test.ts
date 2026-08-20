@@ -118,12 +118,14 @@ function workflowResponse(rows: WorkflowProjectionResponse["rows"]): WorkflowPro
     rows,
     recommendedWorkflowDynastySlug: null,
     recommendedBudgetUsd: null,
+    measured: true,
   };
 }
 
 function wfRow(slug: string, name: string | null, cost: number | null, grain: "crossOrg" | "brand" | "audience"): WorkflowProjectionResponse["rows"][number] {
   return {
     audienceId: null,
+    measured: true,
     workflow: { workflowDynastySlug: slug, workflowDynastyName: name },
     estimatesByGrain: {},
     resolved: {
