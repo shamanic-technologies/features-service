@@ -5275,7 +5275,7 @@
                 "costEconomics"
               ]
             },
-            "description": "The per-channel breakdown, in the SAME response as the total — so a caller states the offer's figures without naming a channel AND shows the rows beside them, without asking N times (it does not own which channels an offer sells through). Each row is byte-equal to that channel's own /features/{slug}/revenue?offerId= headline and costEconomics: same campaign scope, same brand pricing, same engine. Ascending by slug. A channel this service cannot measure (no funnel wired — it measures email today) appears here with its REAL spend and a null pipeline, exactly as its own read reports it, so an unmeasured leg is visible rather than buried in the total."
+            "description": "The per-channel breakdown, in the SAME response as the total — so a caller states the offer's figures without naming a channel AND shows the rows beside them, without asking N times (it does not own which channels an offer sells through). Each row carries the same figures that channel's own /features/{slug}/revenue?offerId= read carries — same campaign scope, same brand pricing, same engine — though not to the cent: a row reads its spend grouped by workflow while the standalone read groups by cost name, and runs-service returns fractional cents per group, so each rounds once per its own grouping (the same sub-cent property the per-workflow grain documents). Ascending by slug. A channel this service cannot measure (no funnel wired — it measures email today) appears here with its REAL spend and a null pipeline, exactly as its own read reports it, so an unmeasured leg is visible rather than buried in the total."
           }
         },
         "required": [
