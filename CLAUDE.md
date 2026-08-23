@@ -44,8 +44,13 @@ contradicting itself.
   offer list: a newly funded channel on one offer changes that row's every figure while no other key
   part moves. Economics are read ONCE (brand-scoped) and shared by every row, fingerprint in the key.
 - **Ordering is ascending `offerId`** — deterministic; a table sorts its own way.
-- **The api-service gateway forwards it** (`GET /v1/brands/:brandId/offers`) — the gateway's brand-grain
-  proxy is EXPLICIT per suffix, no wildcard, so it needed its own line there.
+- **The api-service gateway forwards it at `GET /v1/features/brands/:brandId/offers`, NOT under
+  `/v1/brands/*` like its three siblings** (api-service#855) — `/v1/brands/:id/offers` was ALREADY taken
+  there by brand-service's offer CATALOG, which mounts first, so a same-path forward would have been
+  dead code. Two different questions sharing a noun. The DOWNSTREAM path is unchanged (`/brands/:brandId/offers`
+  is what this service serves); only the gateway's own prefix differs. Do NOT "fix" the inconsistency by
+  moving it — and note the gateway's per-suffix forward is EXPLICIT, no wildcard, so any NEW read at
+  either grain needs its own line there or it 404s.
 - Guards: `src/routes/brand-offers.test.ts` (a row spans every channel; row ≡ the standalone offer read;
   the one-offer brand ≡ the brand read; the one-channel offer ≡ that channel's group; money adds while a
   shared lead counts once; the unattributed campaign in no row; the lean key set; `[]` vs 404).
