@@ -44,6 +44,8 @@ contradicting itself.
   offer list: a newly funded channel on one offer changes that row's every figure while no other key
   part moves. Economics are read ONCE (brand-scoped) and shared by every row, fingerprint in the key.
 - **Ordering is ascending `offerId`** — deterministic; a table sorts its own way.
+- **The api-service gateway forwards it** (`GET /v1/brands/:brandId/offers`) — the gateway's brand-grain
+  proxy is EXPLICIT per suffix, no wildcard, so it needed its own line there.
 - Guards: `src/routes/brand-offers.test.ts` (a row spans every channel; row ≡ the standalone offer read;
   the one-offer brand ≡ the brand read; the one-channel offer ≡ that channel's group; money adds while a
   shared lead counts once; the unattributed campaign in no row; the lean key set; `[]` vs 404).
@@ -107,8 +109,9 @@ real, they were simply about different things.
   breakdown, which is unconditional). Both stay available per channel.
 - **THE PER-FEATURE AND PER-OFFER READS ARE UNTOUCHED** and still mean exactly what they mean. Both
   have live consumers; nothing moves until one opts in.
-- **The api-service gateway does NOT proxy `/brands/*` yet** — same follow-up the `/offers/*` reads
-  need before a consumer outside the cluster can read them.
+- **The api-service gateway DOES proxy `/brands/*` now** (api-service#852, prod) — an EXPLICIT
+  per-route forward per suffix, no wildcard, so a NEW `/brands/:brandId/<suffix>` read here needs its
+  own line there or it 404s at the gateway.
 - Guards: `src/routes/brand-cross-channel.test.ts` (both channels accounted for incl. TODAY's spend;
   money adds and Σ rows is the brand's spend while a shared lead counts once; a row states its own
   return; the one-channel identity on all three reads; the per-feature read unchanged; the named 404;
@@ -197,8 +200,8 @@ Prod 2026-08-20, brand `75d7e3e8…` offer `d5ecba00…`: months of `sales-cold-
   which is unconditional). Both stay available per channel. On `pipeline-activity` the EXPECTED series,
   the daily budget and the conversion actuals are null for the reasons the per-feature offer read already
   states (a budget is funded per brand with no per-offer ceiling; the conversion tracker is brand-keyed).
-- **The api-service gateway does NOT proxy `/offers/*` yet** — it needs an explicit per-route proxy there,
-  so a consumer outside the cluster needs that follow-up.
+- **The api-service gateway DOES proxy `/offers/*` now** — an EXPLICIT per-route forward per suffix, no
+  wildcard, so a NEW `/offers/:offerId/<suffix>` read here needs its own line there or it 404s.
 - Guards: `src/routes/offer-cross-channel.test.ts` (both channels accounted for; money adds while a
   shared lead counts once; a channel row byte-equal to its own read; the one-channel identity; the
   per-feature read unchanged; the named 404), `src/lib/offer-channels.ts` + `src/lib/offer-parents.ts` +
