@@ -1190,6 +1190,61 @@ registry.registerPath({
   },
 });
 
+// ── GET /brands/{brandId}/offers — the brand broken into its OFFERS, each at the offer grain ──
+//
+// The brand Overview lists a brand's offers in a table, one row each. The only way to ask for that was
+// /features/{featureSlug}/revenue?groupBy=offerId, which names ONE channel — so every row answered
+// "what did this offer return THROUGH THIS ONE CHANNEL" while the table presented it as the offer's
+// whole result, contradicting the brand cards directly above it. This answers the row at the grain the
+// row claims: each one is the byte-same computation /offers/{offerId}/revenue makes for its total.
+
+const brandOfferRowSchema = z.object({
+  offerId: z.string().describe("The offer's UUID, as brand-service exposes it and campaign-service stores it on the campaign. features-service does not validate it against brand-service: it partitions the brand's campaigns by what the producer states, and an offer no campaign sells simply has no row."),
+  channels: z.array(brandChannelSchema).describe("The acquisition channels THIS OFFER is sold through, ascending by slug, with the campaigns carrying each — the exact scope this row's figures were computed over, so a reader can see what a row is made of without a second call."),
+  headline: featureRevenueResponseSchema.shape.headline,
+  costEconomics: featureRevenueResponseSchema.shape.costEconomics,
+});
+
+const brandOffersResponseSchema = z.object({
+  brandId: z.string(),
+  offers: z
+    .array(brandOfferRowSchema)
+    .describe(
+      "One LEAN row per offer the brand sells, ascending by offerId (the consumer sorts a table its own way). Each row is the byte-same computation GET /offers/{offerId}/revenue makes for its total — same channel set, same campaign scope, same brand pricing, one engine pass — with only the bulk dropped (no leads[], no spend block, no series), so a table can poll it. An EMPTY array is a real answer distinct from the 404: campaign-service lists campaigns for this brand but none of them states an offer yet.",
+    ),
+});
+
+const brandOffersResponseRef = registry.register("BrandOffersResponse", brandOffersResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/offers",
+  summary: "Every offer of a brand, each with its own money combined across the channels it sells through",
+  description:
+    "The brand Overview's offers table, answered at the grain the table claims: one row per OFFER, each carrying that offer's pipeline revenue, ROI, cost-of-acquisition % and committed spend across EVERY acquisition channel it is sold through, in ONE request. " +
+    "It exists because the only way to ask before was /features/{featureSlug}/revenue?groupBy=offerId, which names one channel — so a brand running several printed an offer's single-channel figures under the offer's name, beneath brand cards showing the whole thing. Both numbers were real and about different things. " +
+    "Each row is the byte-same computation GET /offers/{offerId}/revenue makes for its total, with the bulk dropped (no leads[], no spend block, no series) so the table can poll it. " +
+    "Money adds across an offer's channels; people, pipeline and every ratio do not, and none of them is added here — see the offer-grain note on OfferRevenueResponse. Nothing is re-attributed: the campaign is what runs-service and lead-service froze, and the offer only decides which campaigns answer together. " +
+    "A brand selling ONE offer through every campaign that has runs reads its own figures here. Across several offers the rows do NOT sum to the brand (a lead served under two offers' campaigns is one lead to the brand and belongs to both), and a campaign stating no offer is in no row at all — with its spend and its leads. " +
+    "An empty `offers` array means campaign-service lists campaigns for this brand but none states an offer yet; that is a different answer from the 404, which means it lists no campaign at all.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string() }),
+    query: z.object({
+      funnel: z.string().optional().describe("The SALES FUNNEL each row's economics are priced on, with the same vocabulary, the same default (the brand's first declared funnel) and the same fail-loud parse as the per-feature read."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
+    }),
+  },
+  responses: {
+    200: { description: "One lean row per offer the brand sells", content: { "application/json": { schema: brandOffersResponseRef } } },
+    400: { description: "An invalid funnel / pricing value", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "campaign-service lists no campaign for this brand, so it runs no acquisition channel (reason: brand_has_no_channels) — distinct from an empty offers array, which means its campaigns state no offer yet", content: { "application/json": { schema: errorResponse } } },
+    409: { description: "One of the brand's offers is sold through channels that price on different funnels (reason: offer_channels_price_differently, with the offerId), so that offer's money cannot honestly be answered as one figure", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const brandAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
   channels: z.array(brandChannelSchema).describe("The channels combined into every row below, ascending by slug."),
 });

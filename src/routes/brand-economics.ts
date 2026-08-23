@@ -8,6 +8,7 @@
  * presents.
  *
  *   GET /brands/:brandId/revenue            — the brand's money, plus a per-channel breakdown
+ *   GET /brands/:brandId/offers             — every offer of the brand, each at the OFFER grain
  *   GET /brands/:brandId/audience-stats     — the brand's per-audience economics across its channels
  *   GET /brands/:brandId/pipeline-activity  — the brand's per-day activity across its channels
  *
@@ -79,7 +80,13 @@ import {
   type DownstreamHeaders,
   type FunnelPricedEconomics,
 } from "./revenue.js";
-import { distinctChannelFunnels } from "./offer-economics.js";
+import {
+  distinctChannelFunnels,
+  resolveOfferFunnel,
+  OfferChannelsPriceDifferentlyError,
+} from "./offer-economics.js";
+import { buildOfferChannelMap, offerCampaignIds, offerFeatureSlugs } from "../lib/offer-channels.js";
+import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { computeBrandPipelineActivity } from "./pipeline-activity.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
@@ -89,6 +96,7 @@ import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "../
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import {
   resolveBrandChannels,
+  buildBrandChannels,
   brandFeatureSlugs,
   BrandHasNoChannelsError,
   type BrandChannel,
@@ -152,6 +160,10 @@ function handleError(res: import("express").Response, error: unknown, what: stri
   }
   if (error instanceof BrandChannelsPriceDifferentlyError) {
     return res.status(409).json({ error: error.message, reason: "brand_channels_price_differently", brandId: error.brandId });
+  }
+  // Raised by the per-offer breakdown, where the identical question is asked once per offer.
+  if (error instanceof OfferChannelsPriceDifferentlyError) {
+    return res.status(409).json({ error: error.message, reason: "offer_channels_price_differently", offerId: error.offerId });
   }
   console.error(`[features-service] Brand ${what} error:`, error);
   return res.status(502).json({ error: `Failed to compute brand ${what}` });
@@ -268,6 +280,151 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
     res.json(payload);
   } catch (error) {
     return handleError(res, error, "revenue");
+  }
+});
+
+// ── GET /brands/:brandId/offers ──────────────────────────────────────────────
+//
+// EVERY OFFER OF THE BRAND, EACH AT THE OFFER GRAIN, IN ONE REQUEST.
+//
+// The brand Overview lists a brand's offers in a table, one row each, carrying that offer's ROI, %CAC,
+// pipeline and spend. The only way to ask that today is `/features/:slug/revenue?groupBy=offerId` —
+// which names ONE channel, so every row answers "what did this offer return THROUGH THIS ONE CHANNEL"
+// while the table presents it as the offer's whole result. Prod 2026-08-23, brand `75d7e3e8…`: its one
+// offer returned $2,668.47 committed / 2.623x across its four channels, and the table printed
+// $2,625.44 / 2.666x — the pitch channel alone — directly beneath cards reading the brand's own
+// $2,668 / 2.62x. Both figures are real; they are about different things, and the page contradicts
+// itself. This read answers the row at the grain the row claims.
+//
+// ── WHY THE CONSUMER CANNOT ASSEMBLE IT, EITHER WAY IT MIGHT TRY ────────────────────────────────
+//
+// Looping `/offers/:offerId/revenue` once per row is correct arithmetic and unusable in practice: that
+// body carries the whole lead population (~8 MB for the brand above) for a table that renders four
+// numbers and polls every 30 seconds. Summing the per-channel breakdown in the browser is cheap and
+// WRONG: money adds but people do not (a lead worked through two channels is one lead) and no ratio
+// does (a ratio of sums is neither the sum nor the average of the ratios) — the client-computed-metric
+// bug this service exists to prevent.
+//
+// ── SO IT IS THE OFFER GRAIN, N TIMES, LEAN ─────────────────────────────────────────────────────
+//
+// Each row is ONE `computeFeatureRevenue` over that offer's whole channel set and its whole campaign
+// set — the byte-same call `/offers/:offerId/revenue` makes for its total. So a row IS that offer's own
+// answer, and the reconciliation is by construction rather than by correction. What is dropped is only
+// the bulk: no `leads[]`, no `spend` block, no series — `headline` + `costEconomics`, the same lean
+// shape the channel, campaign, workflow and per-feature offer groups already use.
+//
+// The combination rules are the offer grain's, unchanged and by the same code: money adds (the channel
+// set goes to runs-service as its plural `featureSlugs` filter and the PRODUCER sums), people do not
+// (one brand-scoped lead read, deduped before the engine), pipeline does not (ONE engine pass per
+// offer), no ratio does (recomputed from the combined numerator and denominator).
+//
+// ── WHAT DOES AND DOES NOT RECONCILE ────────────────────────────────────────────────────────────
+//
+// A brand selling ONE offer through every campaign that has runs reads its own figures here. Across
+// several offers the rows do NOT sum to the brand: a lead served under two offers' campaigns is one
+// lead to the brand and belongs to both, and a campaign stating NO offer is in no row at all — with
+// its spend and its leads. Both are properties of counting people, and the brand's own total (which
+// narrows by nothing) stays the number to trust for "what did this brand do".
+//
+// `offers: []` is a real answer and a different one from a 404: it says campaign-service lists
+// campaigns for this brand but none of them states an offer — the transition state while the producer
+// catches up. A brand it lists NO campaign for is the named `brand_has_no_channels` 404, because then
+// we cannot tell which channels any figure should span.
+router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
+  try {
+    const authed = req as AuthenticatedRequest & { params: { brandId: string } };
+    const brandId = authed.params.brandId;
+
+    const pricing = parsePricing(req.query.pricing);
+    if (pricing === null) return res.status(400).json({ error: "pricing must be one of: gross, net" });
+
+    let requestedFunnel: SalesFunnelKey | undefined;
+    const funnelParam = req.query.funnel as string | undefined;
+    if (funnelParam) {
+      const matched = matchSalesFunnelKey(funnelParam);
+      if (!matched) return res.status(400).json({ error: `funnel must be one of: ${SALES_FUNNEL_KEYS.join(", ")}` });
+      requestedFunnel = matched;
+    }
+
+    const headers: DownstreamHeaders = {
+      orgId: authed.orgId,
+      userId: authed.userId,
+      runId: authed.runId,
+      // Deliberately unnamed: a row spans an offer's channels, and naming one of them would attribute
+      // the read to a channel the caller never asked about.
+      featureSlug: undefined,
+    };
+
+    // ONE campaign read answers both questions: does this brand run any channel at all (the 404), and
+    // how do its campaigns partition by (offer × channel). Reading it twice would be the same rows.
+    const rows = await fetchBrandCampaignRows(brandId, undefined, {
+      orgId: authed.orgId,
+      userId: authed.userId,
+      runId: authed.runId,
+    });
+    if (buildBrandChannels(rows).length === 0) throw new BrandHasNoChannelsError(brandId);
+
+    const map = buildOfferChannelMap(rows);
+    const offers = map.offerIds.map((offerId) => ({ offerId, channels: map.channelsOf(offerId) }));
+
+    // Economics are BRAND-scoped, so they are read ONCE and shared by every row: N offers cost one
+    // brand-service call, and the fingerprint rides the cache key so an economics write lands on a new
+    // cell instead of replaying the pre-write answer. Skipped entirely when no offer has a funnel —
+    // there is then nothing to price and every row reports spend with a null pipeline.
+    const anyFunnel = offers.some(({ channels }) => distinctChannelFunnels(channels).length > 0);
+    const [declaredFunnels, brandEconomics] = anyFunnel
+      ? await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId), fetchEffectiveEconomics(brandId, headers)])
+      : [[], null];
+    const brandPriced: FunnelPricedEconomics | undefined = brandEconomics
+      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, requestedFunnel)
+      : undefined;
+    const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
+    const decl = anyFunnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
+
+    const payload = await servedCached({
+      view: "brand-offers",
+      // The whole (offer × channel) partition rides the key, not just the offer list: a newly funded
+      // channel on one offer changes that row's every figure while no other key part moves, so without
+      // it the table would replay its pre-funding answer until the hard-stale cap.
+      scopeKey: buildScopeKey(brandId, {
+        orgId: headers.orgId,
+        offers: offers.map(({ offerId, channels }) => `${offerId}>${offerFeatureSlugs(channels).join("+")}`).join(","),
+        funnel: requestedFunnel,
+        decl,
+        pricing,
+        econ,
+      }),
+      orgId: headers.orgId,
+      compute: async () => {
+        const groups = await mapWithConcurrency(offers, 4, async ({ offerId, channels }) => {
+          const body = await computeFeatureRevenue(
+            offerFeatureSlugs(channels),
+            brandId,
+            offerCampaignIds(channels),
+            // Each offer resolves its OWN funnel from its OWN channels — an offer whose channels price
+            // two ways says so (409) rather than having one silently picked for it.
+            resolveOfferFunnel(offerId, channels),
+            headers,
+            undefined,
+            brandPriced,
+            false,
+            pricing,
+            requestedFunnel,
+          );
+          return {
+            offerId,
+            channels: channels.map((c) => ({ featureSlug: c.featureSlug, campaignIds: c.campaignIds })),
+            headline: body.headline,
+            costEconomics: body.costEconomics,
+          };
+        });
+        return { brandId, offers: groups };
+      },
+    });
+
+    res.json(payload);
+  } catch (error) {
+    return handleError(res, error, "offers");
   }
 });
 
