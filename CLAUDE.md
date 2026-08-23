@@ -1,5 +1,54 @@
 # Features Service — CLAUDE.md
 
+## `GET /brands/:brandId/offers` — THE BRAND'S OFFERS TABLE, EACH ROW AT THE OFFER GRAIN; it is the offer read N times, LEAN, not a new computation
+
+The brand Overview lists a brand's OFFERS one row each, with that offer's ROI, %CAC, revenue and
+invested. The only way to ask for that was `/features/:slug/revenue?groupBy=offerId`, which names ONE
+channel — so every row answered "what did this offer return THROUGH THIS ONE CHANNEL" while the table
+presented it as the offer's whole result, **directly beneath brand cards that already read the whole
+thing**. Prod 2026-08-23, brand `75d7e3e8…` / org `b645207b…`, its single offer `d5ecba00…` across four
+channels: the offer's real money is **$2,668.47 committed / 2.623x / 38.121% CAC** and the table printed
+**$2,625.44 / 2.666x** — the pitch channel alone. Both figures real, about different things, page
+contradicting itself.
+
+- **A ROW IS THE BYTE-SAME COMPUTATION `/offers/:offerId/revenue` MAKES FOR ITS TOTAL** — same channel
+  set, same campaign scope, same brand pricing, ONE engine pass — with only the bulk dropped
+  (`includeSpend: false`, so no `leads[]`, no `spend` block, no series). So the reconciliation is by
+  construction, not by correction: `headline` + `costEconomics`, the lean shape the channel, campaign,
+  workflow and per-feature offer groups already use. **Do NOT re-derive an offer's figures here** — a
+  second implementation is what would drift from the standalone read the customer can open.
+- **THE COMBINATION RULES ARE THE OFFER GRAIN'S, UNCHANGED AND BY THE SAME CODE.** Money adds (the
+  offer's channel set goes to runs-service as its plural `featureSlugs` filter and the PRODUCER sums);
+  people do not (one brand-scoped lead read, deduped before the engine); pipeline does not (one engine
+  pass per offer); no ratio does (recomputed from the combined numerator and denominator).
+- **WHY NEITHER CONSUMER-SIDE ROUTE WORKS.** Looping `/offers/:offerId/revenue` per row is correct
+  arithmetic and unusable: that body is ~8 MB for the brand above (it carries the whole lead
+  population) for a table rendering four numbers and polling every 30s. Summing the per-channel
+  breakdown in the browser is cheap and WRONG — ratios do not add — and is the client-computed-metric
+  bug this service exists to prevent.
+- **`offers: []` AND THE 404 ARE DIFFERENT ANSWERS.** One `fetchBrandCampaignRows` read answers both:
+  no campaign at all ⇒ named `brand_has_no_channels` 404 (we cannot tell which channels a figure should
+  span); campaigns that state no offer ⇒ `offers: []`, the honest transition state while
+  campaign-service fills `offerId` in. A campaign stating no offer is in NO row, with its spend and its
+  leads — never parked on a default offer.
+- **THE ROWS DO NOT SUM TO THE BRAND, and the brand read stays the number to trust for "what did this
+  brand do"** — a lead served under two offers' campaigns is one lead to the brand and belongs to both,
+  and the brand total narrows by nothing while a row narrows to its offer's campaigns. Same
+  counting-people property the campaign, workflow and channel grains carry.
+- **A brand selling ONE offer through every campaign that has runs reads its own figures**, and an offer
+  sold through ONE channel reads that channel's own `?groupBy=offerId` group. Both guarded.
+- **Each offer resolves its OWN funnel from its OWN channels** (`resolveOfferFunnel`, now exported from
+  `offer-economics.ts`): an offer whose channels price two ways is a 409 `offer_channels_price_differently`
+  NAMING THE OFFER, never one silently picked. Cannot happen today.
+- **The WHOLE (offer × channel) partition rides the `scope_key`** (`offers=a>x+y,b>z`), not just the
+  offer list: a newly funded channel on one offer changes that row's every figure while no other key
+  part moves. Economics are read ONCE (brand-scoped) and shared by every row, fingerprint in the key.
+- **Ordering is ascending `offerId`** — deterministic; a table sorts its own way.
+- Guards: `src/routes/brand-offers.test.ts` (a row spans every channel; row ≡ the standalone offer read;
+  the one-offer brand ≡ the brand read; the one-channel offer ≡ that channel's group; money adds while a
+  shared lead counts once; the unattributed campaign in no row; the lean key set; `[]` vs 404).
+  (Set 2026-08-23.)
+
 ## A BRAND RUNS SEVERAL CHANNELS AT ONCE — `GET /brands/:brandId/{revenue,audience-stats,pipeline-activity}` answers for the BRAND; it is the offer grain ONE LEVEL UP, on the SAME code
 
 A brand holds several OFFERS and sells each of them through several ACQUISITION CHANNELS. So neither a

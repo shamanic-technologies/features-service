@@ -130,7 +130,13 @@ export function distinctChannelFunnels(
   return [...new Set(channels.map((c) => getFunnel(c.featureSlug)).filter((f) => f !== null))];
 }
 
-function resolveOfferFunnel(offerId: string, channels: OfferChannel[]): ReturnType<typeof getFunnel> {
+/**
+ * The one funnel an offer's channels price on, or null when none of them has one.
+ *
+ * Exported because the BRAND grain asks the identical question once per offer when it breaks a brand
+ * down into its offers — the same rule answered by the same code, never restated.
+ */
+export function resolveOfferFunnel(offerId: string, channels: OfferChannel[]): ReturnType<typeof getFunnel> {
   const distinct = distinctChannelFunnels(channels);
   if (distinct.length > 1) throw new OfferChannelsPriceDifferentlyError(offerId);
   return distinct[0] ?? null;
