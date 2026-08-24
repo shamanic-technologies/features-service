@@ -191,10 +191,12 @@ describe("workflow-projection: a channel with no history still answers who it co
     expect(res.body.unmeasuredReason).toBe("no_active_workflows");
   });
 
-  it("an ESTABLISHED channel's answer is unchanged — measured rows only, and no history-less row mixed in", async () => {
-    // Fleet spend on dyn-a ONLY. Today that yields: one brand-level row for dyn-a + one row per active
-    // audience under dyn-a. dyn-b has no grain anywhere and is absent — the unmeasured enumeration must
-    // NOT resurrect it, or a consumer ranking these rows would start seeing history-less workflows.
+  it("an ESTABLISHED channel's MEASURED answer is unchanged, and its history-less workflow is offered UNMEASURED beside it", async () => {
+    // Fleet + brand spend on dyn-a ONLY. dyn-a's rows are measured exactly as before: one brand-level
+    // row plus one per active audience, each resolving at a real grain. dyn-b has no grain anywhere —
+    // it is the MIXED case #805 could not reach (prod 2026-08-25: 75 new workflows invisible inside a
+    // channel with 18 that had spend), so it is now offered UNMEASURED, carrying the explore allowance
+    // and nothing else. Full coverage of that half lives in workflow-projection-explore-allowance.test.ts.
     mockFetch({
       crossOrgCost: [costGroup("wf-a", 100000)],
       crossOrgEmail: [emailGroup("wf-a", 100, 50)],
@@ -207,15 +209,26 @@ describe("workflow-projection: a channel with no history still answers who it co
     expect(res.body.measured).toBe(true);
     expect(res.body.unmeasuredReason).toBeUndefined();
 
-    expect(res.body.rows).toHaveLength(1 + 4); // dyn-a: brand-level + one per active audience
-    expect(res.body.rows.every((r: any) => r.workflow.workflowDynastySlug === "dyn-a")).toBe(true);
-    for (const row of res.body.rows) {
-      expect(row.measured).toBe(true);
+    const measured = res.body.rows.filter((r: any) => r.measured);
+    expect(measured).toHaveLength(1 + 4); // dyn-a: brand-level + one per active audience
+    expect(measured.every((r: any) => r.workflow.workflowDynastySlug === "dyn-a")).toBe(true);
+    for (const row of measured) {
       expect(row.resolved.grain).not.toBeNull();
       expect(row.resolved.costPerClickUsd).toBeGreaterThan(0);
       expect(row.resolved.costPerOutcomeUsd).toBeGreaterThan(0);
     }
-    // The workflow it ranks on is still picked from real evidence.
+    // The workflow it RECOMMENDS is still picked from real evidence — an unmeasured row is reachable,
+    // never recommended.
     expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a");
+
+    const unmeasured = res.body.rows.filter((r: any) => !r.measured);
+    expect(unmeasured).toHaveLength(1 + 4); // dyn-b, same enumeration
+    expect(unmeasured.every((r: any) => r.workflow.workflowDynastySlug === "dyn-b")).toBe(true);
+    for (const row of unmeasured) {
+      expect(row.estimatesByGrain).toEqual({});
+      expect(row.resolved.grain).toBeNull();
+      expect(row.resolved.costPerOutcomeUsd).toBeGreaterThan(0);
+      expect(row.resolved.roiMultiple).toBeNull();
+    }
   });
 });
