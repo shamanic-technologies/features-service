@@ -422,6 +422,9 @@ function summarizeAudiences(
 function pickBestWorkflow(projection: WorkflowProjectionResponse): BestWorkflow | null {
   let best: WorkflowProjectionResponse["rows"][number] | null = null;
   for (const row of projection.rows) {
+    // MEASURED rows only — an unproven workflow's EXPLORE ALLOWANCE makes it reachable to a serving
+    // consumer, it is not a "best workflow" a staff member should read off this board.
+    if (!row.measured) continue;
     const metric = row.resolved.costPerOutcomeUsd;
     if (metric == null || metric <= 0) continue;
     const current = best?.resolved.costPerOutcomeUsd ?? null;

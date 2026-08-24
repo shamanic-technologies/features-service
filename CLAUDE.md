@@ -44,8 +44,13 @@ contradicting itself.
   offer list: a newly funded channel on one offer changes that row's every figure while no other key
   part moves. Economics are read ONCE (brand-scoped) and shared by every row, fingerprint in the key.
 - **Ordering is ascending `offerId`** — deterministic; a table sorts its own way.
-- **The api-service gateway forwards it** (`GET /v1/brands/:brandId/offers`) — the gateway's brand-grain
-  proxy is EXPLICIT per suffix, no wildcard, so it needed its own line there.
+- **The api-service gateway forwards it at `GET /v1/features/brands/:brandId/offers`, NOT under
+  `/v1/brands/*` like its three siblings** (api-service#855) — `/v1/brands/:id/offers` was ALREADY taken
+  there by brand-service's offer CATALOG, which mounts first, so a same-path forward would have been
+  dead code. Two different questions sharing a noun. The DOWNSTREAM path is unchanged (`/brands/:brandId/offers`
+  is what this service serves); only the gateway's own prefix differs. Do NOT "fix" the inconsistency by
+  moving it — and note the gateway's per-suffix forward is EXPLICIT, no wildcard, so any NEW read at
+  either grain needs its own line there or it 404s.
 - Guards: `src/routes/brand-offers.test.ts` (a row spans every channel; row ≡ the standalone offer read;
   the one-offer brand ≡ the brand read; the one-channel offer ≡ that channel's group; money adds while a
   shared lead counts once; the unattributed campaign in no row; the lean key set; `[]` vs 404).
@@ -1554,6 +1559,64 @@ disables it) covers write→read-with-no-wait, repeated writes, no-refetch-witho
 round-trip. Response shape unchanged → no OpenAPI regen. `computeWorkflowProjection` (customer-health's
 "best workflow by CAC") keeps its signature and now composes the two halves. Old `workflow-projection`
 snapshot rows are orphaned and harmless (the Gold layer is derived + rebuildable). (Set 2026-07-29.)
+
+## AN ACTIVE WORKFLOW WITH NO HISTORY IS STILL REACHABLE — the EXPLORE ALLOWANCE, and it is what makes a channel's NEWEST workflow able to earn a first run
+
+Every projection row rests on spend. A dynasty with no grain anywhere produced NO ROW, and a consumer
+that picks a workflow by ranking rows cannot pick what it cannot see — so it never spent, which is the
+one thing that would have given it a row. **It could not start because it had not started**, the same
+sentence the section below writes for a whole channel.
+
+**The guard below fires only when the ENTIRE channel has measured nothing, and that is not the case that
+occurs.** Prod 2026-08-25: 75 cold-email workflows created 15-16 August inside
+`sales-cold-email-outreach` — a channel with 18 workflows that DO have spend, so the whole-channel guard
+never fired. Those 75 were active for eight days, logged **zero runs and zero emails**, while nine
+already-spent, zero-outcome workflows (priced at their own small spend, hence cheapest) rotated on a live
+customer's campaign. The MIXED channel is the case with no answer, and it is the one that costs money.
+
+- **AN UNPROVEN DYNASTY IS OFFERED — its brand row plus one row per active audience** (both are needed:
+  campaign-service picks the workflow from the rows and then reads the SAME rows filtered to that
+  dynasty for its audience arms, so a brand-only row is chosen and then serveable to nobody).
+- **THE NUMBER IS THE EXPLORE ALLOWANCE: the price of ONE OUTREACH in this channel**
+  (`channelOutreachPriceUsd` = Σ measured spend ÷ Σ measured contacted — the BRAND's own measured
+  evidence when it has any, else the fleet's), projected through the goal's funnel by `exploreResolved`.
+  Read it for what it is: not a claim about how this workflow performs, but the smallest amount of real
+  money that can buy it its FIRST evidence — the first rung of the same floor ladder every measured row
+  stands on (`max(own spend, parent)`, and this workflow's own spend is still 0).
+- **DO NOT price it at the channel's POOLED cost-per-outcome.** That figure is dominated by the
+  workflows that already spent — prod brand `75d7e3e8…`: **$643/meeting against a $337 measured leader**
+  — so an unproven workflow priced there is never picked and stays exactly as invisible as before. The
+  pooled figure was tried on paper first; it is the obvious answer and it does nothing.
+- **BOUNDED AND SELF-EXTINGUISHING, which is what keeps it from becoming the cheap-forever number.** It
+  applies ONLY while the dynasty has no grain at all. One run gives it real spend, it leaves this path
+  for good, and from then on its OWN floor prices it, rising as it spends — the documented explore /
+  exploit mechanism, unchanged. A workflow can consume the allowance once.
+- **IT STATES A COST FLOOR AND NOTHING ELSE** — `costPerPaidClientUsd`, `roiMultiple` and `cacPct` stay
+  NULL, `grain` stays null, `estimatesByGrain` is `{}`. A return needs evidence that the workflow
+  converts; a return computed off an exploration floor would print the biggest number on the page.
+- **REACHABLE, NEVER RECOMMENDED, NEVER DISPLAYED AS A RESULT.** `recommendedWorkflowDynastySlug` /
+  `recommendedBudgetUsd` skip unmeasured rows, and every DISPLAY / benchmark surface ranks
+  `row.measured` only: `funnel-ranking`'s best-workflow argmin, the customer-health board's best
+  workflow, and (out of repo) the dashboard's Strategy pick. `fetchBrandProjectedParents` builds its own
+  brand rows and never sees these at all. **Anything new that argmins these rows must filter on
+  `measured` — the flag exists so nobody has to probe for nulls.**
+- **ONLY ACTIVE DYNASTIES ARE ENUMERATED**, so a deprecated / retired workflow stays unreachable, and a
+  brand with no active audience enumerates nothing (that is the `no_active_audiences` brand fact).
+- **EVERY MEASURED ROW IS BYTE-UNCHANGED**, and `measured` / `unmeasuredReason` on the RESPONSE are read
+  off the measured rows only — an allowance row is not a measurement and must not let a history-less
+  channel claim it has one. A channel with no measured evidence has no outreach price either, so its
+  rows carry the all-null block: the section below's answer, byte for byte.
+- **Expect the fleet to explore.** While unproven workflows exist, a cost-ranking consumer picks one per
+  tick; it then has spend and rotates out. That is the intended behaviour — the complaint being fixed is
+  that 75 of them sat idle — and the per-workflow exploration is bounded by the same cascade floor that
+  already governs a barely-tried workflow.
+- Guards: `src/routes/workflow-projection-explore-allowance.test.ts` (ONE prod-shaped fixture — the real
+  spend / contacted / positive-reply aggregates of the measured leader, the zero-outcome husk and the
+  channel's heavy spender, beside two active unproven dynasties and one deprecated one: the enumeration,
+  the allowance's value and floor-only shape, campaign-service's own `selectWorkflowGreedy` replayed to
+  prove reachability, the measured rows byte-identical with and without the unproven ones, and the
+  deprecated one unreachable) + the mixed case in `workflow-projection-history-less.test.ts`.
+  (Set 2026-08-25.)
 
 ## A CHANNEL WITH NO HISTORY STILL ANSWERS WHO IT COULD BE SERVED TO — `workflow-projection` enumerates the BRAND's active audiences, stated UNMEASURED, and `measured` / `unmeasuredReason` keep "no audiences" apart from "no measurements"
 

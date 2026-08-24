@@ -85,11 +85,14 @@ interface GrainBlock {
 
 interface ResolvedBlock {
   /**
-   * The grain the number came from. NULL on an UNMEASURED row — a channel that has spent nothing has
-   * no grain, so there is nothing to label. Never a borrowed label.
+   * The grain the number came from. NULL on an UNMEASURED row — nothing measured it, so there is
+   * nothing to label, and a row priced on the EXPLORE ALLOWANCE borrows no other workflow's provenance.
    */
   grain: GrainName | null;
-  /** NULL on an UNMEASURED row: no spend, so no unit cost. Never 0, which would say a click is free. */
+  /**
+   * NULL when there is no evidence AND no allowance to state. On an UNMEASURED row it carries the
+   * channel's outreach price (the explore allowance's floor) — never 0, which would say a click is free.
+   */
   costPerClickUsd: number | null;
   costPerOutcomeUsd: number | null;
   costPerPaidClientUsd: number | null;
@@ -105,9 +108,12 @@ export interface ProjectionRow {
   resolved: ResolvedBlock;
   /**
    * TRUE ⟺ this row rests on real evidence (at least one grain with spend) — every row an established
-   * channel serves. FALSE marks a row this channel has measured NOTHING for: `estimatesByGrain` is
-   * empty and every `resolved` figure is null, so a consumer that RANKS on `resolved.costPerOutcomeUsd`
-   * skips it by construction and can also tell it apart outright rather than by a null probe.
+   * channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for:
+   * `estimatesByGrain` is empty, and `resolved` carries the EXPLORE ALLOWANCE — a cost FLOOR (the price
+   * of one outreach through the goal's funnel) and no return at all, so an unproven workflow is
+   * RANKABLE by a serving consumer while every display / benchmark surface filters on this flag rather
+   * than probing for nulls. When the channel has measured nothing whatsoever there is no allowance to
+   * state either and every `resolved` figure is null (features-service#805).
    * A row is never half-measured: the two states are what the row rests on, not how much it has.
    */
   measured: boolean;
@@ -584,6 +590,73 @@ function resolvePick(
   };
 }
 
+/**
+ * The price of ONE OUTREACH in this channel — Σ measured spend ÷ Σ measured leads contacted. It is the
+ * smallest amount of real money that can buy an UNPROVEN workflow its first piece of evidence, so it is
+ * the first rung of the same floor ladder every measured row stands on (`max(own spend, parent)`, and an
+ * unproven workflow's own spend is still 0). The brand's OWN measured evidence prices it when the brand
+ * has any — that is the money this brand actually pays for an outreach — else the fleet's.
+ *
+ * NULL when the channel has measured nothing at all: there is then no price to state, and the projection
+ * falls back to the all-null unmeasured row (features-service#805's answer, unchanged).
+ *
+ * Do NOT replace this with the channel's pooled cost-per-OUTCOME. That figure is dominated by the
+ * workflows that have already spent — prod 2026-08-25, brand `75d7e3e8…`: $643 per meeting against a
+ * $337 measured leader — so an unproven workflow priced there is never picked by a consumer ranking on
+ * cost and stays exactly as invisible as it is today.
+ */
+function channelOutreachPriceUsd(
+  brandGrain: Map<string, WorkflowGrainEvidence>,
+  costMap: Map<string, { totalCostInUsdCents: number; completedRuns: number }>,
+  aggregatedOutcomes: Map<string, Record<string, number>>,
+): number | null {
+  let brandCents = 0;
+  let brandContacted = 0;
+  for (const ev of brandGrain.values()) {
+    brandCents += ev.totalCostInUsdCents;
+    brandContacted += ev.contacted;
+  }
+  if (brandCents > 0 && brandContacted > 0) return brandCents / 100 / brandContacted;
+
+  let fleetCents = 0;
+  let fleetContacted = 0;
+  for (const [activeSlug, cost] of costMap) {
+    fleetCents += cost.totalCostInUsdCents;
+    fleetContacted += aggregatedOutcomes.get(activeSlug)?.recipientsContacted ?? 0;
+  }
+  if (fleetCents > 0 && fleetContacted > 0) return fleetCents / 100 / fleetContacted;
+  return null;
+}
+
+/**
+ * The `resolved` block of an UNPROVEN row: the EXPLORE ALLOWANCE, priced through the goal's own funnel
+ * from the channel's outreach price so it is denominated in the same unit every other row reports.
+ *
+ * It states a COST FLOOR and nothing else. `costPerPaidClientUsd`, `roiMultiple` and `cacPct` stay NULL
+ * because a return needs evidence that this workflow converts, and it has none — a return computed off
+ * an exploration floor would print the biggest number on the page. `grain` stays null: no grain measured
+ * this, so there is no provenance to label and nothing is borrowed from the workflows that do have one.
+ */
+function exploreResolved(
+  outreachUsd: number,
+  econ: ProjectionEconomics,
+  objective: Objective,
+  singleStepGoal: SingleStepGoal | null,
+  formSubmissionGoal: boolean,
+  meetingChannel: MeetingChannel | null,
+): ResolvedBlock {
+  const unitCosts = { clickUsd: outreachUsd, replyUsd: outreachUsd };
+  return {
+    grain: null,
+    costPerClickUsd: outreachUsd,
+    costPerOutcomeUsd: outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel),
+    costPerPaidClientUsd: null,
+    costPerMeetingBookedUsd: null,
+    roiMultiple: null,
+    cacPct: null,
+  };
+}
+
 // ── GET /features/:featureSlug/workflow-projection ───────────────────────────
 //
 // Serves a 3-grain projection ladder (crossOrg → brand → audience) + a resolved pick, keyed per
@@ -1008,23 +1081,70 @@ export function projectFromEvidence(input: {
       }
     }
 
-    // ── A channel with NO history still answers WHO it could be served to ───────────────────────
+    // ── AN ACTIVE WORKFLOW WITH NO HISTORY IS STILL REACHABLE — the EXPLORE ALLOWANCE ──────────
     //
-    // Every row above rests on spend: a couple with no grain anywhere has nothing to project, so it is
-    // skipped. For a channel the brand has just funded that skips EVERYTHING — no fleet spend, no brand
-    // spend, no audience spend — and an empty `rows` reads downstream as "this brand has no serveable
-    // audience", which stops the channel from ever making the first run that would give it a history.
-    // It cannot start because it has not started.
+    // Every row above rests on spend, so an active dynasty with no grain ANYWHERE produces no row at
+    // all — and a consumer that picks a workflow by ranking these rows cannot pick what it cannot see.
+    // So it never spends, which is the one thing that would have given it a row: it cannot start
+    // because it has not started.
     //
-    // Audience membership is a property of the BRAND, not of what a channel has already spent, so the
-    // answer is the brand's active audiences under this channel's active workflows — stated UNMEASURED.
-    // No cost, no return, no rank, nothing borrowed from the channel that does have a history.
+    // features-service#805 stated that for a channel where NOTHING was measured. The case that actually
+    // occurs is the MIXED one — prod 2026-08-25: 75 workflows created on 15-16 August inside
+    // `sales-cold-email-outreach`, a channel with 18 workflows that DO have spend, so the
+    // whole-channel guard never fired; those 75 logged ZERO runs and ZERO emails for their entire
+    // eight-day life while nine already-spent, zero-outcome workflows rotated on a live customer.
     //
-    // It fires ONLY when nothing measured survived, which is exactly the first-day case: a channel with
-    // ANY spend already enumerates every active audience under every dynasty it has evidence for, so an
-    // established channel never reaches here and its rows are untouched.
+    // So an unproven dynasty gets its brand-level row plus one row per active audience, carrying the
+    // EXPLORE ALLOWANCE (`exploreResolved`): the price of ONE OUTREACH in this channel, projected
+    // through the goal's funnel. Read the number for what it is — not a claim about how this workflow
+    // performs, but the smallest amount of real money that can buy it its FIRST evidence, and the first
+    // rung of the floor ladder every measured row already stands on.
+    //
+    // BOUNDED and SELF-EXTINGUISHING, which is what keeps it from becoming the cheap-forever number the
+    // fleet already suffers from:
+    //   • it applies ONLY while the dynasty has no grain at all. One run gives it real spend, it leaves
+    //     this path for good, and from then on its OWN floor `max(spend, parent)` prices it — rising as
+    //     it spends, exactly as a barely-tried workflow's does today.
+    //   • it is stated UNMEASURED (`measured: false`, `grain: null`, `estimatesByGrain: {}`), so nothing
+    //     can read it as this brand's own result, it can never be RECOMMENDED (below), and every
+    //     DISPLAY / benchmark surface ranks measured rows only (`funnel-ranking`, the customer-health
+    //     board, the audience-stats floor parent — which builds its own brand rows and never sees these
+    //     — and the dashboard's Strategy pick).
+    //   • it states a COST FLOOR and nothing else: no paid-client cost, no return, no %CAC.
+    //   • only ACTIVE dynasties are enumerated, so a deprecated or retired workflow stays unreachable.
+    //   • no active audience ⇒ nothing is serveable through ANY channel, so nothing is enumerated —
+    //     that is the brand fact `no_active_audiences` names, and it is unchanged.
+    //
+    // A channel with no measured evidence whatsoever has no outreach price either, so its rows carry
+    // the all-null resolved block: #805's answer, byte for byte.
+    const measuredRowCount = rows.length;
+    const measuredDynasties = new Set(rows.map((r) => r.workflow.workflowDynastySlug));
+    // Ascending dynasty slug — deterministic, so the same evidence always offers the same order.
+    const unprovenDynasties = [...activeSlugByDynasty.keys()].filter((d) => !measuredDynasties.has(d)).sort();
+    const outreachUsd = channelOutreachPriceUsd(brandGrain, costMap, aggregatedOutcomes);
+    const unprovenResolved: ResolvedBlock =
+      outreachUsd != null && econ
+        ? exploreResolved(outreachUsd, econ, objective, singleStepGoal, formSubmissionGoal, meetingChannel)
+        : UNMEASURED_RESOLVED;
+
+    if (audienceEvidence.length > 0) {
+      for (const dynastySlug of unprovenDynasties) {
+        const workflow = {
+          workflowDynastySlug: dynastySlug,
+          workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null,
+        };
+        rows.push({ audienceId: null, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false });
+        for (const ev of audienceEvidence) {
+          rows.push({ audienceId: ev.audienceId, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false });
+        }
+      }
+    }
+
+    // `measured` / `unmeasuredReason` describe the EVIDENCE, so they are read off the MEASURED rows
+    // only — an explore-allowance row is not a measurement and must not make a history-less channel
+    // claim it has one.
     const unmeasuredReason: UnmeasuredProjectionReason | null =
-      rows.length > 0
+      measuredRowCount > 0
         ? null
         : audienceEvidence.length === 0
           ? "no_active_audiences"
@@ -1032,22 +1152,12 @@ export function projectFromEvidence(input: {
             ? "no_active_workflows"
             : "no_spend_recorded";
 
-    if (unmeasuredReason === "no_spend_recorded") {
-      for (const [dynastySlug] of activeSlugByDynasty) {
-        const workflow = {
-          workflowDynastySlug: dynastySlug,
-          workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null,
-        };
-        rows.push({ audienceId: null, workflow, estimatesByGrain: {}, resolved: UNMEASURED_RESOLVED, measured: false });
-        for (const ev of audienceEvidence) {
-          rows.push({ audienceId: ev.audienceId, workflow, estimatesByGrain: {}, resolved: UNMEASURED_RESOLVED, measured: false });
-        }
-      }
-    }
-
     // Recommendation: the row with the LOWEST resolved cost-per-outcome for the requested goal.
     let recommended: ProjectionRow | null = null;
     for (const row of rows) {
+      // An UNMEASURED row is never recommended: the explore allowance is what makes a workflow
+      // REACHABLE, not a recommendation to put a customer's budget behind it.
+      if (!row.measured) continue;
       const metric = row.resolved.costPerOutcomeUsd;
       if (metric == null || metric <= 0) continue;
       const current = recommended?.resolved.costPerOutcomeUsd ?? null;

@@ -254,6 +254,10 @@ function scoreFunnel(input: {
   let best: ProjectionRow | null = null;
   for (const row of projection.rows) {
     if (row.audienceId !== null) continue;
+    // MEASURED rows only. An unproven workflow carries an EXPLORE ALLOWANCE so a serving consumer can
+    // reach it (see workflow-projection.ts) — it is not evidence, so it can never crown a funnel whose
+    // return a customer reads.
+    if (!row.measured) continue;
     const cost = row.resolved.costPerOutcomeUsd;
     if (!isPositiveFinite(cost)) continue;
     const incumbent = best?.resolved.costPerOutcomeUsd ?? null;
