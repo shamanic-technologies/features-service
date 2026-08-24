@@ -2640,7 +2640,7 @@
                       "description": "Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."
                     }
                   },
-                  "description": "A grain block is included ONLY when that grain has spentUsd > 0. Always EMPTY on an UNMEASURED row (measured=false)."
+                  "description": "A grain block is included ONLY when that grain has spentUsd > 0. Always EMPTY on an UNMEASURED row (measured=false) — nothing is borrowed from the workflows that do have evidence."
                 },
                 "resolved": {
                   "type": "object",
@@ -2653,17 +2653,17 @@
                         "brand",
                         "crossOrg"
                       ],
-                      "description": "PROVENANCE LABEL only (decoupled from the number source): the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg), else crossOrg (benchmark). A grain with spend but 0 outcomes yields a FLOORED projection, not a measured result, so it is NEVER labelled brand/audience (\"this brand's own results\") — it labels crossOrg (fleet benchmark). NOTE: the resolved NUMBERS still come from the finest grain WITH SPEND (its cascade floor max(spent, parent)), so a 0-outcome grain keeps its own spend-floor number even while labelled crossOrg. NULL on an UNMEASURED row (measured=false) — a channel that has spent nothing has no grain to label, and a label is never borrowed."
+                      "description": "PROVENANCE LABEL only (decoupled from the number source): the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg), else crossOrg (benchmark). A grain with spend but 0 outcomes yields a FLOORED projection, not a measured result, so it is NEVER labelled brand/audience (\"this brand's own results\") — it labels crossOrg (fleet benchmark). NOTE: the resolved NUMBERS still come from the finest grain WITH SPEND (its cascade floor max(spent, parent)), so a 0-outcome grain keeps its own spend-floor number even while labelled crossOrg. NULL on an UNMEASURED row (measured=false) — nothing measured it, so there is no provenance to label, and a row priced on the EXPLORE ALLOWANCE borrows no other workflow's label."
                     },
                     "costPerClickUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "costPerClickUsd of the finest grain WITH SPEND (never 0) — the cascade floor max(spent, parent), which may exceed the crossOrg value even when grain (label) = crossOrg. NULL on an UNMEASURED row (measured=false): no spend, so no unit cost — never 0, which would say a click is free."
+                      "description": "costPerClickUsd of the finest grain WITH SPEND (never 0) — the cascade floor max(spent, parent), which may exceed the crossOrg value even when grain (label) = crossOrg. On an UNMEASURED row (measured=false) it carries the channel's outreach price — the explore allowance's floor. NULL only when the channel has measured nothing at all; never 0, which would say a click is free."
                     },
                     "costPerOutcomeUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "The GOAL metric from the finest grain WITH SPEND (cascade floor) — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). A 0-outcome grain keeps its own spend floor here (not collapsed to the fleet value), while `grain` labels it crossOrg. Null only at cold start (no economics)."
+                      "description": "The GOAL metric from the finest grain WITH SPEND (cascade floor) — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). A 0-outcome grain keeps its own spend floor here (not collapsed to the fleet value), while `grain` labels it crossOrg. On an UNMEASURED row (measured=false) it carries the EXPLORE ALLOWANCE — the price of one outreach in this channel through the goal's funnel — so an active workflow with no history is RANKABLE and can earn a first run; it is a cost floor only (costPerPaidClientUsd / roiMultiple / cacPct stay null). Null at cold start (no economics) and when the channel has measured nothing at all."
                     },
                     "costPerPaidClientUsd": {
                       "type": "number",
@@ -2694,7 +2694,7 @@
                 },
                 "measured": {
                   "type": "boolean",
-                  "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row this channel has measured NOTHING for: estimatesByGrain is empty and every resolved figure is null, so a consumer ranking on resolved.costPerOutcomeUsd skips it by construction and can also tell it apart outright rather than by a null probe. Unmeasured rows appear ONLY when the whole projection is unmeasured (response measured=false) — a channel with any spend never mixes them into a ranked set."
+                  "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for: estimatesByGrain is empty and resolved carries the EXPLORE ALLOWANCE (a cost floor, no return), so a serving consumer that ranks on resolved.costPerOutcomeUsd can REACH an active workflow with no history — which is the only way it can earn a first run — while every display / benchmark surface filters on this flag instead of probing for nulls. Unmeasured rows appear beside measured ones in an established channel (the mixed case): an active dynasty with no grain anywhere is offered here, never recommended. When the channel has measured nothing whatsoever there is no allowance to state either and every resolved figure is null."
                 }
               },
               "required": [
@@ -2709,7 +2709,7 @@
           "recommendedWorkflowDynastySlug": {
             "type": "string",
             "nullable": true,
-            "description": "Dynasty of the row with the lowest resolved.costPerOutcomeUsd. Null when none has usable data."
+            "description": "Dynasty of the MEASURED row with the lowest resolved.costPerOutcomeUsd. An unmeasured row (explore allowance) is reachable but never recommended. Null when none has usable data."
           },
           "recommendedBudgetUsd": {
             "type": "number",
@@ -3464,7 +3464,7 @@
                       "description": "Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."
                     }
                   },
-                  "description": "A grain block is included ONLY when that grain has spentUsd > 0. Always EMPTY on an UNMEASURED row (measured=false)."
+                  "description": "A grain block is included ONLY when that grain has spentUsd > 0. Always EMPTY on an UNMEASURED row (measured=false) — nothing is borrowed from the workflows that do have evidence."
                 },
                 "resolved": {
                   "type": "object",
@@ -3477,17 +3477,17 @@
                         "brand",
                         "crossOrg"
                       ],
-                      "description": "PROVENANCE LABEL only (decoupled from the number source): the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg), else crossOrg (benchmark). A grain with spend but 0 outcomes yields a FLOORED projection, not a measured result, so it is NEVER labelled brand/audience (\"this brand's own results\") — it labels crossOrg (fleet benchmark). NOTE: the resolved NUMBERS still come from the finest grain WITH SPEND (its cascade floor max(spent, parent)), so a 0-outcome grain keeps its own spend-floor number even while labelled crossOrg. NULL on an UNMEASURED row (measured=false) — a channel that has spent nothing has no grain to label, and a label is never borrowed."
+                      "description": "PROVENANCE LABEL only (decoupled from the number source): the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg), else crossOrg (benchmark). A grain with spend but 0 outcomes yields a FLOORED projection, not a measured result, so it is NEVER labelled brand/audience (\"this brand's own results\") — it labels crossOrg (fleet benchmark). NOTE: the resolved NUMBERS still come from the finest grain WITH SPEND (its cascade floor max(spent, parent)), so a 0-outcome grain keeps its own spend-floor number even while labelled crossOrg. NULL on an UNMEASURED row (measured=false) — nothing measured it, so there is no provenance to label, and a row priced on the EXPLORE ALLOWANCE borrows no other workflow's label."
                     },
                     "costPerClickUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "costPerClickUsd of the finest grain WITH SPEND (never 0) — the cascade floor max(spent, parent), which may exceed the crossOrg value even when grain (label) = crossOrg. NULL on an UNMEASURED row (measured=false): no spend, so no unit cost — never 0, which would say a click is free."
+                      "description": "costPerClickUsd of the finest grain WITH SPEND (never 0) — the cascade floor max(spent, parent), which may exceed the crossOrg value even when grain (label) = crossOrg. On an UNMEASURED row (measured=false) it carries the channel's outreach price — the explore allowance's floor. NULL only when the channel has measured nothing at all; never 0, which would say a click is free."
                     },
                     "costPerOutcomeUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "The GOAL metric from the finest grain WITH SPEND (cascade floor) — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). A 0-outcome grain keeps its own spend floor here (not collapsed to the fleet value), while `grain` labels it crossOrg. Null only at cold start (no economics)."
+                      "description": "The GOAL metric from the finest grain WITH SPEND (cascade floor) — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). A 0-outcome grain keeps its own spend floor here (not collapsed to the fleet value), while `grain` labels it crossOrg. On an UNMEASURED row (measured=false) it carries the EXPLORE ALLOWANCE — the price of one outreach in this channel through the goal's funnel — so an active workflow with no history is RANKABLE and can earn a first run; it is a cost floor only (costPerPaidClientUsd / roiMultiple / cacPct stay null). Null at cold start (no economics) and when the channel has measured nothing at all."
                     },
                     "costPerPaidClientUsd": {
                       "type": "number",
@@ -3518,7 +3518,7 @@
                 },
                 "measured": {
                   "type": "boolean",
-                  "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row this channel has measured NOTHING for: estimatesByGrain is empty and every resolved figure is null, so a consumer ranking on resolved.costPerOutcomeUsd skips it by construction and can also tell it apart outright rather than by a null probe. Unmeasured rows appear ONLY when the whole projection is unmeasured (response measured=false) — a channel with any spend never mixes them into a ranked set."
+                  "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for: estimatesByGrain is empty and resolved carries the EXPLORE ALLOWANCE (a cost floor, no return), so a serving consumer that ranks on resolved.costPerOutcomeUsd can REACH an active workflow with no history — which is the only way it can earn a first run — while every display / benchmark surface filters on this flag instead of probing for nulls. Unmeasured rows appear beside measured ones in an established channel (the mixed case): an active dynasty with no grain anywhere is offered here, never recommended. When the channel has measured nothing whatsoever there is no allowance to state either and every resolved figure is null."
                 }
               },
               "required": [
@@ -11267,7 +11267,7 @@
     "/features/{featureSlug}/workflow-projection": {
       "get": {
         "summary": "3-grain cost-per-outcome projection ladder per (audience?, workflow dynasty)",
-        "description": "Serves a 3-grain projection ladder (crossOrg → brand → audience) + a resolved pick, keyed per (audienceId?, workflowDynasty). crossOrg = fleet-wide per-workflow unit costs (same source as /public/stats/best); brand = the same path scoped to this brandId; audience = audience-attributed evidence for each active human-service audience that ran the workflow (audience-WIDE — the fleet does not tag outcomes per audience×workflow). Each grain carries its own evidence, floor-ruled unit costs (costPerXUsd = spentUsd / max(observedX,1), never null), and projected cost-per-outcome from the brand's EFFECTIVE economics. A grain is included only when it has spentUsd > 0. resolved NUMBERS come from the finest grain WITH SPEND (its cascade floor max(spent, parent), so a 0-outcome grain that outspent the fleet keeps its own higher floor, never collapsed to the fleet value); resolved.grain is a decoupled PROVENANCE LABEL = the finest grain that OBSERVED the outcome, else crossOrg (benchmark) — so a floored projection is never labelled this brand's/audience's own result. campaign-service ranks on resolved.costPerOutcomeUsd. recommendedWorkflowDynastySlug = argmin over rows of resolved.costPerOutcomeUsd; recommendedBudgetUsd = 10 × that cost. Folds in the audience×workflow grain formerly served by the removed /candidates endpoint. A CHANNEL WITH NO HISTORY STILL ANSWERS WHO IT COULD BE SERVED TO: audience membership belongs to the BRAND, not to what a channel has already spent, so a feature that has never run for this brand answers measured=false / unmeasuredReason='no_spend_recorded' and enumerates every (active audience × active workflow) couple with measured=false, an empty estimatesByGrain and every resolved figure null — no cost, no return, no rank, and nothing borrowed from a channel that does have a history. That path fires ONLY when no measured row survived, so an established channel's rows are unchanged (a channel with any spend already enumerates every active audience under every dynasty it has evidence for).",
+        "description": "Serves a 3-grain projection ladder (crossOrg → brand → audience) + a resolved pick, keyed per (audienceId?, workflowDynasty). crossOrg = fleet-wide per-workflow unit costs (same source as /public/stats/best); brand = the same path scoped to this brandId; audience = audience-attributed evidence for each active human-service audience that ran the workflow (audience-WIDE — the fleet does not tag outcomes per audience×workflow). Each grain carries its own evidence, floor-ruled unit costs (costPerXUsd = spentUsd / max(observedX,1), never null), and projected cost-per-outcome from the brand's EFFECTIVE economics. A grain is included only when it has spentUsd > 0. resolved NUMBERS come from the finest grain WITH SPEND (its cascade floor max(spent, parent), so a 0-outcome grain that outspent the fleet keeps its own higher floor, never collapsed to the fleet value); resolved.grain is a decoupled PROVENANCE LABEL = the finest grain that OBSERVED the outcome, else crossOrg (benchmark) — so a floored projection is never labelled this brand's/audience's own result. campaign-service ranks on resolved.costPerOutcomeUsd. recommendedWorkflowDynastySlug = argmin over MEASURED rows of resolved.costPerOutcomeUsd; recommendedBudgetUsd = 10 × that cost. Folds in the audience×workflow grain formerly served by the removed /candidates endpoint. A CHANNEL WITH NO HISTORY STILL ANSWERS WHO IT COULD BE SERVED TO: audience membership belongs to the BRAND, not to what a channel has already spent, so a feature that has never run for this brand answers measured=false / unmeasuredReason='no_spend_recorded' and enumerates every (active audience × active workflow) couple with measured=false, an empty estimatesByGrain and every resolved figure null — no cost, no return, no rank, and nothing borrowed from a channel that does have a history. AN ACTIVE WORKFLOW WITH NO HISTORY IS REACHABLE INSIDE AN ESTABLISHED CHANNEL TOO (the MIXED case): a dynasty with no grain anywhere used to produce no row at all, so a consumer picking by cost could not see it, so it never spent — the one thing that would have given it a row. Such a dynasty now gets its brand row + one row per active audience with measured=false and the EXPLORE ALLOWANCE on resolved: the price of ONE OUTREACH in this channel (brand-measured spend/contacted, else the fleet's) through the goal's funnel. It is a cost floor, not a claim: no paid-client cost, no return, no %CAC, no grain, no rank. Bounded and self-extinguishing — one run gives the workflow real spend and its own cascade floor prices it from then on. Only ACTIVE dynasties are enumerated, so a deprecated workflow stays unreachable, and a brand with no active audience enumerates nothing. Every MEASURED row is byte-unchanged.",
         "tags": [
           "Stats"
         ],
@@ -11824,7 +11824,7 @@
                                 "description": "Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."
                               }
                             },
-                            "description": "A grain block is included ONLY when that grain has spentUsd > 0. Always EMPTY on an UNMEASURED row (measured=false)."
+                            "description": "A grain block is included ONLY when that grain has spentUsd > 0. Always EMPTY on an UNMEASURED row (measured=false) — nothing is borrowed from the workflows that do have evidence."
                           },
                           "resolved": {
                             "type": "object",
@@ -11837,17 +11837,17 @@
                                   "brand",
                                   "crossOrg"
                                 ],
-                                "description": "PROVENANCE LABEL only (decoupled from the number source): the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg), else crossOrg (benchmark). A grain with spend but 0 outcomes yields a FLOORED projection, not a measured result, so it is NEVER labelled brand/audience (\"this brand's own results\") — it labels crossOrg (fleet benchmark). NOTE: the resolved NUMBERS still come from the finest grain WITH SPEND (its cascade floor max(spent, parent)), so a 0-outcome grain keeps its own spend-floor number even while labelled crossOrg. NULL on an UNMEASURED row (measured=false) — a channel that has spent nothing has no grain to label, and a label is never borrowed."
+                                "description": "PROVENANCE LABEL only (decoupled from the number source): the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg), else crossOrg (benchmark). A grain with spend but 0 outcomes yields a FLOORED projection, not a measured result, so it is NEVER labelled brand/audience (\"this brand's own results\") — it labels crossOrg (fleet benchmark). NOTE: the resolved NUMBERS still come from the finest grain WITH SPEND (its cascade floor max(spent, parent)), so a 0-outcome grain keeps its own spend-floor number even while labelled crossOrg. NULL on an UNMEASURED row (measured=false) — nothing measured it, so there is no provenance to label, and a row priced on the EXPLORE ALLOWANCE borrows no other workflow's label."
                               },
                               "costPerClickUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "costPerClickUsd of the finest grain WITH SPEND (never 0) — the cascade floor max(spent, parent), which may exceed the crossOrg value even when grain (label) = crossOrg. NULL on an UNMEASURED row (measured=false): no spend, so no unit cost — never 0, which would say a click is free."
+                                "description": "costPerClickUsd of the finest grain WITH SPEND (never 0) — the cascade floor max(spent, parent), which may exceed the crossOrg value even when grain (label) = crossOrg. On an UNMEASURED row (measured=false) it carries the channel's outreach price — the explore allowance's floor. NULL only when the channel has measured nothing at all; never 0, which would say a click is free."
                               },
                               "costPerOutcomeUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "The GOAL metric from the finest grain WITH SPEND (cascade floor) — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). A 0-outcome grain keeps its own spend floor here (not collapsed to the fleet value), while `grain` labels it crossOrg. Null only at cold start (no economics)."
+                                "description": "The GOAL metric from the finest grain WITH SPEND (cascade floor) — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). A 0-outcome grain keeps its own spend floor here (not collapsed to the fleet value), while `grain` labels it crossOrg. On an UNMEASURED row (measured=false) it carries the EXPLORE ALLOWANCE — the price of one outreach in this channel through the goal's funnel — so an active workflow with no history is RANKABLE and can earn a first run; it is a cost floor only (costPerPaidClientUsd / roiMultiple / cacPct stay null). Null at cold start (no economics) and when the channel has measured nothing at all."
                               },
                               "costPerPaidClientUsd": {
                                 "type": "number",
@@ -11878,7 +11878,7 @@
                           },
                           "measured": {
                             "type": "boolean",
-                            "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row this channel has measured NOTHING for: estimatesByGrain is empty and every resolved figure is null, so a consumer ranking on resolved.costPerOutcomeUsd skips it by construction and can also tell it apart outright rather than by a null probe. Unmeasured rows appear ONLY when the whole projection is unmeasured (response measured=false) — a channel with any spend never mixes them into a ranked set."
+                            "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for: estimatesByGrain is empty and resolved carries the EXPLORE ALLOWANCE (a cost floor, no return), so a serving consumer that ranks on resolved.costPerOutcomeUsd can REACH an active workflow with no history — which is the only way it can earn a first run — while every display / benchmark surface filters on this flag instead of probing for nulls. Unmeasured rows appear beside measured ones in an established channel (the mixed case): an active dynasty with no grain anywhere is offered here, never recommended. When the channel has measured nothing whatsoever there is no allowance to state either and every resolved figure is null."
                           }
                         },
                         "required": [
@@ -11893,7 +11893,7 @@
                     "recommendedWorkflowDynastySlug": {
                       "type": "string",
                       "nullable": true,
-                      "description": "Dynasty of the row with the lowest resolved.costPerOutcomeUsd. Null when none has usable data."
+                      "description": "Dynasty of the MEASURED row with the lowest resolved.costPerOutcomeUsd. An unmeasured row (explore allowance) is reachable but never recommended. Null when none has usable data."
                     },
                     "recommendedBudgetUsd": {
                       "type": "number",
@@ -12797,7 +12797,7 @@
                                 "description": "Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."
                               }
                             },
-                            "description": "A grain block is included ONLY when that grain has spentUsd > 0. Always EMPTY on an UNMEASURED row (measured=false)."
+                            "description": "A grain block is included ONLY when that grain has spentUsd > 0. Always EMPTY on an UNMEASURED row (measured=false) — nothing is borrowed from the workflows that do have evidence."
                           },
                           "resolved": {
                             "type": "object",
@@ -12810,17 +12810,17 @@
                                   "brand",
                                   "crossOrg"
                                 ],
-                                "description": "PROVENANCE LABEL only (decoupled from the number source): the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg), else crossOrg (benchmark). A grain with spend but 0 outcomes yields a FLOORED projection, not a measured result, so it is NEVER labelled brand/audience (\"this brand's own results\") — it labels crossOrg (fleet benchmark). NOTE: the resolved NUMBERS still come from the finest grain WITH SPEND (its cascade floor max(spent, parent)), so a 0-outcome grain keeps its own spend-floor number even while labelled crossOrg. NULL on an UNMEASURED row (measured=false) — a channel that has spent nothing has no grain to label, and a label is never borrowed."
+                                "description": "PROVENANCE LABEL only (decoupled from the number source): the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg), else crossOrg (benchmark). A grain with spend but 0 outcomes yields a FLOORED projection, not a measured result, so it is NEVER labelled brand/audience (\"this brand's own results\") — it labels crossOrg (fleet benchmark). NOTE: the resolved NUMBERS still come from the finest grain WITH SPEND (its cascade floor max(spent, parent)), so a 0-outcome grain keeps its own spend-floor number even while labelled crossOrg. NULL on an UNMEASURED row (measured=false) — nothing measured it, so there is no provenance to label, and a row priced on the EXPLORE ALLOWANCE borrows no other workflow's label."
                               },
                               "costPerClickUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "costPerClickUsd of the finest grain WITH SPEND (never 0) — the cascade floor max(spent, parent), which may exceed the crossOrg value even when grain (label) = crossOrg. NULL on an UNMEASURED row (measured=false): no spend, so no unit cost — never 0, which would say a click is free."
+                                "description": "costPerClickUsd of the finest grain WITH SPEND (never 0) — the cascade floor max(spent, parent), which may exceed the crossOrg value even when grain (label) = crossOrg. On an UNMEASURED row (measured=false) it carries the channel's outreach price — the explore allowance's floor. NULL only when the channel has measured nothing at all; never 0, which would say a click is free."
                               },
                               "costPerOutcomeUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "The GOAL metric from the finest grain WITH SPEND (cascade floor) — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). A 0-outcome grain keeps its own spend floor here (not collapsed to the fleet value), while `grain` labels it crossOrg. Null only at cold start (no economics)."
+                                "description": "The GOAL metric from the finest grain WITH SPEND (cascade floor) — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). A 0-outcome grain keeps its own spend floor here (not collapsed to the fleet value), while `grain` labels it crossOrg. On an UNMEASURED row (measured=false) it carries the EXPLORE ALLOWANCE — the price of one outreach in this channel through the goal's funnel — so an active workflow with no history is RANKABLE and can earn a first run; it is a cost floor only (costPerPaidClientUsd / roiMultiple / cacPct stay null). Null at cold start (no economics) and when the channel has measured nothing at all."
                               },
                               "costPerPaidClientUsd": {
                                 "type": "number",
@@ -12851,7 +12851,7 @@
                           },
                           "measured": {
                             "type": "boolean",
-                            "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row this channel has measured NOTHING for: estimatesByGrain is empty and every resolved figure is null, so a consumer ranking on resolved.costPerOutcomeUsd skips it by construction and can also tell it apart outright rather than by a null probe. Unmeasured rows appear ONLY when the whole projection is unmeasured (response measured=false) — a channel with any spend never mixes them into a ranked set."
+                            "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for: estimatesByGrain is empty and resolved carries the EXPLORE ALLOWANCE (a cost floor, no return), so a serving consumer that ranks on resolved.costPerOutcomeUsd can REACH an active workflow with no history — which is the only way it can earn a first run — while every display / benchmark surface filters on this flag instead of probing for nulls. Unmeasured rows appear beside measured ones in an established channel (the mixed case): an active dynasty with no grain anywhere is offered here, never recommended. When the channel has measured nothing whatsoever there is no allowance to state either and every resolved figure is null."
                           }
                         },
                         "required": [
