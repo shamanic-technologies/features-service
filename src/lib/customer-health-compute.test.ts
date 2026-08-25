@@ -94,6 +94,7 @@ function audienceRow(id: string, memberCount: number, contacted: number, cpcCent
 
 function audienceEnvelope(brandId: string, rows: AudienceStatsRow[]): AudienceStatsEnvelope {
   return {
+    costBasis: "charged" as const,
     featureSlug: COLD_CSV,
     brandId,
     goal: "signup",
@@ -130,6 +131,7 @@ function wfRow(slug: string, name: string | null, cost: number | null, grain: "c
     estimatesByGrain: {},
     resolved: {
       grain,
+      costBasis: grain === "crossOrg" ? "incurred" : "charged",
       costPerClickUsd: cost ?? 0,
       costPerOutcomeUsd: cost,
       costPerPaidClientUsd: cost,

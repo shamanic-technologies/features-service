@@ -1311,6 +1311,9 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       if (engagementSnapshot && (foldSingleIntoTotal || (offerCampaignIds?.length ?? 0) > 1)) delete rawStats[UNOWNED_ENGAGEMENT_KEY];
 
       return {
+        // ACCOUNTING — the cost figures here are what this customer was CHARGED; comped spend is
+        // absent from them. See lib/cost-basis.ts.
+        costBasis: "charged" as const,
         featureSlug,
         systemStats: buildSystemStats(runsStatsMap.get("__total__"), activeCampaigns),
         stats: computeAllDerivedStats(rawStats),
@@ -1388,7 +1391,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
 
     traceEvent(runId, { service: "features-service", event: "feature-stats-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}` }, req.headers).catch(() => {});
 
-        return { featureSlug, groupBy, systemStats: buildSystemStats(totals, activeCampaigns), groups };
+        return { featureSlug, costBasis: "charged" as const, groupBy, systemStats: buildSystemStats(totals, activeCampaigns), groups };
       },
     });
 
@@ -1459,6 +1462,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       };
 
       return res.json({
+        costBasis: "charged" as const,
         systemStats: buildSystemStats(runsStatsMap.get("__total__"), activeCampaigns),
         stats: computeAllDerivedStats(rawStats),
       });
@@ -1498,7 +1502,7 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
       groups.push(group);
     }
 
-    res.json({ groupBy: groupByParam, systemStats: buildSystemStats(totals, activeCampaigns), groups });
+    res.json({ costBasis: "charged" as const, groupBy: groupByParam, systemStats: buildSystemStats(totals, activeCampaigns), groups });
   } catch (error) {
     console.error("[features-service] Global stats error:", error);
     res.status(500).json({ error: "Internal server error" });

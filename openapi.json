@@ -285,6 +285,13 @@
       "FeatureStatsResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "featureSlug": {
             "type": "string"
           },
@@ -459,6 +466,7 @@
           }
         },
         "required": [
+          "costBasis",
           "featureSlug",
           "systemStats"
         ]
@@ -466,6 +474,13 @@
       "GlobalStatsResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "groupBy": {
             "type": "string"
           },
@@ -637,6 +652,7 @@
           }
         },
         "required": [
+          "costBasis",
           "systemStats"
         ]
       },
@@ -785,6 +801,13 @@
       "FeatureRevenueResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "featureSlug": {
             "type": "string"
           },
@@ -1776,6 +1799,7 @@
           }
         },
         "required": [
+          "costBasis",
           "featureSlug",
           "spend",
           "recipientsContacted",
@@ -1799,6 +1823,13 @@
       "FeatureRevenueGroupedResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "featureSlug": {
             "type": "string"
           },
@@ -1940,6 +1971,7 @@
           }
         },
         "required": [
+          "costBasis",
           "featureSlug",
           "groupBy",
           "groups"
@@ -1948,6 +1980,13 @@
       "FeatureRevenueByWorkflowResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "featureSlug": {
             "type": "string"
           },
@@ -2103,6 +2142,7 @@
           }
         },
         "required": [
+          "costBasis",
           "featureSlug",
           "groupBy",
           "groups"
@@ -2111,6 +2151,13 @@
       "FeatureRevenueByOfferResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "featureSlug": {
             "type": "string"
           },
@@ -2214,6 +2261,7 @@
           }
         },
         "required": [
+          "costBasis",
           "featureSlug",
           "groupBy",
           "groups"
@@ -2345,6 +2393,14 @@
                     "crossOrg": {
                       "type": "object",
                       "properties": {
+                        "costBasis": {
+                          "type": "string",
+                          "enum": [
+                            "charged",
+                            "incurred"
+                          ],
+                          "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                        },
                         "evidence": {
                           "type": "object",
                           "properties": {
@@ -2444,6 +2500,14 @@
                     "brand": {
                       "type": "object",
                       "properties": {
+                        "costBasis": {
+                          "type": "string",
+                          "enum": [
+                            "charged",
+                            "incurred"
+                          ],
+                          "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                        },
                         "evidence": {
                           "type": "object",
                           "properties": {
@@ -2543,6 +2607,14 @@
                     "audience": {
                       "type": "object",
                       "properties": {
+                        "costBasis": {
+                          "type": "string",
+                          "enum": [
+                            "charged",
+                            "incurred"
+                          ],
+                          "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                        },
                         "evidence": {
                           "type": "object",
                           "properties": {
@@ -2645,6 +2717,15 @@
                 "resolved": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "charged",
+                        "incurred"
+                      ],
+                      "description": "The basis the resolved NUMBERS were read on — the basis of the grain they came from (the finest grain WITH SPEND, which is not necessarily the provenance `grain` LABEL). \"charged\" = this customer's own billed money, comped spend absent; \"incurred\" = the fleet benchmark, comped spend at full value. NULL on an UNMEASURED row, where the figure is an EXPLORE ALLOWANCE rather than a measured cost."
+                    },
                     "grain": {
                       "type": "string",
                       "nullable": true,
@@ -2683,6 +2764,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "grain",
                     "costPerClickUsd",
                     "costPerOutcomeUsd",
@@ -3169,6 +3251,14 @@
                     "crossOrg": {
                       "type": "object",
                       "properties": {
+                        "costBasis": {
+                          "type": "string",
+                          "enum": [
+                            "charged",
+                            "incurred"
+                          ],
+                          "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                        },
                         "evidence": {
                           "type": "object",
                           "properties": {
@@ -3268,6 +3358,14 @@
                     "brand": {
                       "type": "object",
                       "properties": {
+                        "costBasis": {
+                          "type": "string",
+                          "enum": [
+                            "charged",
+                            "incurred"
+                          ],
+                          "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                        },
                         "evidence": {
                           "type": "object",
                           "properties": {
@@ -3367,6 +3465,14 @@
                     "audience": {
                       "type": "object",
                       "properties": {
+                        "costBasis": {
+                          "type": "string",
+                          "enum": [
+                            "charged",
+                            "incurred"
+                          ],
+                          "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                        },
                         "evidence": {
                           "type": "object",
                           "properties": {
@@ -3469,6 +3575,15 @@
                 "resolved": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "charged",
+                        "incurred"
+                      ],
+                      "description": "The basis the resolved NUMBERS were read on — the basis of the grain they came from (the finest grain WITH SPEND, which is not necessarily the provenance `grain` LABEL). \"charged\" = this customer's own billed money, comped spend absent; \"incurred\" = the fleet benchmark, comped spend at full value. NULL on an UNMEASURED row, where the figure is an EXPLORE ALLOWANCE rather than a measured cost."
+                    },
                     "grain": {
                       "type": "string",
                       "nullable": true,
@@ -3507,6 +3622,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "grain",
                     "costPerClickUsd",
                     "costPerOutcomeUsd",
@@ -3551,6 +3667,13 @@
       "PipelineActivityResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "incurred"
+            ],
+            "description": "PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."
+          },
           "featureSlug": {
             "type": "string"
           },
@@ -3749,6 +3872,7 @@
           }
         },
         "required": [
+          "costBasis",
           "featureSlug",
           "brandId",
           "timezone",
@@ -3760,6 +3884,13 @@
       "AudienceStatsResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "featureSlug": {
             "type": "string"
           },
@@ -4179,6 +4310,7 @@
           }
         },
         "required": [
+          "costBasis",
           "featureSlug",
           "brandId",
           "goal",
@@ -4191,6 +4323,13 @@
       "OfferRevenueResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "campaignIdentity": {
             "type": "object",
             "properties": {
@@ -5279,6 +5418,7 @@
           }
         },
         "required": [
+          "costBasis",
           "spend",
           "recipientsContacted",
           "recipientsOpened",
@@ -5304,6 +5444,13 @@
       "OfferAudienceStatsResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "featureSlug": {
             "type": "string"
           },
@@ -5750,6 +5897,7 @@
           }
         },
         "required": [
+          "costBasis",
           "featureSlug",
           "brandId",
           "goal",
@@ -5764,6 +5912,13 @@
       "OfferPipelineActivityResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "incurred"
+            ],
+            "description": "PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."
+          },
           "featureSlug": {
             "type": "string"
           },
@@ -5989,6 +6144,7 @@
           }
         },
         "required": [
+          "costBasis",
           "featureSlug",
           "brandId",
           "timezone",
@@ -6002,6 +6158,13 @@
       "BrandRevenueResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "campaignIdentity": {
             "type": "object",
             "properties": {
@@ -7087,6 +7250,7 @@
           }
         },
         "required": [
+          "costBasis",
           "spend",
           "recipientsContacted",
           "recipientsOpened",
@@ -7111,6 +7275,13 @@
       "BrandOffersResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "brandId": {
             "type": "string"
           },
@@ -7227,6 +7398,7 @@
           }
         },
         "required": [
+          "costBasis",
           "brandId",
           "offers"
         ]
@@ -7234,6 +7406,13 @@
       "BrandAudienceStatsResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "featureSlug": {
             "type": "string"
           },
@@ -7677,6 +7856,7 @@
           }
         },
         "required": [
+          "costBasis",
           "featureSlug",
           "brandId",
           "goal",
@@ -7690,6 +7870,13 @@
       "BrandPipelineActivityResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "incurred"
+            ],
+            "description": "PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."
+          },
           "featureSlug": {
             "type": "string"
           },
@@ -7912,6 +8099,7 @@
           }
         },
         "required": [
+          "costBasis",
           "featureSlug",
           "brandId",
           "timezone",
@@ -7924,6 +8112,13 @@
       "PublicRevenueResponse": {
         "type": "object",
         "properties": {
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+          },
           "featureSlug": {
             "type": "string"
           },
@@ -8045,6 +8240,7 @@
           }
         },
         "required": [
+          "costBasis",
           "featureSlug",
           "groupBy",
           "results"
@@ -10834,6 +11030,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "charged"
+                      ],
+                      "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+                    },
                     "featureSlug": {
                       "type": "string"
                     },
@@ -11008,6 +11211,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "featureSlug",
                     "systemStats"
                   ]
@@ -11529,6 +11733,14 @@
                               "crossOrg": {
                                 "type": "object",
                                 "properties": {
+                                  "costBasis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "charged",
+                                      "incurred"
+                                    ],
+                                    "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                                  },
                                   "evidence": {
                                     "type": "object",
                                     "properties": {
@@ -11628,6 +11840,14 @@
                               "brand": {
                                 "type": "object",
                                 "properties": {
+                                  "costBasis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "charged",
+                                      "incurred"
+                                    ],
+                                    "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                                  },
                                   "evidence": {
                                     "type": "object",
                                     "properties": {
@@ -11727,6 +11947,14 @@
                               "audience": {
                                 "type": "object",
                                 "properties": {
+                                  "costBasis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "charged",
+                                      "incurred"
+                                    ],
+                                    "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                                  },
                                   "evidence": {
                                     "type": "object",
                                     "properties": {
@@ -11829,6 +12057,15 @@
                           "resolved": {
                             "type": "object",
                             "properties": {
+                              "costBasis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "charged",
+                                  "incurred"
+                                ],
+                                "description": "The basis the resolved NUMBERS were read on — the basis of the grain they came from (the finest grain WITH SPEND, which is not necessarily the provenance `grain` LABEL). \"charged\" = this customer's own billed money, comped spend absent; \"incurred\" = the fleet benchmark, comped spend at full value. NULL on an UNMEASURED row, where the figure is an EXPLORE ALLOWANCE rather than a measured cost."
+                              },
                               "grain": {
                                 "type": "string",
                                 "nullable": true,
@@ -11867,6 +12104,7 @@
                               }
                             },
                             "required": [
+                              "costBasis",
                               "grain",
                               "costPerClickUsd",
                               "costPerOutcomeUsd",
@@ -12502,6 +12740,14 @@
                               "crossOrg": {
                                 "type": "object",
                                 "properties": {
+                                  "costBasis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "charged",
+                                      "incurred"
+                                    ],
+                                    "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                                  },
                                   "evidence": {
                                     "type": "object",
                                     "properties": {
@@ -12601,6 +12847,14 @@
                               "brand": {
                                 "type": "object",
                                 "properties": {
+                                  "costBasis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "charged",
+                                      "incurred"
+                                    ],
+                                    "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                                  },
                                   "evidence": {
                                     "type": "object",
                                     "properties": {
@@ -12700,6 +12954,14 @@
                               "audience": {
                                 "type": "object",
                                 "properties": {
+                                  "costBasis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "charged",
+                                      "incurred"
+                                    ],
+                                    "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                                  },
                                   "evidence": {
                                     "type": "object",
                                     "properties": {
@@ -12802,6 +13064,15 @@
                           "resolved": {
                             "type": "object",
                             "properties": {
+                              "costBasis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "charged",
+                                  "incurred"
+                                ],
+                                "description": "The basis the resolved NUMBERS were read on — the basis of the grain they came from (the finest grain WITH SPEND, which is not necessarily the provenance `grain` LABEL). \"charged\" = this customer's own billed money, comped spend absent; \"incurred\" = the fleet benchmark, comped spend at full value. NULL on an UNMEASURED row, where the figure is an EXPLORE ALLOWANCE rather than a measured cost."
+                              },
                               "grain": {
                                 "type": "string",
                                 "nullable": true,
@@ -12840,6 +13111,7 @@
                               }
                             },
                             "required": [
+                              "costBasis",
                               "grain",
                               "costPerClickUsd",
                               "costPerOutcomeUsd",
@@ -13063,6 +13335,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "incurred"
+                      ],
+                      "description": "PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."
+                    },
                     "featureSlug": {
                       "type": "string"
                     },
@@ -13261,6 +13540,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "featureSlug",
                     "brandId",
                     "timezone",
@@ -13501,6 +13781,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "charged"
+                      ],
+                      "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+                    },
                     "featureSlug": {
                       "type": "string"
                     },
@@ -13920,6 +14207,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "featureSlug",
                     "brandId",
                     "goal",
@@ -15325,6 +15613,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "charged"
+                      ],
+                      "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
+                    },
                     "groupBy": {
                       "type": "string"
                     },
@@ -15496,6 +15791,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "systemStats"
                   ]
                 }
@@ -15697,6 +15993,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "incurred"
+                      ],
+                      "description": "PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."
+                    },
                     "objective": {
                       "type": "string"
                     },
@@ -15782,6 +16085,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "objective",
                     "sortDirection",
                     "results"
@@ -16542,6 +16846,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "incurred"
+                      ],
+                      "description": "PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."
+                    },
                     "featureSlug": {
                       "type": "string"
                     },
@@ -16617,6 +16928,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "featureSlug",
                     "avgCostPerMeetingBooked",
                     "avgCostPerPurchase",
@@ -16723,6 +17035,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "incurred"
+                      ],
+                      "description": "PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."
+                    },
                     "featureSlug": {
                       "type": "string"
                     },
@@ -16773,6 +17092,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "featureSlug",
                     "objective",
                     "windowOutcomes",
@@ -16868,6 +17188,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "incurred"
+                      ],
+                      "description": "PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."
+                    },
                     "featureSlug": {
                       "type": "string"
                     },
@@ -16925,6 +17252,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "featureSlug",
                     "objective",
                     "windowOutcomes",
@@ -17030,6 +17358,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "incurred"
+                      ],
+                      "description": "PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."
+                    },
                     "featureSlug": {
                       "type": "string"
                     },
@@ -17095,6 +17430,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "featureSlug",
                     "objective",
                     "windowOutcomes",
@@ -17245,6 +17581,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "incurred"
+                      ],
+                      "description": "PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."
+                    },
                     "featureSlug": {
                       "type": "string"
                     },
@@ -17322,6 +17665,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "featureSlug",
                     "avgCostPerOutcomeByObjective",
                     "totalSpentUsd",
@@ -17419,6 +17763,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "incurred"
+                      ],
+                      "description": "PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."
+                    },
                     "featureSlug": {
                       "type": "string"
                     },
@@ -17504,6 +17855,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "featureSlug",
                     "objective",
                     "unit",
@@ -17858,6 +18210,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "incurred"
+                      ],
+                      "description": "PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."
+                    },
                     "objective": {
                       "type": "string"
                     },
@@ -17943,6 +18302,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "objective",
                     "sortDirection",
                     "results"
