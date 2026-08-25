@@ -26,6 +26,8 @@
  * == GROSS for it by construction (no special-casing here).
  */
 
+import { refundedCents, type CostBasis } from "./cost-basis.js";
+
 export type Pricing = "gross" | "net";
 
 /**
@@ -62,6 +64,12 @@ export function selectCostCentsString(
   group: object,
   grossField: GrossCostField,
   pricing: Pricing,
+  // The ACCOUNTING / PERFORMANCE axis (`cost-basis.ts`), ORTHOGONAL to gross/net. "charged" (the
+  // default) is what the customer was charged — a comped cost is absent from runs' own totals, so this
+  // returns the producer's string VERBATIM and is byte-identical to today. "incurred" adds the
+  // refunded (comped) bucket back, because a workflow's cost to produce an outcome does not depend on
+  // whether we decided to bill it.
+  basis: CostBasis = "charged",
 ): string {
   const field = pricing === "net" ? NET_FIELD[grossField] : grossField;
   const raw = (group as Record<string, unknown>)[field];
@@ -73,7 +81,15 @@ export function selectCostCentsString(
         : `[features-service] runs-service cost group missing '${field}': ${JSON.stringify(raw)}`,
     );
   }
-  return String(raw);
+  // A PROVISIONED hold was never charged and can never be comped, so the refund bucket does not touch
+  // it — only the committed total and the billed figure carry spend that could have been refunded.
+  const refunded = basis === "incurred" && grossField !== "provisionedCostInUsdCents"
+    ? refundedCents(group, pricing)
+    : 0;
+  // Nothing comped ⇒ return the producer's string UNTOUCHED (no reformat, no precision loss), so a
+  // fleet with no refunds anywhere is byte-identical on both bases.
+  if (refunded === 0) return String(raw);
+  return String(Number(raw) + refunded);
 }
 
 /** Numeric variant of {@link selectCostCentsString} (parsed to a Number, fail-loud on missing/non-finite). */
@@ -81,6 +97,7 @@ export function selectCostCents(
   group: object,
   grossField: GrossCostField,
   pricing: Pricing,
+  basis: CostBasis = "charged",
 ): number {
-  return Number(selectCostCentsString(group, grossField, pricing));
+  return Number(selectCostCentsString(group, grossField, pricing, basis));
 }

@@ -156,6 +156,7 @@ describe("workflow-projection: a channel with no history still answers who it co
       expect(row.estimatesByGrain).toEqual({});
       expect(row.resolved).toEqual({
         grain: null,
+        costBasis: null,
         costPerClickUsd: null,
         costPerOutcomeUsd: null,
         costPerPaidClientUsd: null,

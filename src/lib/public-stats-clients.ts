@@ -6,6 +6,7 @@
 
 import { fetchWithRetry } from "./fetch-retry.js";
 import { selectCostCentsString, type Pricing } from "./pricing.js";
+import { refundedCents, type CostBasis } from "./cost-basis.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,13 @@ export async function fetchPublicCosts(
   // runs#179's frozen `netTotalCostInUsdCents` (fail-loud if absent) so the fleet crossOrg grain reads
   // frozen net — no read-time discount multiply.
   pricing: Pricing = "gross",
+  // This endpoint serves ONE kind of question — the CROSS-ORG FLEET BENCHMARK (the crossOrg grain of
+  // the projection ladder, the /public/stats/* workflow rankings, the cost-per-outreach divisor every
+  // budget projection floors against). All of those are PERFORMANCE reads: what a workflow costs to
+  // produce an outcome does not depend on whether we decided to bill one org for it. So the basis
+  // defaults to INCURRED here and every call site takes it. A fleet with nothing comped reads
+  // byte-identically on either basis (`selectCostCentsString` returns the producer string untouched).
+  basis: CostBasis = "incurred",
 ): Promise<CostGroup[]> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
 
@@ -88,10 +96,10 @@ export async function fetchPublicCosts(
   }
 
   const data = await response.json() as { groups: CostGroup[] };
-  if (pricing === "gross") return data.groups;
+  if (pricing === "gross" && basis === "charged") return data.groups;
   return data.groups.map((g) => ({
     ...g,
-    totalCostInUsdCents: selectCostCentsString(g, "totalCostInUsdCents", pricing),
+    totalCostInUsdCents: selectCostCentsString(g, "totalCostInUsdCents", pricing, basis),
   }));
 }
 
@@ -102,11 +110,17 @@ export async function fetchPublicCosts(
  * Feeds the cross-org cost-per-outcome trend join against dated outcome counts. api-key only, no org
  * identity. Fail loud (essential input, not optional enrichment).
  */
-export async function fetchFleetSpendByDay(featureSlug: string, brandId?: string): Promise<Map<string, number>> {
+export async function fetchFleetSpendByDay(
+  featureSlug: string,
+  brandId?: string,
+  // Fleet cost-per-outcome trend / lifetime / distribution and the goal-bucket dataset are all
+  // cross-org PERFORMANCE benchmarks, so comped spend counts at full value here (see `cost-basis.ts`).
+  basis: CostBasis = "incurred",
+): Promise<Map<string, number>> {
   const params = new URLSearchParams({ interval: "day", featureSlug });
   // runs filters brandId as a single `= ANY(r.brand_ids)` (NOT comma-split) — pass ONE brand per call.
   if (brandId) params.set("brandId", brandId);
-  return fetchCostTimeseriesByDay(params);
+  return fetchCostTimeseriesByDay(params, basis);
 }
 
 /**
@@ -118,13 +132,15 @@ export async function fetchFleetSpendByDay(featureSlug: string, brandId?: string
 export async function fetchDynastySpendByDay(
   featureSlug: string,
   workflowDynastySlug: string,
+  // Per-workflow cross-org RECENT rate — a performance benchmark, same basis rule as its fleet sibling.
+  basis: CostBasis = "incurred",
 ): Promise<Map<string, number>> {
   const params = new URLSearchParams({ interval: "day", featureSlug, workflowDynastySlug });
-  return fetchCostTimeseriesByDay(params);
+  return fetchCostTimeseriesByDay(params, basis);
 }
 
 /** Shared parse of runs-service `/v1/stats/public/costs/timeseries` → Map<YYYY-MM-DD, spentUsd>. */
-async function fetchCostTimeseriesByDay(params: URLSearchParams): Promise<Map<string, number>> {
+async function fetchCostTimeseriesByDay(params: URLSearchParams, basis: CostBasis = "charged"): Promise<Map<string, number>> {
   const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs/timeseries?${params}`;
   const response = await fetchWithRetry(url, {
     headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY! },
@@ -135,7 +151,9 @@ async function fetchCostTimeseriesByDay(params: URLSearchParams): Promise<Map<st
     throw new Error(`[features-service] runs-service /v1/stats/public/costs/timeseries failed: ${response.status} — ${body}`);
   }
 
-  const data = (await response.json()) as { buckets?: Array<{ period?: string; totalCostInUsdCents?: string }> };
+  const data = (await response.json()) as {
+    buckets?: Array<{ period?: string; totalCostInUsdCents?: string } & Record<string, unknown>>;
+  };
   if (!Array.isArray(data.buckets)) {
     throw new Error("[features-service] runs-service costs/timeseries returned no buckets array");
   }
@@ -145,7 +163,9 @@ async function fetchCostTimeseriesByDay(params: URLSearchParams): Promise<Map<st
     if (typeof b.period !== "string" || typeof b.totalCostInUsdCents !== "string") {
       throw new Error(`[features-service] runs-service costs/timeseries bucket missing period/totalCostInUsdCents`);
     }
-    byDay.set(b.period.slice(0, 10), (byDay.get(b.period.slice(0, 10)) ?? 0) + Number(b.totalCostInUsdCents) / 100);
+    // INCURRED adds the comped bucket back (0 while the producer has not shipped it → unchanged).
+    const cents = Number(b.totalCostInUsdCents) + (basis === "incurred" ? refundedCents(b, "gross") : 0);
+    byDay.set(b.period.slice(0, 10), (byDay.get(b.period.slice(0, 10)) ?? 0) + cents / 100);
   }
   return byDay;
 }

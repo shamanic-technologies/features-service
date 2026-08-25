@@ -273,7 +273,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
             costEconomics: channelBody.costEconomics,
           };
         });
-        return { brandId, channels: groups, ...body };
+        return { brandId, costBasis: "charged" as const, channels: groups, ...body };
       },
     });
 
@@ -418,7 +418,7 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
             costEconomics: body.costEconomics,
           };
         });
-        return { brandId, offers: groups };
+        return { brandId, costBasis: "charged" as const, offers: groups };
       },
     });
 

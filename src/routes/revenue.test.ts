@@ -1447,7 +1447,7 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId").set(AUTH);
     expect(res.status).toBe(200);
-    expect(Object.keys(res.body).sort()).toEqual(["featureSlug", "groupBy", "groups"]);
+    expect(Object.keys(res.body).sort()).toEqual(["costBasis", "featureSlug", "groupBy", "groups"]);
     expect(res.body.featureSlug).toBe("sales-cold-email-outreach");
     expect(res.body.groupBy).toBe("campaignId");
     expect(res.body.groups).toHaveLength(2);

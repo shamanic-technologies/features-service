@@ -1,5 +1,73 @@
 # Features Service — CLAUDE.md
 
+## COMPED SPEND SPLITS EVERY MONEY FIGURE IN TWO — `charged` is what the customer PAID, `incurred` is what the workflow COST, and the second one is the half that breaks silently
+
+The platform sometimes COMPS a customer for spend that genuinely happened (2026-08-25: a provider
+incident burned a brand's budget generating nothing, and the owner comped it). runs-service records
+that as its own cost state. This service answers TWO different questions off that one ledger and they
+want opposite treatment of a comped cost — the owner's line: **refunded money affects the ACCOUNTING
+view, not the workflow PERFORMANCE view.**
+
+- **CHARGED (accounting)** — what the customer was CHARGED: their spend, their invested total, their
+  ROI, their %CAC, their cost per outcome. A comped cost VANISHES from these. **It fixes itself**:
+  runs-service aggregates `status IN ('actual','provisioned')`, so a refunded row is simply not in
+  `totalCostInUsdCents`. Nothing here had to change for this half, and `charged` is the DEFAULT of
+  every selector precisely so it stays that way.
+- **INCURRED (performance)** — what a workflow COSTS to produce an outcome: the cross-org fleet
+  benchmark that ranks workflows, and anything that projects what a budget buys. A comped cost STAYS
+  at FULL value. **This is the half that breaks SILENTLY** — real spend just disappears, no error,
+  no red test, a comped brand reading artificially cheap, the fleet benchmark dragged down for every
+  other customer and their budget projections under-priced. That silent half is the whole reason the
+  axis exists.
+
+- **IT IS NOT THE GROSS/NET AXIS AND MUST NEVER BE FOLDED INTO IT.** Gross-vs-net is a DISCOUNT
+  question (what we charged vs list price); charged-vs-incurred is a COMPED question (did we charge it
+  at all). They COMPOSE: a NET INCURRED figure is the discounted price of spend we comped. Guarded.
+- **THE CLASSIFICATION IS BY SCOPE, WITH ONE DELIBERATE EXCEPTION.** Cross-org fleet aggregates are
+  ALWAYS `incurred` — including the `crossOrg` grain INSIDE a customer's `/workflow-projection` and
+  the fleet parent `/audience-stats` floors against, because that grain IS the fleet benchmark and one
+  org being comped must not make a workflow look cheaper to everybody else. Org-scoped figures are
+  ALWAYS `charged`. The exception is `pipeline-activity`'s brand-observed cost-per-outreach
+  (`fetchBrandObservedOutreachUsd`): brand-scoped but read INCURRED, because it is the DIVISOR of
+  `expected.outreach = dailyBudget / costPerOutreach` — a dollar buys the same number of sends whether
+  or not we later comped it, so comping must never promise a brand more sends than its budget buys —
+  and because it is `max()`-ed against the fleet benchmark, which is incurred. Mixing the two bases
+  inside that `max` compares two currencies and can pick the wrong side.
+- **EVERY SURFACE SAYS WHICH QUESTION IT ANSWERS, ON THE WIRE.** `/revenue`, `/stats`,
+  `/audience-stats`, `/brands/:id/{revenue,offers}`, `/offers/:id/revenue` and `/public/stats/revenue`
+  carry `costBasis: "charged"`; `pipeline-activity` and every `/public/stats/*` cost benchmark carry
+  `costBasis: "incurred"`. `/workflow-projection` is the ONE payload holding both, so it states the
+  basis PER GRAIN (`estimatesByGrain.<grain>.costBasis`) plus `resolved.costBasis` = the basis of the
+  grain the resolved NUMBERS came from (`numberGrain`, not the provenance `grain` label; null on an
+  unmeasured row, where the figure is an explore allowance rather than a measured cost).
+  `/funnel-ranking` needs no marker of its own — it serves `ProjectionRow`s, which already carry it.
+- **THE PRODUCER OWNS THE SHAPE AND THE READER IS TOLERANT OF ITS ABSENCE.** runs-service names every
+  cost state `<state>CostInUsdCents` with a frozen-net twin `net<State>CostInUsdCents`
+  (`total`/`actual`/`provisioned`/`cancelled` on the deployed contract, verified through api-registry),
+  so the refunded bucket is read under that same convention (`lib/cost-basis.ts`). It is **OPTIONAL**:
+  while the producer has not deployed, the field is absent, every read contributes ZERO comped cents,
+  both bases are byte-identical to today, and the value fills in on its own the day runs ships. Do NOT
+  make it required and do NOT fabricate one from another field.
+- **A PROVISIONED HOLD CARRIES NO REFUND** — it was never charged, so it can never have been comped.
+  Only the committed total and the billed figure take the bucket back.
+- **NOTHING COMPED ⇒ BYTE-IDENTICAL, and it is byte-identical by construction, not by rounding**:
+  `selectCostCentsString` returns the producer's string UNTOUCHED when the refunded figure is 0, so
+  the 10-decimal precision is never reformatted.
+- **NET falls back to the GROSS refunded figure** when the net twin is absent — the same
+  `COALESCE(net, gross)` runs applies to pre-freeze rows. Safe here in a way a gross fallback on a
+  customer PRICE is not: this figure is only ever ADDED to a benchmark, so the worst case OVERSTATES
+  what a workflow costs, which under-promises rather than over-promises what a budget buys.
+- **`/internal/stats/revenue`'s realized-revenue series stays CHARGED and must stay so** — that is OUR
+  income, and money we comped is not revenue we earned.
+- Guards: `src/routes/refunded-cost-basis.test.ts` — ONE downstream fixture ($100 billed + $400
+  comped on the SAME runs group) driving `/workflow-projection`, asserting the brand grain reads $100
+  while the crossOrg grain reads $500 and the two DIVERGE by exactly the comped amount. **A test that
+  only checked "the customer's total went down" would pass on the design where the spend is erased
+  from the benchmark too — which is the failure being prevented — so every case asserts the
+  divergence.** Plus: nothing comped ⇒ same number both ways; the producer's bucket absent ⇒ still
+  200, still today's number; the budget-projection read takes incurred while the displayed one does
+  not; and the selectors compose with gross/net rather than replacing it. (Set 2026-08-25.)
+
 ## `GET /brands/:brandId/offers` — THE BRAND'S OFFERS TABLE, EACH ROW AT THE OFFER GRAIN; it is the offer read N times, LEAN, not a new computation
 
 The brand Overview lists a brand's OFFERS one row each, with that offer's ROI, %CAC, revenue and

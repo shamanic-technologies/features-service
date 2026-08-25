@@ -1226,7 +1226,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
 
           traceEvent(runId, { service: "features-service", event: "feature-revenue-by-workflow", detail: `featureSlug=${featureSlug}, brandId=${brandId}, workflows=${groups.length}` }, req.headers).catch(() => {});
 
-          return { featureSlug, groupBy: "workflow", groups };
+          return { featureSlug, costBasis: "charged" as const, groupBy: "workflow", groups };
         },
       });
 
@@ -1276,7 +1276,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
 
           traceEvent(runId, { service: "features-service", event: "feature-revenue-by-offer-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}` }, req.headers).catch(() => {});
 
-          return { featureSlug, groupBy: "offerId", groups };
+          return { featureSlug, costBasis: "charged" as const, groupBy: "offerId", groups };
         },
       });
 
@@ -1330,7 +1330,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
 
           traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}, identities=${byIdentity.size}` }, req.headers).catch(() => {});
 
-          return { featureSlug, groupBy: "campaignId", groups };
+          return { featureSlug, costBasis: "charged" as const, groupBy: "campaignId", groups };
         },
       });
 
@@ -1384,7 +1384,11 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 
-        return { featureSlug, ...body, campaignIdentity: campaignId ? describeIdentity(identity, campaignId) : undefined };
+        // ACCOUNTING — every money figure below is what this customer was CHARGED. Spend the
+        // platform comped is absent from it (they did not pay it), which is the opposite of the
+        // cross-org benchmark on /workflow-projection's crossOrg grain and /public/stats/*, where
+        // the same words mean what the workflow COST to produce an outcome. See lib/cost-basis.ts.
+        return { featureSlug, costBasis: "charged" as const, ...body, campaignIdentity: campaignId ? describeIdentity(identity, campaignId) : undefined };
       },
     });
 
