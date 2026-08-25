@@ -271,7 +271,7 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
             costEconomics: channelBody.costEconomics,
           };
         });
-        return { offerId, brandId, channels: groups, ...body };
+        return { offerId, brandId, costBasis: "charged" as const, channels: groups, ...body };
       },
     });
 

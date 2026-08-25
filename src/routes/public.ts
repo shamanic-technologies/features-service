@@ -638,7 +638,7 @@ export async function handleRanked(
       };
     });
 
-    return { objective, sortDirection, results };
+    return { costBasis: "incurred" as const, objective, sortDirection, results };
     },
   });
   res.json(payload);
@@ -727,7 +727,7 @@ export async function handleBest(
       }
     }
 
-    return { best };
+    return { costBasis: "incurred" as const, best };
     },
   });
   res.json(payload);
@@ -752,6 +752,12 @@ interface PublicRevenueResult {
   timeline?: Array<{ date: string; cumulativePipelineUsd: number }>;
 }
 interface PublicRevenuePayload {
+  /**
+   * ACCOUNTING — this is the CUSTOMERS' money (a cross-org roll-up of the exact engine their own
+   * dashboard runs), so comped spend is absent from every CAC / ROI here. Cross-org does NOT imply
+   * the performance basis: the fleet BENCHMARK surfaces beside it read INCURRED. See lib/cost-basis.ts.
+   */
+  costBasis: "charged";
   featureSlug: string;
   groupBy: "brand";
   results: PublicRevenueResult[];
@@ -900,7 +906,7 @@ export async function handlePublicRevenue(
       return b.costEconomics.committedCostUsd - a.costEconomics.committedCostUsd;
     });
 
-    const body: PublicRevenuePayload = { featureSlug, groupBy: "brand", results };
+    const body: PublicRevenuePayload = { costBasis: "charged", featureSlug, groupBy: "brand", results };
     return body;
     },
   });
@@ -1116,6 +1122,10 @@ export async function handlePublicCostProjection(
     const { objectives, brandCount } = buildObjectiveAverages(unitCostList, perBrandEconomics);
 
     return {
+      // CROSS-ORG PERFORMANCE BENCHMARK — comped spend counts at FULL value here (`lib/cost-basis.ts`).
+      // Stated on the wire because this figure shares the words "cost per outcome" with a customer's own
+      // dashboard, which answers the CHARGED question and drops comped spend.
+      costBasis: "incurred" as const,
       featureSlug,
       avgCostPerMeetingBooked: objectives.meetingBooked,
       avgCostPerPurchase: objectives.websitePurchase, // legacy top-level alias → renamed objective
@@ -1213,7 +1223,7 @@ export async function handleCostPerOutcomeTrend(
       fleetEcon,
     });
 
-    return { featureSlug, objective, windowOutcomes, points };
+    return { featureSlug, objective, windowOutcomes, points, costBasis: "incurred" as const };
     },
   });
   res.json(payload);
@@ -1227,6 +1237,8 @@ export async function handleCostPerOutcomeTrend(
 // /public/stats/best. Sorted by spend desc.
 
 interface WorkflowCostPerOutcomePayload {
+  /** CROSS-ORG PERFORMANCE BENCHMARK — comped spend counts at full value (`lib/cost-basis.ts`). */
+  costBasis: "incurred";
   featureSlug: string;
   objective: string;
   /** The trailing-window size (base outcomes) the per-row `recentCostPerOutcomeUsd` moving average targets
@@ -1390,6 +1402,10 @@ export async function handleWorkflowCostPerOutcome(
     // replies come from the (already-fetched, fast) main fan-out; `recentByDynasty` carries the trailing-
     // window moving average (a dynasty absent from the map → null recent, never a false $0).
     const buildPayload = (recentByDynasty: Map<string, number | null>): WorkflowCostPerOutcomePayload => ({
+      // CROSS-ORG PERFORMANCE BENCHMARK — comped spend counts at FULL value here (`lib/cost-basis.ts`).
+      // Stated on the wire because this figure shares the words "cost per outcome" with a customer's own
+      // dashboard, which answers the CHARGED question and drops comped spend.
+      costBasis: "incurred" as const,
       featureSlug,
       objective,
       windowOutcomes,
@@ -1670,6 +1686,10 @@ export async function handleBestModelCostPerOutcomeTrend(
     }
 
     return {
+      // CROSS-ORG PERFORMANCE BENCHMARK — comped spend counts at FULL value here (`lib/cost-basis.ts`).
+      // Stated on the wire because this figure shares the words "cost per outcome" with a customer's own
+      // dashboard, which answers the CHARGED question and drops comped spend.
+      costBasis: "incurred" as const,
       featureSlug,
       objective,
       windowOutcomes,
@@ -1757,6 +1777,10 @@ export async function handleCostPerOutcomeLifetime(
     }
 
     return {
+      // CROSS-ORG PERFORMANCE BENCHMARK — comped spend counts at FULL value here (`lib/cost-basis.ts`).
+      // Stated on the wire because this figure shares the words "cost per outcome" with a customer's own
+      // dashboard, which answers the CHARGED question and drops comped spend.
+      costBasis: "incurred" as const,
       featureSlug,
       avgCostPerOutcomeByObjective: objectives,
       totalSpentUsd,
@@ -1855,6 +1879,10 @@ export async function handleCostPerOutcomeDistribution(
     });
 
     return {
+      // CROSS-ORG PERFORMANCE BENCHMARK — comped spend counts at FULL value here (`lib/cost-basis.ts`).
+      // Stated on the wire because this figure shares the words "cost per outcome" with a customer's own
+      // dashboard, which answers the CHARGED question and drops comped spend.
+      costBasis: "incurred" as const,
       featureSlug,
       objective,
       unit: "brand" as const,

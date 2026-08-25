@@ -231,7 +231,7 @@ describe("GET /revenue?groupBy=offerId — what each of a brand's offers returns
       .get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=offerId")
       .set(AUTH);
     expect(res.status).toBe(200);
-    expect(Object.keys(res.body).sort()).toEqual(["featureSlug", "groupBy", "groups"]);
+    expect(Object.keys(res.body).sort()).toEqual(["costBasis", "featureSlug", "groupBy", "groups"]);
     expect(res.body.groupBy).toBe("offerId");
 
     const groups = byOffer(res.body);

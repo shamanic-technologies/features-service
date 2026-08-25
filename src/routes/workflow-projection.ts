@@ -8,6 +8,7 @@ import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal,
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
+import { type CostBasis } from "../lib/cost-basis.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type SingleStepGoal, type Goal } from "../lib/goals.js";
 import { SALES_FUNNELS, matchSalesFunnelKey, type MeetingChannel, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
@@ -59,7 +60,35 @@ interface GrainUnitCosts {
   costPerContactedUsd: number;
 }
 
+/**
+ * WHICH ACCOUNTING QUESTION EACH GRAIN ANSWERS — the CHARGED / INCURRED axis (`lib/cost-basis.ts`).
+ *
+ * This payload is the ONE place both questions sit side by side, and they share the label
+ * "cost per outcome", so each grain SAYS which it is rather than leaving a reader to infer it.
+ *
+ *  - `crossOrg` is the FLEET BENCHMARK: what a workflow costs to produce an outcome across every org.
+ *    Comped spend counts at full value — one org being comped must not make the workflow look cheaper
+ *    to everybody else.
+ *  - `brand` / `audience` are THIS CUSTOMER'S OWN MONEY, the figures their dashboard displays and
+ *    divides into ROI/%CAC. Comped spend is absent: they did not pay it.
+ */
+const GRAIN_COST_BASIS: Record<GrainName, CostBasis> = {
+  crossOrg: "incurred",
+  brand: "charged",
+  audience: "charged",
+};
+
+/** Stamp each present grain with the basis it was read on (see {@link GRAIN_COST_BASIS}). */
+function stampGrainBases(estimatesByGrain: Partial<Record<GrainName, GrainBlock>>): Partial<Record<GrainName, GrainBlock>> {
+  for (const g of Object.keys(estimatesByGrain) as GrainName[]) {
+    estimatesByGrain[g]!.costBasis = GRAIN_COST_BASIS[g];
+  }
+  return estimatesByGrain;
+}
+
 interface GrainBlock {
+  /** Which accounting question this grain answers — see {@link GRAIN_COST_BASIS}. */
+  costBasis?: CostBasis;
   evidence: { spentUsd: number; observedContacted: number; observedClicks: number; observedPositiveReplies: number };
   unitCosts: GrainUnitCosts;
   /**
@@ -89,6 +118,13 @@ interface ResolvedBlock {
    * nothing to label, and a row priced on the EXPLORE ALLOWANCE borrows no other workflow's provenance.
    */
   grain: GrainName | null;
+  /**
+   * The basis the resolved NUMBERS were read on — the basis of the grain they came from (which is
+   * `numberGrain`, the finest grain WITH SPEND, not the provenance `grain` label). "charged" = this
+   * customer's own billed money; "incurred" = the fleet benchmark, comped spend included. NULL on an
+   * UNMEASURED row, where the number is an explore allowance rather than a measured cost.
+   */
+  costBasis: CostBasis | null;
   /**
    * NULL when there is no evidence AND no allowance to state. On an UNMEASURED row it carries the
    * channel's outreach price (the explore allowance's floor) — never 0, which would say a click is free.
@@ -130,6 +166,7 @@ export type UnmeasuredProjectionReason = "no_active_audiences" | "no_active_work
 /** The `resolved` block of an UNMEASURED row — every figure absent, nothing borrowed, nothing invented. */
 const UNMEASURED_RESOLVED: ResolvedBlock = {
   grain: null,
+  costBasis: null,
   costPerClickUsd: null,
   costPerOutcomeUsd: null,
   costPerPaidClientUsd: null,
@@ -581,6 +618,7 @@ function resolvePick(
   const costPerOutcomeUsd = econ ? outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel) : null;
   return {
     grain,
+    costBasis: GRAIN_COST_BASIS[numberGrain],
     costPerClickUsd: block.unitCosts.costPerClickUsd,
     costPerOutcomeUsd,
     costPerPaidClientUsd: block.projected.costPerPaidClientUsd,
@@ -648,6 +686,8 @@ function exploreResolved(
   const unitCosts = { clickUsd: outreachUsd, replyUsd: outreachUsd };
   return {
     grain: null,
+    // An explore allowance is a FLOOR, not a measured cost, so it states no accounting basis.
+    costBasis: null,
     costPerClickUsd: outreachUsd,
     costPerOutcomeUsd: outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel),
     costPerPaidClientUsd: null,
@@ -1028,7 +1068,7 @@ export function projectFromEvidence(input: {
           workflowDynastySlug: wf?.workflowDynastySlug ?? activeSlug,
           workflowDynastyName: wf?.workflowDynastyName ?? null,
         },
-        estimatesByGrain,
+        estimatesByGrain: stampGrainBases(estimatesByGrain),
         resolved: resolve(estimatesByGrain),
         measured: true,
       });
@@ -1074,7 +1114,7 @@ export function projectFromEvidence(input: {
             workflowDynastySlug: dynastySlug,
             workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null,
           },
-          estimatesByGrain,
+          estimatesByGrain: stampGrainBases(estimatesByGrain),
           resolved: resolve(estimatesByGrain),
           measured: true,
         });

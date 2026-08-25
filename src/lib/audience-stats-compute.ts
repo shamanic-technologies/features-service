@@ -210,6 +210,14 @@ export interface AudienceStatsFunnelCoverage {
 }
 
 export interface AudienceStatsEnvelope {
+  /**
+   * ACCOUNTING — every `metrics.*Cents` column is what this customer was CHARGED, so spend the platform
+   * comped is absent from it. Stated on the wire because "cost per outcome" is also the label the
+   * CROSS-ORG PERFORMANCE benchmark uses (`/public/stats/*`, and `/workflow-projection`'s crossOrg
+   * grain), where the same words mean what the workflow COST and comped spend counts in full.
+   * See `lib/cost-basis.ts`.
+   */
+  costBasis: "charged";
   featureSlug: string;
   brandId: string;
   /**
@@ -1196,6 +1204,7 @@ export async function computeAudienceStats(
   return {
     ok: true,
     envelope: {
+      costBasis: "charged",
       featureSlug,
       brandId,
       goal: normalizedGoal,

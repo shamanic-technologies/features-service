@@ -74,6 +74,14 @@ interface DayBucket {
 }
 
 interface PipelineActivityResponse {
+  /**
+   * PERFORMANCE. This surface publishes no cost COLUMN, but its `expected.*` series are money-DERIVED
+   * (`expected.outreach = dailyBudgetUsd / costPerOutreach`), and that divisor is read INCURRED: a
+   * dollar buys the same number of sends whether or not the platform later comped it, so comping must
+   * never promise a brand more sends than its budget can buy. Every `.actual` count and the daily
+   * budget itself are cost-free / configuration and carry no basis. See `lib/cost-basis.ts`.
+   */
+  costBasis: "incurred";
   featureSlug: string;
   brandId: string;
   timezone: string;
@@ -535,13 +543,15 @@ export async function computeFeatureOutreachUsd(featureSlug: string): Promise<nu
  * recipients it actually contacted, summed over every workflow dynasty it ran.
  *
  * Same BASIS as the fleet `outreachUsd` it floors (`buildWorkflowActivityUnits`): COMMITTED cost
- * (`totalCostInUsdCents`) over `recipientStats.contacted`. Only the SCOPE differs — one brand instead of
+ * (`totalCostInUsdCents`) over `recipientStats.contacted`, and INCURRED (comped spend counts — see the
+ * note on the call below). Only the SCOPE differs — one brand instead of
  * the fleet — so `max(fleet, own)` compares like with like. It is a LIFETIME ratio (the whole brand ×
  * feature history), not the `days` window: `fetchDailyBroadcastActivity` only covers the requested window
  * (7 days by default), which is far too thin a denominator to price a send.
  *
- * Reuses `fetchBrandWorkflowEvidence` — the exact brand-grain read `workflow-projection` already makes —
- * so the numerator/denominator are the ones that surface as this brand's cost-per-outcome elsewhere.
+ * Reuses `fetchBrandWorkflowEvidence` — the exact brand-grain read `workflow-projection` already makes,
+ * on the one axis where it differs (INCURRED, not the displayed CHARGED basis) — so the
+ * numerator/denominator are the ones that surface as this brand's cost-per-outcome elsewhere.
  *
  * Returns null when EITHER side is 0 (a brand that never spent, or never contacted anyone): there is no
  * own-ratio to floor with, so the caller keeps the fleet benchmark unchanged. Never a fabricated value.
@@ -556,7 +566,13 @@ async function fetchBrandObservedOutreachUsd(
   // wrong side). Threaded from the request's `?pricing=`; gross by default → byte-identical.
   pricing: Pricing = "gross",
 ): Promise<number | null> {
-  const evidence = await fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, { ...headers, featureSlug }, pricing);
+  // INCURRED, deliberately, and it is the ONE brand-scoped read on that basis. This ratio is not a
+  // figure the customer is shown — it is the DIVISOR of `expected.outreach = dailyBudget / costPerOutreach`,
+  // i.e. a projection of what their budget buys. A dollar buys the same number of sends whether or not
+  // we later comped it, so comping must not promise a brand MORE sends than its budget can buy. It is
+  // also `max()`-ed against the fleet benchmark, which is read INCURRED — mixing the two bases there
+  // would compare two different currencies and could pick the wrong side.
+  const evidence = await fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, { ...headers, featureSlug }, pricing, "incurred");
   let costCents = 0;
   let contacted = 0;
   for (const grain of evidence.values()) {
@@ -923,6 +939,7 @@ export async function computeOfferPipelineActivity(
         featureSlug: featureSlugs.join(","),
         brandId: input.brandId,
         timezone,
+        costBasis: "incurred" as const,
         generatedAt: new Date().toISOString(),
         days: buildDayBuckets(dates, today, actualByDate, expected, null),
         summary: {
@@ -1036,6 +1053,7 @@ export async function computeBrandPipelineActivity(
         featureSlug: featureSlugs.join(","),
         brandId: input.brandId,
         timezone,
+        costBasis: "incurred" as const,
         generatedAt: new Date().toISOString(),
         days: buildDayBuckets(dates, today, actualByDate, expected, observed),
         summary: {
@@ -1151,6 +1169,7 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
       featureSlug,
       brandId,
       timezone,
+      costBasis: "incurred" as const,
       generatedAt: new Date().toISOString(),
       days: buildDayBuckets(dates, today, actualByDate, expected, observed),
       summary: {

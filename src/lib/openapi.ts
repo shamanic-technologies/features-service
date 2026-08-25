@@ -52,6 +52,7 @@ const statsGroupSchema = z.object({
 });
 
 const featureStatsResponseSchema = z.object({
+  costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
   groupBy: z.string().optional(),
   systemStats: systemStatsSchema,
@@ -60,6 +61,7 @@ const featureStatsResponseSchema = z.object({
 });
 
 const globalStatsResponseSchema = z.object({
+  costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   groupBy: z.string().optional(),
   systemStats: systemStatsSchema,
   groups: z.array(statsGroupSchema).optional(),
@@ -407,6 +409,7 @@ const spendSchema = z.object({
 });
 
 const featureRevenueResponseSchema = z.object({
+  costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
   campaignIdentity: campaignIdentitySchema.optional().describe("Present only on a ?campaignId= read: the identity the figures were totalled over. A campaign-scoped read answers for the campaign's whole identity — its stopped ancestors included — so asking about any member returns the same, complete campaign."),
   spend: spendSchema.nullable().describe("Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"),
@@ -452,6 +455,7 @@ const revenueGroupSchema = z.object({
 });
 
 const featureRevenueGroupedResponseSchema = z.object({
+  costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
   groupBy: z.literal("campaignId"),
   groups: z.array(revenueGroupSchema),
@@ -489,6 +493,7 @@ const revenueWorkflowGroupSchema = z.object({
 });
 
 const featureRevenueByWorkflowResponseSchema = z.object({
+  costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
   groupBy: z.literal("workflow"),
   groups: z.array(revenueWorkflowGroupSchema),
@@ -512,6 +517,7 @@ const revenueOfferGroupSchema = z.object({
 });
 
 const featureRevenueByOfferResponseSchema = z.object({
+  costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
   groupBy: z.literal("offerId"),
   groups: z.array(revenueOfferGroupSchema),
@@ -563,6 +569,7 @@ registry.registerPath({
 // (audienceId?, workflowDynasty). Replaces the flat per-workflow row + the deleted /candidates endpoint.
 
 const grainBlockSchema = z.object({
+  costBasis: z.enum(["charged", "incurred"]).optional().describe("Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."),
   evidence: z.object({
     spentUsd: z.number().describe("Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."),
     observedContacted: z.number(),
@@ -585,6 +592,7 @@ const grainBlockSchema = z.object({
 });
 
 const resolvedBlockSchema = z.object({
+  costBasis: z.enum(["charged", "incurred"]).nullable().describe("The basis the resolved NUMBERS were read on — the basis of the grain they came from (the finest grain WITH SPEND, which is not necessarily the provenance `grain` LABEL). \"charged\" = this customer's own billed money, comped spend absent; \"incurred\" = the fleet benchmark, comped spend at full value. NULL on an UNMEASURED row, where the figure is an EXPLORE ALLOWANCE rather than a measured cost."),
   grain: z.enum(["audience", "brand", "crossOrg"]).nullable().describe("PROVENANCE LABEL only (decoupled from the number source): the finest grain that actually OBSERVED the goal's outcome (precedence audience > brand > crossOrg), else crossOrg (benchmark). A grain with spend but 0 outcomes yields a FLOORED projection, not a measured result, so it is NEVER labelled brand/audience (\"this brand's own results\") — it labels crossOrg (fleet benchmark). NOTE: the resolved NUMBERS still come from the finest grain WITH SPEND (its cascade floor max(spent, parent)), so a 0-outcome grain keeps its own spend-floor number even while labelled crossOrg. NULL on an UNMEASURED row (measured=false) — nothing measured it, so there is no provenance to label, and a row priced on the EXPLORE ALLOWANCE borrows no other workflow's label."),
   costPerClickUsd: z.number().nullable().describe("costPerClickUsd of the finest grain WITH SPEND (never 0) — the cascade floor max(spent, parent), which may exceed the crossOrg value even when grain (label) = crossOrg. On an UNMEASURED row (measured=false) it carries the channel's outreach price — the explore allowance's floor. NULL only when the channel has measured nothing at all; never 0, which would say a click is free."),
   costPerOutcomeUsd: z.number().nullable().describe("The GOAL metric from the finest grain WITH SPEND (cascade floor) — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). A 0-outcome grain keeps its own spend floor here (not collapsed to the fleet value), while `grain` labels it crossOrg. On an UNMEASURED row (measured=false) it carries the EXPLORE ALLOWANCE — the price of one outreach in this channel through the goal's funnel — so an active workflow with no history is RANKABLE and can earn a first run; it is a cost floor only (costPerPaidClientUsd / roiMultiple / cacPct stay null). Null at cold start (no economics) and when the channel has measured nothing at all."),
@@ -793,6 +801,7 @@ const pipelineActivityDaySchema = z.object({
 });
 
 const pipelineActivityResponseSchema = z.object({
+  costBasis: z.literal("incurred").describe("PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."),
   featureSlug: z.string(),
   brandId: z.string(),
   timezone: z.string(),
@@ -901,6 +910,7 @@ const audienceStatsRowSchema = z.object({
 });
 
 const audienceStatsResponseSchema = z.object({
+  costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
   brandId: z.string(),
   goal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).nullable().describe("The chain's goal ECHO on a single-funnel read. NULL on the BRAND-LEVEL read (neither `funnel` nor `goal` sent): a brand has no goal — it sells through every funnel it declared at once — and echoing one of them there would be exactly the arbitrary pick that read exists to remove."),
@@ -1206,6 +1216,7 @@ const brandOfferRowSchema = z.object({
 });
 
 const brandOffersResponseSchema = z.object({
+  costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   brandId: z.string(),
   offers: z
     .array(brandOfferRowSchema)
@@ -1379,6 +1390,7 @@ const rankedResultSchema = z.object({
 });
 
 const rankedResponseSchema = z.object({
+  costBasis: z.literal("incurred").describe("PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."),
   objective: z.string(),
   sortDirection: z.enum(["asc", "desc"]),
   results: z.array(rankedResultSchema),
@@ -1465,6 +1477,7 @@ const publicRevenueResultSchema = z.object({
 });
 
 const publicRevenueResponseSchema = z.object({
+  costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
   groupBy: z.literal("brand"),
   results: z.array(publicRevenueResultSchema),
@@ -1981,6 +1994,7 @@ const objectiveAveragesSchema = z.object({
 }).describe("Fleet-average cost-per-outcome per optimization objective. Each = mean across client brands of that brand's best-workflow value; null when no brand is backed for the objective.");
 
 const publicCostProjectionResponseSchema = z.object({
+  costBasis: z.literal("incurred").describe("PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."),
   featureSlug: z.string(),
   avgCostPerMeetingBooked: z.number().nullable().describe("Legacy (Wave 1) alias of avgCostPerOutcomeByObjective.meetingBooked. Null when no brand has usable economics."),
   avgCostPerPurchase: z.number().nullable().describe("Legacy (Wave 1) alias of avgCostPerOutcomeByObjective.websitePurchase (renamed from purchase; the field name stays for admin back-compat). Null when no brand has usable economics."),
@@ -1993,6 +2007,7 @@ const objectiveQueryParam = z
   .describe("Optimization objective — one of websiteVisit / positiveReply / signup / formSubmission / meetingBooked / purchase (snake / camel / kebab spellings accepted; self-serve aliases signup).");
 
 const costPerOutcomeTrendResponseSchema = z.object({
+  costBasis: z.literal("incurred").describe("PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."),
   featureSlug: z.string(),
   objective: z.string().describe("Canonical camelCase objective the series is for."),
   windowOutcomes: z.number().int().describe("Target number of base outcomes each trailing moving-average window spans."),
@@ -2006,6 +2021,7 @@ const costPerOutcomeTrendResponseSchema = z.object({
 });
 
 const workflowCostPerOutcomeResponseSchema = z.object({
+  costBasis: z.literal("incurred").describe("PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."),
   featureSlug: z.string(),
   objective: z.string().describe("Canonical camelCase objective the ratios are for."),
   windowOutcomes: z.number().int().describe("Trailing-window size (base outcomes) the per-row recentCostPerOutcomeUsd moving average targets — the SAME window semantics as /public/stats/cost-per-outcome-trend."),
@@ -2021,6 +2037,7 @@ const workflowCostPerOutcomeResponseSchema = z.object({
 });
 
 const bestModelCostPerOutcomeTrendResponseSchema = z.object({
+  costBasis: z.literal("incurred").describe("PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."),
   featureSlug: z.string(),
   objective: z.string().describe("Canonical camelCase objective the series is for."),
   windowOutcomes: z.number().int().describe("Target number of base outcomes each trailing moving-average window spans."),
@@ -2037,6 +2054,7 @@ const bestModelCostPerOutcomeTrendResponseSchema = z.object({
 });
 
 const costPerOutcomeLifetimeResponseSchema = z.object({
+  costBasis: z.literal("incurred").describe("PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."),
   featureSlug: z.string(),
   avgCostPerOutcomeByObjective: objectiveAveragesSchema.describe(
     "Pooled LIFETIME (all-history) cost-per-outcome per objective — total fleet spend ÷ total fleet outcomes, projected objectives through the fleet-mean economics. The window→∞ limit of cost-per-outcome-trend. Null where the objective is unbacked; never a false $0.",
@@ -2048,6 +2066,7 @@ const costPerOutcomeLifetimeResponseSchema = z.object({
 });
 
 const costPerOutcomeDistributionResponseSchema = z.object({
+  costBasis: z.literal("incurred").describe("PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."),
   featureSlug: z.string(),
   objective: z.string().describe("Canonical camelCase objective the distribution is for."),
   unit: z.literal("brand").describe("Each data point is one brand's pooled all-history cost-per-outcome."),

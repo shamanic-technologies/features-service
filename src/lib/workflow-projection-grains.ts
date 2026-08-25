@@ -21,6 +21,7 @@ import type { WorkflowMetadata } from "./public-stats-clients.js";
 import { fetchActiveAudiences } from "./human-client.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { selectCostCents, selectCostCentsString, type Pricing } from "./pricing.js";
+import { type CostBasis } from "./cost-basis.js";
 
 export interface Identity {
   orgId: string;
@@ -145,6 +146,11 @@ export async function fetchBrandWorkflowEvidence(
   identity: Identity,
   // NET reads runs#179's frozen net twin per group; GROSS reads the gross field → byte-identical.
   pricing: Pricing = "gross",
+  // CHARGED (the default) is the customer's own money — this grain is what `workflow-projection` and
+  // `/audience-stats` display and floor against, so a comped cost must be absent from it. INCURRED is
+  // taken by ONE caller: the brand-observed cost-per-outreach that floors the budget→sends PROJECTION,
+  // which is compared against the fleet benchmark and therefore must be read on the fleet's basis.
+  basis: CostBasis = "charged",
 ): Promise<Map<string, WorkflowGrainEvidence>> {
   const [costGroups, emailStats] = await Promise.all([
     fetchBrandCostGroups(brandId, featureSlug, "workflowSlug", identity),
@@ -155,7 +161,7 @@ export async function fetchBrandWorkflowEvidence(
     chains,
     // Select gross vs frozen-net cost per group BEFORE the dynasty rollup, so the aggregated brand-grain
     // cost is net-or-gross end to end (no post-hoc multiply).
-    costGroups.map((g) => ({ dimensions: g.dimensions, totalCostInUsdCents: selectCostCentsString(g, "totalCostInUsdCents", pricing), runCount: g.runCount })),
+    costGroups.map((g) => ({ dimensions: g.dimensions, totalCostInUsdCents: selectCostCentsString(g, "totalCostInUsdCents", pricing, basis), runCount: g.runCount })),
     emailStats,
     "workflowSlug",
   );
