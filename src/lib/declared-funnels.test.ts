@@ -107,8 +107,8 @@ describe("declaredFunnelsToRank", () => {
     ]);
     // Each keeps its OWN lifetime revenue — the merge used to take the lowest across the goal, which
     // priced a $9k contract funnel on a $7k one.
-    expect(parsed[0].economics).toEqual({ replyToMeetingPct: 30, meetingToClosePct: 25, lifetimeRevenueUsd: 9_000 });
-    expect(parsed[1].economics).toEqual({ visitToMeetingPct: 4, meetingToClosePct: 40, lifetimeRevenueUsd: 7_000 });
+    expect(parsed[0].economics).toEqual({ replyToMeetingPct: 30, meetingToClosePct: 25, meetingAttendedToPaidClientPct: 25, lifetimeRevenueUsd: 9_000 });
+    expect(parsed[1].economics).toEqual({ visitToMeetingPct: 4, meetingToClosePct: 40, meetingAttendedToPaidClientPct: 40, lifetimeRevenueUsd: 7_000 });
   });
 
   it("COMPOSES the meeting show-up rate into booked→paid — the shared field name means two things", () => {
@@ -121,7 +121,7 @@ describe("declaredFunnelsToRank", () => {
         rates: { replyToMeetingPct: 30, meetingBookedToAttendedPct: 50, meetingToClosePct: 40 },
       }),
     ]);
-    expect(parsed[0].economics).toEqual({ replyToMeetingPct: 30, meetingToClosePct: 20 });
+    expect(parsed[0].economics).toEqual({ replyToMeetingPct: 30, meetingToClosePct: 20, meetingAttendedToPaidClientPct: 40 });
     // The show-up rate never reaches SalesEconomics under its own name — there is no field for it.
     expect(parsed[0].economics).not.toHaveProperty("meetingBookedToAttendedPct");
   });
@@ -134,7 +134,7 @@ describe("declaredFunnelsToRank", () => {
         rates: { visitToMeetingPct: 4, meetingBookedToAttendedPct: null, meetingToClosePct: 40 },
       }),
     ]);
-    expect(parsed[0].economics).toEqual({ visitToMeetingPct: 4, meetingToClosePct: 40 });
+    expect(parsed[0].economics).toEqual({ visitToMeetingPct: 4, meetingToClosePct: 40, meetingAttendedToPaidClientPct: 40 });
   });
 
   it("a show-up rate with NO close rate contributes nothing — half a chain is not a close rate", () => {

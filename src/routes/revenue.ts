@@ -21,6 +21,7 @@ import { fetchConversionCounts, type ConversionCounts } from "../lib/conversion-
 import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { fetchSequencesByDay } from "../lib/sequences-client.js";
+import { fetchObservedStepFacts } from "../lib/observed-steps.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
 import { observedCostPerOutcome, flooredCostPerOutcome, derivedCostPerOutcome } from "../lib/cost-engine.js";
 import {
@@ -186,6 +187,8 @@ type SpendCostParents = BrandProjectedParentsUsd | null;
  */
 function fetchSpendCostParentsSoft(
   brandId: string,
+  /** The offer being priced, when the caller knows one. See `fetchDeclaredSalesFunnels`. */
+  offerId: string | undefined,
   // ONE channel, or the SET an offer is sold through. A benchmark belongs to one channel, so a
   // multi-channel scope resolves one PER CHANNEL and takes the best-returning channel's whole —
   // never a field-by-field blend. See lib/offer-parents.ts for why that is the only honest combine.
@@ -197,7 +200,7 @@ function fetchSpendCostParentsSoft(
 ): Promise<SpendCostParents> {
   // The caller's own org names whose configuration we want — a brand id alone is shared across every
   // org claiming the same domain, so what it sells through is the (org, brand) pair's data.
-  return fetchDeclaredSalesFunnels(brandId, headers.orgId)
+  return fetchDeclaredSalesFunnels(brandId, headers.orgId, offerId)
     .then(async (declared) => {
       const declaredKeys = declared.map((f) => f.funnelKey).sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
       // An explicit `?funnel=` is honoured only when the brand actually declared it — pricing a brand on
@@ -294,11 +297,16 @@ export interface FunnelPricedEconomics {
  * THROWS at the client (a producer gap, not "sells through nothing") and lands here as that same
  * degrade, which IS the required no-declared-funnel behaviour.
  */
-export async function fetchDeclaredFunnelsSoft(brandId: string, orgId: string): Promise<DeclaredSalesFunnel[]> {
+export async function fetchDeclaredFunnelsSoft(
+  brandId: string,
+  orgId: string,
+  /** The offer being priced, when the read knows one. See `fetchDeclaredSalesFunnels`. */
+  offerId?: string | null,
+): Promise<DeclaredSalesFunnel[]> {
   try {
     // The caller's own org names whose configuration we want: a brand id alone is shared across every
     // org claiming the same domain, so what it sells through is the (org, brand) pair's data.
-    return await fetchDeclaredSalesFunnels(brandId, orgId);
+    return await fetchDeclaredSalesFunnels(brandId, orgId, offerId);
   } catch (err) {
     const what =
       err instanceof SalesFunnelsUnavailableError
@@ -808,6 +816,12 @@ function buildLensBody(
       repliedPositiveAt: person.signals.positiveReply ? (person.signalDates?.positiveReply ?? null) : null,
       meetingBooked: Boolean(person.signals.meeting),
       meetingBookedAt: person.signalDates?.meeting ?? null,
+      // A meeting somebody ACTUALLY ATTENDED — the rung above booked, and the one the lead's value is
+      // priced on when it is reached. Surfaced beside `meetingBooked` so the row a customer opens says
+      // the same thing as the money above it: without it, a lead priced on having attended would show
+      // only "booked", and the drilldown would read as a smaller fact than the total it feeds.
+      meetingAttended: Boolean(person.signals.meetingAttended),
+      meetingAttendedAt: person.signalDates?.meetingAttended ?? null,
       purchased: Boolean(person.signals.closeWin),
       purchasedAt: person.signalDates?.closeWin ?? null,
       // Lens short-circuits before the Wave B conversion-email merge (a brand-total concept), so these
@@ -915,6 +929,12 @@ export async function computeFeatureRevenue(
   // (`?funnel=`). Omitted → the brand's first declared funnel. A funnel the brand never declared is
   // ignored rather than honoured: see fetchSpendCostParentsSoft.
   requestedFunnel?: SalesFunnelKey,
+  // WHICH OFFER this read is about, when the caller knows one (the offer grain does; a brand- or
+  // channel-scoped read does not). It names the offer on the declared-funnel read behind the spend
+  // block's cost-per-outcome benchmark, so those columns are priced on the SAME chains the offer's ROI
+  // is — a benchmark read on the brand's chains beside a return read on the offer's would be one body
+  // answering about two different propositions.
+  offerId?: string,
 ): Promise<RevenueBody> {
   // The single campaign id the campaign-SCOPED downstream reads still take: the requested campaign
   // for a single scope, `undefined` for a family (no producer accepts a campaign list). The reads
@@ -936,7 +956,7 @@ export async function computeFeatureRevenue(
         fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing),
         fetchSequencesSoft(brandId, campaignScope, featureScope, headers),
         fetchConversionCountsSoft(brandId),
-        fetchSpendCostParentsSoft(brandId, featureScope, headers, campaignId, pricing, requestedFunnel),
+        fetchSpendCostParentsSoft(brandId, offerId, featureScope, headers, campaignId, pricing, requestedFunnel),
       ]);
       // ONE basis: ROI/CAC ride the SAME committed total the `spend` block reports.
       return emptyBody(
@@ -986,7 +1006,7 @@ export async function computeFeatureRevenue(
     // /audience-stats floors each audience against. Pre-caught → null on failure (never rejects
     // fail-loud Wave A; the columns then degrade to observed). Off-overview null (no spend block).
     includeSpend
-      ? fetchSpendCostParentsSoft(brandId, featureScope, headers, campaignId, pricing, requestedFunnel)
+      ? fetchSpendCostParentsSoft(brandId, offerId, featureScope, headers, campaignId, pricing, requestedFunnel)
       : Promise.resolve<SpendCostParents>(null),
     // Overview-only DATED spend (runs-service cost timeseries) — the spend leg of the return-on-spend
     // curve. Pre-caught → null on failure (never rejects fail-loud Wave A; roiHistory then degrades to
@@ -1037,24 +1057,29 @@ export async function computeFeatureRevenue(
   // NOT fail the endpoint (pipeline, orgs, leads stay correct). The two mutation loops below run
   // AFTER both settle, in the SAME order as before — concurrency only moves fetch timing, the
   // merge into persons is unchanged, so the response body is byte-identical.
-  //   - fetchEventTimestamps  (email-gateway) — per-event dates for dates / time-series / events.
-  //   - fetchQualifications   (instantly)     — meeting-booked / closed dates → the post-engagement
-  //     stages (meeting, close-win as realized revenue). A known timestamp IS the signal.
+  //   - fetchEventTimestamps   (email-gateway) — per-event dates for dates / time-series / events.
+  //   - fetchObservedStepFacts (lead-service)  — what a HUMAN observed: the rung the lead stands on
+  //     and when, what the deal was worth, and which steps have been ruled out for it.
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
-  const [timestamps, quals] = await Promise.all([
+  const [timestamps, observed, quals] = await Promise.all([
     fetchEventTimestamps(brandId, campaignId, emails, headers).catch((err) => {
       console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
       return null;
     }),
+    fetchObservedStepFacts(brandId).catch((err) => {
+      console.warn(`[features-service] observed step statements failed (degrading to the projection alone): ${(err as Error).message}`);
+      return null;
+    }),
+    // The LEGACY half, still carrying real booked/closed outcomes for brands nobody has restated yet.
     fetchQualifications(brandId, campaignId, emails, headers).catch((err) => {
-      console.warn(`[features-service] qualification enrichment failed (degrading to no meeting/close dates): ${(err as Error).message}`);
+      console.warn(`[features-service] qualification enrichment failed (degrading to no legacy meeting/close dates): ${(err as Error).message}`);
       return null;
     }),
   ]);
 
   // The identical merge the per-workflow grain applies (`lib/signal-overlays.ts`) — one copy, so the
   // two grains can never disagree about whether a lead opened, or when.
-  applySignalOverlays(persons, timestamps, quals);
+  applySignalOverlays(persons, timestamps, observed, quals, priced.pricedFunnelKeys);
 
   // Per-lead SIGNUP / FORM-SUBMISSION outcome attribution (lead-service conversion tracker). The
   // producer matches each website conversion back to a lead we emailed and exposes the DISTINCT

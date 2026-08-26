@@ -17,9 +17,9 @@ describe("sales funnel — legs, milestones, and the declared-set restriction", 
   const paths = funnel.resolvePaths({ economics: ECONOMICS });
   const byTag = Object.fromEntries(paths.map((p) => [p.tag, p]));
 
-  it("emits ONLY the four funnel legs — no delivery stage is a path", () => {
-    expect(paths).toHaveLength(4);
-    expect(paths.map((p) => p.tag)).toEqual(["visit", "reply", "meeting", "closeWin"]);
+  it("emits ONLY the five funnel legs — no delivery stage is a path", () => {
+    expect(paths).toHaveLength(5);
+    expect(paths.map((p) => p.tag)).toEqual(["visit", "reply", "meeting", "meetingAttended", "closeWin"]);
   });
 
   it("contacted / sent / delivered / opened are MILESTONES, and a milestone has no revenue field", () => {
@@ -82,11 +82,11 @@ describe("restrictPathsToDeclaredLegs — only a declared chain's legs carry val
   const tagsFor = (keys: SalesFunnelKey[]) => restrictPathsToDeclaredLegs(paths, keys).map((p) => p.tag);
 
   it("the conversation chain buys a reply, never a website visit", () => {
-    expect(tagsFor(["sales_meetings_from_conversation"])).toEqual(["reply", "meeting", "closeWin"]);
+    expect(tagsFor(["sales_meetings_from_conversation"])).toEqual(["reply", "meeting", "meetingAttended", "closeWin"]);
   });
 
   it("the website meeting chain buys a visit, never a reply", () => {
-    expect(tagsFor(["sales_meetings_from_website"])).toEqual(["visit", "meeting", "closeWin"]);
+    expect(tagsFor(["sales_meetings_from_website"])).toEqual(["visit", "meeting", "meetingAttended", "closeWin"]);
   });
 
   it("the visit-led self-serve chains buy a visit and the paid client, not a meeting", () => {
@@ -96,7 +96,7 @@ describe("restrictPathsToDeclaredLegs — only a declared chain's legs carry val
 
   it("several declared chains are priced on the UNION of their legs", () => {
     // The conversation chain brings the reply (and the meeting); the purchase chain brings the visit.
-    expect(tagsFor(["sales_meetings_from_conversation", "website_purchases"])).toEqual(["visit", "reply", "meeting", "closeWin"]);
+    expect(tagsFor(["sales_meetings_from_conversation", "website_purchases"])).toEqual(["visit", "reply", "meeting", "meetingAttended", "closeWin"]);
     // Two visit-led self-serve chains union to a set that still buys neither a reply nor a meeting.
     expect(tagsFor(["website_purchases", "form_magnet"])).toEqual(["visit", "closeWin"]);
   });
@@ -111,7 +111,7 @@ describe("restrictPathsToDeclaredLegs — only a declared chain's legs carry val
   });
 
   it("NO declaration ⇒ every conversion leg is priced (we do not know the chain, and never invent one)", () => {
-    expect(tagsFor([])).toEqual(["visit", "reply", "meeting", "closeWin"]);
+    expect(tagsFor([])).toEqual(["visit", "reply", "meeting", "meetingAttended", "closeWin"]);
   });
 });
 

@@ -43,6 +43,18 @@ export interface SalesEconomics {
   signupToPaidClientPct: number;
   visitToClosePct: number;
   /**
+   * ATTENDED meeting → paying client. The rate `meetingToClosePct` carries is BOOKED → paid: on a
+   * declared meeting funnel it is already the composition `attended% × show-up%`
+   * (`meetingChainCloseRate`), and on the brand-wide economics row it is the close rate alone, because
+   * that row has no show-up column at all. The two rungs of the meeting chain therefore need two
+   * numbers, and this is the one a lead who ACTUALLY ATTENDED is priced on.
+   *
+   * Optional, and the fallback is deliberate: a brand that declared no show-up rate has said nothing
+   * that tells a meeting somebody took apart from one they booked and missed, so `meetingToClosePct`
+   * stands in and the two rungs are worth the same. Absent means "we cannot tell them apart", never 0.
+   */
+  meetingAttendedToPaidClientPct?: number;
+  /**
    * SINGLE-STEP rates for the `website_visits` / `positive_replies` optimization goals — brand-service
    * serves both on the sales-economics + effective (gold) layers (always present there once the brand
    * has economics). Optional here because the LEGACY multi-step goals never read them and older
@@ -375,7 +387,17 @@ const SALES_MILESTONES: readonly FunnelMilestone[] = [
  */
 const salesFunnel: FunnelDefinition = {
   economicsSource: "sales-economics",
-  signals: ["contacted", "sent", "delivered", "open", "clicked", "positiveReply", "meeting", "closeWin"],
+  signals: [
+    "contacted",
+    "sent",
+    "delivered",
+    "open",
+    "clicked",
+    "positiveReply",
+    "meeting",
+    "meetingAttended",
+    "closeWin",
+  ],
   milestones: SALES_MILESTONES,
   resolvePaths: ({ economics: e }) => {
     const ltr = e.lifetimeRevenueUsd;
@@ -385,20 +407,29 @@ const salesFunnel: FunnelDefinition = {
     // route) and NOT a naive sum (can exceed 1).
     const pCloseClick = orP(pct(e.visitToClosePct), pct(e.visitToMeetingPct) * pct(e.meetingToClosePct));
     const pCloseReply = pct(e.replyToMeetingPct) * pct(e.meetingToClosePct);
-    const pCloseMeeting = pct(e.meetingToClosePct); // a booked meeting closes at the meeting→close rate
-    // Post-engagement legs (per-lead manual-qualification timestamps drive the dates):
-    //   meeting  EV = LTR × P(close|meeting).
-    //   closeWin = realized revenue (full LTR) — the terminal every chain ends at.
-    // Monotonic EV up the chain: reply < meeting < closeWin.
+    const pCloseMeeting = pct(e.meetingToClosePct); // a BOOKED meeting closes at the booked→paid rate
+    // A meeting somebody ATTENDED is a rung of its own, and it is worth more than one they booked and
+    // missed. `meetingToClosePct` is booked→paid — on a declared funnel it already carries the show-up
+    // rate folded in (`meetingChainCloseRate`) — so the attended rung is priced on the rate that does
+    // NOT carry it. A brand that declared no show-up rate has said nothing that tells the two apart, so
+    // the composed rate stands in and both rungs are worth the same: honest, not a free 100%.
+    const pCloseAttended = pct(e.meetingAttendedToPaidClientPct ?? e.meetingToClosePct);
+    // Post-engagement legs, each fired by what a human OBSERVED for the lead:
+    //   meeting         EV = LTR × P(paid | meeting booked).
+    //   meetingAttended EV = LTR × P(paid | meeting attended).
+    //   closeWin        = realized revenue (full LTR) — the terminal every chain ends at.
+    // Monotonic EV up the chain: reply ≤ meeting ≤ meetingAttended ≤ closeWin.
     return [
       // click + reply are INDEPENDENT engagement routes to the same close (a lead can do both, and
       // we don't yet know which fires) → `engagementRoute` so the engine COMBINES them as independent
-      // probabilities bounded by 1 LTR, instead of MAX'ing. meeting and closeWin below are
-      // convergence/terminal positions (mutually exclusive) → left to MAX.
+      // probabilities bounded by 1 LTR, instead of MAX'ing. The three below are OBSERVED POSITIONS
+      // (mutually exclusive, and each one a fact rather than a forecast) → left to MAX, and they
+      // EXTINGUISH the routes: those routes were forecasting exactly the thing that has now happened.
       { tag: "visit", signal: "clicked", expectedRevenueUsd: ltr * pCloseClick, engagementRoute: true },
       { tag: "reply", signal: "positiveReply", expectedRevenueUsd: ltr * pCloseReply, engagementRoute: true },
       { tag: "meeting", signal: "meeting", expectedRevenueUsd: ltr * pCloseMeeting },
-      { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: ltr },
+      { tag: "meetingAttended", signal: "meetingAttended", expectedRevenueUsd: ltr * pCloseAttended },
+      { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: ltr, terminal: true },
     ];
   },
 };
@@ -409,21 +440,60 @@ const salesFunnel: FunnelDefinition = {
  *
  * Read straight off `SALES_FUNNELS[key].steps`, one entry per step that a lead signal can evidence:
  *
- *   Positive reply → `positiveReply`   Website visit → `clicked`
- *   Meeting booked → `meeting`         Signup        → `signup`      Form filled → `formSubmission`
- *   Paid client    → `closeWin`
+ *   Positive reply   → `positiveReply`    Website visit → `clicked`
+ *   Meeting booked   → `meeting`          Signup        → `signup`   Form filled → `formSubmission`
+ *   Meeting attended → `meetingAttended`  Paid client   → `closeWin`
  *
- * "Meeting attended" has no signal of its own — it is folded into the booked→paid rate
- * (`meetingChainCloseRate`), so it needs no entry. `signup` / `formSubmission` are listed because they
- * ARE legs of their chains; no path scores them today (they are per-lead display outcomes), and if one
- * is ever added it prices exactly the brands whose chain contains it, with no further change here.
+ * "Meeting attended" USED to have no signal of its own — nothing in the fleet could observe somebody
+ * showing up, so it survived only folded into the booked→paid rate. A human states it now, so it is a
+ * leg like any other: a rung a lead can stand on, and a step a lead can be declared DEAD at.
+ * `signup` / `formSubmission` are listed because they ARE legs of their chains; no path scores them
+ * today (they are per-lead display outcomes), and if one is ever added it prices exactly the brands
+ * whose chain contains it, with no further change here.
  */
 const FUNNEL_LEG_SIGNALS: Record<SalesFunnelKey, readonly string[]> = {
-  sales_meetings_from_conversation: ["positiveReply", "meeting", "closeWin"],
-  sales_meetings_from_website: ["clicked", "meeting", "closeWin"],
+  sales_meetings_from_conversation: ["positiveReply", "meeting", "meetingAttended", "closeWin"],
+  sales_meetings_from_website: ["clicked", "meeting", "meetingAttended", "closeWin"],
   website_purchases: ["clicked", "signup", "closeWin"],
   form_magnet: ["clicked", "formSubmission", "closeWin"],
 };
+
+/**
+ * A dead STEP expanded into every leg it kills — the whole content of "a `never` kills the CHAIN, not
+ * the step".
+ *
+ * A human stating that a lead will never book a meeting has not merely removed one rung: they have
+ * said the lead has no path to a paying client through any chain that goes through a booked meeting.
+ * Everything that lead already fired ON those chains — the positive reply, the click that was going to
+ * lead somewhere — was a FORECAST of exactly the thing now ruled out, so it is worth nothing too.
+ *
+ * A chain the dead step is NOT on survives untouched, and that is the whole reason this is computed
+ * per declared funnel rather than as a flat "steps at or after this one": a brand selling both a
+ * conversation chain and a self-serve website chain keeps the website chain's value for a lead who
+ * will never take a meeting. They may still buy the thing.
+ *
+ * `closeWin` is a leg of EVERY chain, so a lost deal empties them all — which is the answer we want:
+ * a lead somebody marked as lost is worth zero, not a lingering fraction of the meeting it once had.
+ */
+export function deadLegSignalsFor(
+  deadStepSignals: Iterable<string>,
+  keys: readonly SalesFunnelKey[],
+): Set<string> {
+  const deadSteps = new Set(deadStepSignals);
+  const killed = new Set<string>();
+  if (deadSteps.size === 0) return killed;
+  // No declaration ⇒ EVERY chain is in play, exactly as `restrictPathsToDeclaredLegs` prices every leg
+  // for such a brand. Reading an empty declaration as "no chain contains this step" would make a lost
+  // deal worth its meeting for the one kind of brand we know least about.
+  const chains = keys.length > 0 ? keys : (Object.keys(FUNNEL_LEG_SIGNALS) as SalesFunnelKey[]);
+  for (const key of chains) {
+    const legs = FUNNEL_LEG_SIGNALS[key];
+    if (!legs) continue;
+    if (!legs.some((leg) => deadSteps.has(leg))) continue;
+    for (const leg of legs) killed.add(leg);
+  }
+  return killed;
+}
 
 /** Every signal the given declared funnels buy a step with — the union of their legs. */
 export function declaredLegSignals(keys: readonly SalesFunnelKey[]): Set<string> {

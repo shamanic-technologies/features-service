@@ -1,5 +1,91 @@
 # Features Service — CLAUDE.md
 
+## A LEAD IS WORTH WHAT A HUMAN OBSERVED, NOT WHAT WE FORECAST — the observed rung replaces the rate chain, a ruled-out step is worth nothing, and a priced deal is worth what somebody said
+
+Every money figure this service reports about a lead was a FORECAST: its chance of one day becoming a
+paying client, obtained by multiplying declared conversion rates through whatever the lead last did.
+That was the only thing available — the website tracker sees roughly one conversion in ten and cannot
+see a meeting somebody took or a deal closed on a call at all. lead-service now records what a HUMAN
+states about a funnel step (sales-lead-service#448/#451), so for the steps somebody actually watched
+happen there is nothing left to estimate.
+
+- **AN OBSERVED RUNG REPLACES THE FORECAST POINTING AT IT, AND EXTINGUISHES IT.** The click and reply
+  legs are two independent shots at ONE close, so on their own they still combine as independent
+  probabilities bounded by one close value. But a booked meeting / an attended meeting / a won deal is
+  not another shot at that close — it IS that close, further along, so once one fires the routes are
+  DROPPED rather than combined. Keeping them adds the forecast of an event to the event itself. **A
+  `max` alone does not do it**: a brand whose self-serve rate beats its booked→paid rate can have the
+  click route out-value the meeting the lead is sitting in. `evForPerson` tracks positions separately
+  (`maxPositionEv`) for exactly that reason.
+- **"MEETING ATTENDED" IS A PRICED RUNG NOW, and that is the change with teeth.** It had no signal
+  anywhere in the fleet, so it survived only FOLDED into the booked→paid rate
+  (`meetingChainCloseRate` = attended% × show-up%) — which meant a no-show and a meeting somebody sat
+  through were worth the same number. `SalesEconomics.meetingAttendedToPaidClientPct` carries the
+  UN-composed rate (`meetingAttendedCloseRate`, brand-service's raw `meetingToClosePct`), so booked is
+  priced through the show-up rate and attended is not. **A brand that declared no show-up rate has said
+  nothing that tells the two apart, so the composed rate stands in and both rungs are worth the same** —
+  honest, not a free 100%. The rung is statable BY HAND ONLY: attendance happens off the client's
+  website, so no page-load tag can observe it, which is why the show-up rate brand-service has always
+  priced with could never be checked against reality until now.
+- **A `never` KILLS THE CHAIN, NOT THE STEP** (`deadLegSignalsFor`). A human stating that a lead will
+  never book a meeting has not removed one rung: they have said the lead has no path to a paying client
+  through any chain that goes through a booked meeting — so everything it already fired ON those chains
+  is worth nothing too, because that value was a forecast of the thing now ruled out. A chain the dead
+  step is NOT on survives untouched, which is why the expansion is per declared funnel: a brand selling
+  both a conversation chain and a self-serve website chain keeps the website chain's value for a lead
+  who will never take a meeting. **`closeWin` is a leg of EVERY chain, so a lost deal is worth 0** —
+  never a lingering fraction of the meeting it once had. **NO DECLARATION ⇒ EVERY chain is in play**,
+  matching `restrictPathsToDeclaredLegs`; reading an empty declaration as "no chain contains this step"
+  would make a lost deal worth its meeting for the one kind of brand we know least about.
+- **A STATED VALUE SCALES THE WHOLE LADDER, not only the rung it was stated at.** Every path EV is
+  `value × a rate chain`, so `EnginePerson.valueUsd` is a per-lead LTR OVERRIDE: a lead somebody priced
+  at $49k is worth more at every rung than one priced on a $1k average, which is the point of stating
+  it. The TERMINAL leg is special-cased (`ResolvedPath.terminal`): a won deal carrying an amount IS that
+  amount, read straight rather than scaled, so realized revenue does not depend on the brand having
+  declared a lifetime revenue at all. **Null is "nobody said", never 0** — a 0 would say the deal was
+  worth nothing, which is a statement rather than a silence. The producer refuses a stated sale with no
+  amount, so realized revenue is never an average.
+- **THE DEFAULT VALUE IS THE OFFER'S, and the offer is the right grain — not the campaign.** A lifetime
+  revenue is a property of what is SOLD, so two campaigns selling one offer through two channels must
+  price a client identically or their ROIs stop being comparable, which is the entire job of the channel
+  grain. A campaign resolves it by inheriting its offer's; a campaign that would price differently is a
+  different OFFER. Resolution order, most precise first: **the lead's stated value → the offer's declared
+  lifetime revenue → the funnel's → the brand's.** brand-service already stores it at that grain
+  (`brand_sales_funnels` is keyed `(offer_id, funnel_key)` and carries its own `lifetime_revenue_usd`);
+  what was missing was a way for a service-auth caller to NAME the offer, added in brand-service#473.
+- **TWO PRODUCERS ANSWER "what happened", AND THE ORDER IS THE CONTRACT.** The instantly manual
+  qualifications are the LEGACY source and lead-service's step statements are what is written to now, so
+  a statement WINS wherever it exists and the legacy read only fills what nobody has restated.
+  **This is a migration, not two truths** — the same `COALESCE(new, legacy)` shape the frozen-net cost
+  read uses, and it empties itself as statements move over. **Do NOT "simplify" it by deleting the
+  legacy read**: production carries **4 booked meetings and 4 closed deals** in
+  `instantly_manual_qualifications_raw` against **zero** manual rows in lead-service (verified
+  2026-08-26), so dropping it would erase measured outcomes from live brands' pipelines — a worse answer
+  than a second read that is losing rows every week.
+- **A ROW WE CANNOT JOIN IS SKIPPED, NOT DROPPED UPSTREAM.** The producer keeps an outcome whose lead has
+  no email so its own counts stay self-consistent; we skip it because a lead we cannot join is one we
+  cannot price, which is not the same as one that does not exist.
+- **AN UNDATED OUTCOME STAYS UNDATED.** `occurredAt` is when the outcome HAPPENED (a human may state a
+  past date), never when we heard about it, and null survives as null — the rung is still reached, it
+  simply cannot be placed on the timeline. Never back-filled with the day the statement was made.
+- **FAIL-SOFT with a loud log**, like every other display-enrichment read on the Overview: an unreadable
+  statement set degrades to the forecast alone rather than 502-ing a page whose every other number is
+  correct.
+- **`meetingAttended` / `meetingAttendedAt` ride `leads[]`** so the row a customer opens says the same
+  thing as the money above it. Without them a lead priced on having attended would show only "booked",
+  and the drilldown would read as a smaller fact than the total it feeds.
+- **Expect the pipeline to FALL.** Lost deals leave it, no-shows are depreciated, and real amounts
+  replace the average. ROI and %CAC move with it. That is the end of an overstatement, not a regression.
+- Guards: `src/routes/observed-step-value.test.ts` drives ONE lead and ONE set of economics through
+  every case, so the numbers are comparable line by line (clicked $34.70, replied $120, booked $150,
+  attended $300, closed $1,000): the forecast baseline unchanged; a booked meeting extinguishing the
+  routes; attended worth exactly twice booked under a 50% show-up rate; a stated amount at the terminal
+  rung and at an earlier one; a lost deal at 0; a dead meeting step killing the conversation chain while
+  the website chain keeps its click; an empty disqualification set changing nothing; the legacy source
+  still landing; a statement winning over it; and the fail-soft degrade. Plus `funnel-registry.test.ts`
+  (the five legs, the per-chain leg sets) and `declared-funnels.test.ts` (the composed rate beside its
+  un-composed half). (Set 2026-08-26.)
+
 ## `?groupBy=campaignId` STATES HOW MUCH EVIDENCE ITS MONEY RESTS ON — `outcomes`, the volume half, at the CAMPAIGN grain
 
 A customer looking at the Campaigns list asks one question of each row: is this campaign working. The

@@ -67,8 +67,9 @@ export interface RankableFunnel {
  * where the two services' identically-named fields also mean the same thing.
  *
  * `meetingToClosePct` and `meetingBookedToAttendedPct` are deliberately ABSENT — they are handled by
- * `meetingChainCloseRate` below, because on a declared FUNNEL the name means something else than it
- * does on the brand-wide economics row.
+ * `meetingChainCloseRate` / `meetingAttendedCloseRate` below, because on a declared FUNNEL the name
+ * means something else than it does on the brand-wide economics row, and the meeting chain now has
+ * TWO priced rungs (booked, attended) that need the composition and its un-composed half.
  */
 const CONSUMED_RATE_KEYS = [
   "replyToMeetingPct",
@@ -110,6 +111,26 @@ export function meetingChainCloseRate(rates: Record<string, number | null> | nul
   return showUp === null ? close : (close * showUp) / 100;
 }
 
+/**
+ * `SalesEconomics.meetingAttendedToPaidClientPct` — the OTHER half of the composition above, and the
+ * reason the composition has to be undone rather than just applied.
+ *
+ * A human can now state that a lead ATTENDED a meeting, so a lead standing on that rung is priced on
+ * the funnel's ATTENDED → paid rate — which is exactly brand-service's `meetingToClosePct`, read
+ * straight, with no show-up rate folded in. `meetingChainCloseRate` above folds it in for the rung
+ * BELOW (booked, where the lead still has to show up); pricing an attended meeting on that composed
+ * number would charge a lead who is already in the room for the risk of not turning up.
+ *
+ * Null when the brand declared no close rate — the lead then falls back to `meetingToClosePct`
+ * downstream, so a brand with no show-up rate simply cannot tell the two rungs apart, which is the
+ * truth about what it declared rather than a fabricated distinction.
+ */
+export function meetingAttendedCloseRate(
+  rates: Record<string, number | null> | null | undefined,
+): number | null {
+  return finite(rates?.meetingToClosePct);
+}
+
 /** The declared numbers on one funnel, dropping every rate the brand never gave us. */
 function declaredEconomics(funnel: DeclaredSalesFunnel): Partial<SalesEconomics> | null {
   const out: Record<string, number> = {};
@@ -122,6 +143,8 @@ function declaredEconomics(funnel: DeclaredSalesFunnel): Partial<SalesEconomics>
   }
   const bookedToPaid = meetingChainCloseRate(rates);
   if (bookedToPaid !== null) out.meetingToClosePct = bookedToPaid;
+  const attendedToPaid = meetingAttendedCloseRate(rates);
+  if (attendedToPaid !== null) out.meetingAttendedToPaidClientPct = attendedToPaid;
   if (typeof funnel.lifetimeRevenueUsd === "number" && Number.isFinite(funnel.lifetimeRevenueUsd)) {
     out.lifetimeRevenueUsd = funnel.lifetimeRevenueUsd;
   }
