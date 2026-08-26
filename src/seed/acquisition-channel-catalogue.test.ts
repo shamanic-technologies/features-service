@@ -195,6 +195,20 @@ describe("every published channel is BOOKABLE — no coming-soon state", () => {
     const linkedinAds = bySlug("linkedin-ads")!.acquisitionChannel!.terms;
     expect(linkedinAds.dailyOperatingCostCents).toBeGreaterThan(bySlug("x-ads")!.acquisitionChannel!.terms.dailyOperatingCostCents);
   });
+
+  it("Google Ads states the SAME daily floor the product accepts — $5/day, and nothing else moves", () => {
+    // billing-service takes a new Google Ads brand from $5/day. A buyer reads the published operating cost
+    // and the minimum they may state as one thing: what it takes to run this channel for a day. Publishing
+    // two numbers for that is one channel contradicting itself, so this figure IS that floor.
+    expect(bySlug("google-ads")!.acquisitionChannel!.terms.dailyOperatingCostCents).toBe(500);
+
+    // And it is the LOW mark of paid reach BECAUSE Google imposes no floor of its own: a channel whose
+    // figure encodes a real standing cost — a person on the line, a platform's own imposed minimum —
+    // still stands above it. That is the ordering the figure carries, not a family-wide uniform price.
+    const google = bySlug("google-ads")!.acquisitionChannel!.terms.dailyOperatingCostCents;
+    expect(bySlug("cold-call-outreach")!.acquisitionChannel!.terms.dailyOperatingCostCents).toBeGreaterThan(google);
+    expect(bySlug("linkedin-ads")!.acquisitionChannel!.terms.dailyOperatingCostCents).toBeGreaterThan(google);
+  });
 });
 
 describe("the commercial terms a buyer commits to", () => {
