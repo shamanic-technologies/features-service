@@ -50,6 +50,7 @@ import { fetchBrandCommittedSpendByDay } from "../lib/brand-spend-by-day-client.
 import { buildCostEconomics, type CostEconomics } from "../lib/cost-economics.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
+import { buildRevenueOutcomes, type RevenueOutcomes } from "../lib/revenue-outcomes.js";
 import { fetchOfferCampaigns, resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 import { featureSlugList, type FeatureScope } from "../lib/feature-scope.js";
 import { pickBestChannelParents } from "../lib/offer-parents.js";
@@ -521,6 +522,18 @@ interface RevenueResponse {
    * costPerConversionUsd), and absent on the grouped (?groupBy=campaignId) per-campaign groups.
    */
   spend: Spend | null;
+  /**
+   * The VOLUME half — how much real outcome evidence every money figure on this response rests on:
+   * outreach volume, website visits, positive replies, committed spend, and the cost of a visit and
+   * of a reply ({@link RevenueOutcomes}). Built from the SAME deduped leads and the SAME committed
+   * cents as the money, so the two are coherent by construction.
+   *
+   * NULL means "we could not count this", never "it reached nobody" (that is 0): the no-funnel
+   * short-circuit never reads the leads, and the lensed response omits it for the same reason it
+   * omits `spend` — a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole
+   * spend. The per-campaign groups carry it; that is what it was added for.
+   */
+  outcomes: RevenueOutcomes | null;
 }
 
 /**
@@ -553,6 +566,11 @@ function emptyBody(
   spend: Spend | null,
   sequences: SignalSeries | null = null,
   roiHistory: RoiHistory | null = null,
+  // The VOLUME half. Null on the no-funnel short-circuit, where the leads were never read: a 0 there
+  // would say this scope reached nobody, when what happened is that nobody counted. On the cold-start
+  // path (economics null) the leads WERE read, so the caller passes the real block — a brand with no
+  // economics still knows how many people it contacted.
+  outcomes: RevenueOutcomes | null = null,
 ): RevenueBody {
   return {
     headline: { totalPipelineUsd, economicsSource: null },
@@ -571,6 +589,7 @@ function emptyBody(
     ...buildOutcomeSeries([]),
     sequences,
     spend,
+    outcomes,
   };
 }
 
@@ -840,6 +859,10 @@ function buildLensBody(
     // pages use costPerConversionUsd.
     sequences: null,
     spend: null,
+    // Same gate as `spend` and `roiHistory`, for the same reason: the lens is a SUBSET of the brand's
+    // leads while its spend leg is the brand's whole spend, so a volume block here would divide one
+    // scope's dollars by another scope's people. The un-lensed read carries it.
+    outcomes: null,
   };
 }
 
@@ -982,7 +1005,17 @@ export async function computeFeatureRevenue(
     : (costResult as RunsCostCents);
 
   if (economics === null) {
-    return emptyBody(null, cost, breakdown ? buildSpend(breakdown, [], counts, parents) : null, sequences);
+    // Cold start: no economics, so no pipeline to price — but the leads WERE read, so the volume half
+    // is a real, measured answer and is given. "We could not price this" and "this reached nobody"
+    // are different statements.
+    return emptyBody(
+      null,
+      cost,
+      breakdown ? buildSpend(breakdown, [], counts, parents) : null,
+      sequences,
+      null,
+      buildRevenueOutcomes(persons, cost),
+    );
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
 
@@ -1065,6 +1098,10 @@ export async function computeFeatureRevenue(
     ...buildOutcomeSeries(result.leads),
     sequences,
     spend: breakdown ? buildSpend(breakdown, result.leads, counts, parents) : null,
+    // The VOLUME half — how much real outcome evidence every money figure above rests on. Built from
+    // the SAME deduped persons and the SAME committed cents, so it is coherent with them by
+    // construction rather than by correction. See lib/revenue-outcomes.ts.
+    outcomes: buildRevenueOutcomes(persons, cost),
   };
 }
 
@@ -1074,10 +1111,19 @@ export async function computeFeatureRevenue(
 // features-service is the single source: headline pipeline, organizations + leads tables,
 // the cumulative time-series and the per-event ledger.
 //
-// With ?groupBy=campaignId the response collapses to one LEAN group per campaign that has runs
-// for the brand+feature — { campaignId, campaignIdentity, headline.totalPipelineUsd, costEconomics }
-// — so the dashboard campaigns list gets every campaign's revenue + ROI in ONE call instead of N.
-// Each group's values are byte-equal to the standalone ?campaignId= call.
+// With ?groupBy=campaignId the response collapses to one LEAN group per campaign that has runs for
+// the brand+feature — { campaignId, campaignIdentity, headline.totalPipelineUsd, costEconomics,
+// outcomes } — so the dashboard campaigns list gets every campaign's revenue + ROI in ONE call
+// instead of N. Each group's values are byte-equal to the standalone ?campaignId= call.
+//
+// `outcomes` is the VOLUME half, and it is what makes the three money figures readable. All three are
+// derived from however many outcomes the campaign has produced so far, so with one or two behind them
+// they are decided by whichever one happened to land and swing by whole multiples on the next reply —
+// a customer reads that as a measurement. A consumer could not tell: the group carried the money and
+// nothing about volume, there is no per-campaign outcome count anywhere else on the wire, and deriving
+// one in the browser is the client-side statistic this service exists to prevent. See
+// lib/revenue-outcomes.ts for the counting, null and spend-basis rules — all of them the brand read's
+// own, applied at this grain.
 //
 // BOTH forms report a campaign's IDENTITY total, not its row's: every campaign sharing (org, brand,
 // sales funnel, acquisition channel) — campaign-service's own key — totals as ONE campaign, because
@@ -1323,6 +1369,12 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
                   campaignIdentity: describeIdentity(identity, cid),
                   headline: body.headline,
                   costEconomics: body.costEconomics,
+                  // The VOLUME half — how much real outcome evidence this row's ROI and %CAC rest on.
+                  // Totalled over the identity exactly as the money is (the compute above already runs
+                  // over the family's WHOLE membership), and deduped inside it, so a lead served under
+                  // two member rows is ONE person here as it is one person to the brand. Every member
+                  // of an identity therefore carries the identical block, like the money.
+                  outcomes: body.outcomes,
                 }));
               }),
             )

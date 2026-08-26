@@ -408,6 +408,19 @@ const spendSchema = z.object({
   cpprCents: z.number().nullable().describe("REAL cost per positive reply = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents/cpsCents) / positiveRepliesCount, USD cents. So cpprCents × positiveRepliesCount ≈ committed spend by construction. null when positiveRepliesCount is 0 (no denominator — never a false $0). Real tracked data, not a projection. (features-service#482)"),
 });
 
+// THE VOLUME HALF of a money answer — how much real outcome evidence the figures beside it rest on.
+// Shared verbatim by every grain that answers it (the per-campaign groups, the per-workflow groups and
+// the un-grouped brand read), because two grains counting people two ways would eventually disagree.
+const revenueOutcomesSchema = z.object({
+  recipientsContacted: z.number().describe("Distinct leads this grain reached for this brand — the grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer."),
+  recipientsClicked: z.number().describe("Distinct leads that visited the site off this grain — twin of recipientsClicked.total."),
+  recipientsRepliesPositive: z.number().describe("Distinct leads that replied positively — twin of recipientsRepliesPositive.total."),
+  committedSpentCents: z.number().describe("COMMITTED spend attributed to this grain, in cents — costEconomics.committedCostUsd in the unit the two rates are denominated in."),
+  actualSpentCents: z.number().describe("Billed-only spend for this grain, in cents. TRANSITIONAL — reported for consumer migration, divided by nowhere."),
+  cpcCents: z.number().nullable().describe("Realized spend ÷ website visits, in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."),
+  cpprCents: z.number().nullable().describe("Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."),
+});
+
 const featureRevenueResponseSchema = z.object({
   costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
@@ -432,6 +445,7 @@ const featureRevenueResponseSchema = z.object({
   organizations: z.array(revenueOrganizationSchema),
   leads: z.array(revenueLeadSchema),
   events: z.array(revenueEventSchema).describe("One row per event. Empty until per-event timestamps exist (email-gateway)."),
+  outcomes: revenueOutcomesSchema.nullable().describe("The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."),
 });
 
 const featureRevenueResponseRef = registry.register("FeatureRevenueResponse", featureRevenueResponseSchema);
@@ -452,6 +466,7 @@ const revenueGroupSchema = z.object({
     economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (ESTIMATE). Null when the pipeline is null."),
   }),
   costEconomics: revenueCostEconomicsSchema,
+  outcomes: revenueOutcomesSchema.nullable().describe("The VOLUME half of this campaign's answer — how much real outcome evidence its ROI, %CAC and pipeline rest on. It exists because those three are derived from however many outcomes the campaign has produced so far: with one or two behind them they are decided by whichever one landed and swing by whole multiples on the next reply, so a consumer that cannot see the volume reads noise as a measurement. Totalled over the campaign's IDENTITY exactly as the money is — its stopped ancestors included — and deduped inside it, so a lead served under two member rows is ONE person here as it is one person to the brand, and every member of an identity carries the identical block. Across identities the counts do NOT sum to the brand (a lead worked under two campaigns is one lead to the brand and belongs to both), the same counting-people property the money half carries. NULL only when no funnel is wired for the feature and the leads were never read — never a fabricated 0."),
 });
 
 const featureRevenueGroupedResponseSchema = z.object({
@@ -479,17 +494,7 @@ const revenueWorkflowGroupSchema = z.object({
     economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used, as on the brand read. Null when the pipeline is null."),
   }),
   costEconomics: revenueCostEconomicsSchema,
-  outcomes: z
-    .object({
-      recipientsContacted: z.number().describe("Distinct leads this workflow reached for this brand — the workflow-grain twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes."),
-      recipientsClicked: z.number().describe("Distinct leads that visited the site off this workflow — twin of recipientsClicked.total."),
-      recipientsRepliesPositive: z.number().describe("Distinct leads that replied positively — twin of recipientsRepliesPositive.total."),
-      committedSpentCents: z.number().describe("COMMITTED spend attributed to this dynasty, in cents — costEconomics.committedCostUsd in the unit the two rates are denominated in. Cost is attributed by runs-service's own per-workflow split, never inferred from the campaign row's current workflow."),
-      actualSpentCents: z.number().describe("Billed-only spend for this dynasty, in cents. TRANSITIONAL — reported for consumer migration, divided by nowhere."),
-      cpcCents: z.number().nullable().describe("Realized spend ÷ website visits, in cents. OBSERVED accounting: null when this workflow bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection per workflow lives on /workflow-projection)."),
-      cpprCents: z.number().nullable().describe("Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."),
-    })
-    .describe("The VOLUME half of this workflow's answer — this brand's own outreach through this dynasty and what it cost, the same figures the un-grouped brand read gives for the whole brand. Every figure rides COMMITTED spend, the single basis costEconomics rides, so cpcCents × recipientsClicked ≈ committedSpentCents by construction. This block once rode billed-only spend to avoid a committed numerator beside a realized ROI; the ROI moved to committed, so that divergence would now BE the incoherence. Counts are distinct leads: a lead served under two workflows is one lead to the brand and belongs to both groups, so the groups do not sum to the brand (the same counting-people property the money half carries); a lead served under no workflow is in no group."),
+  outcomes: revenueOutcomesSchema.describe("The VOLUME half of this workflow's answer — this brand's own outreach through this dynasty and what it cost, the same figures the un-grouped brand read gives for the whole brand. Every figure rides COMMITTED spend, the single basis costEconomics rides, so cpcCents × recipientsClicked ≈ committedSpentCents by construction. This block once rode billed-only spend to avoid a committed numerator beside a realized ROI; the ROI moved to committed, so that divergence would now BE the incoherence. Counts are distinct leads: a lead served under two workflows is one lead to the brand and belongs to both groups, so the groups do not sum to the brand (the same counting-people property the money half carries); a lead served under no workflow is in no group."),
 });
 
 const featureRevenueByWorkflowResponseSchema = z.object({
@@ -539,7 +544,8 @@ registry.registerPath({
     "When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. " +
     "costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition %, ROI multiple, and costPerAcquisitionUsd — the dollar cost of winning one customer, now answered on this default un-lensed brand read and equal to the lensed costPerConversionUsd for the same scope. " +
     "With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature " +
-    "(campaignId + headline.totalPipelineUsd + costEconomics only); each group is byte-equal to the standalone ?campaignId= call. " +
+    "(campaignId + campaignIdentity + headline.totalPipelineUsd + costEconomics + outcomes); each group is byte-equal to the standalone ?campaignId= call. " +
+    "`outcomes` is the VOLUME half — how much real outcome evidence that row's ROI, %CAC and pipeline rest on (outreach volume, website visits, positive replies, committed spend, cost per visit, cost per reply), totalled over the campaign's identity exactly as the money is. " +
     "With ?groupBy=workflow it is one LEAN group per WORKFLOW DYNASTY the brand has run (workflowDynastySlug + workflowDynastyName + workflowSlugs + headline.totalPipelineUsd + costEconomics + outcomes), answering which of the workflows we ran for this brand made money and which burned it — and, in `outcomes`, what that money was made of: this brand's own outreach volume, website visits, positive replies, committed spend and the cost of a visit and of a reply, per workflow.",
   tags: ["Stats"],
   request: {
