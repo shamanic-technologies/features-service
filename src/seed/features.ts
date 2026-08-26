@@ -760,7 +760,10 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
   // two of them can take a booking straight from the ad, which is why the steps differ across a family
   // that otherwise looks uniform.
   { slug: "google-ads", name: "Google Ads", displayOrder: 20, icon: "search", family: "paid_reach", producibleSteps: VISIT_AND_IN_AD_FORM,
-    terms: terms(5000, 30, 3),
+    // Google imposes no daily floor of its own, so what a day of this channel costs is what we choose to
+    // accept: billing takes a Google Ads brand from $5/day, and this figure states the SAME floor. A buyer
+    // reads both as "what it takes to run this channel for a day", so they may not disagree.
+    terms: terms(500, 30, 3),
     description: "Buy the searches your buyers already run, and the clicks and lead forms that come from them.",
     inputs: PAID_REACH_INPUTS },
   { slug: "meta-ads", name: "Meta Ads", displayOrder: 21, icon: "facebook", family: "paid_reach", producibleSteps: VISIT_AND_IN_AD_STEPS,
