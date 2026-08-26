@@ -79,6 +79,7 @@ import { buildRevenueOutcomes, type RevenueOutcomes } from "./revenue-outcomes.j
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { fetchRunsCostCentsByWorkflowSlug, type RunsCostCents } from "./runs-cost-client.js";
 import { fetchEventTimestamps } from "./email-status-client.js";
+import { fetchObservedStepFacts } from "./observed-steps.js";
 import { fetchQualifications } from "./qualifications-client.js";
 import { applySignalOverlays } from "./signal-overlays.js";
 import { fetchPublicWorkflows, type WorkflowMetadata } from "./public-stats-clients.js";
@@ -278,17 +279,22 @@ export async function computeWorkflowRevenueGroups(input: {
   // it), so they are fetched ONCE and merged before the partition — every group then prices the
   // identical lead the brand read prices.
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
-  const [timestamps, quals] = await Promise.all([
+  const [timestamps, observed, quals] = await Promise.all([
     fetchEventTimestamps(brandId, undefined, emails, headers).catch((err) => {
       console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
       return null;
     }),
+    fetchObservedStepFacts(brandId).catch((err) => {
+      console.warn(`[features-service] observed step statements failed (degrading to the projection alone): ${(err as Error).message}`);
+      return null;
+    }),
+    // The LEGACY half, still carrying real booked/closed outcomes for brands nobody has restated yet.
     fetchQualifications(brandId, undefined, emails, headers).catch((err) => {
-      console.warn(`[features-service] qualification enrichment failed (degrading to no meeting/close dates): ${(err as Error).message}`);
+      console.warn(`[features-service] qualification enrichment failed (degrading to no legacy meeting/close dates): ${(err as Error).message}`);
       return null;
     }),
   ]);
-  applySignalOverlays(persons, timestamps, quals);
+  applySignalOverlays(persons, timestamps, observed, quals, priced?.pricedFunnelKeys ?? []);
 
   return buildWorkflowRevenueGroups({ persons, costCentsBySlug, workflows, funnel, priced });
 }

@@ -211,7 +211,13 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
     // one brand-service call, and the fingerprint rides the cache key so an economics write lands on a
     // different cell instead of replaying the pre-write answer.
     const [declaredFunnels, brandEconomics] = funnel
-      ? await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId), fetchEffectiveEconomics(brandId, headers)])
+      ? await Promise.all([
+          // THIS offer's declared chains — its own lifetime revenue and its own rates. The offer grain
+          // is the one read that genuinely knows which proposition it is pricing, so it is the one that
+          // names it; every brand-scoped read keeps resolving the sole offer as before.
+          fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId),
+          fetchEffectiveEconomics(brandId, headers),
+        ])
       : [[], null];
     const brandPriced: FunnelPricedEconomics | undefined = brandEconomics
       ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, requestedFunnel)
@@ -247,6 +253,7 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
           true,
           pricing,
           requestedFunnel,
+          offerId,
         );
         // The breakdown. LEAN on purpose (headline + costEconomics, the shape the per-offer and
         // per-workflow groups already use): a full body per channel would repeat the whole lead
@@ -263,6 +270,7 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
             false,
             pricing,
             requestedFunnel,
+            offerId,
           );
           return {
             featureSlug: channel.featureSlug,
