@@ -1196,7 +1196,7 @@
               "daily",
               "undatedCount"
             ],
-            "description": "Meeting-goal outcome ACTUAL series (instantly manual-qualification meetingBookedAt), server-computed from the SAME leads[] snapshot. features-service#377."
+            "description": "Meeting-goal outcome ACTUAL series, dated by when the meeting was booked, server-computed from the SAME leads[] snapshot. features-service#377."
           },
           "purchased": {
             "type": "object",
@@ -1236,7 +1236,7 @@
               "daily",
               "undatedCount"
             ],
-            "description": "Purchase-goal outcome ACTUAL series (instantly manual-qualification closedAt), server-computed from the SAME leads[] snapshot. features-service#377."
+            "description": "Purchase-goal outcome ACTUAL series, dated by when the deal closed, server-computed from the SAME leads[] snapshot. features-service#377."
           },
           "signups": {
             "type": "object",
@@ -1444,7 +1444,7 @@
                 "cumulativePipelineUsd"
               ]
             },
-            "description": "Cumulative pipeline ordered by event date, from the per-lead event timestamps (email-gateway + instantly manual qualifications). An org with no dated event is counted in the headline but absent here."
+            "description": "Cumulative pipeline ordered by event date, from the per-lead event timestamps (email-gateway engagement + the dates a human stated a funnel step happened). An org with no dated event is counted in the headline but absent here."
           },
           "roiHistory": {
             "type": "object",
@@ -1685,16 +1685,25 @@
                 },
                 "meetingBooked": {
                   "type": "boolean",
-                  "description": "True when a meeting was booked (instantly manual qualification). The meeting-goal outcome the goal daily-graph actual buckets (features-service#377)."
+                  "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
+                },
+                "meetingAttended": {
+                  "type": "boolean",
+                  "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
+                },
+                "meetingAttendedAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp the meeting was attended, as stated. Null when not attended, or attended with no known date. No synthesis."
                 },
                 "meetingBookedAt": {
                   "type": "string",
                   "nullable": true,
-                  "description": "ISO timestamp the meeting was booked (instantly manual-qualification meetingBookedAt). Null when no meeting, or no known date. No synthesis."
+                  "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
                 },
                 "purchased": {
                   "type": "boolean",
-                  "description": "True when the lead became a paying client / closed (instantly manual qualification). The purchase-goal outcome (features-service#377)."
+                  "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
                 },
                 "purchasedAt": {
                   "type": "string",
@@ -1750,6 +1759,8 @@
                 "repliedPositive",
                 "repliedPositiveAt",
                 "meetingBooked",
+                "meetingAttended",
+                "meetingAttendedAt",
                 "meetingBookedAt",
                 "purchased",
                 "purchasedAt",
@@ -4809,7 +4820,7 @@
               "daily",
               "undatedCount"
             ],
-            "description": "Meeting-goal outcome ACTUAL series (instantly manual-qualification meetingBookedAt), server-computed from the SAME leads[] snapshot. features-service#377."
+            "description": "Meeting-goal outcome ACTUAL series, dated by when the meeting was booked, server-computed from the SAME leads[] snapshot. features-service#377."
           },
           "purchased": {
             "type": "object",
@@ -4849,7 +4860,7 @@
               "daily",
               "undatedCount"
             ],
-            "description": "Purchase-goal outcome ACTUAL series (instantly manual-qualification closedAt), server-computed from the SAME leads[] snapshot. features-service#377."
+            "description": "Purchase-goal outcome ACTUAL series, dated by when the deal closed, server-computed from the SAME leads[] snapshot. features-service#377."
           },
           "signups": {
             "type": "object",
@@ -5057,7 +5068,7 @@
                 "cumulativePipelineUsd"
               ]
             },
-            "description": "Cumulative pipeline ordered by event date, from the per-lead event timestamps (email-gateway + instantly manual qualifications). An org with no dated event is counted in the headline but absent here."
+            "description": "Cumulative pipeline ordered by event date, from the per-lead event timestamps (email-gateway engagement + the dates a human stated a funnel step happened). An org with no dated event is counted in the headline but absent here."
           },
           "roiHistory": {
             "type": "object",
@@ -5298,16 +5309,25 @@
                 },
                 "meetingBooked": {
                   "type": "boolean",
-                  "description": "True when a meeting was booked (instantly manual qualification). The meeting-goal outcome the goal daily-graph actual buckets (features-service#377)."
+                  "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
+                },
+                "meetingAttended": {
+                  "type": "boolean",
+                  "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
+                },
+                "meetingAttendedAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp the meeting was attended, as stated. Null when not attended, or attended with no known date. No synthesis."
                 },
                 "meetingBookedAt": {
                   "type": "string",
                   "nullable": true,
-                  "description": "ISO timestamp the meeting was booked (instantly manual-qualification meetingBookedAt). Null when no meeting, or no known date. No synthesis."
+                  "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
                 },
                 "purchased": {
                   "type": "boolean",
-                  "description": "True when the lead became a paying client / closed (instantly manual qualification). The purchase-goal outcome (features-service#377)."
+                  "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
                 },
                 "purchasedAt": {
                   "type": "string",
@@ -5363,6 +5383,8 @@
                 "repliedPositive",
                 "repliedPositiveAt",
                 "meetingBooked",
+                "meetingAttended",
+                "meetingAttendedAt",
                 "meetingBookedAt",
                 "purchased",
                 "purchasedAt",
@@ -6691,7 +6713,7 @@
               "daily",
               "undatedCount"
             ],
-            "description": "Meeting-goal outcome ACTUAL series (instantly manual-qualification meetingBookedAt), server-computed from the SAME leads[] snapshot. features-service#377."
+            "description": "Meeting-goal outcome ACTUAL series, dated by when the meeting was booked, server-computed from the SAME leads[] snapshot. features-service#377."
           },
           "purchased": {
             "type": "object",
@@ -6731,7 +6753,7 @@
               "daily",
               "undatedCount"
             ],
-            "description": "Purchase-goal outcome ACTUAL series (instantly manual-qualification closedAt), server-computed from the SAME leads[] snapshot. features-service#377."
+            "description": "Purchase-goal outcome ACTUAL series, dated by when the deal closed, server-computed from the SAME leads[] snapshot. features-service#377."
           },
           "signups": {
             "type": "object",
@@ -6939,7 +6961,7 @@
                 "cumulativePipelineUsd"
               ]
             },
-            "description": "Cumulative pipeline ordered by event date, from the per-lead event timestamps (email-gateway + instantly manual qualifications). An org with no dated event is counted in the headline but absent here."
+            "description": "Cumulative pipeline ordered by event date, from the per-lead event timestamps (email-gateway engagement + the dates a human stated a funnel step happened). An org with no dated event is counted in the headline but absent here."
           },
           "roiHistory": {
             "type": "object",
@@ -7180,16 +7202,25 @@
                 },
                 "meetingBooked": {
                   "type": "boolean",
-                  "description": "True when a meeting was booked (instantly manual qualification). The meeting-goal outcome the goal daily-graph actual buckets (features-service#377)."
+                  "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
+                },
+                "meetingAttended": {
+                  "type": "boolean",
+                  "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
+                },
+                "meetingAttendedAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO timestamp the meeting was attended, as stated. Null when not attended, or attended with no known date. No synthesis."
                 },
                 "meetingBookedAt": {
                   "type": "string",
                   "nullable": true,
-                  "description": "ISO timestamp the meeting was booked (instantly manual-qualification meetingBookedAt). Null when no meeting, or no known date. No synthesis."
+                  "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
                 },
                 "purchased": {
                   "type": "boolean",
-                  "description": "True when the lead became a paying client / closed (instantly manual qualification). The purchase-goal outcome (features-service#377)."
+                  "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
                 },
                 "purchasedAt": {
                   "type": "string",
@@ -7245,6 +7276,8 @@
                 "repliedPositive",
                 "repliedPositiveAt",
                 "meetingBooked",
+                "meetingAttended",
+                "meetingAttendedAt",
                 "meetingBookedAt",
                 "purchased",
                 "purchasedAt",

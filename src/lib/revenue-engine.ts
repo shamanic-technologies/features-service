@@ -56,6 +56,13 @@ export interface ResolvedPath {
   engagementRoute?: boolean;
   /** Whether a fired event of this path is itemised in the events ledger. Defaults to true. */
   ledger?: boolean;
+  /**
+   * Marks the TERMINAL leg — the paying client every chain ends at, worth the whole close value rather
+   * than a fraction of it. When a human stated what this particular deal was worth, that amount IS the
+   * contribution, read straight instead of scaled through the brand's average: realized revenue is a
+   * fact, so it must not depend on the brand having declared a lifetime revenue at all.
+   */
+  terminal?: boolean;
 }
 
 /**
@@ -128,6 +135,36 @@ export interface EnginePerson {
   signals: Record<string, boolean>;
   /** ISO timestamp of each signal's first occurrence, when known (null otherwise). */
   signalDates?: Record<string, string | null>;
+  /**
+   * WHAT THIS PERSON IS WORTH, when somebody said so — overriding the brand's / offer's average
+   * lifetime revenue for this lead alone.
+   *
+   * Every path's expected revenue is `value × a rate chain`, so this scales the whole ladder rather
+   * than only the terminal rung: a lead stated at $49k is worth more at every rung than a lead priced
+   * on a $4k average, and that is the point of stating it. A won deal MUST carry one (the producer
+   * refuses a sale with no amount) — realized revenue is the one figure with no excuse to be an
+   * average — and any earlier rung MAY carry one, for the unusually large lead worth pricing before
+   * it closes.
+   *
+   * Null / absent = nobody said, so the brand's declared revenue stands. Never 0-by-default: a 0 here
+   * would say the deal was worth nothing, which is a statement, not a silence.
+   */
+  valueUsd?: number | null;
+  /**
+   * The signals this person can NEVER fire, because a human stated the step will not happen.
+   *
+   * A "never" is not an outcome and nothing counts it; what it does is tell a lead that is DEAD at a
+   * step from one still PENDING, which no count could ever express. A pending lead legitimately keeps
+   * the forecast its evidence earns; a dead one has no path left through the chains that contain that
+   * step, so those chains' legs are worth nothing for it — including the legs it already fired, whose
+   * whole value was a forecast of the thing that has now been ruled out.
+   *
+   * It is the CHAIN that dies, not just the one step: the caller expands a dead step into every leg
+   * of every declared funnel containing it (see `deadLegSignalsFor`), so a brand that also sells a
+   * chain the dead step is not on keeps that chain's value for this lead. Empty / absent = nothing was
+   * ruled out, which is every lead today.
+   */
+  deadSignals?: readonly string[];
 }
 
 export interface TopPerson {
@@ -205,8 +242,12 @@ export interface LeadRow {
    *     The SAME positive-reply classification the booked-meetings lens
    *     (P=replyToMeeting) + audience-stats positiveReplies use — distinct from `meetingBooked` (the
    *     reply is the meeting-goal engagement signal, the booked meeting is its downstream outcome).
-   *   - meetingBooked  ← instantly manual-qualification `meetingBookedAt` (the meeting-goal outcome)
-   *   - purchased      ← instantly manual-qualification `closedAt`        (the purchase-goal outcome)
+   *   - meetingBooked   ← a human stated the meeting was booked (lead-service step statements)
+   *   - meetingAttended ← a human stated the meeting was ATTENDED — the rung above booked, and the one
+   *     the lead is priced on once it is reached. It is stated by hand ONLY: attendance happens off the
+   *     client's website, so no page-load tag can observe it, which is why the show-up rate it measures
+   *     could never be checked against reality before.
+   *   - purchased      ← a human (or the tracker) stated the deal closed — realized revenue
    *   - signup / formSubmission ← lead-service conversion tracker: the DISTINCT matched-lead email set
    *     (`converted-lead-emails?event=signup|form_submission`) intersected with this lead's email —
    *     REAL producer-side attribution (lead-service runs the match waterfall), the SAME identity join
@@ -224,6 +265,8 @@ export interface LeadRow {
   repliedPositiveAt: string | null;
   meetingBooked: boolean;
   meetingBookedAt: string | null;
+  meetingAttended: boolean;
+  meetingAttendedAt: string | null;
   purchased: boolean;
   purchasedAt: string | null;
   signup: boolean;
@@ -465,12 +508,28 @@ function evForPerson(
   milestones: readonly FunnelMilestone[],
   closeValueUsd: number,
 ): PersonEv {
-  let maxSingleEv = 0;
+  let maxPositionEv = 0;
   const routeEvs: number[] = [];
   const firedEvents: FiredEvent[] = [];
   let date: string | null = null;
   const legTags: string[] = [];
   let furthestMilestoneTag: string | null = null;
+  let reachedPosition = false;
+
+  // WHAT THIS PERSON IS WORTH. Every path EV is `value × a rate chain`, so a stated per-lead value
+  // scales the whole ladder rather than only its terminal rung — a lead somebody priced at $49k is
+  // worth more at every rung than one priced on a $4k average. Nobody said ⇒ the brand's own number,
+  // unscaled, which is every lead today.
+  const statedValueUsd =
+    typeof person.valueUsd === "number" && Number.isFinite(person.valueUsd) && person.valueUsd >= 0
+      ? person.valueUsd
+      : null;
+  const scale = statedValueUsd !== null && closeValueUsd > 0 ? statedValueUsd / closeValueUsd : 1;
+  const scaledCloseValueUsd = closeValueUsd * scale;
+
+  // Steps a human ruled out for this person. Expanded by the caller into every leg of every chain
+  // containing the dead step, so a chain that never touches it keeps its value.
+  const dead = person.deadSignals && person.deadSignals.length > 0 ? new Set(person.deadSignals) : null;
 
   // Milestones first — listed in ascending funnel order, so the last fired is the furthest reached.
   for (const milestone of milestones) {
@@ -481,20 +540,39 @@ function evForPerson(
 
   for (const path of paths) {
     if (!person.signals[path.signal]) continue;
-    if (path.expectedRevenueUsd > maxSingleEv) maxSingleEv = path.expectedRevenueUsd;
-    if (path.engagementRoute) routeEvs.push(path.expectedRevenueUsd);
+    // A leg of a chain a human ruled this person out of carries nothing — not even the legs already
+    // fired, whose whole value was a forecast of the thing that has now been ruled out. It is not in
+    // the ledger either: there is no expected revenue to itemise.
+    if (dead?.has(path.signal)) continue;
+    // A TERMINAL leg carrying a stated amount IS that amount — realized revenue is a fact, so it must
+    // not be routed through the brand's average (nor vanish for a brand that declared no revenue).
+    const contributionUsd =
+      path.terminal && statedValueUsd !== null ? statedValueUsd : path.expectedRevenueUsd * scale;
+    if (path.engagementRoute) {
+      routeEvs.push(contributionUsd);
+    } else {
+      reachedPosition = true;
+      if (contributionUsd > maxPositionEv) maxPositionEv = contributionUsd;
+    }
     const eventDate = person.signalDates?.[path.signal] ?? null;
-    firedEvents.push({ tag: path.tag, eventDate, contributionUsd: path.expectedRevenueUsd, ledger: path.ledger !== false });
+    firedEvents.push({ tag: path.tag, eventDate, contributionUsd, ledger: path.ledger !== false });
     date = maxDate(date, eventDate);
     if (!legTags.includes(path.tag)) legTags.push(path.tag);
   }
 
-  // EV = MAX(best single fired path, combined engagement routes). Mutually-exclusive positions
-  // (meeting, closeWin) only ever raise maxSingleEv; the independent routes (click + reply) combine
-  // as independent probabilities of the SAME single close, bounded by one close value — firing BOTH
-  // earns strictly more than either alone yet never exceeds one close. closeWin's full-LTR single
-  // path still dominates via the MAX (realized revenue).
-  const ev = Math.max(maxSingleEv, combineIndependent(routeEvs, closeValueUsd));
+  // WHAT A HUMAN OBSERVED BEATS WHAT WE FORECAST.
+  //
+  // The engagement routes (click, reply) are two independent shots at the SAME single close, so on
+  // their own they combine as independent probabilities bounded by one close value — firing both earns
+  // strictly more than either alone and never more than one close.
+  //
+  // But an OBSERVED POSITION (a meeting booked, a meeting attended, a deal won) is not another shot at
+  // that close: it IS that close, further along. The routes were forecasting exactly the thing that has
+  // now happened, so once a position fired they are EXTINGUISHED rather than combined — keeping them
+  // would add the forecast of an event to the event itself. A `max` alone would not do it: a brand
+  // whose self-serve rate beats its booked→paid rate can have the click route out-value the meeting the
+  // lead is actually sitting in.
+  const ev = reachedPosition ? maxPositionEv : combineIndependent(routeEvs, scaledCloseValueUsd);
 
   const tags = legTags.length > 0 ? legTags : furthestMilestoneTag ? [furthestMilestoneTag] : [];
   return { person, ev, tags, date, firedEvents, reachedMilestone: furthestMilestoneTag !== null };
@@ -553,6 +631,8 @@ export function computeRevenue(
     repliedPositiveAt: person.signals.positiveReply ? (person.signalDates?.positiveReply ?? null) : null,
     meetingBooked: Boolean(person.signals.meeting),
     meetingBookedAt: person.signalDates?.meeting ?? null,
+    meetingAttended: Boolean(person.signals.meetingAttended),
+    meetingAttendedAt: person.signalDates?.meetingAttended ?? null,
     purchased: Boolean(person.signals.closeWin),
     purchasedAt: person.signalDates?.closeWin ?? null,
     signup: Boolean(person.signals.signup),

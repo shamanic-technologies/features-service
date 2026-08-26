@@ -89,10 +89,23 @@ function costGroups(cents: number): string {
   return JSON.stringify({ groups: [{ dimensions: {}, totalCostInUsdCents: String(cents), actualCostInUsdCents: String(cents), runCount: 0, minStartedAt: null, maxStartedAt: null }] });
 }
 
-/** email → first meeting-booked / closed manual-qualification timestamps. */
-type Qualifications = Record<string, { meetingBookedAt?: string; closedAt?: string }>;
+/**
+ * email → what a human OBSERVED about the lead: the rung it reached and when, plus what the deal was
+ * worth when somebody said. lead-service serves one row per attributed outcome, per step.
+ */
+type Qualifications = Record<
+  string,
+  { meetingBookedAt?: string; meetingAttendedAt?: string; closedAt?: string; valueCents?: number }
+>;
 
-/** Map the `quals` fixture into email-gateway /orgs/manual-qualifications rows (sorted DESC IRL; order-agnostic here). */
+/** Which step each fixture field states, in the producer's own vocabulary. */
+const STEP_OF: Record<string, "meeting_booked" | "meeting_attended" | "sale"> = {
+  meetingBookedAt: "meeting_booked",
+  meetingAttendedAt: "meeting_attended",
+  closedAt: "sale",
+};
+
+/** Map the `quals` fixture into the LEGACY email-gateway /orgs/manual-qualifications rows. */
 function qualRows(quals: Qualifications): unknown[] {
   const rows: unknown[] = [];
   for (const [email, q] of Object.entries(quals)) {
@@ -102,8 +115,29 @@ function qualRows(quals: Qualifications): unknown[] {
   return rows;
 }
 
+/** Map the `quals` fixture into lead-service /internal/brands/:id/converted-leads rows for ONE step. */
+function outcomeRows(quals: Qualifications, event: string): unknown[] {
+  const rows: unknown[] = [];
+  for (const [email, q] of Object.entries(quals)) {
+    for (const [field, step] of Object.entries(STEP_OF)) {
+      const occurredAt = (q as Record<string, unknown>)[field];
+      if (step !== event || typeof occurredAt !== "string") continue;
+      rows.push({
+        leadId: `lead-${email}-${step}`,
+        email,
+        campaignId: "c1",
+        occurredAt,
+        // A sale always carries an amount at the producer; anything else only when stated.
+        valueCents: step === "sale" ? (q.valueCents ?? null) : (q.valueCents ?? null),
+        source: "manual",
+      });
+    }
+  }
+  return rows;
+}
+
 /** Route fetch mock keyed by URL substring. effective economics (saved set + cross-brand average) + leads + status timestamps + manual quals + platform stats + cost overridable. */
-function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; qualRowsRaw?: unknown[]; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; sale: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean; salesFunnels?: unknown[]; spendByDay?: Array<{ period: string; actualCents: number }>; spendByDayFail?: boolean } = {}): void {
+function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; legacyQuals?: Qualifications; qualRowsRaw?: unknown[]; outcomeRowsRaw?: unknown[]; deadByStep?: Record<string, string[]>; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; sale: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean; salesFunnels?: unknown[]; spendByDay?: Array<{ period: string; actualCents: number }>; spendByDayFail?: boolean } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     // lead-service GET /internal/brands/:brandId/converted-lead-emails?event=<type> — per-lead SIGNUP /
@@ -188,8 +222,16 @@ function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; lead
       return new Response(JSON.stringify(opts.platformStats ?? PLATFORM_STATS), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("/manual-qualifications")) {
-      const qualifications = opts.qualRowsRaw ?? qualRows(opts.quals ?? {});
+      const qualifications = opts.qualRowsRaw ?? qualRows(opts.legacyQuals ?? {});
       return new Response(JSON.stringify({ qualifications }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/converted-leads")) {
+      const event = new URL(url, "http://x").searchParams.get("event") ?? "";
+      const outcomes = opts.outcomeRowsRaw ?? outcomeRows(opts.quals ?? {}, event);
+      return new Response(JSON.stringify({ event, outcomes }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/step-disqualifications")) {
+      return new Response(JSON.stringify({ counts: {}, byStep: opts.deadByStep ?? {} }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("/orgs/leads")) {
       return new Response(JSON.stringify({ leads: opts.leads ?? [] }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -1072,23 +1114,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(series).toEqual([...series].sort((a: number, b: number) => a - b));
   });
 
-  it("degrades (still 200, pipeline correct) when /orgs/manual-qualifications fails", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = typeof input === "string" ? input : (input as any).url;
-      if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
-      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
-      if (url.includes("/public/stats")) return new Response(JSON.stringify(PLATFORM_STATS), { status: 200 });
-      if (url.includes("/manual-qualifications")) return new Response("boom", { status: 502 });
-      if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
-      if (url.includes("/orgs/status")) return new Response(JSON.stringify({ results: [] }), { status: 200 });
-      return new Response("{}", { status: 200 });
-    });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
-    expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // click 34.7 + reply 120, unaffected by missing quals
-  });
-
-  it("logs a warning (no silent truncation) when manual-qualifications returns the 500-row cap", async () => {
+  it("logs a warning (no silent truncation) when the LEGACY manual-qualifications hits its row cap", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const capped = Array.from({ length: 500 }, (_, i) => ({
       id: `q${i}`, orgId: "org-1", campaignId: "c1", instantlyCampaignId: "ic1",
@@ -1098,6 +1124,22 @@ describe("GET /features/:featureSlug/revenue", () => {
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(warnSpy.mock.calls.some(([msg]) => typeof msg === "string" && msg.includes("manual-qualifications hit 500-row cap"))).toBe(true);
+  });
+
+  it("degrades (still 200, pipeline correct) when the observed step statements fail", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
+      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
+      if (url.includes("/public/stats")) return new Response(JSON.stringify(PLATFORM_STATS), { status: 200 });
+      if (url.includes("/converted-leads")) return new Response("boom", { status: 502 });
+      if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
+      if (url.includes("/orgs/status")) return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      return new Response("{}", { status: 200 });
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // click 34.7 + reply 120, unaffected by the missing statements
   });
 
   // ── spend (Overview "Outreach & Conversions" cost block, features-service#396) ──
@@ -1147,7 +1189,8 @@ describe("GET /features/:featureSlug/revenue", () => {
       if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
       if (url.includes("/public/stats")) return json(PLATFORM_STATS);
       if (url.includes("/orgs/leads")) return json({ leads: HAPPY_LEADS });
-      if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
+      if (url.includes("/converted-leads")) return json({ event: "", outcomes: [] });
+      if (url.includes("/step-disqualifications")) return json({ counts: {}, byStep: {} });
       if (url.includes("/orgs/status")) return json({ results: [] });
       return json({});
     });
@@ -1243,7 +1286,8 @@ describe("GET /features/:featureSlug/revenue", () => {
       if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
       if (url.includes("/public/stats")) return json(PLATFORM_STATS);
       if (url.includes("/orgs/leads")) return json({ leads: HAPPY_LEADS });
-      if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
+      if (url.includes("/converted-leads")) return json({ event: "", outcomes: [] });
+      if (url.includes("/step-disqualifications")) return json({ counts: {}, byStep: {} });
       if (url.includes("/orgs/status")) return json({ results: [] });
       return json({});
     });
@@ -1305,7 +1349,8 @@ describe("GET /features/:featureSlug/revenue", () => {
       if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
       if (url.includes("/public/stats")) return json(PLATFORM_STATS);
       if (url.includes("/orgs/leads")) return json({ leads: HAPPY_LEADS });
-      if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
+      if (url.includes("/converted-leads")) return json({ event: "", outcomes: [] });
+      if (url.includes("/step-disqualifications")) return json({ counts: {}, byStep: {} });
       if (url.includes("/orgs/status")) return json({ results: [] });
       return json({});
     });
@@ -1361,7 +1406,8 @@ describe("GET /features/:featureSlug/revenue", () => {
       if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
       if (url.includes("/public/stats")) return json(PLATFORM_STATS);
       if (url.includes("/orgs/leads")) return json({ leads: HAPPY_LEADS });
-      if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
+      if (url.includes("/converted-leads")) return json({ event: "", outcomes: [] });
+      if (url.includes("/step-disqualifications")) return json({ counts: {}, byStep: {} });
       if (url.includes("/orgs/status")) return json({ results: [] });
       return json({});
     });
@@ -1410,8 +1456,18 @@ function mockFetchGrouped(opts: { economics?: unknown; economicsAverage?: unknow
     if (url.includes("/public/stats")) {
       return new Response(JSON.stringify(opts.platformStats ?? PLATFORM_STATS), { status: 200, headers: { "Content-Type": "application/json" } });
     }
+    if (url.includes("/step-disqualifications")) {
+      return new Response(JSON.stringify({ counts: {}, byStep: {} }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (url.includes("/manual-qualifications")) {
       return new Response(JSON.stringify({ qualifications: qualRows(cid ? (opts.campaigns[cid]?.quals ?? {}) : {}) }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/converted-leads")) {
+      // The observed statements are BRAND-scoped (they carry the campaign on the row), so the same
+      // set answers whichever campaign is being read — the lead read is what narrows.
+      const event = new URL(url, "http://x").searchParams.get("event") ?? "";
+      const all: Qualifications = Object.assign({}, ...Object.values(opts.campaigns).map((c) => c.quals ?? {}));
+      return new Response(JSON.stringify({ event, outcomes: outcomeRows(all, event) }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("/orgs/leads")) {
       return new Response(JSON.stringify({ leads: cid ? (opts.campaigns[cid]?.leads ?? []) : [] }), { status: 200, headers: { "Content-Type": "application/json" } });

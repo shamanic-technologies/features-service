@@ -81,7 +81,20 @@ export class UnknownSalesFunnelError extends Error {
  * arbitration must report rather than paper over — AND on an EMPTY list, which says this org has
  * never stated a set.
  */
-export async function fetchDeclaredSalesFunnels(brandId: string, orgId: string): Promise<DeclaredSalesFunnel[]> {
+export async function fetchDeclaredSalesFunnels(
+  brandId: string,
+  orgId: string,
+  /**
+   * WHICH offer's funnels — and therefore whose lifetime revenue and whose rates. A declared funnel
+   * hangs off an OFFER, because a brand selling a $200 self-serve plan and a $20k contract converts
+   * and is worth completely different numbers on the same chain (brand-service#473).
+   *
+   * Omitted keeps today's answer for every brand selling one thing, which is 100% of live traffic:
+   * brand-service resolves the sole offer, and refuses (409) for a brand selling several rather than
+   * guessing. Only a caller that genuinely knows which proposition it is pricing names one.
+   */
+  offerId?: string | null,
+): Promise<DeclaredSalesFunnel[]> {
   const url = process.env.BRAND_SERVICE_URL;
   const apiKey = process.env.BRAND_SERVICE_API_KEY;
   if (!url || !apiKey) {
@@ -98,7 +111,8 @@ export async function fetchDeclaredSalesFunnels(brandId: string, orgId: string):
 
   let response: Response;
   try {
-    response = await fetchWithRetry(`${url}/internal/brands/${brandId}/sales-funnels`, {
+    const query = offerId ? `?offerId=${encodeURIComponent(offerId)}` : "";
+    response = await fetchWithRetry(`${url}/internal/brands/${brandId}/sales-funnels${query}`, {
       headers: { "x-api-key": apiKey, "x-org-id": orgId },
     });
   } catch (error) {
