@@ -1,5 +1,56 @@
 # Features Service — CLAUDE.md
 
+## `?groupBy=campaignId` STATES HOW MUCH EVIDENCE ITS MONEY RESTS ON — `outcomes`, the volume half, at the CAMPAIGN grain
+
+A customer looking at the Campaigns list asks one question of each row: is this campaign working. The
+row answered in money alone — ROI, %CAC, expected pipeline, invested spend. All three ratios are
+DERIVED from however many outcomes the campaign has produced so far, so with one or two behind them
+they are decided by whichever one happened to land: they swing by whole multiples on the next reply
+while the row presents them as a measurement. The dashboard states a "Learning" tag instead of a
+number until enough outcomes have landed, and the campaign rows were the one surface it could not
+apply the rule to — the group carried `campaignId`, `campaignIdentity`, `headline` and
+`costEconomics`, and `expectedConversions` is lens-only.
+
+- **THE BLOCK IS THE PER-WORKFLOW GRAIN'S, BY THE SAME CODE.** `lib/revenue-outcomes.ts` now owns the
+  interface + builder that shipped for `?groupBy=workflow` (#776); `buildWorkflowOutcomes` /
+  `WorkflowRevenueOutcomes` are aliases of it, so nothing about that grain moved. Same seven fields
+  (`recipientsContacted` / `recipientsClicked` / `recipientsRepliesPositive`, `committedSpentCents`,
+  the transitional `actualSpentCents`, `cpcCents`, `cpprCents`), same rules — one implementation, so
+  the two grains cannot come to disagree about whether a lead clicked, for the reason
+  `signal-overlays.ts` is one copy.
+- **IT IS TOTALLED OVER THE IDENTITY, exactly as the money is.** The per-identity compute already runs
+  over the family's WHOLE membership, so the block is built from those persons and deduped inside them
+  — a lead served under two member rows is ONE person here as it is one person to the brand, and every
+  member of an identity carries the identical block. **PEOPLE ARE COUNTED, NOT ADDED**: the
+  #749 double-count came from folding email-gateway's per-campaign aggregates, and nothing is folded
+  here, so an identity's count is a SUBSET of the brand's by construction rather than by a correction.
+  Across identities the rows do not sum to the brand — the counting-people property the money already
+  carries.
+- **ONE COMMITTED BASIS, so the two halves cannot describe different dollars.**
+  `committedSpentCents / 100 === costEconomics.committedCostUsd` for the same row and
+  `cpprCents × recipientsRepliesPositive ≈ committedSpentCents`. Guarded with a fixture where committed
+  and billed DIFFER, so a silent billed-basis regression cannot pass.
+- **THE RATES ARE OBSERVED. 0 IS A MEASURED COUNT, NULL IS NOT.** A campaign that spent and bought no
+  visit reports `recipientsClicked: 0` with `cpcCents: null` — never a $0 that reads as free, never a
+  benchmark floor (projection has `/workflow-projection`).
+- **NULL ONLY WHERE THE LEADS WERE NEVER READ** — the no-funnel short-circuit, whose money half is
+  honestly null beside it. The COLD-START path (economics null) DID read the leads, so it answers the
+  real volume: "we could not price this" and "this reached nobody" are different statements. The lens
+  response nulls it on the same gate as `spend` (a lens is a lead SUBSET while its spend leg is the
+  brand's whole spend).
+- **IT RIDES `RevenueBody`, so it is on the un-grouped brand / offer / channel reads too** — the same
+  scope's volume, truthfully — and it costs ZERO extra IO everywhere: the persons and the cents were
+  already in hand. NOT added to the `?groupBy=offerId` or `?groupBy=workflow` group shapes (workflow
+  already had it; the offer row was not asked for and its shape stays byte-unchanged).
+- **NO QUERY PARAMETER.** A consumer that has to opt in is a consumer that renders the ratios without
+  the volume by default, which is the bug.
+- Guards: `src/routes/campaign-group-outcomes.test.ts` (identity totalling + shared lead counted once
+  + the committed basis; no row exceeds the brand while the rows over-count when added; a one-campaign
+  identity byte-equal to its own `?campaignId=` read; the measured 0 vs the null rate; the
+  spent-and-reached-nobody row; the no-funnel null; the lens null) + the lean key-set case in
+  `routes/revenue.test.ts`. (Set 2026-08-26.)
+
+
 ## COMPED SPEND SPLITS EVERY MONEY FIGURE IN TWO — `charged` is what the customer PAID, `incurred` is what the workflow COST, and the second one is the half that breaks silently
 
 The platform sometimes COMPS a customer for spend that genuinely happened (2026-08-25: a provider

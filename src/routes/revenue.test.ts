@@ -1451,10 +1451,10 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
     expect(res.body.featureSlug).toBe("sales-cold-email-outreach");
     expect(res.body.groupBy).toBe("campaignId");
     expect(res.body.groups).toHaveLength(2);
-    // Each group is lean — campaignId + the identity it was totalled over + headline + costEconomics,
-    // no timeSeries/orgs/leads/events.
+    // Each group is lean — campaignId + the identity it was totalled over + headline + costEconomics
+    // + the volume half, no timeSeries/orgs/leads/events.
     for (const g of res.body.groups) {
-      expect(Object.keys(g).sort()).toEqual(["campaignId", "campaignIdentity", "costEconomics", "headline"]);
+      expect(Object.keys(g).sort()).toEqual(["campaignId", "campaignIdentity", "costEconomics", "headline", "outcomes"]);
     }
     const byId = Object.fromEntries(res.body.groups.map((g: any) => [g.campaignId, g]));
     // grouped costEconomics carries NEITHER lens-only field

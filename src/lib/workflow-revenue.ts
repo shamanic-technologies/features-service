@@ -75,7 +75,7 @@ import type { EffectiveEconomics } from "./sales-economics-client.js";
 import type { SalesFunnelKey } from "./sales-funnels.js";
 import { buildCostEconomics, type CostEconomics } from "./cost-economics.js";
 import { computeRevenue, dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
-import { observedCostPerOutcome } from "./cost-engine.js";
+import { buildRevenueOutcomes, type RevenueOutcomes } from "./revenue-outcomes.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { fetchRunsCostCentsByWorkflowSlug, type RunsCostCents } from "./runs-cost-client.js";
 import { fetchEventTimestamps } from "./email-status-client.js";
@@ -88,33 +88,13 @@ import type { Pricing } from "./pricing.js";
  * The volume half of a workflow's answer — this brand's OWN outreach through this dynasty, and what
  * it cost. Every field is scoped to (this brand, this feature, this dynasty), versions folded in.
  *
- * The three counts are DISTINCT LEADS, deduped within the dynasty by the SAME `dedupPersonsByLead`
- * the engine uses and read off the SAME per-lead signals the brand read's `recipientsContacted` /
- * `recipientsClicked` / `recipientsRepliesPositive` series are built from — so a single-workflow
- * brand reads its brand figure here, by construction. A lead served under two workflows is ONE lead
- * to the brand and belongs to BOTH groups, so across several workflows the counts do not sum to the
- * brand: the same counting-people property the money half already carries. A lead the producer
+ * The SHARED block every `/revenue` grain answers (`lib/revenue-outcomes.ts`), which is where the
+ * counting, null and spend-basis rules live. Applied here: a lead served under two workflows is ONE
+ * lead to the brand and belongs to BOTH groups, so across several workflows the counts do not sum to
+ * the brand — the same counting-people property the money half already carries. A lead the producer
  * served under no workflow is in no group.
- *
- * 0 is a MEASURED count. The two rates are null when unmeasurable — no outcome of that kind, or no
- * committed spend — never 0, and never floored to a benchmark (see the module header).
  */
-export interface WorkflowRevenueOutcomes {
-  /** Distinct leads this workflow reached. The workflow-grain twin of `recipientsContacted.total`. */
-  recipientsContacted: number;
-  /** Distinct leads that visited the site off this workflow. Twin of `recipientsClicked.total`. */
-  recipientsClicked: number;
-  /** Distinct leads that replied positively. Twin of `recipientsRepliesPositive.total`. */
-  recipientsRepliesPositive: number;
-  /** COMMITTED spend attributed to this dynasty, in cents — `costEconomics.committedCostUsd` in the unit the two rates below are denominated in. */
-  committedSpentCents: number;
-  /** Billed-only spend for this dynasty, in cents. TRANSITIONAL — reported, divided by nowhere. */
-  actualSpentCents: number;
-  /** Committed spend ÷ website visits. Null when this workflow bought no visit, or spent nothing. */
-  cpcCents: number | null;
-  /** Committed spend ÷ positive replies. Null when this workflow bought no reply, or spent nothing. */
-  cpprCents: number | null;
-}
+export type WorkflowRevenueOutcomes = RevenueOutcomes;
 
 /** One workflow the brand has run, and what it returned. The four figures are the brand read's own. */
 export interface WorkflowRevenueGroup {
@@ -170,39 +150,11 @@ function dynastyNames(workflows: WorkflowMetadata[]): Map<string, string> {
 }
 
 /**
- * PURE: the volume half for ONE dynasty's persons + its realized cents.
- *
- * Dedup FIRST, on the engine's own rule: a lead the producer served twice under the same dynasty is
- * one person, and its signals OR together — the identical treatment the brand read gives it. The
- * counts then read straight off the deduped signals rather than off the engine's `leads[]`, so they
- * survive the no-funnel / no-economics path where the engine is never run at all. Where the engine
- * IS run the two agree by construction: a contacted lead always reaches a delivery milestone and a
- * lead carrying any conversion signal scores above zero, so every lead counted here is a row there.
+ * PURE: the volume half for ONE dynasty's persons + its realized cents — the shared builder, under
+ * the name this grain's tests and callers already use. One implementation, so the workflow grain and
+ * the campaign grain can never disagree about whether a lead clicked.
  */
-export function buildWorkflowOutcomes(
-  persons: EnginePerson[],
-  cost: RunsCostCents,
-): WorkflowRevenueOutcomes {
-  const deduped = dedupPersonsByLead(persons);
-  let recipientsContacted = 0;
-  let recipientsClicked = 0;
-  let recipientsRepliesPositive = 0;
-  for (const person of deduped) {
-    if (person.signals.contacted) recipientsContacted += 1;
-    if (person.signals.clicked) recipientsClicked += 1;
-    if (person.signals.positiveReply) recipientsRepliesPositive += 1;
-  }
-  return {
-    recipientsContacted,
-    recipientsClicked,
-    recipientsRepliesPositive,
-    committedSpentCents: cost.committedCents,
-    actualSpentCents: cost.actualCents,
-    // OBSERVED, never floored: null is "this workflow bought none of these", not "$0 each".
-    cpcCents: observedCostPerOutcome(cost.committedCents, recipientsClicked),
-    cpprCents: observedCostPerOutcome(cost.committedCents, recipientsRepliesPositive),
-  };
-}
+export const buildWorkflowOutcomes = buildRevenueOutcomes;
 
 /**
  * PURE: the groups, from evidence already in hand. Separated from the IO above so the whole
