@@ -205,6 +205,65 @@ view, not the workflow PERFORMANCE view.**
   200, still today's number; the budget-projection read takes incurred while the displayed one does
   not; and the selectors compose with gross/net rather than replacing it. (Set 2026-08-25.)
 
+## `GET /offers/:offerId/chains` — WHAT EACH OF AN OFFER'S SALES CHAINS COST AND RETURNED; the chain is the smallest scope whose money divides into a RETURN, and one-campaign-per-step is why
+
+Money answers at the brand grain, the offer grain, the campaign grain and the workflow grain. The grain
+that was missing is **(offer × sales chain)**, and it stops being optional the moment the product ships
+ONE CAMPAIGN PER STEP of a chain. A campaign then buys a single LINK — a reply, a booked meeting, an
+attended meeting — so it has a cost per step and **no return of its own**: the lifetime revenue sits at
+the END of the chain, and hanging it on whichever link happened to be last would wildly overstate that
+link. The chain is the smallest scope that spans a whole path to a paying client, so it is the smallest
+scope at which a return is computable at all.
+
+- **CORRECT UNDER BOTH SHAPES WITH NO SWITCH, because the row is scoped to the chain's CAMPAIGN SET.**
+  A chain served by ONE campaign — every chain in production today — is **byte-equal to that campaign's
+  own `/features/:slug/revenue?campaignId=` answer** (guarded), because the per-campaign read already
+  prices on the funnel the campaign itself states. A chain served by one campaign per step is the same
+  row over a larger set: the money adds, the leads dedupe, and the return is the chain's. Nothing
+  branches on which shape is live.
+- **THE PARTITION IS THE PRODUCER'S** (`lib/offer-chains.ts`): a campaign states its own `funnelKey` and
+  campaign-service owns it. **NEVER inferred from the goal** — both meeting chains answer to
+  `meetingBooked`, so that inference prints a chain the campaign never stated. A campaign stating NO
+  chain (or one the catalogue does not know) is in NO row and its id rides `unattributedCampaignIds`:
+  never parked on a default, never dropped in silence.
+- **MONEY ADDS, PEOPLE DO NOT.** A campaign belongs to exactly one chain, so `Σ chains +
+  Σ unattributed` IS the offer's own spend (guarded against `/offers/:offerId/revenue`). A lead worked
+  through two chains is ONE lead to the offer and is in BOTH rows, so the rows do not sum on the
+  pipeline half — the counting-people property every grain here carries, and the reason the offer read
+  stays the number to trust for "what did this offer do".
+- **EACH CHAIN IS PRICED ON ITS OWN DECLARED TERMS** — its own rates and its own lifetime revenue, via
+  the SAME `priceOnDeclaredFunnel` merge every other funnel-narrowed read uses, with the chain's key as
+  the requested funnel. A $1k conversation contract and a $4k website one are never blended, and only
+  the chain's OWN legs carry expected value (`restrictPathsToDeclaredLegs`).
+- **A CHAIN WE CANNOT PRICE SAYS WHICH INGREDIENT IS MISSING** — `priced: false` +
+  `unpricedReason`, checked in this order so the plain thing is said first: `no_channel_funnel` (no
+  channel carrying it measures anything; the leads are never read, so `outcomes` is null too) →
+  `no_economics_declared` (the brand states none, or the declaration could not be read) →
+  `chain_not_declared` (the declaration IS readable and does not contain this chain). In all three the
+  SPEND is real and reported and the pipeline / return / $CAC are **null, never 0**. **Do NOT fall back
+  to the brand-wide economics record here** — the un-narrowed reads legitimately do, but every rate on
+  that row is server-defaulted, so pricing chain A on it is the retired-goal fiction one grain finer.
+  The two unpriced-but-measurable reasons still read the leads (the engine's cold-start path), because
+  "we could not price this" and "this reached nobody" are different statements.
+- **`costCoverage: "platform_spend_only"` IS ON THE WIRE, AND IT IS AN ADMISSION.** Some steps of a
+  chain are performed by a human on the CUSTOMER's side and the platform spends nothing on them, so a
+  chain whose last legs are manual reads cheaper here than it truly is — and a chain's true cost of
+  acquisition needs that money. lead-service is adding a customer-declared cost per step transition;
+  **it exposes none today** (verified against its deployed contract: `converted-leads`,
+  `step-disqualifications`, `conversion-counts{,-by-day}`, `converted-lead-emails`, and nothing else).
+  Inventing one, or leaving the basis unstated, is the fabricated figure this read refuses everywhere
+  else. When the producer ships it, the marker is what a consumer keys the change off.
+- **NO CONSUMER-SIDE AGGREGATION.** The composition happens here; a grain the dashboard has to assemble
+  from N campaign calls is not a grain. Rows are LEAN (`headline` + `costEconomics` + `outcomes`,
+  `includeSpend: false`) because a table polls them.
+- **The api-service gateway forwards `/offers/*` per SUFFIX, explicitly, with no wildcard**, so this
+  read needs its own line there or it 404s at the gateway.
+- Guards: `src/routes/offer-chain-revenue.test.ts` — ONE fixture drives the grain, the single-campaign
+  byte-equality, the one-campaign-per-step chain, money-adds-while-people-do-not, each chain on its own
+  declared terms, both unpriced reasons, the unattributed campaign, the lean key set, the named 404,
+  the fail-loud parses, and every existing grain answering unchanged. Plus `lib/offer-chains.ts` for
+  the partition itself. (Set 2026-08-27.)
+
 ## `GET /brands/:brandId/offers` — THE BRAND'S OFFERS TABLE, EACH ROW AT THE OFFER GRAIN; it is the offer read N times, LEAN, not a new computation
 
 The brand Overview lists a brand's OFFERS one row each, with that offer's ROI, %CAC, revenue and

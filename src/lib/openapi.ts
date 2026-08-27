@@ -1064,6 +1064,83 @@ registry.registerPath({
   },
 });
 
+// ── (OFFER x SALES CHAIN) — the grain under the offer, and the only one at which a RETURN survives
+// one-campaign-per-step ─────────────────────────────────────────────────────────────────────────
+//
+// The product is moving to ONE CAMPAIGN PER STEP of a chain. A campaign then buys a single link, so it
+// has a cost per step and NO return of its own: the lifetime revenue sits at the END of the chain, and
+// attributing it to whichever link happened to be last would wildly overstate that link. The chain is
+// the smallest scope spanning a whole path to a paying client, so it is the smallest scope whose money
+// divides into a return.
+//
+// A campaign states exactly one chain (campaign-service owns `funnelKey`; it is never inferred from a
+// goal — two chains answer to `meetingBooked`), so MONEY adds: Sigma chains + Sigma unattributed IS the
+// offer's own spend. PEOPLE do not — a lead worked through two chains is ONE lead to the offer and is
+// in both rows — so the rows do not sum on the pipeline half and the offer read stays the number to
+// trust for "what did this offer do".
+
+const offerChainRowSchema = z.object({
+  funnelKey: z.string().describe("The sales chain, canonicalised onto this service's catalogue."),
+  name: z.string().describe("The chain's buyer-facing name."),
+  steps: z.array(z.string()).describe("The chain's steps in order, so a row renders without the consumer knowing the catalogue."),
+  campaignIds: z.array(z.string()).describe("Every campaign of the offer selling through this chain, ascending. ONE today; one per STEP as the product moves — the row is the same computation over the larger set."),
+  channels: z.array(offerChannelSchema).describe("The acquisition channels carrying this chain, ascending by slug."),
+  priced: z.boolean().describe("Whether this chain's money could be turned into a return. False leaves every money-derived figure null and names the missing ingredient below."),
+  unpricedReason: z
+    .enum(["no_channel_funnel", "no_economics_declared", "chain_not_declared"])
+    .nullable()
+    .describe(
+      "Why the return is null, checked in this order so the plain thing is said first. no_channel_funnel: no channel carrying this chain measures anything (no funnel wired), so the leads are never read and `outcomes` is null too. no_economics_declared: the brand states no economics, or its declaration could not be read, so this chain has no rates and no lifetime revenue of its own. chain_not_declared: the declaration IS readable and does not contain this chain. In all three the SPEND is real and reported — the customer paid it — and the pipeline, the return and the cost of acquisition are null, never 0 and never the brand-wide record the un-narrowed reads legitimately fall back to (pricing one chain on a server-defaulted brand row is the fiction the retired goal produced, one grain finer).",
+    ),
+  headline: featureRevenueResponseSchema.shape.headline,
+  costEconomics: featureRevenueResponseSchema.shape.costEconomics,
+  outcomes: featureRevenueResponseSchema.shape.outcomes,
+});
+
+const offerChainsResponseSchema = z.object({
+  offerId: z.string(),
+  brandId: z.string(),
+  costBasis: z.literal("charged").describe("What the customer was CHARGED — a comped cost is not in it. Same accounting basis as every other org-scoped money read."),
+  costCoverage: z
+    .literal("platform_spend_only")
+    .describe(
+      "Which dollars this cost is made of: the platform spend runs-service ledgers, and nothing else. Some steps of a chain are performed by a human on the customer's side and the platform spends nothing on them, so a chain whose last legs are manual reads cheaper here than it truly is. lead-service is adding a customer-declared cost per step transition and exposes none today; inventing one would be the fabricated figure this read refuses everywhere else, so the basis is stated on the wire instead.",
+    ),
+  chains: z.array(offerChainRowSchema).describe("One LEAN row per chain the offer sells through, in the catalogue's canonical order. Lean (headline + costEconomics + outcomes) because a table polls it: a full body per chain would repeat the whole lead population once per row."),
+  unattributedCampaignIds: z
+    .array(z.string())
+    .describe("Campaigns of this offer that state no chain (or one the catalogue does not know), ascending. Their spend is in NO row and still in the offer's own total, which narrows by nothing — stated so a reader sees the difference rather than wondering why the rows do not add up to the offer."),
+});
+
+const offerChainsResponseRef = registry.register("OfferChainsResponse", offerChainsResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/chains",
+  summary: "What each of an offer's sales chains cost and returned",
+  description:
+    "The (offer x sales chain) grain: one row per chain the offer is sold through, each carrying that chain's own spend, pipeline, return per dollar and cost of acquisition. " +
+    "It is the grain the product needs as it moves to ONE CAMPAIGN PER STEP — a campaign then buys a single link and has no return of its own, because the lifetime revenue sits at the end of the chain. Correct under both shapes with no switch: the row is scoped to the chain's CAMPAIGN SET, so a chain served by one campaign (every chain in production today) is byte-equal to that campaign's own answer, and a chain served by one campaign per step is the same row over the larger set. " +
+    "Each chain is priced on its OWN declared terms — its own rates and its own lifetime revenue — so a $200 self-serve chain and a $20k contract chain are never blended. A chain we cannot price says which ingredient is missing (`unpricedReason`) and reports its real spend beside a null return. " +
+    "The composition happens here: nothing on this response is meant to be summed in a browser, and the rows deliberately do not sum on the people half.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ offerId: z.string() }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required) — an offer belongs to a brand."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
+    }),
+  },
+  responses: {
+    200: { description: "One row per sales chain the offer is sold through", content: { "application/json": { schema: offerChainsResponseRef } } },
+    400: { description: "Missing brandId, or an invalid pricing value", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels) — never the brand's own numbers under the offer's label", content: { "application/json": { schema: errorResponse } } },
+    409: { description: "A chain is carried by channels that price on different funnels (reason: offer_channels_price_differently), so its money cannot honestly be answered as one figure", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const offerAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
   offerId: z.string(),
   channels: z.array(offerChannelSchema).describe("The channels combined into every row below, ascending by slug."),

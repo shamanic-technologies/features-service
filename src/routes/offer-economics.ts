@@ -87,11 +87,14 @@ import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "../
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import {
   resolveOfferChannels,
+  buildOfferChannelMap,
   offerCampaignIds,
   offerFeatureSlugs,
   OfferHasNoChannelsError,
   type OfferChannel,
 } from "../lib/offer-channels.js";
+import { buildOfferChains, type OfferChain } from "../lib/offer-chains.js";
+import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 
 const router = Router();
 
@@ -141,6 +144,12 @@ export function resolveOfferFunnel(offerId: string, channels: OfferChannel[]): R
   if (distinct.length > 1) throw new OfferChannelsPriceDifferentlyError(offerId);
   return distinct[0] ?? null;
 }
+
+/**
+ * Why a chain's money could not be turned into a return. See the `/offers/:offerId/chains` header for
+ * the order they are checked in and what each one leaves populated.
+ */
+export type ChainUnpricedReason = "no_channel_funnel" | "no_economics_declared" | "chain_not_declared";
 
 /** Shared parsing + channel resolution for all three offer reads. */
 async function resolveRequest(req: AuthenticatedRequest & { params: { offerId: string }; query: Record<string, unknown> }) {
@@ -381,6 +390,195 @@ router.get("/offers/:offerId/pipeline-activity", apiKeyAuth, async (req, res) =>
     }
     console.error("[features-service] Offer pipeline activity error:", error);
     res.status(502).json({ error: "Failed to compute offer pipeline activity" });
+  }
+});
+
+
+// ── GET /offers/:offerId/chains ──────────────────────────────────────────────
+//
+// WHAT EACH OF THIS OFFER'S SALES CHAINS COST AND RETURNED — one lean row per chain, in ONE request.
+//
+// A customer reads the return of their brand, and of each of their offers. The grain under that is the
+// SALES CHAIN, and it is the one that is about to matter most: the product is moving to ONE CAMPAIGN
+// PER STEP, so a campaign will buy a single link and have a cost per step but NO return of its own —
+// the lifetime revenue sits at the END of the chain, and hanging it on whichever link happened to be
+// last would wildly overstate that link. The chain is the smallest scope that spans a whole path to a
+// paying client, so it is the smallest scope whose money divides into a return.
+//
+// It is correct under BOTH shapes with no switch: the row is scoped to the chain's CAMPAIGN SET, so a
+// chain served by one campaign (every chain in production today) and a chain served by one campaign
+// per step read through the identical code — the set simply grows.
+//
+// ── THE ROW IS THE SAME COMPUTATION THE OFFER READ MAKES, NARROWED ─────────────────────────────
+//
+// Same engine, same brand pricing, same committed basis, `includeSpend: false` — the LEAN shape the
+// offer, channel, campaign and workflow groups already use. So a chain row and the offer total above
+// it are one statement at two grains rather than two computations to reconcile.
+//
+// ── WHAT ADDS AND WHAT DOES NOT ────────────────────────────────────────────────────────────────
+//
+// A campaign states exactly one chain, so MONEY adds: Σ chains + Σ unattributed IS the offer's own
+// spend. PEOPLE do not — a lead worked through two chains is ONE lead to the offer and belongs to both
+// rows — so the rows do not sum on the pipeline half and the offer read stays the number to trust for
+// "what did this offer do". Same counting-people property every grain here already carries.
+//
+// ── A CHAIN WE CANNOT PRICE SAYS SO, AND NAMES THE MISSING INGREDIENT ──────────────────────────
+//
+// `priced: false` + `unpricedReason`, checked in the order below so the plain thing is said first:
+//
+//   no_channel_funnel     — no channel carrying this chain measures anything (no funnel wired). The
+//                           leads are never read, so `outcomes` is null too: nothing counted them.
+//   no_economics_declared — the brand states no economics, or its declaration could not be read. This
+//                           chain therefore has no rates and no lifetime revenue of its own.
+//   chain_not_declared    — the declaration IS readable and does not contain this chain.
+//
+// In all three the SPEND is real and reported (the customer paid it) and the pipeline, the return and
+// the cost of acquisition are null. Never 0, and never the brand-wide fallback the un-narrowed reads
+// legitimately take: pricing chain A on a brand-wide record — whose every rate is server-defaulted —
+// is exactly the fiction the retired goal produced, one grain finer.
+//
+// ── WHAT THIS COST DOES NOT YET INCLUDE ────────────────────────────────────────────────────────
+//
+// `costCoverage: "platform_spend_only"`. Some steps of a chain are performed by a human on the
+// customer's side and the platform spends nothing on them, so a chain whose last legs are manual reads
+// cheaper here than it truly is. lead-service is adding a customer-declared cost per step transition;
+// it exposes none today (verified against its deployed contract), and inventing one would be the
+// fabricated figure this endpoint refuses everywhere else. The marker states the basis on the wire so
+// no consumer has to guess which dollars are in it.
+router.get("/offers/:offerId/chains", apiKeyAuth, async (req, res) => {
+  try {
+    const authed = req as AuthenticatedRequest & { params: { offerId: string } };
+    const offerId = authed.params.offerId;
+    const brandId = (req.query.brandId as string | undefined) ?? "";
+    if (!brandId) return res.status(400).json({ error: "brandId query parameter is required" });
+
+    const pricing = parsePricing(req.query.pricing);
+    if (pricing === null) return res.status(400).json({ error: "pricing must be one of: gross, net" });
+
+    const headers: DownstreamHeaders = {
+      orgId: authed.orgId,
+      userId: authed.userId,
+      runId: authed.runId,
+      // A chain is sold through however many channels carry it, so naming one would attribute the read
+      // to a channel the caller never asked about.
+      featureSlug: undefined,
+    };
+
+    // ONE campaign read answers both questions: does any campaign of this brand sell this offer (the
+    // 404), and how do those campaigns partition by chain. Reading it twice would be the same rows.
+    const rows = await fetchBrandCampaignRows(brandId, undefined, {
+      orgId: authed.orgId,
+      userId: authed.userId,
+      runId: authed.runId,
+    });
+    if (buildOfferChannelMap(rows).channelsOf(offerId).length === 0) {
+      throw new OfferHasNoChannelsError(offerId, brandId);
+    }
+    const { chains, unattributedCampaignIds } = buildOfferChains(rows, offerId);
+
+    // Economics and the declaration are BRAND-scoped for THIS offer, so they are read ONCE and shared
+    // by every row: N chains cost one pair of calls, and both ride the cache key so a write lands on a
+    // new cell instead of replaying the pre-write answer. Skipped entirely when no chain has a channel
+    // that measures anything — there is then nothing to price.
+    const anyFunnel = chains.some((chain) => distinctChannelFunnels(chain.channels).length > 0);
+    const [declaredFunnels, brandEconomics] = anyFunnel
+      ? await Promise.all([
+          fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId),
+          fetchEffectiveEconomics(brandId, headers),
+        ])
+      : [[], null];
+    const declaredKeys = new Set(declaredFunnels.map((f) => f.funnelKey));
+    const decl = anyFunnel ? [...declaredKeys].sort().join("+") || "none" : undefined;
+    const econ = brandEconomics ? economicsFingerprint(brandEconomics) : undefined;
+
+    const payload = await servedCached({
+      view: "offer-chains",
+      // The whole (chain × channel) partition rides the key, not just the chain list: a newly funded
+      // channel on one chain changes that row's every figure while no other key part moves.
+      scopeKey: buildScopeKey(offerId, {
+        orgId: headers.orgId,
+        brandId,
+        chains: chains
+          .map((chain) => `${chain.funnelKey}>${chain.channels.map((c) => c.featureSlug).join("+")}`)
+          .join(","),
+        unattributed: unattributedCampaignIds.join("+"),
+        decl,
+        pricing,
+        econ,
+      }),
+      orgId: headers.orgId,
+      compute: async () => {
+        const groups = await mapWithConcurrency(chains, 4, async (chain: OfferChain) => {
+          // Each chain resolves the measurement funnel of ITS OWN channels — a chain whose channels
+          // price two ways says so (409) rather than having one silently picked for it.
+          const funnel = resolveOfferFunnel(offerId, chain.channels);
+          const unpricedReason: ChainUnpricedReason | null = !funnel
+            ? "no_channel_funnel"
+            : declaredFunnels.length === 0 || !brandEconomics?.economics
+              ? "no_economics_declared"
+              : !declaredKeys.has(chain.funnelKey)
+                ? "chain_not_declared"
+                : null;
+
+          // PRICED: the chain's OWN declared terms merged over the brand-wide record — its own rates
+          // and its own lifetime revenue, and its own legs are the only ones carrying expected value.
+          //
+          // UNPRICED but measurable: the same read with the economics deliberately nulled, which is the
+          // engine's cold-start path — real spend, real volume, null pipeline. The leads are still
+          // read, because "we could not price this" and "this reached nobody" are different statements.
+          const economicsOverride: FunnelPricedEconomics | undefined = !brandEconomics
+            ? undefined
+            : unpricedReason === null
+              ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, chain.funnelKey)
+              : { economics: { ...brandEconomics, economics: null }, pricedFunnelKeys: [chain.funnelKey] };
+
+          const body = await computeFeatureRevenue(
+            chain.channels.map((c) => c.featureSlug),
+            brandId,
+            chain.campaignIds,
+            unpricedReason === "no_channel_funnel" ? null : funnel,
+            headers,
+            undefined,
+            economicsOverride,
+            false,
+            pricing,
+            chain.funnelKey,
+            offerId,
+          );
+          return {
+            funnelKey: chain.funnelKey,
+            name: chain.name,
+            steps: chain.steps,
+            campaignIds: chain.campaignIds,
+            channels: chain.channels.map((c) => ({ featureSlug: c.featureSlug, campaignIds: c.campaignIds })),
+            priced: unpricedReason === null,
+            unpricedReason,
+            headline: body.headline,
+            costEconomics: body.costEconomics,
+            outcomes: body.outcomes,
+          };
+        });
+        return {
+          offerId,
+          brandId,
+          costBasis: "charged" as const,
+          costCoverage: "platform_spend_only" as const,
+          chains: groups,
+          unattributedCampaignIds,
+        };
+      },
+    });
+
+    res.json(payload);
+  } catch (error) {
+    if (error instanceof OfferHasNoChannelsError) {
+      return res.status(404).json({ error: error.message, reason: "offer_has_no_channels", offerId: error.offerId });
+    }
+    if (error instanceof OfferChannelsPriceDifferentlyError) {
+      return res.status(409).json({ error: error.message, reason: "offer_channels_price_differently", offerId: error.offerId });
+    }
+    console.error("[features-service] Offer chains error:", error);
+    res.status(502).json({ error: "Failed to compute offer chain economics" });
   }
 });
 

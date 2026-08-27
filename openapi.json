@@ -5604,6 +5604,241 @@
           "channels"
         ]
       },
+      "OfferChainsResponse": {
+        "type": "object",
+        "properties": {
+          "offerId": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "What the customer was CHARGED — a comped cost is not in it. Same accounting basis as every other org-scoped money read."
+          },
+          "costCoverage": {
+            "type": "string",
+            "enum": [
+              "platform_spend_only"
+            ],
+            "description": "Which dollars this cost is made of: the platform spend runs-service ledgers, and nothing else. Some steps of a chain are performed by a human on the customer's side and the platform spends nothing on them, so a chain whose last legs are manual reads cheaper here than it truly is. lead-service is adding a customer-declared cost per step transition and exposes none today; inventing one would be the fabricated figure this read refuses everywhere else, so the basis is stated on the wire instead."
+          },
+          "chains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "funnelKey": {
+                  "type": "string",
+                  "description": "The sales chain, canonicalised onto this service's catalogue."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "The chain's buyer-facing name."
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The chain's steps in order, so a row renders without the consumer knowing the catalogue."
+                },
+                "campaignIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Every campaign of the offer selling through this chain, ascending. ONE today; one per STEP as the product moves — the row is the same computation over the larger set."
+                },
+                "channels": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "featureSlug": {
+                        "type": "string",
+                        "description": "The acquisition channel — a feature slug, this fleet's only name for one."
+                      },
+                      "campaignIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "The campaigns of this brand selling this offer through this channel, ascending."
+                      }
+                    },
+                    "required": [
+                      "featureSlug",
+                      "campaignIds"
+                    ]
+                  },
+                  "description": "The acquisition channels carrying this chain, ascending by slug."
+                },
+                "priced": {
+                  "type": "boolean",
+                  "description": "Whether this chain's money could be turned into a return. False leaves every money-derived figure null and names the missing ingredient below."
+                },
+                "unpricedReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_channel_funnel",
+                    "no_economics_declared",
+                    "chain_not_declared"
+                  ],
+                  "description": "Why the return is null, checked in this order so the plain thing is said first. no_channel_funnel: no channel carrying this chain measures anything (no funnel wired), so the leads are never read and `outcomes` is null too. no_economics_declared: the brand states no economics, or its declaration could not be read, so this chain has no rates and no lifetime revenue of its own. chain_not_declared: the declaration IS readable and does not contain this chain. In all three the SPEND is real and reported — the customer paid it — and the pipeline, the return and the cost of acquisition are null, never 0 and never the brand-wide record the un-narrowed reads legitimately fall back to (pricing one chain on a server-defaulted brand row is the fiction the retired goal produced, one grain finer)."
+                },
+                "headline": {
+                  "type": "object",
+                  "properties": {
+                    "totalPipelineUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Org-deduped expected pipeline. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."
+                    },
+                    "economicsSource": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "sales-economics",
+                        "cross-brand-average"
+                      ],
+                      "description": "Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no funnel wired or no economics applied)."
+                    }
+                  },
+                  "required": [
+                    "totalPipelineUsd",
+                    "economicsSource"
+                  ]
+                },
+                "costEconomics": {
+                  "type": "object",
+                  "properties": {
+                    "committedCostUsd": {
+                      "type": "number",
+                      "description": "COMMITTED run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0) — billed `actual` PLUS the open `provisioned` holds. THE spend basis: every money figure below divides by it, and it is byte the same total the `spend` block reports as totalSpentCents, so the ROI a campaign row shows and the 'Total spent' the Overview shows can never describe different money. This is the field a consumer renders as '$ Invested'. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
+                    },
+                    "actualCostUsd": {
+                      "type": "number",
+                      "description": "Billed-only run spend for the same scope, in dollars (>= 0) — EXCLUDES the open provisioned holds. TRANSITIONAL AND REPORTED ONLY: it is kept populated (and still honestly billed-only, because a field whose name asserts 'actual' must never start carrying a committed value) so a consumer rendering money off this field has a gap-free path onto committedCostUsd. NOTHING divides by it any more — ROI, %CAC, cost per acquisition and cost per conversion all ride committedCostUsd. (features-service#396, naming features-service#402, single basis features-service#779)"
+                    },
+                    "costOfAcquisitionPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                    },
+                    "roiMultiple": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                    },
+                    "costPerAcquisitionUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
+                    },
+                    "expectedConversions": {
+                      "type": "number",
+                      "description": "LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "costPerConversionUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    }
+                  },
+                  "required": [
+                    "committedCostUsd",
+                    "actualCostUsd",
+                    "costOfAcquisitionPct",
+                    "roiMultiple",
+                    "costPerAcquisitionUsd"
+                  ],
+                  "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
+                },
+                "outcomes": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "recipientsContacted": {
+                      "type": "number",
+                      "description": "Distinct leads this grain reached for this brand — the grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer."
+                    },
+                    "recipientsClicked": {
+                      "type": "number",
+                      "description": "Distinct leads that visited the site off this grain — twin of recipientsClicked.total."
+                    },
+                    "recipientsRepliesPositive": {
+                      "type": "number",
+                      "description": "Distinct leads that replied positively — twin of recipientsRepliesPositive.total."
+                    },
+                    "committedSpentCents": {
+                      "type": "number",
+                      "description": "COMMITTED spend attributed to this grain, in cents — costEconomics.committedCostUsd in the unit the two rates are denominated in."
+                    },
+                    "actualSpentCents": {
+                      "type": "number",
+                      "description": "Billed-only spend for this grain, in cents. TRANSITIONAL — reported for consumer migration, divided by nowhere."
+                    },
+                    "cpcCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Realized spend ÷ website visits, in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."
+                    },
+                    "cpprCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."
+                    }
+                  },
+                  "required": [
+                    "recipientsContacted",
+                    "recipientsClicked",
+                    "recipientsRepliesPositive",
+                    "committedSpentCents",
+                    "actualSpentCents",
+                    "cpcCents",
+                    "cpprCents"
+                  ],
+                  "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
+                }
+              },
+              "required": [
+                "funnelKey",
+                "name",
+                "steps",
+                "campaignIds",
+                "channels",
+                "priced",
+                "unpricedReason",
+                "headline",
+                "costEconomics",
+                "outcomes"
+              ]
+            },
+            "description": "One LEAN row per chain the offer sells through, in the catalogue's canonical order. Lean (headline + costEconomics + outcomes) because a table polls it: a full body per chain would repeat the whole lead population once per row."
+          },
+          "unattributedCampaignIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Campaigns of this offer that state no chain (or one the catalogue does not know), ascending. Their spend is in NO row and still in the offer's own total, which narrows by nothing — stated so a reader sees the difference rather than wondering why the rows do not add up to the offer."
+          }
+        },
+        "required": [
+          "offerId",
+          "brandId",
+          "costBasis",
+          "costCoverage",
+          "chains",
+          "unattributedCampaignIds"
+        ]
+      },
       "OfferAudienceStatsResponse": {
         "type": "object",
         "properties": {
@@ -14655,6 +14890,176 @@
           },
           "409": {
             "description": "The offer is sold through channels that price on different funnels (reason: offer_channels_price_differently), so its money cannot honestly be answered as one figure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/offers/{offerId}/chains": {
+      "get": {
+        "summary": "What each of an offer's sales chains cost and returned",
+        "description": "The (offer x sales chain) grain: one row per chain the offer is sold through, each carrying that chain's own spend, pipeline, return per dollar and cost of acquisition. It is the grain the product needs as it moves to ONE CAMPAIGN PER STEP — a campaign then buys a single link and has no return of its own, because the lifetime revenue sits at the end of the chain. Correct under both shapes with no switch: the row is scoped to the chain's CAMPAIGN SET, so a chain served by one campaign (every chain in production today) is byte-equal to that campaign's own answer, and a chain served by one campaign per step is the same row over the larger set. Each chain is priced on its OWN declared terms — its own rates and its own lifetime revenue — so a $200 self-serve chain and a $20k contract chain are never blended. A chain we cannot price says which ingredient is missing (`unpricedReason`) and reports its real spend beside a null return. The composition happens here: nothing on this response is meant to be summed in a browser, and the rows deliberately do not sum on the people half.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "offerId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID (required) — an offer belongs to a brand."
+            },
+            "required": true,
+            "description": "Brand UUID (required) — an offer belongs to a brand.",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."
+            },
+            "required": false,
+            "description": "Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One row per sales chain the offer is sold through",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferChainsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing brandId, or an invalid pricing value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels) — never the brand's own numbers under the offer's label",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A chain is carried by channels that price on different funnels (reason: offer_channels_price_differently), so its money cannot honestly be answered as one figure",
             "content": {
               "application/json": {
                 "schema": {
