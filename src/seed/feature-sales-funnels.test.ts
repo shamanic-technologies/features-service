@@ -50,7 +50,7 @@ describe("per-feature sales funnels", () => {
     // Hiring outreach is the "none" side now: it is not an acquisition channel at all, so it sells
     // through nothing. Journalist outreach and expert quotes moved to the "some" side when they were
     // published as earned acquisition channels — they produce website visits, so they sell through
-    // every click-driven chain.
+    // every click-driven funnel.
     const none = bySlug("hiring-cold-email-outreach")!.salesFunnels;
     const all = bySlug(SALES_SLUG)!.salesFunnels;
 
@@ -81,7 +81,7 @@ describe("per-feature sales funnels", () => {
     }
   });
 
-  it("the earned PR channels ARE published channels now, and sell through every click-driven chain", () => {
+  it("the earned PR channels ARE published channels now, and sell through every click-driven funnel", () => {
     for (const slug of ["pr-cold-email-outreach", "pr-expert-quote-outreach", "pr-expert-quote-opportunities"]) {
       expect(bySlug(slug)!.acquisitionChannel, slug).not.toBeNull();
       expect(bySlug(slug)!.salesFunnels, slug).toEqual([
@@ -92,7 +92,7 @@ describe("per-feature sales funnels", () => {
     }
   });
 
-  it("the feedback request sells through the reply-to-meeting chain ALONE", () => {
+  it("the feedback request sells through the reply-to-meeting funnel ALONE", () => {
     expect(bySlug(FEEDBACK_SLUG)!.salesFunnels).toEqual(["sales_meetings_from_conversation"]);
   });
 

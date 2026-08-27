@@ -186,7 +186,7 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     if (url.includes("runs:3000/v1/stats/public/costs")) return json({ groups: fleet.costs });
     if (url.includes("email:3000/public/stats")) return json({ groups: fleet.email });
     if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
-    // The funnels this brand declared — both meeting chains, so a `?funnel=` request is answerable.
+    // The funnels this brand declared — both meeting funnels, so a `?funnel=` request is answerable.
     if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
       return json({
         funnels: ["sales_meetings_from_conversation", "sales_meetings_from_website", "website_purchases", "form_magnet"].map(
@@ -376,7 +376,7 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
     expect(click.statsUsd).toBe(4); // wf-closer's click cost, NOT wf-cheap's cheaper $2.00
   });
 
-  // THE RETIREMENT'S OWN COHERENCE CASE — the two meeting funnels are two chains bought through two
+  // THE RETIREMENT'S OWN COHERENCE CASE — the two meeting funnels are two funnels bought through two
   // different channels, so they legitimately crown DIFFERENT workflows and price the same audience
   // differently. What must NOT differ is the two surfaces' answer for one funnel: the per-audience floor
   // parent has to move with the funnel, or the Audiences table and the Strategy page split apart again
@@ -396,7 +396,7 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
     expect(website.statsUsd).toBe(2);
 
     // The two funnels genuinely disagree — a goal-keyed request cannot produce this split at all, which
-    // is why a brand running only the reply chain was benchmarked against clicks it never buys.
+    // is why a brand running only the reply funnel was benchmarked against clicks it never buys.
     expect(conversation.statsUsd).not.toBe(website.statsUsd);
   });
 

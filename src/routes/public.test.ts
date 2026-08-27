@@ -276,7 +276,7 @@ describe("GET /public/stats/ranked", () => {
     expect(res.body.results).toHaveLength(2);
   });
 
-  it("aggregates stats across upgrade chains using workflowSlug", async () => {
+  it("aggregates stats across version dynasties using workflowSlug", async () => {
     mockFindFirst.mockResolvedValueOnce(MOCK_FEATURE);
     mockFetchResponses({
       "http://workflow:3000/public/workflows": {
@@ -1797,7 +1797,7 @@ describe("GET /public/stats/cost-per-outcome-lifetime (funnel-bucketed)", () => 
     __resetFunnelBucketDatasetCache();
   });
 
-  it("CPC stays funnel-BUCKETED (excludes the reply-bought chain) but CPPR is FLEET-WIDE (pools every brand's spend÷replies)", async () => {
+  it("CPC stays funnel-BUCKETED (excludes the reply-bought funnel) but CPPR is FLEET-WIDE (pools every brand's spend÷replies)", async () => {
     mockFindFirst.mockResolvedValue(MOCK_FEATURE);
     mockBucketedFetch({
       memberships: [
@@ -1819,12 +1819,12 @@ describe("GET /public/stats/cost-per-outcome-lifetime (funnel-bucketed)", () => 
     // CPPR is goal-agnostic: pools BOTH brands → total spend 1300 ÷ total replies 36 = 36.11
     // (the website-visit brand's $400 + its 6 incidental replies both count — a reply is a fleet-wide fact)
     expect(res.body.avgCostPerOutcomeByObjective.positiveReply).toBeCloseTo(1300 / 36, 5);
-    // no brand sells through the website-purchase chain → the signup bucket is empty → null (never $0)
+    // no brand sells through the website-purchase funnel → the signup bucket is empty → null (never $0)
     expect(res.body.avgCostPerOutcomeByObjective.signup).toBeNull();
-    // the meeting bucket IS backed here: the reply-bought meeting chain is one of its two members, and
-    // it is priced on that chain's own channel — which is the whole reason the two are ranked apart.
+    // the meeting bucket IS backed here: the reply-bought meeting funnel is one of its two members, and
+    // it is priced on that funnel's own channel — which is the whole reason the two are ranked apart.
     expect(res.body.avgCostPerOutcomeByObjective.meetingBooked).not.toBeNull();
-    // and whatsapp has no chain that expresses it → empty bucket → null, never a mislabelled fleet CPC
+    // and whatsapp has no funnel that expresses it → empty bucket → null, never a mislabelled fleet CPC
     expect(res.body.avgCostPerOutcomeByObjective.whatsappConversation).toBeNull();
   });
 

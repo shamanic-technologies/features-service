@@ -137,10 +137,10 @@ function mockFetch(opts: {
    */
   netDiscountPct?: number;
   /**
-   * Timezone spellings the day-bucketing chain REFUSES (email-gateway → instantly-service 500). Prod
+   * Timezone spellings the day-bucketing funnel REFUSES (email-gateway → instantly-service 500). Prod
    * behaves exactly this way for a family of legacy IANA aliases — `Asia/Saigon` 500s while
    * `Asia/Ho_Chi_Minh`, the same zone, answers — which is why a customer in Vietnam had a permanently
-   * empty chart. `"*"` refuses every spelling, i.e. the chain is genuinely down.
+   * empty chart. `"*"` refuses every spelling, i.e. the funnel is genuinely down.
    */
   dayStatsRefusesTimezones?: string[];
 } = {}): void {
@@ -830,7 +830,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
       expect(alias.body.summary).toEqual(canonical.body.summary);
     });
 
-    it("400s NAMING the timezone when the day-bucketing chain cannot serve that spelling", async () => {
+    it("400s NAMING the timezone when the day-bucketing path cannot serve that spelling", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
       // The prod split: this one spelling is refused, UTC (and everything else) answers.
@@ -848,7 +848,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
       expect(res.body.days).toBeUndefined();
     });
 
-    it("500s WITH a body — not a blame-the-caller 400 — when the chain is down for every timezone", async () => {
+    it("500s WITH a body — not a blame-the-caller 400 — when the path is down for every timezone", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
       mockFetch({ dayStatsRefusesTimezones: ["*"] });

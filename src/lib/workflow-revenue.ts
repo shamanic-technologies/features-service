@@ -211,7 +211,7 @@ export function buildWorkflowRevenueGroups(input: {
       : "cross-brand-average";
   // The SAME leg restriction the brand read applies: only the legs of the funnels the brand declared
   // carry value. A workflow does not state a funnel of its own, so every group is priced on the
-  // brand's chains — which is also why a single-workflow brand lands on the brand's own figure.
+  // brand's funnels — which is also why a single-workflow brand lands on the brand's own figure.
   const paths =
     funnel && economics
       ? restrictPathsToDeclaredLegs(funnel.resolvePaths({ economics }), priced!.pricedFunnelKeys)

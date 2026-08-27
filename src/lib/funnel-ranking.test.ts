@@ -59,7 +59,7 @@ function evidence(over: Partial<Evidence> = {}): Evidence {
   } as Evidence;
 }
 
-// LTR $1000. Against the fixture above, each funnel prices on ITS OWN chain:
+// LTR $1000. Against the fixture above, each funnel prices on ITS OWN funnel:
 //   website_purchases                 click $10 / 10%         = $100 per signup  → /20%  = $500  → return 2
 //   form_magnet                       click $10 / 10%         = $100 per form    → /20%  = $500  → return 2
 //   sales_meetings_from_website       click $10 / 5%          = $200 per meeting → /30%  = $666.67 → return 1.5
@@ -110,7 +110,7 @@ const entry = (res: ReturnType<typeof run>, funnelKey: string) =>
 
 describe("rankDeclaredFunnels — which declared funnel returns the most per dollar", () => {
   it("prices the TWO MEETING FUNNELS APART — same evidence, same economics, different channel", () => {
-    // This is the retirement's whole reason for existing. Both chains end in a booked meeting and both
+    // This is the retirement's whole reason for existing. Both funnels end in a booked meeting and both
     // echo the `meetingBooked` goal, so a goal-keyed score gave them ONE blended both-channel price and
     // the customer could not see which of the two to fund. Priced on their own channel:
     //   conversation → reply $10 (dyn-b) / 40% = $25 per meeting
@@ -213,7 +213,7 @@ describe("rankDeclaredFunnels — which declared funnel returns the most per dol
   });
 
   it("a funnel with NO defined return is listed with its reason, ranked last, never dropped", () => {
-    // A chain the brand priced at a 0% close: there is no path to a paying client through it, which is
+    // A funnel the brand priced at a 0% close: there is no path to a paying client through it, which is
     // not the same as it being free. Note the goal-keyed score used to hide exactly this behind the
     // other channel's contribution to the same blended figure.
     const res = run([f(CONVERSATION, { economics: { meetingToClosePct: 0 } }), f(PURCHASES)]);

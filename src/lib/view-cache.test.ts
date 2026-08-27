@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// ── Stateful drizzle-chain mock for `db` ────────────────────────────────────
+// ── Stateful drizzle-funnel mock for `db` ────────────────────────────────────
 // Faithfully models the three call shapes view-cache.ts uses:
 //   select().from().where().limit()              → [row] | []
 //   insert().values(v).onConflictDoUpdate()      → persists v as the row

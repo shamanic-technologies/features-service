@@ -20,7 +20,7 @@ import {
   type CostGroup,
   type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
-import { buildUpgradeChains, aggregateAcrossChains } from "./public.js";
+import { buildWorkflowDynasties, aggregateAcrossDynasties } from "./public.js";
 import {
   fetchBrandWorkflowEvidence,
   fetchAudienceGrainEvidence,
@@ -259,9 +259,9 @@ export function goalToProjectionInputs(goal: Goal): {
  * against the same evidence, which is the whole point.
  *
  * The other two funnels need no channel: `website_purchases` is visit → signup → paid (the `signup`
- * chain, click-driven by construction) and `form_magnet` is visit → form → paid. Note
+ * funnel, click-driven by construction) and `form_magnet` is visit → form → paid. Note
  * `website_purchases` maps to the `signup` objective and NOT to the `websitePurchase` goal — that goal
- * is the full self-serve-plus-meeting close funnel, whose rates are not this chain's.
+ * is the full self-serve-plus-meeting close funnel, whose rates are not this funnel's.
  *
  * `goal` / `objective` here are ECHOES for consumers that still read them (campaign-service reads
  * `arbitration.goal` in prod); they never re-decide the math, which is keyed on the funnel.
@@ -334,7 +334,7 @@ function resolveGoalInputs(raw: string | undefined): ({ ok: true } & GoalInputs)
  * The PAID-CLIENT cost for the queried goal, single-sourced through projectOutcomeCosts. For a
  * single-step goal this is the ONE-rate cost (visit→paid / reply→paid); for form_submissions it is the
  * two-step form route (visit→form→paid); otherwise the multi-step purchase funnel. Drives ROI + the
- * recommended budget (never the zero-collapsing multi-step chain when a single-step goal is active).
+ * recommended budget (never the zero-collapsing multi-step funnel when a single-step goal is active).
  *
  * EXPORTED for the SAME reason `outcomeCostForGoal` is: /audience-stats now reports each audience's
  * RETURN PER DOLLAR (`lifetimeRevenueUsd / costPerPaidClientUsd`), which is the identical quantity
@@ -359,7 +359,7 @@ export function paidClientCostForGoal(
   // COMBINED-SALES: the outcome IS the paying client (a sale won via EITHER path), so the paid-client
   // cost == the outcome cost == cost-per-sale. ROI = CLTV / costPerSale.
   if (objective === "sales") return p.costPerSaleUsd;
-  // Each goal's paid-client cost chains through ITS OWN funnel (coherent: always ≥ that goal's outcome
+  // Each goal's paid-client cost funnels through ITS OWN funnel (coherent: always ≥ that goal's outcome
   // cost). signup/self-serve → visit→signup→paid; meeting-booked → the meeting→paid routes; website
   // purchase → the full self-serve+meeting close funnel. Do NOT collapse signup/meeting onto the close
   // funnel — its rates are unrelated to their step and read incoherently below the goal's own cost.
@@ -781,7 +781,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
 
     // A funnel the brand never declared has no cost to serve. "We could not estimate this" and "it costs
     // zero" are different statements, and only the first one is true here — so this 404s with the reason
-    // rather than pricing a chain the org never said it sells through. Fires ONLY on `?funnel=`, so the
+    // rather than pricing a funnel the org never said it sells through. Fires ONLY on `?funnel=`, so the
     // goal path takes no extra read.
     let funnelEconomics: Partial<SalesEconomics> | null = null;
     if (funnelKey) {
@@ -963,8 +963,8 @@ export function projectFromEvidence(input: {
   }));
 
     // crossOrg dynasty rollup (identical to /public/stats/best).
-    const chains = buildUpgradeChains(workflows);
-    const { costMap, aggregatedOutcomes } = aggregateAcrossChains(chains, costGroups, emailStats, "workflowSlug");
+    const dynasties = buildWorkflowDynasties(workflows);
+    const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(dynasties, costGroups, emailStats, "workflowSlug");
     const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
     const dynastyNameBySlug = new Map(workflows.map((w) => [w.workflowDynastySlug, w.workflowDynastyName]));
 

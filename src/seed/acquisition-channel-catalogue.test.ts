@@ -94,7 +94,7 @@ describe("the published acquisition-channel catalogue", () => {
       "organic-x-publishing",
       "organic-reddit-publishing",
       "organic-youtube-publishing",
-      // Conversion — the legs a human performs once a lead is already on the chain, published twice
+      // Conversion — the legs a human performs once a lead is already on the funnel, published twice
       // over: once run by a specialist of ours, once run by the customer themselves.
       "managed-meeting-booking",
       "in-house-meeting-booking",
@@ -279,7 +279,7 @@ describe("what each channel can produce, and what follows from it", () => {
     }
   });
 
-  it("a cold call sells the conversation chain ALONE — there is no link in a phone call", () => {
+  it("a cold call sells the conversation funnel ALONE — there is no link in a phone call", () => {
     expect(bySlug("cold-call-outreach")!.acquisitionChannel!.stepTransitions).toEqual([
       { from: null, to: "conversation" },
     ]);
@@ -305,12 +305,12 @@ describe("what each channel can produce, and what follows from it", () => {
   });
 });
 
-describe("A CHAIN IS SOLD LEG BY LEG — a channel states where it picks a lead up, not only what it makes", () => {
+describe("A FUNNEL IS SOLD LEG BY LEG — a channel states where it picks a lead up, not only what it makes", () => {
   const legStarters = channels.filter((c) =>
     c.acquisitionChannel!.stepTransitions.some((t) => t.from != null),
   );
 
-  it("publishes channels whose starting step is NOT the beginning of a chain", () => {
+  it("publishes channels whose starting step is NOT the beginning of a funnel", () => {
     expect(legStarters.length).toBeGreaterThan(0);
     // And they are genuinely sellable — a leg that sold through nothing would be a page nobody can buy.
     for (const channel of legStarters) {
@@ -318,7 +318,7 @@ describe("A CHAIN IS SOLD LEG BY LEG — a channel states where it picks a lead 
     }
   });
 
-  it("the three legs of a meeting chain are three separate things to buy", () => {
+  it("the three legs of a meeting funnel are three separate things to buy", () => {
     // Booking it, getting it held, and closing it. Each has its own channel, its own budget and its own
     // stats, which is the entire reason the catalogue had to stop describing only entry steps.
     expect(bySlug("managed-meeting-booking")!.acquisitionChannel!.stepTransitions).toEqual([
@@ -332,7 +332,7 @@ describe("A CHAIN IS SOLD LEG BY LEG — a channel states where it picks a lead 
       { from: "meeting_attended", to: "paid_client" },
     ]);
 
-    // Both meeting chains share every leg after the meeting is booked, so those two sell both.
+    // Both meeting funnels share every leg after the meeting is booked, so those two sell both.
     expect(bySlug("managed-meeting-attendance")!.salesFunnels).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
@@ -343,7 +343,7 @@ describe("A CHAIN IS SOLD LEG BY LEG — a channel states where it picks a lead 
     ]);
   });
 
-  it("closing a self-serve lead sells the two self-serve chains, and neither meeting chain", () => {
+  it("closing a self-serve lead sells the two self-serve funnels, and neither meeting funnel", () => {
     expect(bySlug("managed-signup-conversion")!.salesFunnels).toEqual(["website_purchases", "form_magnet"]);
     expect(bySlug("in-house-signup-conversion")!.salesFunnels).toEqual(["website_purchases", "form_magnet"]);
   });
@@ -354,8 +354,8 @@ describe("A CHAIN IS SOLD LEG BY LEG — a channel states where it picks a lead 
     }
   });
 
-  it("EVERY leg a channel states is a leg some deployed chain actually takes", () => {
-    // Otherwise it would be a channel we sell that moves a lead somewhere no chain goes.
+  it("EVERY leg a channel states is a leg some deployed funnel actually takes", () => {
+    // Otherwise it would be a channel we sell that moves a lead somewhere no funnel goes.
     for (const channel of channels) {
       const sellable = channel.salesFunnels;
       const internal = channel.acquisitionChannel!.stepTransitions.filter((t) => t.from != null);
@@ -392,7 +392,7 @@ describe("WHO operates a channel, and why a zero daily cost is a statement rathe
     for (const [ours, theirs] of pairs) {
       const a = bySlug(ours)!;
       const b = bySlug(theirs)!;
-      // Same leg, same sellable chains — the only difference is who does the work and what it costs.
+      // Same leg, same sellable funnels — the only difference is who does the work and what it costs.
       expect(a.acquisitionChannel!.stepTransitions, theirs).toEqual(b.acquisitionChannel!.stepTransitions);
       expect(a.salesFunnels, theirs).toEqual(b.salesFunnels);
       expect(a.acquisitionChannel!.operatedBy, ours).toBe("platform");

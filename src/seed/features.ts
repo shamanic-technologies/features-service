@@ -20,14 +20,14 @@ import {
  * this service owns the feature catalogue. Hardcoding the matrix in each consumer was rejected — that
  * is how one product fact becomes four drifting copies.
  *
- * The one fact a feature STATES is its `acquisitionChannel`, and inside it, WHICH LEG OF A CHAIN THE
+ * The one fact a feature STATES is its `acquisitionChannel`, and inside it, WHICH LEG OF A FUNNEL THE
  * CHANNEL PERFORMS — the step it moves a lead FROM and the step it moves them TO. A sales funnel is a
- * chain of steps, so which pairings are possible falls out of the join (`sellableFunnelsFor`) instead
+ * funnel of steps, so which pairings are possible falls out of the join (`sellableFunnelsFor`) instead
  * of being a second list somebody keeps in sync. The keys are still brand-service's; nothing here
  * invents a funnel.
  *
- * A channel that moves a lead FROM NOTHING onto a chain's first step is the special case, written as
- * one (`producesFromNothing`), and it is what every channel published before this looked like. A chain
+ * A channel that moves a lead FROM NOTHING onto a funnel's first step is the special case, written as
+ * one (`producesFromNothing`), and it is what every channel published before this looked like. A funnel
  * can now be bought a LEG AT A TIME: booking the meeting, getting it held, and closing it are three
  * separate things somebody does, each with its own channel, its own budget and its own stats.
  *
@@ -35,7 +35,7 @@ import {
  * written out — they are now written as what the channel can produce. A feature that is NOT an
  * acquisition channel at all (hiring, investor and accelerator outreach, outlet discovery, press-kit
  * generation, AI visibility) states `acquisitionChannel: null` and sells through nothing. A channel that
- * produces both a conversation and a website visit sells through all four chains. Nothing is left
+ * produces both a conversation and a website visit sells through all four funnels. Nothing is left
  * unstated, so a consumer never has to decide what an absent answer means; the column's `[]` default
  * only ever covers a row this seed has not reached, and reads as the restrictive side.
  */
@@ -46,16 +46,16 @@ const VISIT_AND_IN_AD_FORM = producesFromNothing("website_visit", "in_ad_form_su
 const VISIT_AND_IN_AD_STEPS = producesFromNothing("website_visit", "in_ad_form_submission", "in_ad_booked_meeting");
 
 /**
- * THE LEGS A HUMAN PERFORMS, once a lead is already on a chain.
+ * THE LEGS A HUMAN PERFORMS, once a lead is already on a funnel.
  *
- * Each is an INTERNAL leg of a deployed chain — a step somebody moves a lead to, from a step they are
- * already sitting at — so a chain can be bought one leg at a time instead of only end to end. Two of
- * them span both meeting chains, because the meeting chains differ only in what buys the first meeting
+ * Each is an INTERNAL leg of a deployed funnel — a step somebody moves a lead to, from a step they are
+ * already sitting at — so a funnel can be bought one leg at a time instead of only end to end. Two of
+ * them span both meeting funnels, because the meeting funnels differ only in what buys the first meeting
  * and share every leg after it.
  */
 const BOOKS_THE_MEETING: readonly ChannelStepTransition[] = [
   // A conversation that was opened, and a visit that landed, are the two things a booked meeting comes
-  // from — one per meeting chain.
+  // from — one per meeting funnel.
   { from: "conversation", to: "meeting_booked" },
   { from: "website_visit", to: "meeting_booked" },
 ];
@@ -190,7 +190,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
    * only thing that differs is what the email ASKS FOR. Instead of pitching, it asks a buyer for
    * feedback on the problem we solve, and the conversation it opens is what becomes the sales meeting.
    *
-   * So it is sold through EXACTLY ONE chain: `sales_meetings_from_conversation`. The other three chains
+   * So it is sold through EXACTLY ONE funnel: `sales_meetings_from_conversation`. The other three funnels
    * buy their first step with a website CLICK, and a feedback request has no website step to sell.
    * That single-funnel restriction is the whole reason the per-feature answer exists.
    */
@@ -886,7 +886,7 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
     inputs: EARNED_INPUTS },
 
   // ── Conversion ──────────────────────────────────────────────────────────────────────────────────
-  // Nothing here finds anybody. Each of these takes a lead who is ALREADY on the chain and moves them
+  // Nothing here finds anybody. Each of these takes a lead who is ALREADY on the funnel and moves them
   // one step along it, which is why every one of them states a `from`. The same leg is published twice,
   // once run by us and once run by the customer, because those are genuinely two different things to
   // buy: ours carries the specialist's day; theirs costs the platform nothing, and says so with a zero

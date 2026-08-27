@@ -2,7 +2,7 @@
  * The sales funnels a brand DECLARED it sells through, prepared for ranking.
  *
  * OWNERSHIP: the declared set is BRAND-SERVICE's. A brand declares its funnels
- * (`GET /internal/brands/:brandId/sales-funnels`), each funnel carrying the economics that chain is
+ * (`GET /internal/brands/:brandId/sales-funnels`), each funnel carrying the economics that funnel is
  * priced on. features-service reads that declaration and ranks it. It is NEVER supplied by the caller
  * and it is NEVER inferred here — in particular a brand's single `optimizationGoal` is ONE goal, not a
  * set, and brand-service is explicit that the brand-wide economics row cannot stand in for a
@@ -16,7 +16,7 @@
  * `sales_meetings_from_website` both mapped onto one `meetingBooked`, so this service priced a meeting
  * won from a REPLY and one won on the WEBSITE identically — it charged a reply-driven brand against
  * clicks it never buys. The key now drives the pricing directly (`funnelToProjectionInputs`), so the two
- * chains are priced on their own channel and finally read apart. A goal ECHO is derived FROM the key for
+ * funnels are priced on their own channel and finally read apart. A goal ECHO is derived FROM the key for
  * the consumers that still read one; nothing derives a price from a goal on this path.
  *
  * ── ONE ENTRY PER FUNNEL — funnels sharing a goal are NO LONGER MERGED ────────────────────────────
@@ -35,7 +35,7 @@
  * self-serve plan and a $20k contract is ranked on each funnel's own revenue instead of one blend.
  *
  * A SHARED FIELD NAME IS NOT A SHARED MEANING. The two services' rate keys line up 1:1 except on the
- * meeting chain, where brand-service prices one more step than we model — see `meetingChainCloseRate`.
+ * meeting funnel, where brand-service prices one more step than we model — see `meetingFunnelCloseRate`.
  * Copying that one across by name overstates the meeting funnel's return by the show-up rate.
  */
 
@@ -45,7 +45,7 @@ import type { DeclaredSalesFunnel, SalesFunnelKey } from "./sales-funnels-client
 /** One declared funnel to rank: its identity and its own declared terms.
  *
  * NO `goal`. The funnel key IS what this is priced on — that is the whole retirement: two funnels that
- * shared the `meetingBooked` goal are two different chains bought through two different channels, and a
+ * shared the `meetingBooked` goal are two different funnels bought through two different channels, and a
  * goal-keyed entry could only give them one price. The goal ECHO a consumer still reads is derived from
  * the key downstream (`funnelToProjectionInputs`), never carried here as an input. */
 export interface RankableFunnel {
@@ -67,8 +67,8 @@ export interface RankableFunnel {
  * where the two services' identically-named fields also mean the same thing.
  *
  * `meetingToClosePct` and `meetingBookedToAttendedPct` are deliberately ABSENT — they are handled by
- * `meetingChainCloseRate` / `meetingAttendedCloseRate` below, because on a declared FUNNEL the name
- * means something else than it does on the brand-wide economics row, and the meeting chain now has
+ * `meetingFunnelCloseRate` / `meetingAttendedCloseRate` below, because on a declared FUNNEL the name
+ * means something else than it does on the brand-wide economics row, and the meeting funnel now has
  * TWO priced rungs (booked, attended) that need the composition and its un-composed half.
  */
 const CONSUMED_RATE_KEYS = [
@@ -91,7 +91,7 @@ const finite = (value: unknown): number | null =>
  * does NOT mean the same thing, and copying it across is a silent overstatement.
  *
  * Our projection multiplies `meetingToClosePct` by `visitToMeetingPct` / `replyToMeetingPct`, and both
- * of those produce a meeting BOOKED — so ours is BOOKED → paid. brand-service's meeting chains are
+ * of those produce a meeting BOOKED — so ours is BOOKED → paid. brand-service's meeting funnels are
  * `… → Meeting booked → Meeting attended → Paid client` with `legs[i]` sitting between `steps[i]` and
  * `steps[i+1]`, so the funnel's `meetingToClosePct` is ATTENDED → paid and `meetingBookedToAttendedPct`
  * is the show-up rate in between. Reading the funnel's value as ours therefore asserts a 100% show-up
@@ -104,7 +104,7 @@ const finite = (value: unknown): number | null =>
  * column at all — rather than discarding a number the brand did give us. This is the ONE place the
  * show-up rate is read; it never reaches `SalesEconomics` under its own name, which has no field for it.
  */
-export function meetingChainCloseRate(rates: Record<string, number | null> | null | undefined): number | null {
+export function meetingFunnelCloseRate(rates: Record<string, number | null> | null | undefined): number | null {
   const close = finite(rates?.meetingToClosePct);
   if (close === null) return null;
   const showUp = finite(rates?.meetingBookedToAttendedPct);
@@ -117,7 +117,7 @@ export function meetingChainCloseRate(rates: Record<string, number | null> | nul
  *
  * A human can now state that a lead ATTENDED a meeting, so a lead standing on that rung is priced on
  * the funnel's ATTENDED → paid rate — which is exactly brand-service's `meetingToClosePct`, read
- * straight, with no show-up rate folded in. `meetingChainCloseRate` above folds it in for the rung
+ * straight, with no show-up rate folded in. `meetingFunnelCloseRate` above folds it in for the rung
  * BELOW (booked, where the lead still has to show up); pricing an attended meeting on that composed
  * number would charge a lead who is already in the room for the risk of not turning up.
  *
@@ -141,7 +141,7 @@ function declaredEconomics(funnel: DeclaredSalesFunnel): Partial<SalesEconomics>
       if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
     }
   }
-  const bookedToPaid = meetingChainCloseRate(rates);
+  const bookedToPaid = meetingFunnelCloseRate(rates);
   if (bookedToPaid !== null) out.meetingToClosePct = bookedToPaid;
   const attendedToPaid = meetingAttendedCloseRate(rates);
   if (attendedToPaid !== null) out.meetingAttendedToPaidClientPct = attendedToPaid;
@@ -199,7 +199,7 @@ export function declaredEconomicsForFunnel(
  * Merge a funnel's declared terms OVER a brand's effective economics — the SAME merge the ranking does
  * (`mergeEconomics` in funnel-ranking.ts): only stated fields win, and a rate the brand never declared
  * is absent here rather than 0, so it falls through to the effective value instead of zero-collapsing
- * the chain.
+ * the funnel.
  */
 export function mergeFunnelEconomics<T extends SalesEconomics>(
   base: T | null,

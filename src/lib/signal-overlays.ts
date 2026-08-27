@@ -40,9 +40,9 @@ export function applySignalOverlays(
    */
   quals: Map<string, QualificationDates> | null = null,
   /**
-   * The chains this read prices on. A `never` kills the CHAINS that contain the dead step, not the
-   * step alone, so the expansion needs to know which chains are in play — a brand that also sells a
-   * chain the dead step is not on keeps that chain's value for the lead.
+   * The funnels this read prices on. A `never` kills the FUNNELS that contain the dead step, not the
+   * step alone, so the expansion needs to know which funnels are in play — a brand that also sells a
+   * funnel the dead step is not on keeps that funnel's value for the lead.
    */
   pricedFunnelKeys: readonly SalesFunnelKey[] = [],
 ): void {

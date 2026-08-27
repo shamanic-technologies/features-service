@@ -1,21 +1,21 @@
 /**
- * WHAT EACH OF AN OFFER'S SALES CHAINS COST AND RETURNED.
+ * WHAT EACH OF AN OFFER'S SALES FUNNELS COST AND RETURNED.
  *
- * Driven from ONE downstream fixture, so a chain row and the answer the customer can already open for
+ * Driven from ONE downstream fixture, so a funnel row and the answer the customer can already open for
  * the same campaigns are two views of one evidence set rather than two computations to reconcile.
  * What they pin:
  *
- *   - a read answers at the (offer x sales chain) grain, one row per chain the offer sells through;
- *   - a chain served by a SINGLE campaign — every chain in production today — is byte-equal to that
+ *   - a read answers at the (offer x sales funnel) grain, one row per funnel the offer sells through;
+ *   - a funnel served by a SINGLE campaign — every funnel in production today — is byte-equal to that
  *     campaign's own answer, so today's shape is correct by construction;
- *   - a chain served by SEVERAL campaigns, one per step, is the same row over the larger campaign set:
- *     the money adds and the return is the chain's, not the last step's;
- *   - MONEY adds across an offer's chains (Sigma chains + Sigma unattributed IS the offer's spend) while
+ *   - a funnel served by SEVERAL campaigns, one per step, is the same row over the larger campaign set:
+ *     the money adds and the return is the funnel's, not the last step's;
+ *   - MONEY adds across an offer's funnels (Sigma funnels + Sigma unattributed IS the offer's spend) while
  *     PEOPLE do not;
- *   - each chain is priced on its OWN declared terms — its own rates, its own lifetime revenue;
- *   - a chain we cannot price says which ingredient is missing and reports its real spend beside a
- *     null return, never a figure borrowed from another chain;
- *   - a campaign that states no chain is in NO row, and its id is stated;
+ *   - each funnel is priced on its OWN declared terms — its own rates, its own lifetime revenue;
+ *   - a funnel we cannot price says which ingredient is missing and reports its real spend beside a
+ *     null return, never a figure borrowed from another funnel;
+ *   - a campaign that states no funnel is in NO row, and its id is stated;
  *   - the rows are LEAN — no leads, no spend block, no series — because a table polls them;
  *   - every existing grain answers exactly as it does now.
  */
@@ -71,7 +71,7 @@ const FEATURE_ROW = (slug: string) => ({
   createdAt: new Date(), updatedAt: new Date(),
 });
 
-/** The brand-wide record. Every rate on it is server-defaulted, which is why a chain never borrows it. */
+/** The brand-wide record. Every rate on it is server-defaulted, which is why a funnel never borrows it. */
 const ECONOMICS = {
   lifetimeRevenueUsd: 500,
   replyToMeetingPct: 10,
@@ -87,8 +87,8 @@ const ECONOMICS = {
 };
 
 /**
- * The two chains, each stating its OWN rates and its OWN lifetime revenue — a $1,000 conversation
- * contract beside a $4,000 website one, so a row priced on the wrong chain's terms cannot pass.
+ * The two funnels, each stating its OWN rates and its OWN lifetime revenue — a $1,000 conversation
+ * contract beside a $4,000 website one, so a row priced on the wrong funnel's terms cannot pass.
  */
 const DECLARED = [
   {
@@ -136,7 +136,7 @@ function lead(
 }
 
 interface Fixture {
-  /** campaign-service's rows: campaign id -> the channel it runs, the chain it sells, the offer. */
+  /** campaign-service's rows: campaign id -> the channel it runs, the funnel it sells, the offer. */
   campaigns: Record<string, { featureSlug: string; funnelKey: string | null; offerId: string | null }>;
   /** runs-service spend in cents per campaign id. */
   costByCampaign: Record<string, number>;
@@ -153,7 +153,7 @@ interface Fixture {
 /**
  * Every downstream, honouring BOTH filters a cross-channel read depends on: `featureSlugs`
  * (comma-split, as runs-service does) and `campaignId`. A mock ignoring either could not tell one
- * chain's answer from the offer's, which is the whole thing under test.
+ * funnel's answer from the offer's, which is the whole thing under test.
  */
 function mockFetch(fixture: Fixture): void {
   const inScope = (cid: string, q: URLSearchParams): boolean => {
@@ -197,7 +197,7 @@ function mockFetch(fixture: Fixture): void {
       if (declared === null) return new Response("not found", { status: 404 });
       return json({ funnels: declared });
     }
-    // The cross-org FLEET reads. Empty on purpose: a chain's figures are realized money, never a fleet
+    // The cross-org FLEET reads. Empty on purpose: a funnel's figures are realized money, never a fleet
     // benchmark, so a fleet with nothing in it must not move a single number asserted below.
     if (path.includes("/public/workflows")) return json({ workflows: [] });
     if (path.includes("/public/costs")) return json({ groups: [] });
@@ -264,8 +264,8 @@ function mockFetch(fixture: Fixture): void {
   });
 }
 
-/** TODAY's live shape: one offer, two chains, ONE campaign each. */
-const ONE_CAMPAIGN_PER_CHAIN: Fixture = {
+/** TODAY's live shape: one offer, two funnels, ONE campaign each. */
+const ONE_CAMPAIGN_PER_FUNNEL: Fixture = {
   campaigns: {
     c1: { featureSlug: PITCH, funnelKey: CONVERSATION, offerId: OFFER },
     c2: { featureSlug: FEEDBACK, funnelKey: WEBSITE, offerId: OFFER },
@@ -280,7 +280,7 @@ const withFeatures = () => {
   );
 };
 
-type ChainRow = {
+type FunnelRow = {
   funnelKey: string;
   name: string;
   steps: string[];
@@ -303,16 +303,16 @@ type ChainRow = {
   outcomes: { recipientsContacted: number } | null;
 };
 
-const chainsOf = (body: { chains: ChainRow[] }): Record<string, ChainRow> =>
-  Object.fromEntries(body.chains.map((c) => [c.funnelKey, c]));
+const funnelsOf = (body: { funnels: FunnelRow[] }): Record<string, FunnelRow> =>
+  Object.fromEntries(body.funnels.map((c) => [c.funnelKey, c]));
 
-describe("GET /offers/:offerId/chains — an offer's money, one row per sales chain", () => {
+describe("GET /offers/:offerId/funnels — an offer's money, one row per sales funnel", () => {
   beforeEach(withFeatures);
   afterEach(() => vi.restoreAllMocks());
 
-  it("answers at the (offer x sales chain) grain, stating what each row is made of", async () => {
-    mockFetch(ONE_CAMPAIGN_PER_CHAIN);
-    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+  it("answers at the (offer x sales funnel) grain, stating what each row is made of", async () => {
+    mockFetch(ONE_CAMPAIGN_PER_FUNNEL);
+    const res = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
     expect(res.status).toBe(200);
 
     expect(res.body.offerId).toBe(OFFER);
@@ -321,14 +321,14 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
     expect(res.body.costBasis).toBe("charged");
     expect(res.body.costCoverage).toBe("platform_spend_only");
 
-    const by = chainsOf(res.body);
+    const by = funnelsOf(res.body);
     expect(Object.keys(by).sort()).toEqual([CONVERSATION, WEBSITE].sort());
     expect(by[CONVERSATION].campaignIds).toEqual(["c1"]);
     expect(by[CONVERSATION].channels).toEqual([{ featureSlug: PITCH, campaignIds: ["c1"] }]);
     expect(by[CONVERSATION].steps).toEqual(["Positive reply", "Meeting booked", "Meeting attended", "Paid client"]);
     expect(by[WEBSITE].campaignIds).toEqual(["c2"]);
 
-    // Its own money, not the offer's: $40.07 on the conversation chain, $10.32 on the website one.
+    // Its own money, not the offer's: $40.07 on the conversation funnel, $10.32 on the website one.
     expect(by[CONVERSATION].costEconomics.committedCostUsd).toBeCloseTo(40.07, 6);
     expect(by[WEBSITE].costEconomics.committedCostUsd).toBeCloseTo(10.32, 6);
     // And a return, which is the whole point of the grain.
@@ -337,26 +337,26 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
     expect(by[CONVERSATION].costEconomics.costPerAcquisitionUsd).toBeGreaterThan(0);
   });
 
-  it("a chain served by a SINGLE campaign is byte-equal to that campaign's own answer", async () => {
-    mockFetch(ONE_CAMPAIGN_PER_CHAIN);
-    const chains = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
-    expect(chains.status).toBe(200);
+  it("a funnel served by a SINGLE campaign is byte-equal to that campaign's own answer", async () => {
+    mockFetch(ONE_CAMPAIGN_PER_FUNNEL);
+    const funnels = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
+    expect(funnels.status).toBe(200);
 
-    mockFetch(ONE_CAMPAIGN_PER_CHAIN);
+    mockFetch(ONE_CAMPAIGN_PER_FUNNEL);
     const campaign = await request(app)
       .get(`/features/${PITCH}/revenue?brandId=${BRAND}&campaignId=c1`)
       .set(AUTH);
     expect(campaign.status).toBe(200);
 
-    const row = chainsOf(chains.body)[CONVERSATION];
-    // The AC this exists for: today every chain is one campaign, so nothing about today's numbers moves.
+    const row = funnelsOf(funnels.body)[CONVERSATION];
+    // The AC this exists for: today every funnel is one campaign, so nothing about today's numbers moves.
     expect(row.headline).toEqual(campaign.body.headline);
     expect(row.costEconomics).toEqual(campaign.body.costEconomics);
   });
 
-  it("a chain served by ONE CAMPAIGN PER STEP is the same row over the larger campaign set", async () => {
-    // The shape the product is moving to: three campaigns buying three links of ONE chain. None of
-    // them has a return of its own; the chain does.
+  it("a funnel served by ONE CAMPAIGN PER STEP is the same row over the larger campaign set", async () => {
+    // The shape the product is moving to: three campaigns buying three links of ONE funnel. None of
+    // them has a return of its own; the funnel does.
     const perStep: Fixture = {
       campaigns: {
         s1: { featureSlug: PITCH, funnelKey: CONVERSATION, offerId: OFFER },
@@ -367,22 +367,22 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
       leads: [lead("s1", "l1", "reply"), lead("s3", "l2", "reply")],
     };
     mockFetch(perStep);
-    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    const res = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
     expect(res.status).toBe(200);
 
-    const row = chainsOf(res.body)[CONVERSATION];
+    const row = funnelsOf(res.body)[CONVERSATION];
     expect(row.campaignIds).toEqual(["s1", "s2", "s3"]);
-    // The chain's money is every step's money: $10 + $20 + $30.
+    // The funnel's money is every step's money: $10 + $20 + $30.
     expect(row.costEconomics.committedCostUsd).toBeCloseTo(60, 6);
-    // And its return is the chain's, spanning the leads every step reached.
+    // And its return is the funnel's, spanning the leads every step reached.
     expect(row.headline.totalPipelineUsd).toBeGreaterThan(0);
     expect(row.costEconomics.roiMultiple).toBeCloseTo((row.headline.totalPipelineUsd as number) / 60, 6);
     // Nothing has to be summed in the browser to get there.
-    expect(res.body.chains).toHaveLength(1);
+    expect(res.body.funnels).toHaveLength(1);
   });
 
-  it("MONEY adds across an offer's chains and equals the offer's own spend; PEOPLE do not add", async () => {
-    // The SAME person worked through both chains.
+  it("MONEY adds across an offer's funnels and equals the offer's own spend; PEOPLE do not add", async () => {
+    // The SAME person worked through both funnels.
     const shared: Fixture = {
       campaigns: {
         c1: { featureSlug: PITCH, funnelKey: CONVERSATION, offerId: OFFER },
@@ -392,27 +392,27 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
       leads: [lead("c1", "l1", "reply"), lead("c2", "l1", "click")],
     };
     mockFetch(shared);
-    const chains = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
-    expect(chains.status).toBe(200);
+    const funnels = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
+    expect(funnels.status).toBe(200);
 
     mockFetch(shared);
     const offer = await request(app).get(`/offers/${OFFER}/revenue?brandId=${BRAND}`).set(AUTH);
     expect(offer.status).toBe(200);
 
-    const summed = (chains.body.chains as ChainRow[]).reduce((n, c) => n + c.costEconomics.committedCostUsd, 0);
+    const summed = (funnels.body.funnels as FunnelRow[]).reduce((n, c) => n + c.costEconomics.committedCostUsd, 0);
     expect(summed).toBeCloseTo(offer.body.costEconomics.committedCostUsd, 6);
     expect(summed).toBeCloseTo(50.39, 6);
 
-    // ONE person to the offer, and in BOTH chain rows: the rows deliberately do not sum on people.
-    const by = chainsOf(chains.body);
+    // ONE person to the offer, and in BOTH funnel rows: the rows deliberately do not sum on people.
+    const by = funnelsOf(funnels.body);
     expect(by[CONVERSATION].outcomes?.recipientsContacted).toBe(1);
     expect(by[WEBSITE].outcomes?.recipientsContacted).toBe(1);
     expect(offer.body.outcomes.recipientsContacted).toBe(1);
   });
 
-  it("each chain is priced on its OWN declared terms, never on the other chain's or the brand's", async () => {
-    // Same evidence on both chains — one lead each, same spend — so any difference in the money is
-    // the chain's own declaration and nothing else.
+  it("each funnel is priced on its OWN declared terms, never on the other funnel's or the brand's", async () => {
+    // Same evidence on both funnels — one lead each, same spend — so any difference in the money is
+    // the funnel's own declaration and nothing else.
     const even: Fixture = {
       campaigns: {
         c1: { featureSlug: PITCH, funnelKey: CONVERSATION, offerId: OFFER },
@@ -422,17 +422,17 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
       leads: [lead("c1", "l1", "reply"), lead("c2", "l2", "click")],
     };
     mockFetch(even);
-    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    const res = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
     expect(res.status).toBe(200);
 
-    const by = chainsOf(res.body);
-    // A positive reply on the conversation chain: $1,000 x 40% reply->booked x (50% x 60%) booked->paid.
+    const by = funnelsOf(res.body);
+    // A positive reply on the conversation funnel: $1,000 x 40% reply->booked x (50% x 60%) booked->paid.
     expect(by[CONVERSATION].headline.totalPipelineUsd).toBeCloseTo(120, 6);
-    // A website visit on the website chain: $4,000 x 20% visit->booked x 30% booked->paid, combined
-    // with the brand-wide self-serve route the chain does not restate (1% visit->close).
+    // A website visit on the website funnel: $4,000 x 20% visit->booked x 30% booked->paid, combined
+    // with the brand-wide self-serve route the funnel does not restate (1% visit->close).
     // Priced on the brand's own $500 record instead, the same click would be worth a fraction of it.
     expect(by[WEBSITE].headline.totalPipelineUsd as number).toBeGreaterThan(240);
-    // $CAC is the third unit of the same statement, and it is each chain's own.
+    // $CAC is the third unit of the same statement, and it is each funnel's own.
     expect(by[CONVERSATION].costEconomics.costPerAcquisitionUsd).toBeCloseTo(
       1000 / (by[CONVERSATION].costEconomics.roiMultiple as number),
       6,
@@ -443,7 +443,7 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
     );
   });
 
-  it("a chain the brand never declared reports its real spend and a NULL return, naming the gap", async () => {
+  it("a funnel the brand never declared reports its real spend and a NULL return, naming the gap", async () => {
     mockFetch({
       campaigns: {
         c1: { featureSlug: PITCH, funnelKey: CONVERSATION, offerId: OFFER },
@@ -452,15 +452,15 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
       costByCampaign: { c1: 1000, c2: 2500 },
       leads: [lead("c1", "l1", "reply"), lead("c2", "l2", "click")],
     });
-    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    const res = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
     expect(res.status).toBe(200);
 
-    const row = chainsOf(res.body)["website_purchases"];
+    const row = funnelsOf(res.body)["website_purchases"];
     expect(row.priced).toBe(false);
-    expect(row.unpricedReason).toBe("chain_not_declared");
+    expect(row.unpricedReason).toBe("funnel_not_declared");
     // The customer paid it, so it is reported.
     expect(row.costEconomics.committedCostUsd).toBeCloseTo(25, 6);
-    // Nothing is borrowed from the chain beside it: no pipeline, no return, no cost of acquisition.
+    // Nothing is borrowed from the funnel beside it: no pipeline, no return, no cost of acquisition.
     expect(row.headline.totalPipelineUsd).toBeNull();
     expect(row.costEconomics.roiMultiple).toBeNull();
     expect(row.costEconomics.costOfAcquisitionPct).toBeNull();
@@ -468,15 +468,15 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
     // "We could not price this" and "this reached nobody" are different statements: the volume is real.
     expect(row.outcomes?.recipientsContacted).toBe(1);
     // Its declared sibling is unaffected.
-    expect(chainsOf(res.body)[CONVERSATION].priced).toBe(true);
+    expect(funnelsOf(res.body)[CONVERSATION].priced).toBe(true);
   });
 
   it("an unreadable declaration names THAT ingredient instead, and still never fabricates a return", async () => {
-    mockFetch({ ...ONE_CAMPAIGN_PER_CHAIN, declared: null });
-    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    mockFetch({ ...ONE_CAMPAIGN_PER_FUNNEL, declared: null });
+    const res = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
     expect(res.status).toBe(200);
 
-    for (const row of res.body.chains as ChainRow[]) {
+    for (const row of res.body.funnels as FunnelRow[]) {
       expect(row.priced).toBe(false);
       expect(row.unpricedReason).toBe("no_economics_declared");
       expect(row.headline.totalPipelineUsd).toBeNull();
@@ -485,7 +485,7 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
     }
   });
 
-  it("a campaign that states no chain is in NO row, and its id is stated", async () => {
+  it("a campaign that states no funnel is in NO row, and its id is stated", async () => {
     mockFetch({
       campaigns: {
         c1: { featureSlug: PITCH, funnelKey: CONVERSATION, offerId: OFFER },
@@ -494,22 +494,22 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
       costByCampaign: { c1: 1000, c9: 4000 },
       leads: [lead("c1", "l1", "reply"), lead("c9", "l9", "reply")],
     });
-    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    const res = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
     expect(res.status).toBe(200);
 
-    expect(res.body.chains).toHaveLength(1);
-    expect(res.body.chains[0].campaignIds).toEqual(["c1"]);
-    // Never parked on a default chain, never dropped in silence — its $40 is in no row and still in
+    expect(res.body.funnels).toHaveLength(1);
+    expect(res.body.funnels[0].campaignIds).toEqual(["c1"]);
+    // Never parked on a default funnel, never dropped in silence — its $40 is in no row and still in
     // the offer's own total, which narrows by nothing.
     expect(res.body.unattributedCampaignIds).toEqual(["c9"]);
   });
 
   it("the rows are LEAN — no leads, no spend block, no series — because a table polls them", async () => {
-    mockFetch(ONE_CAMPAIGN_PER_CHAIN);
-    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    mockFetch(ONE_CAMPAIGN_PER_FUNNEL);
+    const res = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
     expect(res.status).toBe(200);
 
-    expect(Object.keys(res.body.chains[0]).sort()).toEqual(
+    expect(Object.keys(res.body.funnels[0]).sort()).toEqual(
       [
         "campaignIds", "channels", "combinedCostEconomics", "costCoverage", "costEconomics", "customerCost",
         "funnelKey", "headline", "name", "outcomes", "priced", "steps", "unpricedReason",
@@ -518,34 +518,34 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
   });
 
   it("an offer no campaign of this brand sells is a NAMED 404, never a figure about an unknown scope", async () => {
-    mockFetch(ONE_CAMPAIGN_PER_CHAIN);
-    const res = await request(app).get(`/offers/offer-nobody-sells/chains?brandId=${BRAND}`).set(AUTH);
+    mockFetch(ONE_CAMPAIGN_PER_FUNNEL);
+    const res = await request(app).get(`/offers/offer-nobody-sells/funnels?brandId=${BRAND}`).set(AUTH);
     expect(res.status).toBe(404);
     expect(res.body.reason).toBe("offer_has_no_channels");
   });
 
   it("brandId is required and pricing is fail-loud, like every sibling offer read", async () => {
-    mockFetch(ONE_CAMPAIGN_PER_CHAIN);
-    expect((await request(app).get(`/offers/${OFFER}/chains`).set(AUTH)).status).toBe(400);
+    mockFetch(ONE_CAMPAIGN_PER_FUNNEL);
+    expect((await request(app).get(`/offers/${OFFER}/funnels`).set(AUTH)).status).toBe(400);
     expect(
-      (await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}&pricing=whatever`).set(AUTH)).status,
+      (await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}&pricing=whatever`).set(AUTH)).status,
     ).toBe(400);
   });
 
   it("EVERY EXISTING GRAIN answers exactly as it does now", async () => {
-    mockFetch(ONE_CAMPAIGN_PER_CHAIN);
+    mockFetch(ONE_CAMPAIGN_PER_FUNNEL);
     const offer = await request(app).get(`/offers/${OFFER}/revenue?brandId=${BRAND}`).set(AUTH);
     expect(offer.status).toBe(200);
     expect(offer.body.costEconomics.committedCostUsd).toBeCloseTo(50.39, 6);
-    // The offer body carries no chain key: this grain is a NEW read, not a widening of an old one.
-    expect(offer.body.chains).toBeUndefined();
+    // The offer body carries no funnel key: this grain is a NEW read, not a widening of an old one.
+    expect(offer.body.funnels).toBeUndefined();
 
-    mockFetch(ONE_CAMPAIGN_PER_CHAIN);
+    mockFetch(ONE_CAMPAIGN_PER_FUNNEL);
     const brand = await request(app).get(`/brands/${BRAND}/revenue`).set(AUTH);
     expect(brand.status).toBe(200);
     expect(brand.body.costEconomics.committedCostUsd).toBeCloseTo(50.39, 6);
 
-    mockFetch(ONE_CAMPAIGN_PER_CHAIN);
+    mockFetch(ONE_CAMPAIGN_PER_FUNNEL);
     const offers = await request(app).get(`/brands/${BRAND}/offers`).set(AUTH);
     expect(offers.status).toBe(200);
     expect(offers.body.offers).toHaveLength(1);
@@ -554,43 +554,43 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
 });
 
 /**
- * A CHAIN'S COST OF ACQUISITION COUNTS WHAT THE CUSTOMER SPENT ON IT TOO.
+ * A FUNNEL'S COST OF ACQUISITION COUNTS WHAT THE CUSTOMER SPENT ON IT TOO.
  *
  * The platform automates the first link and CHARGES for it; the customer runs the meeting and closes
  * the deal, and lead-service records what those legs cost THEM. Driven from the same one fixture, so
  * the charged half and the declared half are two views of one campaign set rather than two
  * computations to reconcile. What they pin:
  *
- *   - a chain whose customer-worked legs carry declared costs reports a cost of acquisition that
+ *   - a funnel whose customer-worked legs carry declared costs reports a cost of acquisition that
  *     includes them, and a return computed from it;
- *   - a chain with NONE reports exactly what it reported before this existed;
+ *   - a funnel with NONE reports exactly what it reported before this existed;
  *   - the two kinds of money stay tellable apart — `costEconomics` never moves, and none of the
  *     customer's money is folded into what we charged;
- *   - a leg nobody stated a cost for is never fabricated: it raises `unstatedCount` and the chain says
+ *   - a leg nobody stated a cost for is never fabricated: it raises `unstatedCount` and the funnel says
  *     it can only be partly costed;
  *   - a statement is attributed by CAMPAIGN, so it lands in one row and nowhere else, and one that
  *     cannot be placed is stated apart rather than dropped;
  *   - the stated basis describes what the figures are actually made of, per row and for the payload;
  *   - an unreadable statement set degrades the customer half and 502s nothing.
  */
-describe("GET /offers/:offerId/chains — the customer's own money", () => {
+describe("GET /offers/:offerId/funnels — the customer's own money", () => {
   beforeEach(withFeatures);
   afterEach(() => vi.restoreAllMocks());
 
-  /** $40.07 charged on the conversation chain; the customer states $120 + $80 of their own legs. */
+  /** $40.07 charged on the conversation funnel; the customer states $120 + $80 of their own legs. */
   const WITH_CUSTOMER_COST: Fixture = {
-    ...ONE_CAMPAIGN_PER_CHAIN,
+    ...ONE_CAMPAIGN_PER_FUNNEL,
     stepCosts: [
       { campaignId: "c1", step: "meeting_attended", kind: "outcome", costCents: 12_000 },
       { campaignId: "c1", step: "sale", kind: "never", costCents: 8_000 },
     ],
   };
 
-  it("a chain whose customer-worked legs carry declared costs is priced with them in", async () => {
+  it("a funnel whose customer-worked legs carry declared costs is priced with them in", async () => {
     mockFetch(WITH_CUSTOMER_COST);
-    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    const res = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
     expect(res.status).toBe(200);
-    const by = chainsOf(res.body);
+    const by = funnelsOf(res.body);
     const row = by[CONVERSATION];
 
     // What we CHARGED is untouched — it is a billing fact and none of their money is folded into it.
@@ -603,7 +603,7 @@ describe("GET /offers/:offerId/chains — the customer's own money", () => {
     expect(row.combinedCostEconomics.platformCommittedCostUsd).toBeCloseTo(40.07, 6);
     expect(row.combinedCostEconomics.customerDeclaredCostUsd).toBeCloseTo(200, 6);
     expect(row.combinedCostEconomics.committedCostUsd).toBeCloseTo(240.07, 6);
-    // The whole point: a chain ending in a human leg is dearer, so its return is SMALLER than the one
+    // The whole point: a funnel ending in a human leg is dearer, so its return is SMALLER than the one
     // computed off the billed link alone — the overstatement is what this closes.
     expect(row.combinedCostEconomics.roiMultiple).toBeLessThan(row.costEconomics.roiMultiple!);
     expect(row.combinedCostEconomics.costOfAcquisitionPct).toBeGreaterThan(row.costEconomics.costOfAcquisitionPct!);
@@ -614,7 +614,7 @@ describe("GET /offers/:offerId/chains — the customer's own money", () => {
       6,
     );
 
-    // A statement is attributed by CAMPAIGN, so the other chain's row does not move at all.
+    // A statement is attributed by CAMPAIGN, so the other funnel's row does not move at all.
     expect(by[WEBSITE].customerCost).toEqual({ declaredCostUsd: 0, statedCount: 0, unstatedCount: 0 });
     expect(by[WEBSITE].costCoverage).toBe("platform_spend_only");
     expect(by[WEBSITE].combinedCostEconomics.committedCostUsd).toBeCloseTo(
@@ -622,17 +622,17 @@ describe("GET /offers/:offerId/chains — the customer's own money", () => {
       6,
     );
 
-    // The payload states the WEAKEST of its rows: one chain here is not costed at all.
+    // The payload states the WEAKEST of its rows: one funnel here is not costed at all.
     expect(res.body.costCoverage).toBe("platform_spend_only");
     expect(res.body.customerCost.declaredCostUsd).toBeCloseTo(200, 6);
     expect(res.body.customerCost.unattributed).toEqual({ declaredCostUsd: 0, statedCount: 0, unstatedCount: 0 });
   });
 
-  it("a chain with NO customer-declared cost answers exactly as it does today", async () => {
-    mockFetch(ONE_CAMPAIGN_PER_CHAIN);
-    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+  it("a funnel with NO customer-declared cost answers exactly as it does today", async () => {
+    mockFetch(ONE_CAMPAIGN_PER_FUNNEL);
+    const res = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
     expect(res.status).toBe(200);
-    const row = chainsOf(res.body)[CONVERSATION];
+    const row = funnelsOf(res.body)[CONVERSATION];
 
     expect(row.costCoverage).toBe("platform_spend_only");
     expect(row.customerCost).toEqual({ declaredCostUsd: 0, statedCount: 0, unstatedCount: 0 });
@@ -644,9 +644,9 @@ describe("GET /offers/:offerId/chains — the customer's own money", () => {
     expect(res.body.costCoverage).toBe("platform_spend_only");
   });
 
-  it("a leg nobody stated a cost for is NEVER fabricated — the chain says it is only partly costed", async () => {
+  it("a leg nobody stated a cost for is NEVER fabricated — the funnel says it is only partly costed", async () => {
     mockFetch({
-      ...ONE_CAMPAIGN_PER_CHAIN,
+      ...ONE_CAMPAIGN_PER_FUNNEL,
       stepCosts: [
         { campaignId: "c1", step: "meeting_attended", kind: "outcome", costCents: 12_000 },
         // Stated before the cost became mandatory: nobody was ever asked. Absent is absent.
@@ -655,8 +655,8 @@ describe("GET /offers/:offerId/chains — the customer's own money", () => {
         { campaignId: "c1", step: "meeting_booked", kind: "outcome", costCents: 0 },
       ],
     });
-    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
-    const row = chainsOf(res.body)[CONVERSATION];
+    const res = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
+    const row = funnelsOf(res.body)[CONVERSATION];
 
     expect(row.customerCost).toEqual({ declaredCostUsd: 120, statedCount: 2, unstatedCount: 1 });
     expect(row.costCoverage).toBe("platform_and_partial_customer_spend");
@@ -664,9 +664,9 @@ describe("GET /offers/:offerId/chains — the customer's own money", () => {
     expect(res.body.costCoverage).toBe("platform_and_partial_customer_spend");
   });
 
-  it("a statement that belongs to no chain of this offer is stated apart, never dropped and never parked", async () => {
+  it("a statement that belongs to no funnel of this offer is stated apart, never dropped and never parked", async () => {
     mockFetch({
-      ...ONE_CAMPAIGN_PER_CHAIN,
+      ...ONE_CAMPAIGN_PER_FUNNEL,
       stepCosts: [
         { campaignId: "c1", step: "sale", kind: "outcome", costCents: 5_000 },
         // A campaign this offer does not sell through, and a statement naming none at all.
@@ -674,8 +674,8 @@ describe("GET /offers/:offerId/chains — the customer's own money", () => {
         { campaignId: null, step: "sale", kind: "outcome", costCents: 100 },
       ],
     });
-    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
-    const by = chainsOf(res.body);
+    const res = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
+    const by = funnelsOf(res.body);
 
     expect(by[CONVERSATION].customerCost!.declaredCostUsd).toBeCloseTo(50, 6);
     expect(by[WEBSITE].customerCost!.declaredCostUsd).toBe(0);
@@ -689,10 +689,10 @@ describe("GET /offers/:offerId/chains — the customer's own money", () => {
   });
 
   it("an unreadable statement set degrades the customer half and 502s nothing", async () => {
-    mockFetch({ ...ONE_CAMPAIGN_PER_CHAIN, stepCosts: null });
-    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    mockFetch({ ...ONE_CAMPAIGN_PER_FUNNEL, stepCosts: null });
+    const res = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
     expect(res.status).toBe(200);
-    const row = chainsOf(res.body)[CONVERSATION];
+    const row = funnelsOf(res.body)[CONVERSATION];
 
     // NULL is "we could not read the statements" — never confused with "nobody stated one" (zeros).
     expect(row.customerCost).toBeNull();

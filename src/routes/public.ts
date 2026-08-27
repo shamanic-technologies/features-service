@@ -451,9 +451,9 @@ function computeGroupStats(
 }
 
 /**
- * Build workflow upgrade chains for aggregation.
+ * Build workflow upgrade funnels for aggregation.
  */
-export function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, string[]> {
+export function buildWorkflowDynasties(workflows: WorkflowMetadata[]): Map<string, string[]> {
   const predecessorMap = new Map<string, string[]>();
   const idToSlug = new Map<string, string>();
   const activeWorkflows: WorkflowMetadata[] = [];
@@ -468,7 +468,7 @@ export function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, s
     }
   }
 
-  const chains = new Map<string, string[]>();
+  const dynasties = new Map<string, string[]>();
   for (const wf of activeWorkflows) {
     const slugs = new Set<string>([wf.workflowSlug]);
     const queue = [wf.id];
@@ -485,14 +485,14 @@ export function buildUpgradeChains(workflows: WorkflowMetadata[]): Map<string, s
       }
     }
 
-    chains.set(wf.workflowSlug, [...slugs]);
+    dynasties.set(wf.workflowSlug, [...slugs]);
   }
 
-  return chains;
+  return dynasties;
 }
 
-export function aggregateAcrossChains(
-  chains: Map<string, string[]>,
+export function aggregateAcrossDynasties(
+  dynasties: Map<string, string[]>,
   costGroups: { dimensions: Record<string, string | null>; totalCostInUsdCents: string; runCount: number }[],
   outcomeMap: Map<string, Record<string, number>>,
   dimensionKey: string,
@@ -507,11 +507,11 @@ export function aggregateAcrossChains(
   const costMap = new Map<string, { totalCostInUsdCents: number; completedRuns: number }>();
   const aggregatedOutcomes = new Map<string, Record<string, number>>();
 
-  for (const [activeSlug, chainSlugs] of chains) {
+  for (const [activeSlug, versionSlugs] of dynasties) {
     let totalCost = 0, totalRuns = 0;
     const mergedOutcomes: Record<string, number> = {};
 
-    for (const slug of chainSlugs) {
+    for (const slug of versionSlugs) {
       const cost = perSlugCost.get(slug);
       if (cost) { totalCost += cost.totalCostInUsdCents; totalRuns += cost.completedRuns; }
       const outcomes = outcomeMap.get(slug);
@@ -586,8 +586,8 @@ export async function handleRanked(
         costMap.set(key, { totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)), completedRuns: group.runCount });
       }
     } else {
-      const chains = buildUpgradeChains(workflows);
-      const agg = aggregateAcrossChains(chains, costGroups, outcomeMap, "workflowSlug");
+      const dynasties = buildWorkflowDynasties(workflows);
+      const agg = aggregateAcrossDynasties(dynasties, costGroups, outcomeMap, "workflowSlug");
       costMap = agg.costMap;
       aggregatedOutcomes = agg.aggregatedOutcomes;
     }
@@ -696,8 +696,8 @@ export async function handleBest(
         costMap.set(key, { totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)), completedRuns: group.runCount });
       }
     } else {
-      const chains = buildUpgradeChains(workflows);
-      const agg = aggregateAcrossChains(chains, costGroups, outcomeMap, "workflowSlug");
+      const dynasties = buildWorkflowDynasties(workflows);
+      const agg = aggregateAcrossDynasties(dynasties, costGroups, outcomeMap, "workflowSlug");
       costMap = agg.costMap;
       aggregatedOutcomes = agg.aggregatedOutcomes;
     }
@@ -1070,7 +1070,7 @@ export async function handlePublicCostProjection(
     label: "public cost-projection",
     compute: async () => {
     // GLOBAL per-workflow unit costs (cross-org, feature-scoped) — fetched once, shared across brands.
-    // Same dynasty-chain aggregation as /public/stats/best|ranked and the authed workflow-projection route.
+    // Same dynasty-funnel aggregation as /public/stats/best|ranked and the authed workflow-projection route.
     const [workflows, costGroups, emailStats, memberships] = await Promise.all([
       fetchPublicWorkflows(featureSlug, "all"),
       fetchPublicCosts(featureSlug, "workflowSlug"),
@@ -1078,8 +1078,8 @@ export async function handlePublicCostProjection(
       fetchFeatureMemberships(featureSlug),
     ]);
 
-    const chains = buildUpgradeChains(workflows);
-    const { costMap, aggregatedOutcomes } = aggregateAcrossChains(chains, costGroups, emailStats, "workflowSlug");
+    const dynasties = buildWorkflowDynasties(workflows);
+    const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(dynasties, costGroups, emailStats, "workflowSlug");
 
     const unitCostList: { clickUsd: number | null; replyUsd: number | null }[] = [];
     for (const [slug, cost] of costMap) {
@@ -1362,11 +1362,11 @@ export async function handleWorkflowCostPerOutcome(
       fetchFleetBrandEconomics(featureSlug),
     ]);
 
-    const chains = buildUpgradeChains(workflows);
-    const { costMap, aggregatedOutcomes } = aggregateAcrossChains(chains, costGroups, emailStats, "workflowSlug");
+    const dynasties = buildWorkflowDynasties(workflows);
+    const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(dynasties, costGroups, emailStats, "workflowSlug");
     const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
 
-    // Roll each active-workflow chain up to its dynasty (two active heads sharing a dynasty merge).
+    // Roll each active-workflow funnel up to its dynasty (two active heads sharing a dynasty merge).
     const byDynasty = new Map<string, WorkflowGrainInput>();
     for (const [slug, cost] of costMap) {
       const wf = workflowBySlug.get(slug);
@@ -1610,8 +1610,8 @@ export async function handleBestModelCostPerOutcomeTrend(
       fetchFleetBrandEconomics(featureSlug),
     ]);
 
-    const chains = buildUpgradeChains(workflows);
-    const { costMap, aggregatedOutcomes } = aggregateAcrossChains(chains, costGroups, emailStats, "workflowSlug");
+    const dynasties = buildWorkflowDynasties(workflows);
+    const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(dynasties, costGroups, emailStats, "workflowSlug");
     const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
 
     const byDynasty = new Map<string, WorkflowGrainInput>();
@@ -2204,7 +2204,7 @@ export async function handleRevenueHistory(
 //   GET /public/channel-funnel-economics  — one row per (sales funnel, channel) PAIR: either its
 //                                           measured economics or an explicit "not enough data".
 //
-// A customer buys a PAIR. The same chain costs a very different amount through a phone channel than
+// A customer buys a PAIR. The same funnel costs a very different amount through a phone channel than
 // through paid search, so neither a brand-level nor a channel-level aggregate can answer this, and the
 // site prints one row per pair.
 
@@ -2225,7 +2225,7 @@ async function loadPublishedChannels(): Promise<PublicChannel[]> {
 interface ChannelCataloguePayload {
   channels: PublicChannel[];
   /** The step vocabulary itself, so a consumer never hardcodes it to join a channel's legs against a
-   *  chain's. It spans EVERY step of every chain, not only the ones a chain can start from — a channel
+   *  funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel
    *  that performs an internal leg names the step it moves a lead OUT of, and that step is never one. */
   steps: ReturnType<typeof channelStepCatalogue>;
 }
@@ -2249,7 +2249,7 @@ interface ChannelFunnelPairRow {
   channelName: string;
   funnelKey: SalesFunnelKey;
   funnelName: string;
-  /** The chain's steps in order, so a row renders without the consumer knowing the catalogue. */
+  /** The funnel's steps in order, so a row renders without the consumer knowing the catalogue. */
   funnelSteps: readonly string[];
   result: PairResult;
 }

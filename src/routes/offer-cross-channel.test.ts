@@ -465,7 +465,7 @@ describe("GET /offers/:offerId/pipeline-activity — per-day activity across cha
     expect(res.body.channels.map((c: { featureSlug: string }) => c.featureSlug)).toEqual([FEEDBACK, PITCH]);
   });
 
-  it("asks brand-service for THIS OFFER's declared chains, not the brand's only one", async () => {
+  it("asks brand-service for THIS OFFER's declared funnels, not the brand's only one", async () => {
     // A declared funnel carries its offer's OWN lifetime revenue and rates, so an offer read that did
     // not say which offer it meant would price a $200 self-serve plan on a $20k contract's numbers —
     // and would simply 409 for any brand selling more than one thing (brand-service#473).

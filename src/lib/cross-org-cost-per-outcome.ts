@@ -500,16 +500,16 @@ export function addUtcDays(iso: string, delta: number): string {
  * Which DECLARED SALES FUNNELS put a brand in each objective's cost-per-outcome bucket.
  *
  * Read each row as "whose spend legitimately produced this outcome":
- * - **websiteVisit (CPC)** — every CLICK-bought chain: the website meeting funnel, website purchases and
+ * - **websiteVisit (CPC)** — every CLICK-bought funnel: the website meeting funnel, website purchases and
  *   the form magnet all buy their first signal with a click. The conversation meeting funnel is excluded,
  *   exactly as the reply-driven goal was: its link-light copy yields incidental, artificially-low click
  *   rates that dilute the fleet CPC.
- * - **signup** — `website_purchases` (visit → signup → paid: the signup is that chain's own step).
+ * - **signup** — `website_purchases` (visit → signup → paid: the signup is that funnel's own step).
  * - **formSubmission** — `form_magnet`.
- * - **meetingBooked** — BOTH meeting chains. They are priced apart everywhere it matters (each on its own
+ * - **meetingBooked** — BOTH meeting funnels. They are priced apart everywhere it matters (each on its own
  *   channel); this bucket only asks whose spend bought meetings, and both did.
  * - **websitePurchase** — `website_purchases`.
- * - **sales** — every chain: each one terminates in a paying client, which is what this objective prices.
+ * - **sales** — every funnel: each one terminates in a paying client, which is what this objective prices.
  * - **whatsappConversation** — EMPTY, and deliberately so. Its outcome needs a WhatsApp link in the email,
  *   which no declared funnel expresses, so there is no honest way to identify those brands now that the
  *   goal is gone. An empty bucket yields `null` — "we could not compute this" — which is the truth, and
@@ -549,18 +549,18 @@ export function funnelsInObjectiveBucket(objective: Goal, funnels: readonly Sale
  * Currently just `positiveReply`. A positive reply can come from ANY cold-email recipient (hitting reply
  * to any brand's outreach), and the public homepage headlines its cost as the fleet-wide average CAC
  * ("the average cost of acquisition observed across every brand we run"). Scoping it to the brands whose
- * chain is reply-bought (a tiny subset) made the headline a biased, small-denominator metric whose weekly
+ * funnel is reply-bought (a tiny subset) made the headline a biased, small-denominator metric whose weekly
  * delta swung on noise — directly contradicting the "every brand" claim.
  *
  * DELIBERATELY NOT pooled fleet-wide:
- *  - **websiteVisit (CPC)** — a click is also raw-measured, but the reply-bought chain is excluded on
+ *  - **websiteVisit (CPC)** — a click is also raw-measured, but the reply-bought funnel is excluded on
  *    purpose (link-light copy → incidental, artificially-low click rates), and the CPC card carries NO
  *    fleet-wide public claim. The metric's scope matches its consumer's claim.
  *  - **whatsappConversation** — its outcome requires a WhatsApp link in the email, so it is not produced
  *    fleet-wide.
  *  - **the PROJECTED objectives** (signup / formSubmission / meetingBooked / websitePurchase / sales) —
  *    each projects spend through a brand's conversion economics, which is only meaningful for brands whose
- *    chain those economics describe.
+ *    funnel those economics describe.
  */
 export const GOAL_AGNOSTIC_OBJECTIVES: readonly Goal[] = ["positiveReply"];
 
@@ -574,8 +574,8 @@ export function isGoalAgnosticObjective(objective: Goal): boolean {
  * (cross-org). No goal: a brand is placed in a bucket by what it declared it sells through. */
 export interface BucketedBrand {
   brandId: string;
-  /** The chains this brand declared it sells through. Never empty — a brand with no declaration is
-   * omitted from the dataset entirely rather than carried with a substituted chain. */
+  /** The funnels this brand declared it sells through. Never empty — a brand with no declaration is
+   * omitted from the dataset entirely rather than carried with a substituted funnel. */
   funnels: SalesFunnelKey[];
   economics: SalesEconomics;
   /** Dated fleet spend for THIS brand (USD per UTC day). */
@@ -798,7 +798,7 @@ export function buildCostPerOutcomeDistribution(params: {
  * run concurrently. Feature-level (objective-independent) so the trend + lifetime surfaces can share ONE
  * cached dataset. Fails loud on any transport / non-OK error (essential input, not optional enrichment).
  *
- * A brand is OMITTED — never carried on a substituted chain — when it has no saved economics, or when its
+ * A brand is OMITTED — never carried on a substituted funnel — when it has no saved economics, or when its
  * declaration cannot be read or is EMPTY (`SalesFunnelsUnavailableError`, logged loud). That is the same
  * treatment the retired goal read gave a brand with no goal, and it is the only honest one: a brand that
  * has not said what it sells through cannot be placed in a bucket, and placing it anyway is exactly the
@@ -835,7 +835,7 @@ export async function fetchFunnelBucketDataset(featureSlug: string): Promise<Buc
         fetchDeclaredFunnelKeys(brandId, orgId).catch((error): SalesFunnelKey[] => {
           if (error instanceof SalesFunnelsUnavailableError) {
             console.warn(
-              `[features-service] funnel-bucket dataset: brand ${brandId} (org ${orgId}) has declared no readable sales funnel — omitted from every bucket rather than placed on a substituted chain: ${error.message}`,
+              `[features-service] funnel-bucket dataset: brand ${brandId} (org ${orgId}) has declared no readable sales funnel — omitted from every bucket rather than placed on a substituted funnel: ${error.message}`,
             );
             return [];
           }

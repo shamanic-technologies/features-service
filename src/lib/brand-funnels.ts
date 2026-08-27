@@ -29,8 +29,8 @@
  *   `orgId` is a required argument, never resolved to a stand-in.
  * - **A surface that can only carry ONE funnel takes the brand's FIRST DECLARED one in catalogue
  *   order.** That is a deterministic pick over the brand's OWN declarations — not a default, and not an
- *   inference: every candidate is a chain the brand said it sells through. Any surface that can carry
- *   several (the ranking, and any caller passing an explicit `?funnel=`) prices each on its own chain
+ *   inference: every candidate is a funnel the brand said it sells through. Any surface that can carry
+ *   several (the ranking, and any caller passing an explicit `?funnel=`) prices each on its own funnel
  *   instead, which is always the better answer where the shape allows it.
  */
 
@@ -52,7 +52,7 @@ export async function fetchDeclaredFunnelKeys(brandId: string, orgId: string): P
 /**
  * The ONE funnel a single-valued surface prices on: the brand's first declared funnel in catalogue
  * order. Deterministic, so the same declaration always produces the same answer, and every candidate is
- * a chain the brand itself declared. `null` for an empty set — a caller must never substitute one.
+ * a funnel the brand itself declared. `null` for an empty set — a caller must never substitute one.
  */
 export function primaryDeclaredFunnel(keys: readonly SalesFunnelKey[]): SalesFunnelKey | null {
   if (keys.length === 0) return null;

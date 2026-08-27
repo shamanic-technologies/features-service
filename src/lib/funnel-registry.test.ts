@@ -43,7 +43,7 @@ describe("sales funnel — legs, milestones, and the declared-set restriction", 
     expect(byTag.closeWin.expectedRevenueUsd).toBeCloseTo(1000); // full LTR
   });
 
-  it("EV is monotonic up the post-engagement chain: reply < meeting < closeWin", () => {
+  it("EV is monotonic up the post-engagement funnel: reply < meeting < closeWin", () => {
     expect(byTag.reply.expectedRevenueUsd).toBeLessThan(byTag.meeting.expectedRevenueUsd);
     expect(byTag.meeting.expectedRevenueUsd).toBeLessThan(byTag.closeWin.expectedRevenueUsd);
   });
@@ -76,41 +76,41 @@ describe("sales funnel — legs, milestones, and the declared-set restriction", 
   });
 });
 
-describe("restrictPathsToDeclaredLegs — only a declared chain's legs carry value", () => {
+describe("restrictPathsToDeclaredLegs — only a declared funnel's legs carry value", () => {
   const funnel = getFunnel("sales-cold-email-outreach")!;
   const paths = funnel.resolvePaths({ economics: ECONOMICS });
   const tagsFor = (keys: SalesFunnelKey[]) => restrictPathsToDeclaredLegs(paths, keys).map((p) => p.tag);
 
-  it("the conversation chain buys a reply, never a website visit", () => {
+  it("the conversation funnel buys a reply, never a website visit", () => {
     expect(tagsFor(["sales_meetings_from_conversation"])).toEqual(["reply", "meeting", "meetingAttended", "closeWin"]);
   });
 
-  it("the website meeting chain buys a visit, never a reply", () => {
+  it("the website meeting funnel buys a visit, never a reply", () => {
     expect(tagsFor(["sales_meetings_from_website"])).toEqual(["visit", "meeting", "meetingAttended", "closeWin"]);
   });
 
-  it("the visit-led self-serve chains buy a visit and the paid client, not a meeting", () => {
+  it("the visit-led self-serve funnels buy a visit and the paid client, not a meeting", () => {
     expect(tagsFor(["website_purchases"])).toEqual(["visit", "closeWin"]);
     expect(tagsFor(["form_magnet"])).toEqual(["visit", "closeWin"]);
   });
 
-  it("several declared chains are priced on the UNION of their legs", () => {
-    // The conversation chain brings the reply (and the meeting); the purchase chain brings the visit.
+  it("several declared funnels are priced on the UNION of their legs", () => {
+    // The conversation funnel brings the reply (and the meeting); the purchase funnel brings the visit.
     expect(tagsFor(["sales_meetings_from_conversation", "website_purchases"])).toEqual(["visit", "reply", "meeting", "meetingAttended", "closeWin"]);
-    // Two visit-led self-serve chains union to a set that still buys neither a reply nor a meeting.
+    // Two visit-led self-serve funnels union to a set that still buys neither a reply nor a meeting.
     expect(tagsFor(["website_purchases", "form_magnet"])).toEqual(["visit", "closeWin"]);
   });
 
-  it("every chain terminates in a paid client, so closeWin is always a leg", () => {
+  it("every funnel terminates in a paid client, so closeWin is always a leg", () => {
     for (const key of SALES_FUNNEL_KEYS) expect(tagsFor([key])).toContain("closeWin");
   });
 
-  it("declaredLegSignals never names a delivery milestone, for any chain", () => {
+  it("declaredLegSignals never names a delivery milestone, for any funnel", () => {
     const signals = declaredLegSignals(SALES_FUNNEL_KEYS);
     for (const milestone of funnel.milestones) expect(signals.has(milestone.signal)).toBe(false);
   });
 
-  it("NO declaration ⇒ every conversion leg is priced (we do not know the chain, and never invent one)", () => {
+  it("NO declaration ⇒ every conversion leg is priced (we do not know the funnel, and never invent one)", () => {
     expect(tagsFor([])).toEqual(["visit", "reply", "meeting", "meetingAttended", "closeWin"]);
   });
 });

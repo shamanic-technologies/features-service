@@ -1,9 +1,9 @@
 /**
- * THE JOIN IS THE MODEL: a channel states which LEG of a chain it performs, a funnel states its chain,
+ * THE JOIN IS THE MODEL: a channel states which LEG of a funnel it performs, a funnel states its funnel,
  * and which pairings are possible falls out of the two. These cases pin that nothing is stated twice —
- * in particular that the step mirror cannot drift from the chains it claims to read, and that widening
- * the join from "the chain's entry step" to "any of the chain's legs" left every channel published
- * before it reading the exact same list of chains.
+ * in particular that the step mirror cannot drift from the funnels it claims to read, and that widening
+ * the join from "the funnel's entry step" to "any of the funnel's legs" left every channel published
+ * before it reading the exact same list of funnels.
  */
 import { describe, it, expect } from "vitest";
 
@@ -25,9 +25,9 @@ import {
 import { SALES_FUNNELS, SALES_FUNNEL_KEYS } from "./sales-funnels.js";
 
 describe("the steps a channel can move a lead between", () => {
-  it("spans EVERY step of every chain, not only the ones a chain can start from", () => {
+  it("spans EVERY step of every funnel, not only the ones a funnel can start from", () => {
     // A channel that performs an internal leg names the step it moves a lead OUT of, and that step is
-    // never one a chain starts at — so the vocabulary is the union, not the entry subset it once was.
+    // never one a funnel starts at — so the vocabulary is the union, not the entry subset it once was.
     expect([...CHANNEL_STEP_KEYS]).toEqual([
       "conversation",
       "website_visit",
@@ -46,7 +46,7 @@ describe("the steps a channel can move a lead between", () => {
     }
   });
 
-  it("names every step of every deployed chain — a chain we cannot read would silently lose a leg", () => {
+  it("names every step of every deployed funnel — a funnel we cannot read would silently lose a leg", () => {
     for (const key of SALES_FUNNEL_KEYS) {
       for (const label of SALES_FUNNELS[key].steps) {
         expect(FUNNEL_STEP_LABEL_TO_KEY[label], `${key} → "${label}"`).toBeDefined();
@@ -67,7 +67,7 @@ describe("the steps a channel can move a lead between", () => {
   });
 
   it("keeps the `in_ad_` prefix apart from the SITE steps it would otherwise collide with", () => {
-    // "Form filled" and "Meeting booked" are real INTERNAL steps of deployed chains, reached on the
+    // "Form filled" and "Meeting booked" are real INTERNAL steps of deployed funnels, reached on the
     // brand's own site. What an ad produces is an ENTRY step reached without ever getting there, so the
     // two pairs of names must stay distinct — which is the whole reason the prefix exists.
     expect(matchChannelStepKey("form_filled")).toBe("form_filled");
@@ -77,7 +77,7 @@ describe("the steps a channel can move a lead between", () => {
   });
 });
 
-describe("a chain read as its legs", () => {
+describe("a funnel read as its legs", () => {
   it("starts with a leg FROM NOTHING, then one leg per consecutive pair", () => {
     expect(funnelLegs("sales_meetings_from_conversation")).toEqual([
       { from: null, to: "conversation" },
@@ -98,7 +98,7 @@ describe("a chain read as its legs", () => {
     }
   });
 
-  it("the entry step MATCHES the chain's own first step — the mirror cannot drift from what it reads", () => {
+  it("the entry step MATCHES the funnel's own first step — the mirror cannot drift from what it reads", () => {
     for (const key of SALES_FUNNEL_KEYS) {
       const firstStep = SALES_FUNNELS[key].steps[0];
       expect(SALES_FUNNEL_ENTRY_STEP[key], `${key} starts with "${firstStep}"`).toBe(FUNNEL_STEP_LABEL_TO_KEY[firstStep]);
@@ -106,7 +106,7 @@ describe("a chain read as its legs", () => {
     }
   });
 
-  it("EVERY chain terminates in a paid client — the SALE is a leg of all of them", () => {
+  it("EVERY funnel terminates in a paid client — the SALE is a leg of all of them", () => {
     for (const key of SALES_FUNNEL_KEYS) {
       expect(funnelStepKeys(key).at(-1), key).toBe("paid_client");
     }
@@ -133,11 +133,11 @@ describe("from nothing is the SPECIAL case, written as one", () => {
 });
 
 describe("which pairings are possible", () => {
-  it("a channel that opens a conversation sells the conversation chain, and ONLY that one", () => {
+  it("a channel that opens a conversation sells the conversation funnel, and ONLY that one", () => {
     expect(sellableFunnelsFor(producesFromNothing("conversation"))).toEqual(["sales_meetings_from_conversation"]);
   });
 
-  it("a channel that sends a website visit sells every click-driven chain", () => {
+  it("a channel that sends a website visit sells every click-driven funnel", () => {
     expect(sellableFunnelsFor(producesFromNothing("website_visit"))).toEqual([
       "sales_meetings_from_website",
       "website_purchases",
@@ -151,9 +151,9 @@ describe("which pairings are possible", () => {
     expect(sellableFunnelsFor(producesFromNothing("website_visit", "conversation"))).toEqual([...SALES_FUNNEL_KEYS]);
   });
 
-  it("a step no deployed chain starts from sells NOTHING yet, and says so as an empty list", () => {
-    // brand-service ships the in-ad chains in parallel. Until it does, a channel producing only those
-    // sells through none of the declared four — and the moment the mirror gains the chain, it starts
+  it("a step no deployed funnel starts from sells NOTHING yet, and says so as an empty list", () => {
+    // brand-service ships the in-ad funnels in parallel. Until it does, a channel producing only those
+    // sells through none of the declared four — and the moment the mirror gains the funnel, it starts
     // selling with no change here.
     expect(sellableFunnelsFor(producesFromNothing("in_ad_form_submission"))).toEqual([]);
     expect(sellableFunnelsFor(producesFromNothing("in_ad_booked_meeting"))).toEqual([]);
@@ -164,16 +164,16 @@ describe("which pairings are possible", () => {
     ]);
   });
 
-  it("AN INTERNAL LEG SELLS ITS CHAIN TOO — that is the whole point of the widened join", () => {
-    // Booking the meeting off a reply is a leg of the conversation chain; off a visit, of the website
-    // chain. A channel that does both sells both, and neither of them is anyone's ENTRY step.
+  it("AN INTERNAL LEG SELLS ITS FUNNEL TOO — that is the whole point of the widened join", () => {
+    // Booking the meeting off a reply is a leg of the conversation funnel; off a visit, of the website
+    // funnel. A channel that does both sells both, and neither of them is anyone's ENTRY step.
     expect(sellableFunnelsFor([{ from: "conversation", to: "meeting_booked" }])).toEqual([
       "sales_meetings_from_conversation",
     ]);
     expect(sellableFunnelsFor([{ from: "website_visit", to: "meeting_booked" }])).toEqual([
       "sales_meetings_from_website",
     ]);
-    // The two meeting chains share every leg AFTER the meeting is booked, so one leg sells both.
+    // The two meeting funnels share every leg AFTER the meeting is booked, so one leg sells both.
     expect(sellableFunnelsFor([{ from: "meeting_booked", to: "meeting_attended" }])).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
@@ -182,16 +182,16 @@ describe("which pairings are possible", () => {
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
     ]);
-    // And the two self-serve chains close through their own milestone.
+    // And the two self-serve funnels close through their own milestone.
     expect(sellableFunnelsFor([{ from: "signup", to: "paid_client" }])).toEqual(["website_purchases"]);
     expect(sellableFunnelsFor([{ from: "form_filled", to: "paid_client" }])).toEqual(["form_magnet"]);
   });
 
-  it("a leg no chain takes sells nothing, even between two steps that both exist", () => {
-    // Both steps are real; the chain that goes from one to the other is not.
+  it("a leg no funnel takes sells nothing, even between two steps that both exist", () => {
+    // Both steps are real; the funnel that goes from one to the other is not.
     expect(sellableFunnelsFor([{ from: "signup", to: "meeting_attended" }])).toEqual([]);
     expect(sellableFunnelsFor([{ from: "conversation", to: "signup" }])).toEqual([]);
-    // Direction matters: no chain walks backwards.
+    // Direction matters: no funnel walks backwards.
     expect(sellableFunnelsFor([{ from: "meeting_attended", to: "meeting_booked" }])).toEqual([]);
   });
 

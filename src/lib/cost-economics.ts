@@ -99,9 +99,9 @@ export function buildCostEconomics(input: {
  * THE SAME SCOPE'S MONEY WITH THE CUSTOMER'S OWN LEGS IN IT — reported BESIDE the charged figures,
  * never inside them.
  *
- * The platform automates the first link of a sales chain and bills for it; the customer performs the
+ * The platform automates the first link of a sales funnel and bills for it; the customer performs the
  * rest, and lead-service records what those legs cost them. A cost of acquisition that counts only the
- * billed link is too small for every chain that ends in a human leg, and the return that divides by it
+ * billed link is too small for every funnel that ends in a human leg, and the return that divides by it
  * is too good — the single most misleading figure a customer can be shown about their own money.
  *
  * The two kinds of money stay TELLABLE APART, which is why this is a second block rather than a wider

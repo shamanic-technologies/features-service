@@ -39,7 +39,7 @@ const router = Router();
 // fan-out is goal-INDEPENDENT and therefore SHARES the Gold snapshot `/workflow-projection` already
 // maintains (same view, same scope key) — ranking N funnels adds zero IO over reading one.
 //
-// EACH FUNNEL IS PRICED ON ITS OWN CHAIN. A funnel no longer carries a goal (brand-service #434) and
+// EACH FUNNEL IS PRICED ON ITS OWN FUNNEL. A funnel no longer carries a goal (brand-service #434) and
 // the goal could not have answered this anyway: `sales_meetings_from_conversation` and
 // `sales_meetings_from_website` both mapped onto `meetingBooked`, so the two were charged the same
 // blended both-channel price. They are now scored on the channel each actually buys through, so a brand
@@ -114,7 +114,7 @@ const handleFunnelRanking = async (req: Request, res: Response) => {
       });
     }
     if (error instanceof UnknownSalesFunnelError) {
-      // A funnel the brand declared that we have no chain for must never be silently dropped from the
+      // A funnel the brand declared that we have no funnel for must never be silently dropped from the
       // ranking — that would rank a smaller set and answer as if it were the whole one, leaving the
       // customer comparing against a list missing one of their own funnels. The wire `reason` keeps its
       // deployed spelling; campaign-service matches on it verbatim.

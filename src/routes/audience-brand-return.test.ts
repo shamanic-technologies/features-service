@@ -7,11 +7,11 @@
  * one statistic seen three ways, rather than three hand-written expectations:
  *
  *   - the brand's combined return IS the head of the funnel ranking (same definition, same evidence);
- *   - an audience's combined return IS its return on the chain it was combined through, so the number
+ *   - an audience's combined return IS its return on the funnel it was combined through, so the number
  *     the Audiences table leads with is the number a click into that funnel shows;
  *   - naming a funnel still behaves exactly as it did.
  *
- * The fixture is built so the brand's best chain and an audience's best chain DIFFER — which is the
+ * The fixture is built so the brand's best funnel and an audience's best funnel DIFFER — which is the
  * whole reason the row carries its own `basisFunnelKey` instead of inheriting the brand's.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -70,7 +70,7 @@ let economics: Record<string, number> = {
   formSubmissionToPaidClientPct: 20,
 };
 
-/** The funnels this brand DECLARED — a reply-bought meeting chain and a website purchase chain. */
+/** The funnels this brand DECLARED — a reply-bought meeting funnel and a website purchase funnel. */
 let declaredKeys: string[] = ["sales_meetings_from_conversation", "website_purchases"];
 /** When true, brand-service refuses the declared-funnel read (the producer-gap path). */
 let declarationUnreadable = false;
@@ -98,7 +98,7 @@ function emailGroup(key: string, clicked: number, repliesPositive: number, conta
 // Fleet (cross-org, per workflow):
 //   wf-click  $200 / 100 clicks /   0 replies → click $2.00, reply floors to $200 (spent, none produced)
 //   wf-reply  $400 / 100 clicks / 200 replies → click $4.00, reply $2.00
-// So the reply-bought meeting chain wins on wf-reply and the website-purchase chain wins on wf-click:
+// So the reply-bought meeting funnel wins on wf-reply and the website-purchase funnel wins on wf-click:
 // the two funnels are priced apart, on their own channel, against identical evidence.
 const FLEET_WORKFLOWS = [workflow("wf-click"), workflow("wf-reply")];
 const FLEET_COSTS = [costGroup({ workflowSlug: "wf-click" }, 20000), costGroup({ workflowSlug: "wf-reply" }, 40000)];
@@ -107,8 +107,8 @@ const FLEET_EMAIL = [emailGroup("wf-click", 100, 0), emailGroup("wf-reply", 100,
 interface AudienceLeg { slug: string; cents: number; clicks: number; replies: number }
 interface AudienceFixture { id: string; name: string; legs: AudienceLeg[] }
 
-// audience-a pays best through the REPLY chain (its replies are cheap, its clicks are not);
-// audience-b pays best through the CLICK chain. The brand's own best is the reply chain, so
+// audience-a pays best through the REPLY funnel (its replies are cheap, its clicks are not);
+// audience-b pays best through the CLICK funnel. The brand's own best is the reply funnel, so
 // audience-b is the case that must NOT be priced on the brand's basis.
 const AUDIENCES: AudienceFixture[] = [
   { id: "audience-a", name: "CFOs", legs: [{ slug: "wf-reply", cents: 5000, clicks: 5, replies: 10 }] },
@@ -154,7 +154,7 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
           groups: AUDIENCES.flatMap((a) => a.legs.map((l) => costGroup({ audienceId: a.id, workflowSlug: l.slug }, l.cents, 1))),
         });
       }
-      // brand grain — this brand ran nothing of its own, so every chain floors on the fleet.
+      // brand grain — this brand ran nothing of its own, so every funnel floors on the fleet.
       return json({ groups: [] });
     }
 
@@ -248,7 +248,7 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
       ["sales_meetings_from_conversation", "website_purchases"],
     );
     expect(body.funnelCoverage.funnels.every((f: any) => f.priced && f.reason === null)).toBe(true);
-    // The cost COLUMNS cannot be combined across chains, so the one they are priced on is named.
+    // The cost COLUMNS cannot be combined across funnels, so the one they are priced on is named.
     expect(body.funnelCoverage.pricingBasisFunnelKey).toBe(body.brandProjection.basisFunnelKey);
   });
 
@@ -264,7 +264,7 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
     expect(body.brandProjection.returnPerDollar).toBeCloseTo(best, 10);
   });
 
-  it("reconciles with the per-funnel figures: each audience's return is its return on the chain it was combined through", async () => {
+  it("reconciles with the per-funnel figures: each audience's return is its return on the funnel it was combined through", async () => {
     const brand = await brandLevelRead();
     const perFunnel: Record<string, any> = {
       sales_meetings_from_conversation: await funnelRead("sales_meetings_from_conversation"),
@@ -278,7 +278,7 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
       expect(row.projection.costPerPaidClientUsd).toBeCloseTo(twin.projection.costPerPaidClientUsd, 10);
       expect(row.projection.returnPerDollar).toBeCloseTo(twin.projection.returnPerDollar, 10);
       expect(row.projection.costOfAcquisitionPct).toBeCloseTo(twin.projection.costOfAcquisitionPct, 10);
-      // ...and it is the BEST of the brand's chains for that audience, not merely one of them.
+      // ...and it is the BEST of the brand's funnels for that audience, not merely one of them.
       for (const key of Object.keys(perFunnel)) {
         expect(row.projection.returnPerDollar).toBeGreaterThanOrEqual(
           rowFor(perFunnel[key], row.audienceId).projection.returnPerDollar,
@@ -287,11 +287,11 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
     }
   });
 
-  it("prices an audience on ITS OWN best chain, not on the brand's, and ranks best return first", async () => {
+  it("prices an audience on ITS OWN best funnel, not on the brand's, and ranks best return first", async () => {
     const body = await brandLevelRead();
 
     // audience-b's replies are expensive and its clicks are cheap, so it pays through the website
-    // chain — while the brand as a whole pays through the conversation chain.
+    // funnel — while the brand as a whole pays through the conversation funnel.
     expect(rowFor(body, "audience-a").projection.basisFunnelKey).toBe("sales_meetings_from_conversation");
     expect(rowFor(body, "audience-b").projection.basisFunnelKey).toBe("website_purchases");
     expect(body.brandProjection.basisFunnelKey).toBe("sales_meetings_from_conversation");
@@ -301,7 +301,7 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
     expect(body.audiences[0].audienceId).toBe("audience-b");
   });
 
-  it("naming a funnel still behaves exactly as it did — one chain, its own order, no coverage block", async () => {
+  it("naming a funnel still behaves exactly as it did — one funnel, its own order, no coverage block", async () => {
     const body = await funnelRead("sales_meetings_from_conversation");
 
     expect(body.goal).toBe("meetingBooked");

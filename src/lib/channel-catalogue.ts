@@ -51,7 +51,7 @@ export interface ChannelStepDefWire {
   description: string;
 }
 
-/** One leg, rendered: the step it takes a lead out of (null when the lead did not exist on the chain
+/** One leg, rendered: the step it takes a lead out of (null when the lead did not exist on the funnel
  *  yet) and the step it moves them to, each carrying its own buyer-facing wording. */
 export interface ChannelStepTransitionWire {
   from: ChannelStepDefWire | null;
@@ -73,9 +73,9 @@ export interface PublicChannel {
   /** Every leg this channel performs, `from` → `to`. `from: null` is "from nothing". */
   stepTransitions: ChannelStepTransitionWire[];
   /** The steps this channel produces FROM NOTHING — the `to` of its entry legs. DERIVED; a channel that
-   *  only performs internal legs of a chain legitimately produces none. */
+   *  only performs internal legs of a funnel legitimately produces none. */
   producibleSteps: ChannelStepDefWire[];
-  /** The sales funnels this channel may be sold through — every chain one of its legs belongs to. */
+  /** The sales funnels this channel may be sold through — every funnel one of its legs belongs to. */
   salesFunnels: Array<{ key: SalesFunnelKey; name: string; steps: readonly string[] }>;
 }
 
@@ -106,7 +106,7 @@ function parseTransition(slug: string, raw: unknown): ChannelStepTransition {
   const to = matchChannelStepKey(entry.to);
   if (!to) throw new MalformedAcquisitionChannelError(slug, `unknown step ${JSON.stringify(entry.to)}`);
 
-  // `from: null` is a WRITTEN statement — the channel moves a lead from nothing onto the chain — so it
+  // `from: null` is a WRITTEN statement — the channel moves a lead from nothing onto the funnel — so it
   // must be stated, exactly like every other "this is the special case" answer in this catalogue. An
   // absent key is a row nobody finished, and reading it as "from nothing" would publish a channel as an
   // entry channel because a field was forgotten.
@@ -136,7 +136,7 @@ export function parseAcquisitionChannel(slug: string, raw: unknown): Acquisition
 
   if (!Array.isArray(blob.stepTransitions)) throw new MalformedAcquisitionChannelError(slug, "stepTransitions is not an array");
   const transitions = blob.stepTransitions.map((entry) => parseTransition(slug, entry));
-  // A channel that performs no leg could be paired with no chain and sold to nobody; that is a broken
+  // A channel that performs no leg could be paired with no funnel and sold to nobody; that is a broken
   // row rather than a restriction someone chose.
   if (transitions.length === 0) throw new MalformedAcquisitionChannelError(slug, "performs no step transition at all");
 
