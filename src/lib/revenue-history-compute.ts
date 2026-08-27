@@ -107,7 +107,7 @@ const REAL_DEPS: RevenueHistoryDeps = {
   orgDailySpendCents: fetchOrgDailySpendCents,
   currentFleetStats: async (csv, now) => {
     const s = (await buildAccountsAudit(csv, now)).stats;
-    return { mrrUsd: s.mrrUsd, dailyBudgetUsd: s.totalDailyBudgetUsd, activeCount: s.activeCount };
+    return { mrrUsd: s.mrrUsd, dailyBudgetUsd: s.totalRunningDailyBudgetUsd, activeCount: s.activeCount };
   },
   recordCommittedSnapshot: recordCommittedMrrSnapshotSoft,
   readCommittedSnapshots: readCommittedMrrSnapshotsSoft,

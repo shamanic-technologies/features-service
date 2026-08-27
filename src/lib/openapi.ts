@@ -1580,17 +1580,19 @@ const accountRowSchema = z.object({
   brandId: z.string().describe("Brand UUID."),
   brandName: z.string().nullable(),
   brandDomain: z.string().nullable(),
-  dailyBudgetUsd: z.number().nullable().describe("The RAW configured brand daily budget in USD. The per-org usage discount is a charge modifier and is NEVER applied to this configuration ceiling — two orgs with the same configured budget show the same number regardless of their discounts. Null when unset/paused."),
+  configuredDailyBudgetUsd: z.number().describe("Every ceiling this (org, brand) configured, in USD — what the customer SET, not what can be spent today. The per-org usage discount is a charge modifier and is NEVER applied to a configuration ceiling, so two orgs with the same configured budget show the same number regardless of their discounts."),
+  runningDailyBudgetUsd: z.number().describe("The part of the configured ceiling standing behind a campaign that is ONGOING right now, in USD (campaign-service joins the campaign status to billing's per-funnel rows). This is the money in play — what the active verdict and every fleet total read. Lower than configured whenever a funded funnel's campaign is stopped or was never created."),
   orgBalanceUsd: z.number().describe("Org SPENDABLE credit balance in USD (billing balance_cents/100; committed usage incl. provisioned holds subtracted; 0 if no funded wallet). Display only."),
   orgActualBalanceUsd: z.number().describe("Org ACTUAL credit balance in USD (billing actual_balance_cents/100; only ACTUALIZED usage subtracted). The figure the active verdict gates on."),
   autoTopupEnabled: z.boolean().describe("Whether the org has auto-topup enabled (billing has_auto_topup). An auto-topup org never runs dry → active regardless of momentary balance. false when absent."),
-  status: z.enum(["active", "paused", "inactive"]).describe("Precedence paused > active > inactive: 'paused' iff campaign-service brand pause=true; else 'active' iff dailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>dailyBudgetUsd); else 'inactive'."),
+  status: z.enum(["active", "paused", "inactive"]).describe("Precedence active > paused > inactive: 'active' iff runningDailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."),
 });
 
 const accountsStatsSchema = z.object({
-  totalDailyBudgetUsd: z.number().describe("Σ RAW configured daily budget over ACTIVE rows only (USD; undiscounted — a budget is a config ceiling, not a charge; paused/inactive excluded). The staff metrics-page figure."),
-  mrrUsd: z.number().describe("MRR = totalDailyBudgetUsd × 30 (a budget projection, undiscounted)."),
-  arrUsd: z.number().describe("ARR = totalDailyBudgetUsd × 365 (a budget projection, undiscounted)."),
+  totalRunningDailyBudgetUsd: z.number().describe("Σ RUNNING daily budget over ACTIVE rows only (USD; undiscounted — a budget is a config ceiling, not a charge; paused/inactive excluded). The staff metrics-page figure: what the fleet can actually spend today."),
+  totalConfiguredDailyBudgetUsd: z.number().describe("Σ CONFIGURED daily budget over the SAME ACTIVE rows (USD). What those customers posted, whatever is running against it — stated beside the running total so the two can never be mistaken for one another."),
+  mrrUsd: z.number().describe("MRR = totalRunningDailyBudgetUsd × 30 (a budget projection, undiscounted)."),
+  arrUsd: z.number().describe("ARR = totalRunningDailyBudgetUsd × 365 (a budget projection, undiscounted)."),
   activeCount: z.number().int(),
   pausedCount: z.number().int(),
   inactiveCount: z.number().int(),
@@ -1610,14 +1612,17 @@ registry.registerPath({
   path: "/internal/stats/accounts",
   summary: "Fleet-wide cold-email customer accounts audit (internal, api-key; staff-gated at api-service)",
   description:
-    "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with its daily budget, the org's spendable credit balance, " +
-    "and a 3-way status, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). " +
-    "Status precedence paused > active > inactive: 'paused' iff the campaign-service brand pause is set (campaigns HELD, budget kept); " +
-    "else 'active' iff dailyBudgetUsd > 0 && (autoTopupEnabled || orgActualBalanceUsd > dailyBudgetUsd) — the ACTUAL balance (actualized usage only), " +
-    "NOT the spendable balance (which subtracts in-flight provisioned holds); else 'inactive'. All rows (active + paused + inactive) are LISTED, never dropped. " +
-    "Stats sum ACTIVE rows only (a paused brand is not spending). The daily budget is the RAW configured ceiling — the per-org usage discount is a " +
-    "charge modifier and is NEVER applied to it, so two orgs with the same configured budget show the same number regardless of their discounts; " +
-    "totalDailyBudgetUsd/MRR/ARR are pure budget projections (× 30 / × 365) and are undiscounted too. " +
+    "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with BOTH of its daily budgets, the org's spendable credit balance, " +
+    "and a 3-way status, plus fleet financial stats (total RUNNING daily budget → MRR = ×30 → ARR = ×365). " +
+    "Two budgets, answering different questions: CONFIGURED is every ceiling the customer set in billing; RUNNING is the part of it standing behind a " +
+    "campaign that is ongoing right now (campaign-service joins its own campaign status to billing's per-funnel ceilings — billing's brand total is " +
+    "status-blind and counts money on funnels whose campaign is stopped or was never created). Everything that claims to be money in play reads RUNNING. " +
+    "Status precedence active > paused > inactive: 'active' iff runningDailyBudgetUsd > 0 && (autoTopupEnabled || orgActualBalanceUsd > runningDailyBudgetUsd) " +
+    "— the ACTUAL balance (actualized usage only), NOT the spendable balance (which subtracts in-flight provisioned holds); else 'paused' iff " +
+    "configuredDailyBudgetUsd > 0, i.e. money posted with nothing running against it; else 'inactive'. There is NO brand-level pause flag in this rule any " +
+    "more: that control was removed from the product, the flag stopped being written, and it lied in both directions. All rows (active + paused + inactive) " +
+    "are LISTED, never dropped. Stats sum ACTIVE rows only (a paused brand is not spending). Neither budget carries the per-org usage discount — that is a " +
+    "charge modifier, never applied to a configuration ceiling — so totalRunningDailyBudgetUsd/MRR/ARR are pure undiscounted budget projections (× 30 / × 365). " +
     "All money + the status determination are computed here; the dashboard renders only.",
   tags: ["Internal"],
   responses: {
@@ -1657,8 +1662,9 @@ const customerHealthRowSchema = z.object({
   activeThisWeek: z.boolean(),
   activeThisMonth: z.boolean(),
   activeDays: z.array(z.string()).describe("The de-facto active-day timeline from billed spend (distinct UTC days, ascending)."),
-  status: z.enum(["active", "paused", "inactive"]).describe("Same composition as GET /internal/stats/accounts (pause > active > inactive; active needs budget > 0 AND funded/auto-topup)."),
-  dailyBudgetUsd: z.number().nullable(),
+  status: z.enum(["active", "paused", "inactive"]).describe("Same composition as GET /internal/stats/accounts (active > paused > inactive; active needs a RUNNING budget > 0 AND funded/auto-topup; paused means money posted with nothing running)."),
+  configuredDailyBudgetUsd: z.number().describe("Every ceiling this (org, brand) configured, in USD."),
+  runningDailyBudgetUsd: z.number().describe("The part of it standing behind an ongoing campaign, in USD — the money in play."),
   orgBalanceUsd: z.number().describe("Org SPENDABLE balance in USD (display)."),
   orgActualBalanceUsd: z.number().describe("Org ACTUAL balance in USD (the active-verdict figure)."),
   autoTopupEnabled: z.boolean(),
