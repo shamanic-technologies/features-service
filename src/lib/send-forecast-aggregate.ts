@@ -9,13 +9,16 @@
  * sequences-per-USD) → `max` over its features. The daily BUDGET is the only per-brand input.
  *
  * ACTIVE gate (shared with the `/internal/stats/accounts` audit — reuses `accountStatus`): a
- * (org, brand) account contributes ONLY when `accountStatus(...) === "active"` — NOT paused
- * (campaign-service brand pause) AND `dailyBudget > 0` AND (the org has auto-topup enabled OR its
- * ACTUAL credit balance — credited − actualized usage, NOT the provisioned-holds-subtracted spendable
- * figure — EXCEEDS the daily budget). This is the fix for the forecast over-count: without it, every
- * brand that ever ran cold-email and still has a stale positive budget was summed in — incl. paused
- * brands and churned orgs with $0 credits — inflating the projection several-fold above the observed
- * send rate.
+ * (org, brand) account contributes ONLY when `accountStatus(...) === "active"` — its RUNNING daily
+ * budget (the part of its configured ceilings standing behind an ongoing campaign, per campaign-service)
+ * is > 0 AND (the org has auto-topup enabled OR its ACTUAL credit balance — credited − actualized usage,
+ * NOT the provisioned-holds-subtracted spendable figure — EXCEEDS that budget). This is the fix for the
+ * forecast over-count: without it, every brand that ever ran cold-email and still has a stale positive
+ * budget was summed in — incl. brands whose campaigns are stopped and churned orgs with $0 credits —
+ * inflating the projection several-fold above the observed send rate.
+ *
+ * The budget driving `R_b` is the RUNNING one for the same reason: a ceiling nobody is spending against
+ * launches no sequences, so projecting from the configured figure forecasts sends that cannot happen.
  *
  * Today's cohort is scaled to the REMAINING budget (`todayNewOverride`): the day's budget is partly
  * spent already, so only the remainder launches new sequences today. Remaining = daily budget −
@@ -26,9 +29,15 @@
  */
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { fetchSpendBreakdown } from "./spend-client.js";
-import { fetchOrgBalance, fetchBrandPaused, type OrgBalance } from "./accounts-client.js";
+import {
+  fetchOrgBalance,
+  fetchSpendableBudgets,
+  spendableKey,
+  type OrgBalance,
+  type BrandSpendableBudget,
+} from "./accounts-client.js";
 import { accountStatus } from "./accounts-compute.js";
-import { computeFeatureOutreachUsd, fetchBrandDailyBudgetUsd } from "../routes/pipeline-activity.js";
+import { computeFeatureOutreachUsd } from "../routes/pipeline-activity.js";
 
 export interface FleetNewSequences {
   /** Σ over ACTIVE brands of R_b (new sequences/day at full budget). The steady future cohort size. */
@@ -50,19 +59,20 @@ interface BrandEntry {
 export interface FleetDeps {
   featureOutreachUsd: (slug: string) => Promise<number | null>;
   featureMemberships: (slug: string) => Promise<Array<{ orgId: string; brandId: string }>>;
-  brandDailyBudgetUsd: (brandId: string, orgId: string) => Promise<number | null>;
   orgBalance: (orgId: string) => Promise<OrgBalance>;
-  brandPaused: (brandId: string, orgId: string) => Promise<boolean>;
+  spendableBudgets: (
+    pairs: Array<{ orgId: string; brandId: string }>,
+  ) => Promise<Map<string, BrandSpendableBudget>>;
   brandSpentTodayUsd: (brandId: string, featureSlugsCsv: string, orgId: string, now: Date) => Promise<number>;
 }
 
 const REAL_DEPS: FleetDeps = {
   featureOutreachUsd: computeFeatureOutreachUsd,
   featureMemberships: async (slug) => (await fetchFeatureMemberships(slug)).map((m) => ({ orgId: m.orgId, brandId: m.brandId })),
-  // Org-only reads: billing daily-budget + campaign pause + runs cost authorize on x-org-id; user/run omitted.
-  brandDailyBudgetUsd: (brandId, orgId) => fetchBrandDailyBudgetUsd(brandId, "", { orgId }),
+  // Org-less platform reads: campaign spendable-budget takes its pairs in the body; billing balance and
+  // runs cost authorize on x-org-id. No user/run identity is forwarded.
   orgBalance: fetchOrgBalance,
-  brandPaused: fetchBrandPaused,
+  spendableBudgets: fetchSpendableBudgets,
   brandSpentTodayUsd: async (brandId, featureSlugsCsv, orgId, now) => {
     const spend = await fetchSpendBreakdown(brandId, undefined, featureSlugsCsv, { orgId }, now);
     return spend.totalSpentTodayCents / 100;
@@ -106,21 +116,30 @@ export async function aggregateFleetNewSequences(
   const balanceByOrg = new Map<string, OrgBalance>();
   await Promise.all(orgIds.map(async (orgId) => balanceByOrg.set(orgId, await deps.orgBalance(orgId))));
 
-  // 4. Per unique (org, brand): daily budget + ACTIVE gate (budget>0 && balance>budget) + remaining-today.
+  // 4. Per unique (org, brand): running budget + ACTIVE gate (running>0 && balance>running) +
+  //    remaining-today. One batched call covers every pair's budgets.
+  const budgets = await deps.spendableBudgets([...brands.values()].map((b) => ({ orgId: b.orgId, brandId: b.brandId })));
   const perBrand = await Promise.all(
     [...brands.values()].map(async (b) => {
       const featureList = [...b.features];
       const bestInvRate = featureList.reduce((max, f) => Math.max(max, invRateByFeature.get(f) ?? 0), 0);
       if (bestInvRate <= 0) return null; // no cold-email feature with usable cost → contributes nothing
 
-      const [budgetUsd, paused] = await Promise.all([
-        deps.brandDailyBudgetUsd(b.brandId, b.orgId),
-        deps.brandPaused(b.brandId, b.orgId),
-      ]);
+      const spendable = budgets.get(spendableKey(b.orgId, b.brandId));
+      // A pair the producer did not answer for is a read we did not get, never a zero.
+      if (!spendable) {
+        throw new Error(`[features-service] send-forecast: no spendable budget for ${b.orgId}/${b.brandId}`);
+      }
       const balance = balanceByOrg.get(b.orgId) ?? { spendableUsd: 0, actualUsd: 0, autoTopupEnabled: false };
-      // Same rule as /internal/stats/accounts: only "active" (NOT paused, budget>0, auto-topup OR actual credits cover ≥1 day) contributes.
-      if (accountStatus(budgetUsd, balance.actualUsd, balance.autoTopupEnabled, paused) !== "active") return null;
-      const budget = budgetUsd as number; // "active" guarantees non-null & > 0
+      // Same rule as /internal/stats/accounts: only "active" (running budget > 0, auto-topup OR actual
+      // credits cover ≥1 day) contributes.
+      if (
+        accountStatus(spendable.configuredUsd, spendable.runningUsd, balance.actualUsd, balance.autoTopupEnabled) !==
+        "active"
+      ) {
+        return null;
+      }
+      const budget = spendable.runningUsd; // "active" guarantees > 0
 
       const R = budget * bestInvRate;
       const spentTodayUsd = await deps.brandSpentTodayUsd(b.brandId, featureList.join(","), b.orgId, now);

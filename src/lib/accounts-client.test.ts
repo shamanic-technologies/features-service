@@ -4,8 +4,10 @@ process.env.CLIENT_SERVICE_URL = "http://client:3000";
 process.env.CLIENT_SERVICE_API_KEY = "client-key";
 process.env.BILLING_SERVICE_URL = "http://billing:3000";
 process.env.BILLING_SERVICE_API_KEY = "billing-key";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 
-const { fetchOrgIdentity, fetchOrgBalance } = await import("./accounts-client.js");
+const { fetchOrgIdentity, fetchOrgBalance, fetchSpendableBudgets, spendableKey } = await import("./accounts-client.js");
 
 function jsonRes(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -70,5 +72,69 @@ describe("fetchOrgBalance", () => {
   it("fails loud on a non-404 billing error", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonRes({ error: "boom" }, 500));
     await expect(fetchOrgBalance("o1")).rejects.toThrow(/balance failed \(500\)/);
+  });
+});
+
+describe("fetchSpendableBudgets", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("returns both figures per (org, brand), in dollars", async () => {
+    // The production shape: a brand funding two funnels, one of whose campaigns is stopped.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonRes({
+        brands: [
+          { orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 6000, runningDailyBudgetCents: 5000 },
+          { orgId: "o2", brandId: "b2", configuredDailyBudgetCents: 1000, runningDailyBudgetCents: 0 },
+        ],
+        unavailable: [],
+      }),
+    );
+    const out = await fetchSpendableBudgets([
+      { orgId: "o1", brandId: "b1" },
+      { orgId: "o2", brandId: "b2" },
+    ]);
+    expect(out.get(spendableKey("o1", "b1"))).toEqual({ configuredUsd: 60, runningUsd: 50 });
+    expect(out.get(spendableKey("o2", "b2"))).toEqual({ configuredUsd: 10, runningUsd: 0 });
+  });
+
+  it("keys on the PAIR, so one brand claimed by two orgs keeps each org's own money", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonRes({
+        brands: [
+          { orgId: "oA", brandId: "shared", configuredDailyBudgetCents: 2000, runningDailyBudgetCents: 2000 },
+          { orgId: "oB", brandId: "shared", configuredDailyBudgetCents: 500, runningDailyBudgetCents: 0 },
+        ],
+        unavailable: [],
+      }),
+    );
+    const out = await fetchSpendableBudgets([
+      { orgId: "oA", brandId: "shared" },
+      { orgId: "oB", brandId: "shared" },
+    ]);
+    expect(out.get(spendableKey("oA", "shared"))?.runningUsd).toBe(20);
+    expect(out.get(spendableKey("oB", "shared"))?.runningUsd).toBe(0);
+  });
+
+  it("THROWS on an unavailable pair rather than reading it as zero", async () => {
+    // A pair the producer could not price carries no figures. Defaulting it to 0 would silently shrink
+    // the fleet total with nothing reporting it — which is why the producer refuses to send a zero.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonRes({
+        brands: [],
+        unavailable: [{ orgId: "o1", brandId: "b1", reason: "billing unreachable" }],
+      }),
+    );
+    await expect(fetchSpendableBudgets([{ orgId: "o1", brandId: "b1" }])).rejects.toThrow(/billing unreachable/);
+  });
+
+  it("fails loud on a campaign-service error", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonRes({ error: "boom" }, 500));
+    await expect(fetchSpendableBudgets([{ orgId: "o1", brandId: "b1" }])).rejects.toThrow(/spendable-budget failed \(500\)/);
+  });
+
+  it("makes no call at all for an empty pair list", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    expect((await fetchSpendableBudgets([])).size).toBe(0);
+    expect(spy).not.toHaveBeenCalled();
   });
 });

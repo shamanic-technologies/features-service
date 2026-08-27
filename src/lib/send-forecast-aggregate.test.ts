@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import { aggregateFleetNewSequences, type FleetDeps } from "./send-forecast-aggregate.js";
+import { spendableKey, type BrandSpendableBudget } from "./accounts-client.js";
 
 const NOW = new Date("2026-07-01T12:00:00Z");
 const COLD = ["sales-cold-email-outreach", "pr-cold-email-outreach"];
@@ -14,21 +15,32 @@ const COLD = ["sales-cold-email-outreach", "pr-cold-email-outreach"];
 function deps(fixture: {
   outreachUsd: Record<string, number | null>;
   memberships: Record<string, Array<{ orgId: string; brandId: string }>>;
+  // Configured ceilings per brandId — what the customer set.
   budgetUsd: Record<string, number | null>;
+  // Running ceilings per brandId — the part behind an ongoing campaign. Defaults to the configured one.
+  runningUsd?: Record<string, number>;
   balanceUsd?: Record<string, number>; // ACTUAL balance per org (the gate figure)
   autoTopup?: Record<string, boolean>;
-  paused?: Record<string, boolean>;
   spentTodayUsd?: Record<string, number>;
 }): FleetDeps {
   return {
     featureOutreachUsd: async (slug) => fixture.outreachUsd[slug] ?? null,
     featureMemberships: async (slug) => fixture.memberships[slug] ?? [],
-    brandDailyBudgetUsd: async (brandId) => fixture.budgetUsd[brandId] ?? null,
     orgBalance: async (orgId) => {
       const actualUsd = fixture.balanceUsd?.[orgId] ?? 1_000_000;
       return { spendableUsd: actualUsd, actualUsd, autoTopupEnabled: fixture.autoTopup?.[orgId] ?? false };
     },
-    brandPaused: async (brandId) => fixture.paused?.[brandId] ?? false,
+    spendableBudgets: async (pairs) => {
+      const out = new Map<string, BrandSpendableBudget>();
+      for (const p of pairs) {
+        const configuredUsd = fixture.budgetUsd[p.brandId] ?? 0;
+        out.set(spendableKey(p.orgId, p.brandId), {
+          configuredUsd,
+          runningUsd: fixture.runningUsd?.[p.brandId] ?? configuredUsd,
+        });
+      }
+      return out;
+    },
     brandSpentTodayUsd: async (brandId) => fixture.spentTodayUsd?.[brandId] ?? 0,
   };
 }
@@ -120,13 +132,13 @@ describe("aggregateFleetNewSequences", () => {
       expect(r.totalDailyBudgetUsd).toBe(100);
     });
 
-    it("excludes a PAUSED brand even with budget>0 and sufficient balance", async () => {
+    it("excludes a brand whose money is configured but whose campaigns are not running", async () => {
       const d = deps({
         outreachUsd: { "sales-cold-email-outreach": 2 },
         memberships: { "sales-cold-email-outreach": [{ orgId: "o1", brandId: "b1" }] },
-        budgetUsd: { b1: 100 },
-        balanceUsd: { o1: 500 }, // funded...
-        paused: { b1: true }, // ...but paused → excluded
+        budgetUsd: { b1: 100 }, // posted...
+        runningUsd: { b1: 0 }, // ...but nothing running → launches no sequences
+        balanceUsd: { o1: 500 }, // funded
       });
       const r = await aggregateFleetNewSequences(COLD, NOW, d);
       expect(r.activeBrandCount).toBe(0);
@@ -207,12 +219,12 @@ describe("aggregateFleetNewSequences", () => {
               { orgId: "o1", brandId: "b2" }, // same org, two brands
             ]
           : [],
-      brandDailyBudgetUsd: async () => 100,
       orgBalance: async (orgId) => {
         balanceCalls.push(orgId);
         return { spendableUsd: 500, actualUsd: 500, autoTopupEnabled: false };
       },
-      brandPaused: async () => false,
+      spendableBudgets: async (pairs) =>
+        new Map(pairs.map((p) => [spendableKey(p.orgId, p.brandId), { configuredUsd: 100, runningUsd: 100 }])),
       brandSpentTodayUsd: async () => 0,
     };
     await aggregateFleetNewSequences(COLD, NOW, d);
