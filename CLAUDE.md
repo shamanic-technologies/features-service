@@ -205,6 +205,65 @@ view, not the workflow PERFORMANCE view.**
   200, still today's number; the budget-projection read takes incurred while the displayed one does
   not; and the selectors compose with gross/net rather than replacing it. (Set 2026-08-25.)
 
+## `GET /offers/:offerId/chains` — WHAT EACH OF AN OFFER'S SALES CHAINS COST AND RETURNED; the chain is the smallest scope whose money divides into a RETURN, and one-campaign-per-step is why
+
+Money answers at the brand grain, the offer grain, the campaign grain and the workflow grain. The grain
+that was missing is **(offer × sales chain)**, and it stops being optional the moment the product ships
+ONE CAMPAIGN PER STEP of a chain. A campaign then buys a single LINK — a reply, a booked meeting, an
+attended meeting — so it has a cost per step and **no return of its own**: the lifetime revenue sits at
+the END of the chain, and hanging it on whichever link happened to be last would wildly overstate that
+link. The chain is the smallest scope that spans a whole path to a paying client, so it is the smallest
+scope at which a return is computable at all.
+
+- **CORRECT UNDER BOTH SHAPES WITH NO SWITCH, because the row is scoped to the chain's CAMPAIGN SET.**
+  A chain served by ONE campaign — every chain in production today — is **byte-equal to that campaign's
+  own `/features/:slug/revenue?campaignId=` answer** (guarded), because the per-campaign read already
+  prices on the funnel the campaign itself states. A chain served by one campaign per step is the same
+  row over a larger set: the money adds, the leads dedupe, and the return is the chain's. Nothing
+  branches on which shape is live.
+- **THE PARTITION IS THE PRODUCER'S** (`lib/offer-chains.ts`): a campaign states its own `funnelKey` and
+  campaign-service owns it. **NEVER inferred from the goal** — both meeting chains answer to
+  `meetingBooked`, so that inference prints a chain the campaign never stated. A campaign stating NO
+  chain (or one the catalogue does not know) is in NO row and its id rides `unattributedCampaignIds`:
+  never parked on a default, never dropped in silence.
+- **MONEY ADDS, PEOPLE DO NOT.** A campaign belongs to exactly one chain, so `Σ chains +
+  Σ unattributed` IS the offer's own spend (guarded against `/offers/:offerId/revenue`). A lead worked
+  through two chains is ONE lead to the offer and is in BOTH rows, so the rows do not sum on the
+  pipeline half — the counting-people property every grain here carries, and the reason the offer read
+  stays the number to trust for "what did this offer do".
+- **EACH CHAIN IS PRICED ON ITS OWN DECLARED TERMS** — its own rates and its own lifetime revenue, via
+  the SAME `priceOnDeclaredFunnel` merge every other funnel-narrowed read uses, with the chain's key as
+  the requested funnel. A $1k conversation contract and a $4k website one are never blended, and only
+  the chain's OWN legs carry expected value (`restrictPathsToDeclaredLegs`).
+- **A CHAIN WE CANNOT PRICE SAYS WHICH INGREDIENT IS MISSING** — `priced: false` +
+  `unpricedReason`, checked in this order so the plain thing is said first: `no_channel_funnel` (no
+  channel carrying it measures anything; the leads are never read, so `outcomes` is null too) →
+  `no_economics_declared` (the brand states none, or the declaration could not be read) →
+  `chain_not_declared` (the declaration IS readable and does not contain this chain). In all three the
+  SPEND is real and reported and the pipeline / return / $CAC are **null, never 0**. **Do NOT fall back
+  to the brand-wide economics record here** — the un-narrowed reads legitimately do, but every rate on
+  that row is server-defaulted, so pricing chain A on it is the retired-goal fiction one grain finer.
+  The two unpriced-but-measurable reasons still read the leads (the engine's cold-start path), because
+  "we could not price this" and "this reached nobody" are different statements.
+- **`costCoverage: "platform_spend_only"` IS ON THE WIRE, AND IT IS AN ADMISSION.** Some steps of a
+  chain are performed by a human on the CUSTOMER's side and the platform spends nothing on them, so a
+  chain whose last legs are manual reads cheaper here than it truly is — and a chain's true cost of
+  acquisition needs that money. lead-service is adding a customer-declared cost per step transition;
+  **it exposes none today** (verified against its deployed contract: `converted-leads`,
+  `step-disqualifications`, `conversion-counts{,-by-day}`, `converted-lead-emails`, and nothing else).
+  Inventing one, or leaving the basis unstated, is the fabricated figure this read refuses everywhere
+  else. When the producer ships it, the marker is what a consumer keys the change off.
+- **NO CONSUMER-SIDE AGGREGATION.** The composition happens here; a grain the dashboard has to assemble
+  from N campaign calls is not a grain. Rows are LEAN (`headline` + `costEconomics` + `outcomes`,
+  `includeSpend: false`) because a table polls them.
+- **The api-service gateway forwards `/offers/*` per SUFFIX, explicitly, with no wildcard**, so this
+  read needs its own line there or it 404s at the gateway.
+- Guards: `src/routes/offer-chain-revenue.test.ts` — ONE fixture drives the grain, the single-campaign
+  byte-equality, the one-campaign-per-step chain, money-adds-while-people-do-not, each chain on its own
+  declared terms, both unpriced reasons, the unattributed campaign, the lean key set, the named 404,
+  the fail-loud parses, and every existing grain answering unchanged. Plus `lib/offer-chains.ts` for
+  the partition itself. (Set 2026-08-27.)
+
 ## `GET /brands/:brandId/offers` — THE BRAND'S OFFERS TABLE, EACH ROW AT THE OFFER GRAIN; it is the offer read N times, LEAN, not a new computation
 
 The brand Overview lists a brand's OFFERS one row each, with that offer's ROI, %CAC, revenue and
@@ -417,19 +476,83 @@ Prod 2026-08-20, brand `75d7e3e8…` offer `d5ecba00…`: months of `sales-cold-
   per-feature read unchanged; the named 404), `src/lib/offer-channels.ts` + `src/lib/offer-parents.ts` +
   `src/lib/feature-scope.ts` for the rules themselves. (Set 2026-08-20.)
 
+## A SALES CHAIN IS SOLD LEG BY LEG — a channel states which step it moves a lead FROM and which step it moves it TO, and "from nothing" is the SPECIAL case (supersedes the produces-an-entry-step model)
+
+A four-step chain used to be sellable only end to end, because a channel could state nothing but the
+kinds of step it could PRODUCE, and every one of those is a step a chain STARTS from. That reads as the
+whole model only because it was the only kind of channel in the catalogue. It is not: booking a meeting
+off a reply, getting that meeting actually held, and closing it are three separate things somebody does,
+each with its own channel, its own daily budget and its own stats. Campaign provisioning already works
+per funded (chain, channel) pair, so the catalogue was the only thing in the way.
+
+- **A CHANNEL STATES ITS `stepTransitions` — `{ from, to }` — AND `from: null` IS "FROM NOTHING".** The
+  lead was not on the chain at all until this channel produced its first step. Every channel published
+  before this states only legs of that shape, which is written as one line by `producesFromNothing(...)`.
+  Do NOT reintroduce a bare `producibleSteps` on the STORED blob: that is the special case wearing the
+  clothes of the general one, which is exactly what made an internal leg unsayable.
+- **`producibleSteps` SURVIVES ON THE WIRE, DERIVED, WITH ITS MEANING INTACT** (`producibleStepsOf` =
+  the `to` of the `from: null` legs). A channel that only performs internal legs produces NOTHING, and
+  `[]` there is a real answer rather than a gap.
+- **THE JOIN IS STILL DERIVED — ONLY ITS GRAIN MOVED.** `sellableFunnelsFor` used to compare a channel's
+  produced steps against each chain's ENTRY step; it now compares its transitions against each chain's
+  LEGS, of which the entry (`{from: null, to: steps[0]}`) is simply the first. `funnelLegs` reads those
+  straight off `SALES_FUNNELS[key].steps` through `FUNNEL_STEP_LABEL_TO_KEY`, and a chain containing a
+  step this catalogue cannot name THROWS (`UnknownFunnelStepLabelError`) rather than silently losing a
+  leg — which would quietly stop a channel being sellable through a chain it can genuinely serve.
+- **EVERY CHANNEL PUBLISHED BEFORE THIS READS THE IDENTICAL LIST OF CHAINS**, verified row by row
+  against `origin/main` before shipping: 40 feature rows, zero drift. Cold email and CRM email still all
+  four, the feedback request still `sales_meetings_from_conversation` alone, a non-channel still `[]`.
+- **THE STEP VOCABULARY IS NOW THE UNION OF EVERY CHAIN'S STEPS, not the entry subset**
+  (`CHANNEL_STEP_KEYS`, nine): a channel performing an internal leg has to name the step it moves a lead
+  OUT of, and that step is never one a chain starts at. `meeting_booked` / `meeting_attended` / `signup`
+  / `form_filled` / `paid_client` joined the four that were there. This is precisely why the `in_ad_`
+  prefix was load-bearing all along — `form_filled` and `meeting_booked` are now real keys in the same
+  list, so the shorter spellings would COLLIDE outright.
+- **`operatedBy` SAYS WHO PUTS THE HOURS IN, and it is what makes a ZERO daily cost legible.** A leg a
+  human performs can be run by US (`platform` — the daily operating cost is that specialist's day) or by
+  the CUSTOMER (`customer` — their founder takes the call, their team confirms the meeting). A
+  customer-run channel spends none of the platform's money, so its `dailyOperatingCostCents` is
+  genuinely **0**, and the parser REFUSES a customer-operated channel that states anything else: we do
+  not charge for a day of work we do not do. **Do NOT invent a flat daily figure for those to make the
+  family look uniform** — what the leg costs THEM is stated per lead against lead-service, and a zero
+  nobody can read is indistinguishable from a field nobody filled in. Every channel that FINDS people
+  (any `from: null` leg) is `platform`-operated; a zero there WOULD be a hole, and is guarded.
+- **THE SAME LEG IS PUBLISHED TWICE, ours and theirs**, because those are two different things to buy:
+  `managed-meeting-booking` / `in-house-meeting-booking`, `managed-meeting-attendance` /
+  `in-house-meeting-attendance`, `managed-closing-calls` / `founder-led-closing`,
+  `managed-signup-conversion` / `in-house-signup-conversion`. Each pair states the IDENTICAL legs and
+  therefore the identical sellable chains; only the operator and the price differ. They carry the new
+  `conversion` family — nothing here finds anybody.
+- **A LEG CHANNEL IS PAIRED FROM DAY ONE AND ANSWERS `no_spend_recorded`.** `channel.salesFunnels` is
+  what `/public/channel-funnel-economics` builds pairs from, so these get their rows immediately; with
+  no run behind them the pooled evidence is empty and the pair states the honest missing ingredient.
+  Nothing was special-cased for them, and nothing here reads the per-lead declared costs a parallel
+  workspace is adding to lead-service — that reader belongs with the data.
+- **STILL NO AVAILABILITY FLAG, still no channel table, and no "convertor" beside "channel"** — it is
+  the CHANNEL that gained this capability, and the blob's key set is pinned to
+  `{family, operatedBy, stepTransitions, terms}`.
+- Guards: the widened-join cases in `src/lib/acquisition-channels.test.ts` (an internal leg sells its
+  chain; the two meeting chains share every leg after the booking; a leg no chain takes, and a backwards
+  leg, sell nothing), `src/lib/channel-catalogue.test.ts` (an unstated `from` and a leg-to-itself both
+  FAIL LOUD; a customer-operated channel with a daily cost fails; an internal-leg channel produces
+  nothing and still sells), and the two new suites in
+  `src/seed/acquisition-channel-catalogue.test.ts` (the three legs of a meeting chain as three products;
+  the ours-vs-theirs pairs agreeing on legs and disagreeing on price). (Set 2026-08-27.)
+
 ## A CHANNEL PUBLISHES ITS COMMERCIAL TERMS AND WHAT IT CAN PRODUCE; WHICH FUNNELS IT SELLS THROUGH IS DERIVED, NEVER A SECOND LIST
 
 An acquisition channel IS a feature slug — still no channel table, still no channel concept, and none
 may be introduced. What a feature now states is `acquisitionChannel`: the commercial terms a buyer
-commits to before anything is measured, and the kinds of STEP the channel can PRODUCE. Roughly thirty
-channels are published, all bookable from day one, and a public marketing site is generated from them.
+commits to before anything is measured, and the legs the channel can PERFORM (see the section above;
+this section's "kinds of STEP it can PRODUCE" is the `from: null` half of that). Roughly forty channels
+are published, all bookable from day one, and a public marketing site is generated from them.
 
-- **`salesFunnels` IS DERIVED (`sellableFunnelsFor`) AND MUST STAY DERIVED.** A channel states what it
-  produces; a funnel states what STARTS it (`SALES_FUNNEL_ENTRY_STEP`, mirrored from brand-service and
-  pinned against `SALES_FUNNELS[key].steps[0]`); a pairing is possible when the two meet. Hand-writing
-  `salesFunnels` again would restore the drift the derivation removes. The wire field is UNCHANGED and
-  every existing row reads byte-identically: cold email and CRM email still all four, the feedback
-  request still `sales_meetings_from_conversation` alone, a non-channel still `[]`.
+- **`salesFunnels` IS DERIVED (`sellableFunnelsFor`) AND MUST STAY DERIVED.** A channel states which leg
+  it performs; a funnel states its chain (`funnelLegs`, mirrored from brand-service and pinned against
+  `SALES_FUNNELS[key].steps`); a pairing is possible when the two meet. Hand-writing `salesFunnels`
+  again would restore the drift the derivation removes. The wire field is UNCHANGED and every existing
+  row reads byte-identically: cold email and CRM email still all four, the feedback request still
+  `sales_meetings_from_conversation` alone, a non-channel still `[]`.
 - **NULL ON `acquisitionChannel` IS A WRITTEN STATEMENT** — this feature is not an acquisition channel
   (hiring, VC and accelerator outreach, outlet discovery, press-kit generation, AI visibility). It
   acquires something other than a customer, or is internal tooling, so there is nothing to pair it with.
@@ -453,7 +576,9 @@ channels are published, all bookable from day one, and a public marketing site i
   "Form filled" and "Meeting booked" ALREADY exist in the deployed catalogue as INTERMEDIATE steps
   (`form_magnet` step 2, both meeting chains' milestone), reached through a click or a reply onto the
   brand's site; an ad produces an ENTRY step reached without ever getting there, so the bare names
-  invite a consumer to read such a channel as able to START `form_magnet`, which it cannot. `platform_`
+  invite a consumer to read such a channel as able to START `form_magnet`, which it cannot. Since the
+  leg-by-leg change those two are LITERAL KEYS in `CHANNEL_STEP_KEYS` (`form_filled`, `meeting_booked`),
+  so the shorter spellings would now collide outright rather than merely mislead. `platform_`
   (the first spelling, renamed 2026-08-19) is wrong because `platform` is this fleet's word for OUR OWN
   platform, and `ad_` alone reads as "attributed to an ad" — i.e. filled on the brand's site after the
   click, the very reading the prefix blocks.
@@ -493,9 +618,12 @@ channels are published, all bookable from day one, and a public marketing site i
 Both are public and identity-free by design: a site that restates the terms is a site that can drift
 from what we actually charge and actually measured.
 
-- **`/public/channels`** serves the catalogue: terms, producible steps (each with buyer-facing wording),
-  and the derived funnels, each carrying its own chain so a row renders without the consumer knowing the
-  catalogue. The step vocabulary rides the payload so nothing hardcodes it.
+- **`/public/channels`** serves the catalogue: terms, `operatedBy`, the LEGS the channel performs (each
+  side with buyer-facing wording, `from: null` for "from nothing"), the derived `producibleSteps`, and
+  the derived funnels, each carrying its own chain so a row renders without the consumer knowing the
+  catalogue. The step vocabulary rides the payload under `steps` (renamed from `producibleSteps` when it
+  widened past the entry subset; the gateway does not proxy `/public/*`, so it had no outside consumer)
+  so nothing hardcodes it.
 - **`/public/channel-funnel-economics`** serves ONE ROW PER PAIR — the grain the marketing site prints.
   A customer buys a PAIR, and the same chain costs a very different amount through a phone channel than
   through paid search, so a brand-level or channel-level aggregate cannot answer it. `?channelSlug=`
@@ -1420,19 +1548,24 @@ is reverted — the net/gross budget split (`grossDailyBudgetUsd`, `stats.gross*
 `fetchOrgUsageDiscountPct`, the `usage-discount` fetch) is **DELETED** (a config budget has ONE true value,
 no "net budget"; the admin only ever read `dailyBudgetUsd`, so the gross* twins had zero external consumers).
 
-- **`/internal/stats/accounts` (`buildAccountsAudit`)** — per-brand `dailyBudgetUsd` = the RAW configured
-  billing daily-budget (undiscounted). Fleet `stats.totalDailyBudgetUsd`/`mrrUsd`/`arrUsd` are pure budget
-  projections (Σ active budget, × 30, × 365) → undiscounted too. The ACTIVE verdict + row sort gate on this
-  same raw budget vs the actual balance (no separate gross field). `customer-health` reads `dailyBudgetUsd`
-  directly.
+- **`/internal/stats/accounts` (`buildAccountsAudit`)** — both per-brand budgets
+  (`configuredDailyBudgetUsd`, `runningDailyBudgetUsd`) are RAW, undiscounted figures. Fleet
+  `stats.totalRunningDailyBudgetUsd`/`mrrUsd`/`arrUsd` are pure budget projections (Σ active **running**
+  budget, × 30, × 365) → undiscounted too. The ACTIVE verdict + row sort gate on the running budget vs the
+  actual balance (no separate gross field). `customer-health` reads both directly.
 - **`/internal/stats/revenue`** — committed MRR/ARR (`currentMrrUsd`, `committedMrr.*`) are budget
-  projections (Σ active budget × 30) → **undiscounted** automatically (they read the accounts-audit
-  `stats.mrrUsd`/`totalDailyBudgetUsd`). **Realized-spend buckets STAY NET** (actual charges) — they read
+  projections (Σ active **running** budget × 30) → **undiscounted** automatically (they read the
+  accounts-audit `stats.mrrUsd`/`totalRunningDailyBudgetUsd`). **THE COMMITTED MRR/ARR SERIES BREAKS ON
+  2026-08-27 AND THAT STEP DOWN IS NOT CHURN.** Every daily snapshot recorded before that day was written
+  from the CONFIGURED budget — money posted on funnels with no ongoing campaign behind it — and a snapshot
+  cannot be replayed, so the history is not restatable. Measured at the cutover: **$3,450 → $2,610** MRR,
+  fleet daily budget **$138 configured → $87 running**. Anyone reading the curve, or writing copy about it,
+  must state the basis change at that date rather than read a lost customer. **Realized-spend buckets STAY NET** (actual charges) — they read
   runs' **frozen-NET twin `netActualCostInUsdCents`** on `/v1/stats/public/costs/timeseries`
   (`selectBucketActualCents`, `revenue-history-client.ts`); those are real billed spend, so net is correct.
   The distinction: budget-derived = undiscounted (config projection), realized-charge = net (money we bill).
 
-**Why in-place:** the admin renders `dailyBudgetUsd`/`mrrUsd` verbatim (no discount math of its own), so
+**Why in-place:** the admin renders the budget/`mrrUsd` figures verbatim (no discount math of its own), so
 fixing the value at the source corrects the admin display with ZERO dashboard change (distribute.you
 deploys to PROD straight off `main` — it has no staging buffer, so a dashboard-side fix could not be
 smoke-tested before customers saw it).
@@ -2124,13 +2257,16 @@ brand's features, budget counted ONCE — do NOT sum per (feature,brand), that d
 budget.**
 
 **Only ACTIVE accounts contribute — reuses `accountStatus()` from `accounts-compute.ts` (do NOT
-duplicate).** A (org, brand) enters `totalNewPerDay` iff `accountStatus(budget, balance, paused) ===
-"active"` — NOT paused (campaign-service brand pause) AND `dailyBudget > 0` AND `orgBalance > dailyBudget`
-(org spendable credit covers ≥1 more day). This is THE fix for the forecast OVER-count: before the gate,
-every brand that ever ran cold-email and still had a stale positive budget was summed in — incl. PAUSED
-brands and churned orgs with $0 credits — inflating the projection ~6× above the observed send rate.
-Org balance is fetched ONCE per org (shared across its brands); brand pause is read per (org, brand).
-Same status rule + same account universe as `/internal/stats/accounts`.
+duplicate).** A (org, brand) enters `totalNewPerDay` iff
+`accountStatus(configured, running, actualBalance, autoTopup) === "active"` — i.e. **RUNNING budget > 0**
+AND the org can fund it (auto-topup, or actual credit above a day of it). This is THE fix for the forecast
+OVER-count: before the gate, every brand that ever ran cold-email and still had a stale positive budget was
+summed in — incl. churned orgs with $0 credits — inflating the projection ~6× above the observed send rate.
+**`R_b` is built from the RUNNING budget too, not the configured one** — a ceiling with no ongoing campaign
+behind it launches no sequences, so counting it forecasts mail nobody will send. Org balance is fetched
+ONCE per org (shared across its brands); both budgets come from the one batched
+campaign-service `POST /brands/spendable-budget` call the audit makes. Same status rule + same account
+universe as `/internal/stats/accounts`.
 
 **Fleet enumeration = the 5 `*-cold-email-outreach` seed slugs** (`coldEmailOutreachSlugs`, derived at
 runtime from the `features` table, `slug.endsWith`) — the instantly cold-email sequences that série 2
@@ -2163,32 +2299,63 @@ injectable deps), new cross-org reads in `src/lib/accounts-client.ts`. 60s in-me
 (`__resetAccountsCache` seam), same pattern as the other `/internal/stats/*` audits. **All money +
 the active determination + MRR/ARR are computed HERE; the dashboard renders only.**
 
-Each row: `{ orgId, orgExternalId, ownerEmail, brandId, brandName, brandDomain, dailyBudgetUsd,
-orgBalanceUsd, orgActualBalanceUsd, autoTopupEnabled, status }`. Response also carries `stats {
-totalDailyBudgetUsd, mrrUsd, arrUsd, activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
+Each row: `{ orgId, orgExternalId, ownerEmail, brandId, brandName, brandDomain,
+configuredDailyBudgetUsd, runningDailyBudgetUsd, orgBalanceUsd, orgActualBalanceUsd, autoTopupEnabled,
+status }`. Response also carries `stats { totalRunningDailyBudgetUsd, totalConfiguredDailyBudgetUsd,
+mrrUsd, arrUsd, activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
 
-**STATUS rule (exact, single source `accountStatus(dailyBudget, actualBalance, autoTopup, paused)` — do
-NOT re-litigate). Precedence paused > active > inactive:** (1) `paused === true` (campaign-service brand
-pause) → `"paused"`; (2) else `dailyBudgetUsd != null && dailyBudgetUsd > 0 && (autoTopupEnabled ||
-orgActualBalanceUsd > dailyBudgetUsd)` → `"active"`; (3) else `"inactive"`. The credit test uses the
-**ACTUAL** balance (credited − ACTUALIZED usage), **NOT the spendable** figure — a provisioned hold is
-in-flight ACTIVE spend, so subtracting it wrongly read the busiest accounts "inactive" (the bug this
-fixed, features-service#502). An **auto-topup** org never runs dry → active regardless of the momentary
-balance (`has_auto_topup` is OPTIONAL on the balance read — absent ⇒ not-enabled, so the actual-balance
-path already corrects the verdict and auto-topup activates once billing ships it). A PAUSED brand keeps
-its budget but campaigns are HELD — so it is neither active nor plain-inactive (paused wins even over a
-funded budget). **All rows (active + paused + inactive) are LISTED — never dropped.**
-`stats.totalDailyBudgetUsd`/MRR(×30)/ARR(×365) sum ACTIVE rows ONLY (a paused brand is not spending).
-send-forecast's série-3 gate reuses `accountStatus` and counts only `"active"`.
+**AN ACCOUNT IS ACTIVE WHEN ITS MONEY IS RUNNING, NOT MERELY CONFIGURED — and the brand PAUSE FLAG is
+GONE from the rule, not kept as an override (supersedes the pause-first precedence of #427/#502).**
+Single source `accountStatus(configuredDailyBudgetUsd, runningDailyBudgetUsd, actualBalanceUsd,
+autoTopupEnabled)`, precedence **active > paused > inactive**: (1) `runningDailyBudgetUsd > 0 &&
+(autoTopupEnabled || orgActualBalanceUsd > runningDailyBudgetUsd)` → `"active"`; (2) else
+`configuredDailyBudgetUsd > 0` → `"paused"` (money POSTED with nothing running against it — the honest
+reading of a customer who set a ceiling and stopped, or never created, the campaign behind it); (3) else
+`"inactive"`.
+- **The pause flag LIED IN BOTH DIRECTIONS and is no longer written by any product surface.** That
+  customer control was removed; the campaign-service brand-pause table holds 8 rows, none written since
+  early August. Prod 2026-08-27: `a179bbd9` was flagged paused since 21 July while spending **$55.69 in
+  the prior 7 days** behind an ongoing campaign — so its money was excluded from MRR — while two brands
+  with a funded funnel and **no campaign at all** counted as active. Do NOT re-add it "just in case":
+  a stale flag that contradicts the running money is worse than no flag, and the running figure already
+  answers the question the flag was standing in for. `fetchBrandPause` is deleted, not disabled.
+- **The credit test is still the ACTUAL balance** (credited − ACTUALIZED usage), **never the spendable**
+  figure — a provisioned hold is in-flight ACTIVE spend, so subtracting it wrongly read the busiest
+  accounts "inactive" (features-service#502, unchanged). It gates on the RUNNING budget now, because
+  that is what a day of spending actually costs the org. An **auto-topup** org never runs dry → active
+  regardless of the momentary balance (`has_auto_topup` OPTIONAL, absent ⇒ not-enabled).
+- **All rows (active + paused + inactive) are LISTED — never dropped.** `stats.totalRunningDailyBudgetUsd`
+  and MRR(×30)/ARR(×365) sum **RUNNING** budget over ACTIVE rows only; `totalConfiguredDailyBudgetUsd`
+  rides alongside so a reader sees what those same customers POSTED and can never mistake one for the
+  other. send-forecast's série-3 gate reuses `accountStatus` and counts only `"active"`, so it projects
+  from the running budget too — a ceiling nobody spends against launches no sequences.
+- **Expect the fleet numbers to STEP DOWN on the day this deploys, and it is not churn.** Prod
+  2026-08-27, before → after: MRR **$3,450 → $2,610**, fleet daily budget **$138 configured → $87
+  running**, activeCount → **4**, which is exactly the number of brands that billed cold-email spend in
+  the prior 7 days. The committed MRR/ARR daily snapshots already recorded were written with the
+  inflated figure and **cannot be replayed** — see the staff-metrics section, which states the same
+  break beside the series it describes.
+- Guards: `src/lib/accounts-compute.test.ts` (the rule at each branch, the three production shapes, the
+  running-vs-configured split in `stats`) + `src/lib/accounts-client.test.ts` (pair keying, batching at
+  the producer's cap, and the unavailable-pair THROW). (Set 2026-08-27, features-service#837.)
 
 **Account universe = the SAME source send-forecast uses** — lead-service `/internal/feature-memberships`
 over the cold-email slugs (`coldEmailOutreachSlugs`), deduped to distinct (org, brand). Org-level reads
-(balance + Clerk id + owner email) run ONCE per org; the daily budget + the brand pause state are
-per-(org,brand); brand name/domain is one batched brand-service call. Fail loud on any read error.
+(balance + Clerk id + owner email) run ONCE per org; both budgets come back for EVERY pair in ONE
+batched call; brand name/domain is one batched brand-service call. Fail loud on any read error.
 
-- **paused** = campaign-service **`GET /brands/:brandId/pause`** → `{ paused }` (api-key + x-org-id; no
-  user/run). The brand pause lives in campaign-service (NOT brand/billing): a brand can be paused while
-  keeping a non-zero daily budget. No pause row → `paused:false` (active by default). Fail loud.
+- **configuredDailyBudgetUsd / runningDailyBudgetUsd** = campaign-service **`POST
+  /brands/spendable-budget`** (api-key, `{ brands: [{orgId, brandId}] }`, producer cap **500 pairs**
+  per request — `fetchSpendableBudgets`, `accounts-client.ts`). **Do NOT read billing's brand daily
+  budget here any more**: billing keys a ceiling on (funnel × channel × offer) and stores NO campaign
+  status, so its total is status-BLIND and counts money sitting on funnels whose campaign is stopped or
+  was never created. campaign-service owns the join of campaign status to per-funnel ceiling, so it is
+  the only service that can answer "running", and it returns BOTH figures plus `campaigns[]`/`rows[]`
+  decompositions — **never sum those; the producer already totalled them.** A ceiling written before the
+  offer level (`offerId: null`) still counts as RUNNING when a campaign on its funnel and channel is
+  ongoing. **A pair listed in the response's `unavailable[]` THROWS** — reading it as zero would
+  silently shrink a fleet total, which is the same reason the producer refuses to send a zero. The
+  BULK route exists precisely so a fleet audit does not fan out one request per brand.
 
 - **orgBalanceUsd / orgActualBalanceUsd / autoTopupEnabled** = billing **`GET
   /internal/accounts/by-org/:orgId/balance`** (user-less internal read — api-key only, org in path; NOT
@@ -2203,8 +2370,6 @@ per-(org,brand); brand name/domain is one batched brand-service call. Fail loud 
   auto-topup** (an org that never funded a wallet is inactive by the rule). That is a documented billing
   semantic, NOT a swallowed error — do NOT "fix" it to fail-loud (it would 500 the whole fleet audit on
   one unfunded org). Any OTHER non-OK fails loud.
-- **dailyBudgetUsd** = billing `GET /internal/brands/:brandId/daily-budget` (reuses
-  `fetchBrandDailyBudgetUsd`); `dailyBudgetCents:null` = unset/paused → row inactive.
 - **orgExternalId** (Clerk `org_...`) = client-service `GET /internal/orgs/:orgId` (NEW producer read,
   client-service). **ownerEmail** = client-service `GET /internal/users?orgId=` → earliest-created
   user's email (owner proxy; no staff flag exposed, so earliest-createdAt is the heuristic). A
@@ -2214,7 +2379,8 @@ per-(org,brand); brand name/domain is one batched brand-service call. Fail loud 
 - **brandName/brandDomain** = brand-service `GET /internal/brands?ids=` (batch, ≤100/req; missing ids
   omitted → null name/domain, still listed).
 
-Rows sort active-first, then daily budget desc (nulls last), tiebreak brandId. **Depends on the NEW
+Rows sort active-first, then RUNNING budget desc, then CONFIGURED budget desc (a paused row runs
+nothing, so its posted money is what ranks it), tiebreak brandId. **Depends on the NEW
 client-service `GET /internal/orgs/:orgId` + the SHARED `CLIENT_SERVICE_URL`/`CLIENT_SERVICE_API_KEY`
 in features-service's env file on the deploy host (`/root/distribute/env/features-service.env`), for
 both prod and staging.** Additive/dormant (no dashboard consumer yet). Reuses
@@ -2255,7 +2421,10 @@ an averaged ROI dressed as the brand's own) — and the revenue engine is not ev
 
 **Health badge (owned thresholds):** `red` = not active (paused/inactive/no budget); `green` = active AND
 ROI ≥ 1 AND audience not near-exhausted (`pctUsed < 80`); `yellow` = active but ROI < 1 (or unknown) OR
-audience `pctUsed ≥ 80`. The badge + its INPUTS are both returned (`health.inputs`).
+audience `pctUsed ≥ 80`. The badge + its INPUTS are both returned (`health.inputs`). **`hasBudget` reads
+the RUNNING budget** (`account.runningDailyBudgetUsd > 0`), the same rule `accountStatus` applies — a
+customer whose posted ceiling stands behind no ongoing campaign is not a green account. The row states
+BOTH budgets so a CSM can see the gap between what was posted and what is live.
 
 **Audience size/remaining/%used** derive from `AudienceStatsRow.evidence.memberCount` — a NEW field added to
 the audience evidence (`memberCount` = distinct member emails, ALREADY fetched for the outcome join, so free;
@@ -2633,6 +2802,46 @@ before baking is mandatory.**
 | `src/seed/features.ts` | Seed feature definitions (registered at cold start) |
 | `src/middleware/auth.ts` | API key + identity header auth |
 | `openapi.json` | Generated — never edit manually |
+
+## A CHANGE THAT SUPERSEDES A DOCUMENTED RULE UPDATES THIS FILE IN THE SAME PR
+
+Most sections here open by stating an invariant and then say "do NOT re-litigate". That wording is what
+makes the next agent trust them, so a section describing a rule the code no longer follows is worse than
+no section: it is a premise someone will build on. `tsc` and the suite cannot catch it — the tests were
+rewritten around the new rule and pass, while the doc keeps asserting the old one.
+
+Before opening a PR that changes a RULE (a verdict, a precedence, a basis, a producer, a field name a
+section names), `git grep` this file for the identifiers you touched and rewrite every section that
+answers with the old rule — including the SIBLING surfaces that share the code (`accountStatus` is read
+by the accounts audit, send-forecast and customer-health, so one rule change is three sections). State
+what it supersedes and why, so the reasoning that produced the old rule is not re-derived later.
+
+Cost 2026-08-27 (#837 → #838): the accounts audit moved to campaign-service's running budget and dropped
+the brand pause flag, and this file went on documenting the pause-first precedence, `dailyBudgetUsd`, and
+billing as the budget source in four places — a second PR the same day. Corollary the brief named
+explicitly: when a change BREAKS a recorded series (a snapshot basis that cannot be replayed), say so
+beside the section that DESCRIBES that series, not only in the section that caused it — a reader of the
+curve will not be reading the section that moved it.
+
+## A CHANGE THAT SUPERSEDES A DOCUMENTED RULE UPDATES THIS FILE IN THE SAME PR
+
+Most sections here open by stating an invariant and then say "do NOT re-litigate". That wording is what
+makes the next agent trust them, so a section describing a rule the code no longer follows is worse than
+no section: it is a premise someone will build on. `tsc` and the suite cannot catch it — the tests were
+rewritten around the new rule and pass, while the doc keeps asserting the old one.
+
+Before opening a PR that changes a RULE (a verdict, a precedence, a basis, a producer, a field name a
+section names), `git grep` this file for the identifiers you touched and rewrite every section that
+answers with the old rule — including the SIBLING surfaces that share the code (`accountStatus` is read
+by the accounts audit, send-forecast and customer-health, so one rule change is three sections). State
+what it supersedes and why, so the reasoning that produced the old rule is not re-derived later.
+
+Cost 2026-08-27 (#837 → #838): the accounts audit moved to campaign-service's running budget and dropped
+the brand pause flag, and this file went on documenting the pause-first precedence, `dailyBudgetUsd`, and
+billing as the budget source in four places — a second PR the same day. Corollary the brief named
+explicitly: when a change BREAKS a recorded series (a snapshot basis that cannot be replayed), say so
+beside the section that DESCRIBES that series, not only in the section that caused it — a reader of the
+curve will not be reading the section that moved it.
 
 ## OpenAPI Rule
 

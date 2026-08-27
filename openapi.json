@@ -5604,6 +5604,241 @@
           "channels"
         ]
       },
+      "OfferChainsResponse": {
+        "type": "object",
+        "properties": {
+          "offerId": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ],
+            "description": "What the customer was CHARGED — a comped cost is not in it. Same accounting basis as every other org-scoped money read."
+          },
+          "costCoverage": {
+            "type": "string",
+            "enum": [
+              "platform_spend_only"
+            ],
+            "description": "Which dollars this cost is made of: the platform spend runs-service ledgers, and nothing else. Some steps of a chain are performed by a human on the customer's side and the platform spends nothing on them, so a chain whose last legs are manual reads cheaper here than it truly is. lead-service is adding a customer-declared cost per step transition and exposes none today; inventing one would be the fabricated figure this read refuses everywhere else, so the basis is stated on the wire instead."
+          },
+          "chains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "funnelKey": {
+                  "type": "string",
+                  "description": "The sales chain, canonicalised onto this service's catalogue."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "The chain's buyer-facing name."
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The chain's steps in order, so a row renders without the consumer knowing the catalogue."
+                },
+                "campaignIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Every campaign of the offer selling through this chain, ascending. ONE today; one per STEP as the product moves — the row is the same computation over the larger set."
+                },
+                "channels": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "featureSlug": {
+                        "type": "string",
+                        "description": "The acquisition channel — a feature slug, this fleet's only name for one."
+                      },
+                      "campaignIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "The campaigns of this brand selling this offer through this channel, ascending."
+                      }
+                    },
+                    "required": [
+                      "featureSlug",
+                      "campaignIds"
+                    ]
+                  },
+                  "description": "The acquisition channels carrying this chain, ascending by slug."
+                },
+                "priced": {
+                  "type": "boolean",
+                  "description": "Whether this chain's money could be turned into a return. False leaves every money-derived figure null and names the missing ingredient below."
+                },
+                "unpricedReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_channel_funnel",
+                    "no_economics_declared",
+                    "chain_not_declared"
+                  ],
+                  "description": "Why the return is null, checked in this order so the plain thing is said first. no_channel_funnel: no channel carrying this chain measures anything (no funnel wired), so the leads are never read and `outcomes` is null too. no_economics_declared: the brand states no economics, or its declaration could not be read, so this chain has no rates and no lifetime revenue of its own. chain_not_declared: the declaration IS readable and does not contain this chain. In all three the SPEND is real and reported — the customer paid it — and the pipeline, the return and the cost of acquisition are null, never 0 and never the brand-wide record the un-narrowed reads legitimately fall back to (pricing one chain on a server-defaulted brand row is the fiction the retired goal produced, one grain finer)."
+                },
+                "headline": {
+                  "type": "object",
+                  "properties": {
+                    "totalPipelineUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Org-deduped expected pipeline. Null when no funnel is wired, or the brand has no saved economics AND no cross-brand average exists (cold start)."
+                    },
+                    "economicsSource": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "sales-economics",
+                        "cross-brand-average"
+                      ],
+                      "description": "Provenance of the economics used: 'sales-economics' = the brand's own saved set; 'cross-brand-average' = the brand-service cross-brand average fallback (revenue is an ESTIMATE, not user-confirmed). Null when the pipeline is null (no funnel wired or no economics applied)."
+                    }
+                  },
+                  "required": [
+                    "totalPipelineUsd",
+                    "economicsSource"
+                  ]
+                },
+                "costEconomics": {
+                  "type": "object",
+                  "properties": {
+                    "committedCostUsd": {
+                      "type": "number",
+                      "description": "COMMITTED run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0) — billed `actual` PLUS the open `provisioned` holds. THE spend basis: every money figure below divides by it, and it is byte the same total the `spend` block reports as totalSpentCents, so the ROI a campaign row shows and the 'Total spent' the Overview shows can never describe different money. This is the field a consumer renders as '$ Invested'. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
+                    },
+                    "actualCostUsd": {
+                      "type": "number",
+                      "description": "Billed-only run spend for the same scope, in dollars (>= 0) — EXCLUDES the open provisioned holds. TRANSITIONAL AND REPORTED ONLY: it is kept populated (and still honestly billed-only, because a field whose name asserts 'actual' must never start carrying a committed value) so a consumer rendering money off this field has a gap-free path onto committedCostUsd. NOTHING divides by it any more — ROI, %CAC, cost per acquisition and cost per conversion all ride committedCostUsd. (features-service#396, naming features-service#402, single basis features-service#779)"
+                    },
+                    "costOfAcquisitionPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                    },
+                    "roiMultiple": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                    },
+                    "costPerAcquisitionUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
+                    },
+                    "expectedConversions": {
+                      "type": "number",
+                      "description": "LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "costPerConversionUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    }
+                  },
+                  "required": [
+                    "committedCostUsd",
+                    "actualCostUsd",
+                    "costOfAcquisitionPct",
+                    "roiMultiple",
+                    "costPerAcquisitionUsd"
+                  ],
+                  "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
+                },
+                "outcomes": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "recipientsContacted": {
+                      "type": "number",
+                      "description": "Distinct leads this grain reached for this brand — the grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer."
+                    },
+                    "recipientsClicked": {
+                      "type": "number",
+                      "description": "Distinct leads that visited the site off this grain — twin of recipientsClicked.total."
+                    },
+                    "recipientsRepliesPositive": {
+                      "type": "number",
+                      "description": "Distinct leads that replied positively — twin of recipientsRepliesPositive.total."
+                    },
+                    "committedSpentCents": {
+                      "type": "number",
+                      "description": "COMMITTED spend attributed to this grain, in cents — costEconomics.committedCostUsd in the unit the two rates are denominated in."
+                    },
+                    "actualSpentCents": {
+                      "type": "number",
+                      "description": "Billed-only spend for this grain, in cents. TRANSITIONAL — reported for consumer migration, divided by nowhere."
+                    },
+                    "cpcCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Realized spend ÷ website visits, in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."
+                    },
+                    "cpprCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."
+                    }
+                  },
+                  "required": [
+                    "recipientsContacted",
+                    "recipientsClicked",
+                    "recipientsRepliesPositive",
+                    "committedSpentCents",
+                    "actualSpentCents",
+                    "cpcCents",
+                    "cpprCents"
+                  ],
+                  "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
+                }
+              },
+              "required": [
+                "funnelKey",
+                "name",
+                "steps",
+                "campaignIds",
+                "channels",
+                "priced",
+                "unpricedReason",
+                "headline",
+                "costEconomics",
+                "outcomes"
+              ]
+            },
+            "description": "One LEAN row per chain the offer sells through, in the catalogue's canonical order. Lean (headline + costEconomics + outcomes) because a table polls it: a full body per chain would repeat the whole lead population once per row."
+          },
+          "unattributedCampaignIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Campaigns of this offer that state no chain (or one the catalogue does not know), ascending. Their spend is in NO row and still in the offer's own total, which narrows by nothing — stated so a reader sees the difference rather than wondering why the rows do not add up to the offer."
+          }
+        },
+        "required": [
+          "offerId",
+          "brandId",
+          "costBasis",
+          "costCoverage",
+          "chains",
+          "unattributedCampaignIds"
+        ]
+      },
       "OfferAudienceStatsResponse": {
         "type": "object",
         "properties": {
@@ -8601,10 +8836,13 @@
                   "type": "string",
                   "nullable": true
                 },
-                "dailyBudgetUsd": {
+                "configuredDailyBudgetUsd": {
                   "type": "number",
-                  "nullable": true,
-                  "description": "The RAW configured brand daily budget in USD. The per-org usage discount is a charge modifier and is NEVER applied to this configuration ceiling — two orgs with the same configured budget show the same number regardless of their discounts. Null when unset/paused."
+                  "description": "Every ceiling this (org, brand) configured, in USD — what the customer SET, not what can be spent today. The per-org usage discount is a charge modifier and is NEVER applied to a configuration ceiling, so two orgs with the same configured budget show the same number regardless of their discounts."
+                },
+                "runningDailyBudgetUsd": {
+                  "type": "number",
+                  "description": "The part of the configured ceiling standing behind a campaign that is ONGOING right now, in USD (campaign-service joins the campaign status to billing's per-funnel rows). This is the money in play — what the active verdict and every fleet total read. Lower than configured whenever a funded funnel's campaign is stopped or was never created."
                 },
                 "orgBalanceUsd": {
                   "type": "number",
@@ -8625,7 +8863,7 @@
                     "paused",
                     "inactive"
                   ],
-                  "description": "Precedence paused > active > inactive: 'paused' iff campaign-service brand pause=true; else 'active' iff dailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>dailyBudgetUsd); else 'inactive'."
+                  "description": "Precedence active > paused > inactive: 'active' iff runningDailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."
                 }
               },
               "required": [
@@ -8635,7 +8873,8 @@
                 "brandId",
                 "brandName",
                 "brandDomain",
-                "dailyBudgetUsd",
+                "configuredDailyBudgetUsd",
+                "runningDailyBudgetUsd",
                 "orgBalanceUsd",
                 "orgActualBalanceUsd",
                 "autoTopupEnabled",
@@ -8646,17 +8885,21 @@
           "stats": {
             "type": "object",
             "properties": {
-              "totalDailyBudgetUsd": {
+              "totalRunningDailyBudgetUsd": {
                 "type": "number",
-                "description": "Σ RAW configured daily budget over ACTIVE rows only (USD; undiscounted — a budget is a config ceiling, not a charge; paused/inactive excluded). The staff metrics-page figure."
+                "description": "Σ RUNNING daily budget over ACTIVE rows only (USD; undiscounted — a budget is a config ceiling, not a charge; paused/inactive excluded). The staff metrics-page figure: what the fleet can actually spend today."
+              },
+              "totalConfiguredDailyBudgetUsd": {
+                "type": "number",
+                "description": "Σ CONFIGURED daily budget over the SAME ACTIVE rows (USD). What those customers posted, whatever is running against it — stated beside the running total so the two can never be mistaken for one another."
               },
               "mrrUsd": {
                 "type": "number",
-                "description": "MRR = totalDailyBudgetUsd × 30 (a budget projection, undiscounted)."
+                "description": "MRR = totalRunningDailyBudgetUsd × 30 (a budget projection, undiscounted)."
               },
               "arrUsd": {
                 "type": "number",
-                "description": "ARR = totalDailyBudgetUsd × 365 (a budget projection, undiscounted)."
+                "description": "ARR = totalRunningDailyBudgetUsd × 365 (a budget projection, undiscounted)."
               },
               "activeCount": {
                 "type": "integer"
@@ -8672,7 +8915,8 @@
               }
             },
             "required": [
-              "totalDailyBudgetUsd",
+              "totalRunningDailyBudgetUsd",
+              "totalConfiguredDailyBudgetUsd",
               "mrrUsd",
               "arrUsd",
               "activeCount",
@@ -8766,11 +9010,15 @@
                     "paused",
                     "inactive"
                   ],
-                  "description": "Same composition as GET /internal/stats/accounts (pause > active > inactive; active needs budget > 0 AND funded/auto-topup)."
+                  "description": "Same composition as GET /internal/stats/accounts (active > paused > inactive; active needs a RUNNING budget > 0 AND funded/auto-topup; paused means money posted with nothing running)."
                 },
-                "dailyBudgetUsd": {
+                "configuredDailyBudgetUsd": {
                   "type": "number",
-                  "nullable": true
+                  "description": "Every ceiling this (org, brand) configured, in USD."
+                },
+                "runningDailyBudgetUsd": {
+                  "type": "number",
+                  "description": "The part of it standing behind an ongoing campaign, in USD — the money in play."
                 },
                 "orgBalanceUsd": {
                   "type": "number",
@@ -9207,7 +9455,8 @@
                 "activeThisMonth",
                 "activeDays",
                 "status",
-                "dailyBudgetUsd",
+                "configuredDailyBudgetUsd",
+                "runningDailyBudgetUsd",
                 "orgBalanceUsd",
                 "orgActualBalanceUsd",
                 "autoTopupEnabled",
@@ -9928,8 +10177,17 @@
             "enum": [
               "outbound_one_to_one",
               "paid_reach",
-              "earned"
+              "earned",
+              "conversion"
             ]
+          },
+          "operatedBy": {
+            "type": "string",
+            "enum": [
+              "platform",
+              "customer"
+            ],
+            "description": "WHO puts the hours in. `platform` is us, and the daily operating cost is what that costs. `customer` is their own founder or team, so the platform spends nothing and the daily operating cost is 0 — a stated fact, not a blank. What such a leg costs THEM is declared per lead against lead-service; this catalogue never guesses at it."
           },
           "terms": {
             "type": "object",
@@ -9953,6 +10211,82 @@
               "maxDaysToFirstProduction"
             ]
           },
+          "stepTransitions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "enum": [
+                        "conversation",
+                        "website_visit",
+                        "meeting_booked",
+                        "meeting_attended",
+                        "signup",
+                        "form_filled",
+                        "paid_client",
+                        "in_ad_form_submission",
+                        "in_ad_booked_meeting"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                    "description"
+                  ],
+                  "description": "The step this channel takes a lead OUT of. NULL is 'from nothing' — the lead was not on the chain at all until this channel produced its first step, which is the SPECIAL case rather than the rule."
+                },
+                "to": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "enum": [
+                        "conversation",
+                        "website_visit",
+                        "meeting_booked",
+                        "meeting_attended",
+                        "signup",
+                        "form_filled",
+                        "paid_client",
+                        "in_ad_form_submission",
+                        "in_ad_booked_meeting"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                    "description"
+                  ],
+                  "description": "The step this channel moves the lead TO."
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ]
+            },
+            "description": "Every LEG this channel performs: which step it moves a lead FROM and which step it moves it TO. A chain is sold leg by leg, not only end to end — booking a meeting, getting it held, and closing it are three separate things to buy. `from: null` means the channel moves a lead from nothing onto the chain's first step."
+          },
           "producibleSteps": {
             "type": "array",
             "items": {
@@ -9963,6 +10297,11 @@
                   "enum": [
                     "conversation",
                     "website_visit",
+                    "meeting_booked",
+                    "meeting_attended",
+                    "signup",
+                    "form_filled",
+                    "paid_client",
                     "in_ad_form_submission",
                     "in_ad_booked_meeting"
                   ]
@@ -9980,7 +10319,7 @@
                 "description"
               ]
             },
-            "description": "The kinds of step this channel can PRODUCE. A sales funnel states what step STARTS it, so a consumer joins the two to decide which pairings are possible."
+            "description": "The steps this channel produces FROM NOTHING — DERIVED as the `to` of its `from: null` legs, and unchanged in meaning from before a channel could state an internal leg. A channel that only performs internal legs of a chain legitimately produces none."
           },
           "salesFunnels": {
             "type": "array",
@@ -10006,7 +10345,7 @@
                 "steps"
               ]
             },
-            "description": "The sales funnels this channel may be SOLD THROUGH — DERIVED from what it produces, so it can never drift from `producibleSteps`. An empty list is a real statement (no deployed chain starts from anything this channel produces), not a gap."
+            "description": "The sales funnels this channel may be SOLD THROUGH — DERIVED as every declared chain containing one of its `stepTransitions` as a leg, so it can never drift from them. An empty list is a real statement (no deployed chain takes any step this channel performs), not a gap."
           }
         },
         "required": [
@@ -10016,7 +10355,9 @@
           "icon",
           "displayOrder",
           "family",
+          "operatedBy",
           "terms",
+          "stepTransitions",
           "producibleSteps",
           "salesFunnels"
         ]
@@ -10030,7 +10371,7 @@
               "$ref": "#/components/schemas/PublicAcquisitionChannel"
             }
           },
-          "producibleSteps": {
+          "steps": {
             "type": "array",
             "items": {
               "type": "object",
@@ -10040,6 +10381,11 @@
                   "enum": [
                     "conversation",
                     "website_visit",
+                    "meeting_booked",
+                    "meeting_attended",
+                    "signup",
+                    "form_filled",
+                    "paid_client",
                     "in_ad_form_submission",
                     "in_ad_booked_meeting"
                   ]
@@ -10057,12 +10403,12 @@
                 "description"
               ]
             },
-            "description": "The step vocabulary itself, published so a consumer never hardcodes it to join against a funnel's entry step."
+            "description": "The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a chain's. It spans EVERY step of every chain, not only the ones a chain can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a chain starts at."
           }
         },
         "required": [
           "channels",
-          "producibleSteps"
+          "steps"
         ]
       },
       "ChannelFunnelPair": {
@@ -14678,6 +15024,176 @@
         }
       }
     },
+    "/offers/{offerId}/chains": {
+      "get": {
+        "summary": "What each of an offer's sales chains cost and returned",
+        "description": "The (offer x sales chain) grain: one row per chain the offer is sold through, each carrying that chain's own spend, pipeline, return per dollar and cost of acquisition. It is the grain the product needs as it moves to ONE CAMPAIGN PER STEP — a campaign then buys a single link and has no return of its own, because the lifetime revenue sits at the end of the chain. Correct under both shapes with no switch: the row is scoped to the chain's CAMPAIGN SET, so a chain served by one campaign (every chain in production today) is byte-equal to that campaign's own answer, and a chain served by one campaign per step is the same row over the larger set. Each chain is priced on its OWN declared terms — its own rates and its own lifetime revenue — so a $200 self-serve chain and a $20k contract chain are never blended. A chain we cannot price says which ingredient is missing (`unpricedReason`) and reports its real spend beside a null return. The composition happens here: nothing on this response is meant to be summed in a browser, and the rows deliberately do not sum on the people half.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "offerId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID (required) — an offer belongs to a brand."
+            },
+            "required": true,
+            "description": "Brand UUID (required) — an offer belongs to a brand.",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."
+            },
+            "required": false,
+            "description": "Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One row per sales chain the offer is sold through",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferChainsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing brandId, or an invalid pricing value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels) — never the brand's own numbers under the offer's label",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A chain is carried by channels that price on different funnels (reason: offer_channels_price_differently), so its money cannot honestly be answered as one figure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/offers/{offerId}/audience-stats": {
       "get": {
         "summary": "An offer's per-audience economics, across every channel it is sold through",
@@ -16646,7 +17162,7 @@
     "/internal/stats/accounts": {
       "get": {
         "summary": "Fleet-wide cold-email customer accounts audit (internal, api-key; staff-gated at api-service)",
-        "description": "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with its daily budget, the org's spendable credit balance, and a 3-way status, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). Status precedence paused > active > inactive: 'paused' iff the campaign-service brand pause is set (campaigns HELD, budget kept); else 'active' iff dailyBudgetUsd > 0 && (autoTopupEnabled || orgActualBalanceUsd > dailyBudgetUsd) — the ACTUAL balance (actualized usage only), NOT the spendable balance (which subtracts in-flight provisioned holds); else 'inactive'. All rows (active + paused + inactive) are LISTED, never dropped. Stats sum ACTIVE rows only (a paused brand is not spending). The daily budget is the RAW configured ceiling — the per-org usage discount is a charge modifier and is NEVER applied to it, so two orgs with the same configured budget show the same number regardless of their discounts; totalDailyBudgetUsd/MRR/ARR are pure budget projections (× 30 / × 365) and are undiscounted too. All money + the status determination are computed here; the dashboard renders only.",
+        "description": "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with BOTH of its daily budgets, the org's spendable credit balance, and a 3-way status, plus fleet financial stats (total RUNNING daily budget → MRR = ×30 → ARR = ×365). Two budgets, answering different questions: CONFIGURED is every ceiling the customer set in billing; RUNNING is the part of it standing behind a campaign that is ongoing right now (campaign-service joins its own campaign status to billing's per-funnel ceilings — billing's brand total is status-blind and counts money on funnels whose campaign is stopped or was never created). Everything that claims to be money in play reads RUNNING. Status precedence active > paused > inactive: 'active' iff runningDailyBudgetUsd > 0 && (autoTopupEnabled || orgActualBalanceUsd > runningDailyBudgetUsd) — the ACTUAL balance (actualized usage only), NOT the spendable balance (which subtracts in-flight provisioned holds); else 'paused' iff configuredDailyBudgetUsd > 0, i.e. money posted with nothing running against it; else 'inactive'. There is NO brand-level pause flag in this rule any more: that control was removed from the product, the flag stopped being written, and it lied in both directions. All rows (active + paused + inactive) are LISTED, never dropped. Stats sum ACTIVE rows only (a paused brand is not spending). Neither budget carries the per-org usage discount — that is a charge modifier, never applied to a configuration ceiling — so totalRunningDailyBudgetUsd/MRR/ARR are pure undiscounted budget projections (× 30 / × 365). All money + the status determination are computed here; the dashboard renders only.",
         "tags": [
           "Internal"
         ],
@@ -17706,7 +18222,7 @@
     "/public/channels": {
       "get": {
         "summary": "Every acquisition channel, its commercial terms and what it can produce (public, no auth)",
-        "description": "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), the kinds of step it can PRODUCE, and the sales funnels that follow from those steps. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
+        "description": "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), which LEG of a chain it performs (the step it moves a lead FROM and the step it moves it TO), who operates it, and the sales funnels that follow from those legs. A chain is sellable LEG BY LEG rather than only end to end, so the catalogue publishes channels for the internal steps a human performs — the ones a specialist of ours runs and the ones the customer runs themselves. A channel the CUSTOMER operates spends none of the platform's money, so its daily operating cost is 0 and `operatedBy` is what makes that zero legible. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
         "tags": [
           "Public"
         ],

@@ -41,7 +41,8 @@ function account(over: Partial<AccountRow> & { orgId: string; brandId: string; s
     ownerEmail: `${over.orgId}@ex.com`,
     brandName: `Brand ${over.brandId}`,
     brandDomain: `${over.brandId}.com`,
-    dailyBudgetUsd: 50,
+    configuredDailyBudgetUsd: 50,
+    runningDailyBudgetUsd: 50,
     orgBalanceUsd: 1000,
     orgActualBalanceUsd: 1000,
     autoTopupEnabled: false,
@@ -166,7 +167,7 @@ function makeDeps(fixtures: {
 }): CustomerHealthDeps {
   const audit: AccountsAudit = {
     rows: fixtures.accounts,
-    stats: { totalDailyBudgetUsd: 0, mrrUsd: 0, arrUsd: 0, activeCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
+    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, mrrUsd: 0, arrUsd: 0, activeCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
     asOf: NOW.toISOString(),
   };
   const byUser: ActiveUsersByUser = {
@@ -283,10 +284,11 @@ describe("buildCustomerHealthBoard", () => {
   it("YELLOW when active but ROI<1 OR audience near-exhausted; RED when paused/inactive; ordering active-first then recency", async () => {
     const deps = makeDeps({
       accounts: [
-        account({ orgId: "b", brandId: "bb", status: "active", dailyBudgetUsd: 50 }),
-        account({ orgId: "c", brandId: "bc", status: "active", dailyBudgetUsd: 50 }),
-        account({ orgId: "d", brandId: "bd", status: "paused", dailyBudgetUsd: 50 }),
-        account({ orgId: "e", brandId: "be", status: "inactive", dailyBudgetUsd: null }),
+        account({ orgId: "b", brandId: "bb", status: "active", runningDailyBudgetUsd: 50 }),
+        account({ orgId: "c", brandId: "bc", status: "active", runningDailyBudgetUsd: 50 }),
+        // Posted money, nothing running against it — the shape "paused" now names.
+        account({ orgId: "d", brandId: "bd", status: "paused", configuredDailyBudgetUsd: 50, runningDailyBudgetUsd: 0 }),
+        account({ orgId: "e", brandId: "be", status: "inactive", configuredDailyBudgetUsd: 0, runningDailyBudgetUsd: 0 }),
       ],
       recencies: [recency("b", "2026-07-10"), recency("c", "2026-07-12"), recency("d", "2026-07-05")],
       perBrand: {

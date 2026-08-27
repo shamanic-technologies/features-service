@@ -3,7 +3,7 @@
  *
  * Four producer reads, all api-key service-to-service:
  *   - org spendable balance      → billing-service  GET /internal/accounts/by-org/:orgId/balance  (api-key only, org in path)
- *   - brand pause state          → campaign-service GET /brands/:brandId/pause  (api-key + x-org-id)
+ *   - spendable daily budget     → campaign-service POST /brands/spendable-budget  (api-key, pairs in body)
  *   - org Clerk id + owner email → client-service   GET /internal/orgs/:orgId + GET /internal/users
  *   - brand name + domain        → brand-service    GET /internal/brands?ids=  (batch, ≤100/req)
  *
@@ -89,24 +89,93 @@ function campaignConfig(): { url: string; apiKey: string } {
   return { url, apiKey };
 }
 
+export interface BrandSpendableBudget {
+  /** Every ceiling the customer configured for this brand, in USD. */
+  configuredUsd: number;
+  /** The part of it attached to a campaign that is ongoing right now, in USD. */
+  runningUsd: number;
+}
+
+/** campaign-service caps one bulk request at 500 (org, brand) pairs. */
+const SPENDABLE_BATCH_CAP = 500;
+
+/** Map key for a (org, brand) pair — one brand row is claimed by several orgs, each funding its own. */
+export function spendableKey(orgId: string, brandId: string): string {
+  return `${orgId}::${brandId}`;
+}
+
 /**
- * Whether a brand is PAUSED, from campaign-service `GET /brands/:brandId/pause` → `{ paused }`.
- * The brand active/paused status lives in campaign-service (NOT brand/billing): a brand can be paused
- * while keeping a non-zero daily budget (campaigns are HELD, not stopped). Pause is keyed by
- * (org, brand), so the owning org's x-org-id is required (api-key + x-org-id only — no user/run).
- * No pause row → `paused:false` (active by default). Fail loud on any non-OK.
+ * What each (org, brand) may actually spend today, from campaign-service
+ * `POST /brands/spendable-budget` → `{ brands[], unavailable[] }`.
+ *
+ * Two figures come back per pair and they answer different questions. CONFIGURED is every ceiling the
+ * customer set in billing; RUNNING is the part of it standing behind a campaign that is ongoing right
+ * now. billing's own brand total is the configured one and is status-BLIND — it counts money sitting on
+ * funnels whose campaign is stopped or was never created — so the audit's money, its active verdict and
+ * the MRR built on them all read the RUNNING figure. Neither is derivable from the other here: the join
+ * of campaign status to per-funnel ceiling lives in campaign-service, which owns the first half.
+ *
+ * Batched at the producer's cap. A pair campaign-service could not price is listed in `unavailable`
+ * and carries NO figures — we THROW rather than read it as zero, which would silently shrink a fleet
+ * total (the same reason the producer refuses to send a zero). Fail loud on any non-OK.
  */
-export async function fetchBrandPaused(brandId: string, orgId: string): Promise<boolean> {
+export async function fetchSpendableBudgets(
+  pairs: Array<{ orgId: string; brandId: string }>,
+): Promise<Map<string, BrandSpendableBudget>> {
+  const out = new Map<string, BrandSpendableBudget>();
+  if (pairs.length === 0) return out;
+
   const { url, apiKey } = campaignConfig();
-  const response = await fetchWithRetry(`${url}/brands/${encodeURIComponent(brandId)}/pause`, {
-    headers: { "x-api-key": apiKey, "x-org-id": orgId },
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`[features-service] campaign-service /brands/:brandId/pause failed (${response.status}): ${body}`);
+  for (let i = 0; i < pairs.length; i += SPENDABLE_BATCH_CAP) {
+    const batch = pairs.slice(i, i + SPENDABLE_BATCH_CAP);
+    const response = await fetchWithRetry(`${url}/brands/spendable-budget`, {
+      method: "POST",
+      headers: { "x-api-key": apiKey, "content-type": "application/json" },
+      body: JSON.stringify({ brands: batch }),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(
+        `[features-service] campaign-service /brands/spendable-budget failed (${response.status}): ${body}`,
+      );
+    }
+    const data = (await response.json()) as {
+      brands?: Array<{
+        orgId?: string;
+        brandId?: string;
+        configuredDailyBudgetCents?: number;
+        runningDailyBudgetCents?: number;
+      }>;
+      unavailable?: Array<{ orgId?: string; brandId?: string; reason?: string }>;
+    };
+
+    if (data.unavailable && data.unavailable.length > 0) {
+      const first = data.unavailable[0];
+      throw new Error(
+        `[features-service] campaign-service could not price ${data.unavailable.length} (org, brand) pair(s), ` +
+          `first ${first.orgId}/${first.brandId}: ${first.reason ?? "no reason given"}`,
+      );
+    }
+
+    for (const row of data.brands ?? []) {
+      if (!row.orgId || !row.brandId) {
+        throw new Error("[features-service] campaign-service /brands/spendable-budget returned a row with no (org, brand)");
+      }
+      const configured = row.configuredDailyBudgetCents;
+      const running = row.runningDailyBudgetCents;
+      if (typeof configured !== "number" || typeof running !== "number") {
+        throw new Error(
+          `[features-service] campaign-service /brands/spendable-budget returned non-numeric figures for ${row.orgId}/${row.brandId}`,
+        );
+      }
+      out.set(spendableKey(row.orgId, row.brandId), {
+        configuredUsd: configured / 100,
+        runningUsd: running / 100,
+      });
+    }
   }
-  const data = (await response.json()) as { paused?: boolean };
-  return data.paused === true;
+
+  return out;
 }
 
 /**

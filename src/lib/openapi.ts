@@ -1064,6 +1064,83 @@ registry.registerPath({
   },
 });
 
+// ── (OFFER x SALES CHAIN) — the grain under the offer, and the only one at which a RETURN survives
+// one-campaign-per-step ─────────────────────────────────────────────────────────────────────────
+//
+// The product is moving to ONE CAMPAIGN PER STEP of a chain. A campaign then buys a single link, so it
+// has a cost per step and NO return of its own: the lifetime revenue sits at the END of the chain, and
+// attributing it to whichever link happened to be last would wildly overstate that link. The chain is
+// the smallest scope spanning a whole path to a paying client, so it is the smallest scope whose money
+// divides into a return.
+//
+// A campaign states exactly one chain (campaign-service owns `funnelKey`; it is never inferred from a
+// goal — two chains answer to `meetingBooked`), so MONEY adds: Sigma chains + Sigma unattributed IS the
+// offer's own spend. PEOPLE do not — a lead worked through two chains is ONE lead to the offer and is
+// in both rows — so the rows do not sum on the pipeline half and the offer read stays the number to
+// trust for "what did this offer do".
+
+const offerChainRowSchema = z.object({
+  funnelKey: z.string().describe("The sales chain, canonicalised onto this service's catalogue."),
+  name: z.string().describe("The chain's buyer-facing name."),
+  steps: z.array(z.string()).describe("The chain's steps in order, so a row renders without the consumer knowing the catalogue."),
+  campaignIds: z.array(z.string()).describe("Every campaign of the offer selling through this chain, ascending. ONE today; one per STEP as the product moves — the row is the same computation over the larger set."),
+  channels: z.array(offerChannelSchema).describe("The acquisition channels carrying this chain, ascending by slug."),
+  priced: z.boolean().describe("Whether this chain's money could be turned into a return. False leaves every money-derived figure null and names the missing ingredient below."),
+  unpricedReason: z
+    .enum(["no_channel_funnel", "no_economics_declared", "chain_not_declared"])
+    .nullable()
+    .describe(
+      "Why the return is null, checked in this order so the plain thing is said first. no_channel_funnel: no channel carrying this chain measures anything (no funnel wired), so the leads are never read and `outcomes` is null too. no_economics_declared: the brand states no economics, or its declaration could not be read, so this chain has no rates and no lifetime revenue of its own. chain_not_declared: the declaration IS readable and does not contain this chain. In all three the SPEND is real and reported — the customer paid it — and the pipeline, the return and the cost of acquisition are null, never 0 and never the brand-wide record the un-narrowed reads legitimately fall back to (pricing one chain on a server-defaulted brand row is the fiction the retired goal produced, one grain finer).",
+    ),
+  headline: featureRevenueResponseSchema.shape.headline,
+  costEconomics: featureRevenueResponseSchema.shape.costEconomics,
+  outcomes: featureRevenueResponseSchema.shape.outcomes,
+});
+
+const offerChainsResponseSchema = z.object({
+  offerId: z.string(),
+  brandId: z.string(),
+  costBasis: z.literal("charged").describe("What the customer was CHARGED — a comped cost is not in it. Same accounting basis as every other org-scoped money read."),
+  costCoverage: z
+    .literal("platform_spend_only")
+    .describe(
+      "Which dollars this cost is made of: the platform spend runs-service ledgers, and nothing else. Some steps of a chain are performed by a human on the customer's side and the platform spends nothing on them, so a chain whose last legs are manual reads cheaper here than it truly is. lead-service is adding a customer-declared cost per step transition and exposes none today; inventing one would be the fabricated figure this read refuses everywhere else, so the basis is stated on the wire instead.",
+    ),
+  chains: z.array(offerChainRowSchema).describe("One LEAN row per chain the offer sells through, in the catalogue's canonical order. Lean (headline + costEconomics + outcomes) because a table polls it: a full body per chain would repeat the whole lead population once per row."),
+  unattributedCampaignIds: z
+    .array(z.string())
+    .describe("Campaigns of this offer that state no chain (or one the catalogue does not know), ascending. Their spend is in NO row and still in the offer's own total, which narrows by nothing — stated so a reader sees the difference rather than wondering why the rows do not add up to the offer."),
+});
+
+const offerChainsResponseRef = registry.register("OfferChainsResponse", offerChainsResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/chains",
+  summary: "What each of an offer's sales chains cost and returned",
+  description:
+    "The (offer x sales chain) grain: one row per chain the offer is sold through, each carrying that chain's own spend, pipeline, return per dollar and cost of acquisition. " +
+    "It is the grain the product needs as it moves to ONE CAMPAIGN PER STEP — a campaign then buys a single link and has no return of its own, because the lifetime revenue sits at the end of the chain. Correct under both shapes with no switch: the row is scoped to the chain's CAMPAIGN SET, so a chain served by one campaign (every chain in production today) is byte-equal to that campaign's own answer, and a chain served by one campaign per step is the same row over the larger set. " +
+    "Each chain is priced on its OWN declared terms — its own rates and its own lifetime revenue — so a $200 self-serve chain and a $20k contract chain are never blended. A chain we cannot price says which ingredient is missing (`unpricedReason`) and reports its real spend beside a null return. " +
+    "The composition happens here: nothing on this response is meant to be summed in a browser, and the rows deliberately do not sum on the people half.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ offerId: z.string() }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required) — an offer belongs to a brand."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
+    }),
+  },
+  responses: {
+    200: { description: "One row per sales chain the offer is sold through", content: { "application/json": { schema: offerChainsResponseRef } } },
+    400: { description: "Missing brandId, or an invalid pricing value", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels) — never the brand's own numbers under the offer's label", content: { "application/json": { schema: errorResponse } } },
+    409: { description: "A chain is carried by channels that price on different funnels (reason: offer_channels_price_differently), so its money cannot honestly be answered as one figure", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const offerAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
   offerId: z.string(),
   channels: z.array(offerChannelSchema).describe("The channels combined into every row below, ascending by slug."),
@@ -1580,17 +1657,19 @@ const accountRowSchema = z.object({
   brandId: z.string().describe("Brand UUID."),
   brandName: z.string().nullable(),
   brandDomain: z.string().nullable(),
-  dailyBudgetUsd: z.number().nullable().describe("The RAW configured brand daily budget in USD. The per-org usage discount is a charge modifier and is NEVER applied to this configuration ceiling — two orgs with the same configured budget show the same number regardless of their discounts. Null when unset/paused."),
+  configuredDailyBudgetUsd: z.number().describe("Every ceiling this (org, brand) configured, in USD — what the customer SET, not what can be spent today. The per-org usage discount is a charge modifier and is NEVER applied to a configuration ceiling, so two orgs with the same configured budget show the same number regardless of their discounts."),
+  runningDailyBudgetUsd: z.number().describe("The part of the configured ceiling standing behind a campaign that is ONGOING right now, in USD (campaign-service joins the campaign status to billing's per-funnel rows). This is the money in play — what the active verdict and every fleet total read. Lower than configured whenever a funded funnel's campaign is stopped or was never created."),
   orgBalanceUsd: z.number().describe("Org SPENDABLE credit balance in USD (billing balance_cents/100; committed usage incl. provisioned holds subtracted; 0 if no funded wallet). Display only."),
   orgActualBalanceUsd: z.number().describe("Org ACTUAL credit balance in USD (billing actual_balance_cents/100; only ACTUALIZED usage subtracted). The figure the active verdict gates on."),
   autoTopupEnabled: z.boolean().describe("Whether the org has auto-topup enabled (billing has_auto_topup). An auto-topup org never runs dry → active regardless of momentary balance. false when absent."),
-  status: z.enum(["active", "paused", "inactive"]).describe("Precedence paused > active > inactive: 'paused' iff campaign-service brand pause=true; else 'active' iff dailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>dailyBudgetUsd); else 'inactive'."),
+  status: z.enum(["active", "paused", "inactive"]).describe("Precedence active > paused > inactive: 'active' iff runningDailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."),
 });
 
 const accountsStatsSchema = z.object({
-  totalDailyBudgetUsd: z.number().describe("Σ RAW configured daily budget over ACTIVE rows only (USD; undiscounted — a budget is a config ceiling, not a charge; paused/inactive excluded). The staff metrics-page figure."),
-  mrrUsd: z.number().describe("MRR = totalDailyBudgetUsd × 30 (a budget projection, undiscounted)."),
-  arrUsd: z.number().describe("ARR = totalDailyBudgetUsd × 365 (a budget projection, undiscounted)."),
+  totalRunningDailyBudgetUsd: z.number().describe("Σ RUNNING daily budget over ACTIVE rows only (USD; undiscounted — a budget is a config ceiling, not a charge; paused/inactive excluded). The staff metrics-page figure: what the fleet can actually spend today."),
+  totalConfiguredDailyBudgetUsd: z.number().describe("Σ CONFIGURED daily budget over the SAME ACTIVE rows (USD). What those customers posted, whatever is running against it — stated beside the running total so the two can never be mistaken for one another."),
+  mrrUsd: z.number().describe("MRR = totalRunningDailyBudgetUsd × 30 (a budget projection, undiscounted)."),
+  arrUsd: z.number().describe("ARR = totalRunningDailyBudgetUsd × 365 (a budget projection, undiscounted)."),
   activeCount: z.number().int(),
   pausedCount: z.number().int(),
   inactiveCount: z.number().int(),
@@ -1610,14 +1689,17 @@ registry.registerPath({
   path: "/internal/stats/accounts",
   summary: "Fleet-wide cold-email customer accounts audit (internal, api-key; staff-gated at api-service)",
   description:
-    "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with its daily budget, the org's spendable credit balance, " +
-    "and a 3-way status, plus fleet financial stats (total ACTIVE daily budget → MRR = ×30 → ARR = ×365). " +
-    "Status precedence paused > active > inactive: 'paused' iff the campaign-service brand pause is set (campaigns HELD, budget kept); " +
-    "else 'active' iff dailyBudgetUsd > 0 && (autoTopupEnabled || orgActualBalanceUsd > dailyBudgetUsd) — the ACTUAL balance (actualized usage only), " +
-    "NOT the spendable balance (which subtracts in-flight provisioned holds); else 'inactive'. All rows (active + paused + inactive) are LISTED, never dropped. " +
-    "Stats sum ACTIVE rows only (a paused brand is not spending). The daily budget is the RAW configured ceiling — the per-org usage discount is a " +
-    "charge modifier and is NEVER applied to it, so two orgs with the same configured budget show the same number regardless of their discounts; " +
-    "totalDailyBudgetUsd/MRR/ARR are pure budget projections (× 30 / × 365) and are undiscounted too. " +
+    "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with BOTH of its daily budgets, the org's spendable credit balance, " +
+    "and a 3-way status, plus fleet financial stats (total RUNNING daily budget → MRR = ×30 → ARR = ×365). " +
+    "Two budgets, answering different questions: CONFIGURED is every ceiling the customer set in billing; RUNNING is the part of it standing behind a " +
+    "campaign that is ongoing right now (campaign-service joins its own campaign status to billing's per-funnel ceilings — billing's brand total is " +
+    "status-blind and counts money on funnels whose campaign is stopped or was never created). Everything that claims to be money in play reads RUNNING. " +
+    "Status precedence active > paused > inactive: 'active' iff runningDailyBudgetUsd > 0 && (autoTopupEnabled || orgActualBalanceUsd > runningDailyBudgetUsd) " +
+    "— the ACTUAL balance (actualized usage only), NOT the spendable balance (which subtracts in-flight provisioned holds); else 'paused' iff " +
+    "configuredDailyBudgetUsd > 0, i.e. money posted with nothing running against it; else 'inactive'. There is NO brand-level pause flag in this rule any " +
+    "more: that control was removed from the product, the flag stopped being written, and it lied in both directions. All rows (active + paused + inactive) " +
+    "are LISTED, never dropped. Stats sum ACTIVE rows only (a paused brand is not spending). Neither budget carries the per-org usage discount — that is a " +
+    "charge modifier, never applied to a configuration ceiling — so totalRunningDailyBudgetUsd/MRR/ARR are pure undiscounted budget projections (× 30 / × 365). " +
     "All money + the status determination are computed here; the dashboard renders only.",
   tags: ["Internal"],
   responses: {
@@ -1657,8 +1739,9 @@ const customerHealthRowSchema = z.object({
   activeThisWeek: z.boolean(),
   activeThisMonth: z.boolean(),
   activeDays: z.array(z.string()).describe("The de-facto active-day timeline from billed spend (distinct UTC days, ascending)."),
-  status: z.enum(["active", "paused", "inactive"]).describe("Same composition as GET /internal/stats/accounts (pause > active > inactive; active needs budget > 0 AND funded/auto-topup)."),
-  dailyBudgetUsd: z.number().nullable(),
+  status: z.enum(["active", "paused", "inactive"]).describe("Same composition as GET /internal/stats/accounts (active > paused > inactive; active needs a RUNNING budget > 0 AND funded/auto-topup; paused means money posted with nothing running)."),
+  configuredDailyBudgetUsd: z.number().describe("Every ceiling this (org, brand) configured, in USD."),
+  runningDailyBudgetUsd: z.number().describe("The part of it standing behind an ongoing campaign, in USD — the money in play."),
   orgBalanceUsd: z.number().describe("Org SPENDABLE balance in USD (display)."),
   orgActualBalanceUsd: z.number().describe("Org ACTUAL balance in USD (the active-verdict figure)."),
   autoTopupEnabled: z.boolean(),
@@ -2194,10 +2277,25 @@ const channelTermsSchema = z.object({
   maxDaysToFirstProduction: z.number().int().describe("UPPER BOUND on how many days after booking the channel starts producing — a promise, not an estimate. A channel we are slower to deliver says so HERE; there is deliberately no availability or coming-soon flag anywhere on this payload."),
 });
 
-const producibleStepSchema = z.object({
-  key: z.enum(["conversation", "website_visit", "in_ad_form_submission", "in_ad_booked_meeting"]),
+const channelStepSchema = z.object({
+  key: z.enum([
+    "conversation",
+    "website_visit",
+    "meeting_booked",
+    "meeting_attended",
+    "signup",
+    "form_filled",
+    "paid_client",
+    "in_ad_form_submission",
+    "in_ad_booked_meeting",
+  ]),
   label: z.string(),
   description: z.string(),
+});
+
+const channelStepTransitionSchema = z.object({
+  from: channelStepSchema.nullable().describe("The step this channel takes a lead OUT of. NULL is 'from nothing' — the lead was not on the chain at all until this channel produced its first step, which is the SPECIAL case rather than the rule."),
+  to: channelStepSchema.describe("The step this channel moves the lead TO."),
 });
 
 const publicChannelSchema = registry.register(
@@ -2208,10 +2306,12 @@ const publicChannelSchema = registry.register(
     description: z.string(),
     icon: z.string(),
     displayOrder: z.number().int(),
-    family: z.enum(["outbound_one_to_one", "paid_reach", "earned"]),
+    family: z.enum(["outbound_one_to_one", "paid_reach", "earned", "conversion"]),
+    operatedBy: z.enum(["platform", "customer"]).describe("WHO puts the hours in. `platform` is us, and the daily operating cost is what that costs. `customer` is their own founder or team, so the platform spends nothing and the daily operating cost is 0 — a stated fact, not a blank. What such a leg costs THEM is declared per lead against lead-service; this catalogue never guesses at it."),
     terms: channelTermsSchema,
-    producibleSteps: z.array(producibleStepSchema).describe("The kinds of step this channel can PRODUCE. A sales funnel states what step STARTS it, so a consumer joins the two to decide which pairings are possible."),
-    salesFunnels: z.array(z.object({ key: z.string(), name: z.string(), steps: z.array(z.string()) })).describe("The sales funnels this channel may be SOLD THROUGH — DERIVED from what it produces, so it can never drift from `producibleSteps`. An empty list is a real statement (no deployed chain starts from anything this channel produces), not a gap."),
+    stepTransitions: z.array(channelStepTransitionSchema).describe("Every LEG this channel performs: which step it moves a lead FROM and which step it moves it TO. A chain is sold leg by leg, not only end to end — booking a meeting, getting it held, and closing it are three separate things to buy. `from: null` means the channel moves a lead from nothing onto the chain's first step."),
+    producibleSteps: z.array(channelStepSchema).describe("The steps this channel produces FROM NOTHING — DERIVED as the `to` of its `from: null` legs, and unchanged in meaning from before a channel could state an internal leg. A channel that only performs internal legs of a chain legitimately produces none."),
+    salesFunnels: z.array(z.object({ key: z.string(), name: z.string(), steps: z.array(z.string()) })).describe("The sales funnels this channel may be SOLD THROUGH — DERIVED as every declared chain containing one of its `stepTransitions` as a leg, so it can never drift from them. An empty list is a real statement (no deployed chain takes any step this channel performs), not a gap."),
   }),
 );
 
@@ -2219,7 +2319,7 @@ const channelCatalogueResponseSchema = registry.register(
   "ChannelCatalogueResponse",
   z.object({
     channels: z.array(publicChannelSchema),
-    producibleSteps: z.array(producibleStepSchema).describe("The step vocabulary itself, published so a consumer never hardcodes it to join against a funnel's entry step."),
+    steps: z.array(channelStepSchema).describe("The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a chain's. It spans EVERY step of every chain, not only the ones a chain can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a chain starts at."),
   }),
 );
 
@@ -2228,7 +2328,7 @@ registry.registerPath({
   path: "/public/channels",
   summary: "Every acquisition channel, its commercial terms and what it can produce (public, no auth)",
   description:
-    "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), the kinds of step it can PRODUCE, and the sales funnels that follow from those steps. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
+    "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), which LEG of a chain it performs (the step it moves a lead FROM and the step it moves it TO), who operates it, and the sales funnels that follow from those legs. A chain is sellable LEG BY LEG rather than only end to end, so the catalogue publishes channels for the internal steps a human performs — the ones a specialist of ours runs and the ones the customer runs themselves. A channel the CUSTOMER operates spends none of the platform's money, so its daily operating cost is 0 and `operatedBy` is what makes that zero legible. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
   tags: ["Public"],
   responses: {
     200: { description: "The acquisition-channel catalogue", content: { "application/json": { schema: channelCatalogueResponseSchema } } },

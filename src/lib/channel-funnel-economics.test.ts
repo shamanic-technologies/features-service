@@ -58,6 +58,24 @@ describe("not enough data is an answer, and it names the missing ingredient", ()
     expect(website).toEqual({ measured: false, reason: "no_entry_step_produced" });
   });
 
+  it("a LEG channel nobody has run yet says the plain thing, on every chain its leg belongs to", () => {
+    // A channel that picks a lead up MID-chain (booking the meeting, closing it) is sellable through
+    // every chain containing that leg, so it has pairs from the day it is published — and until
+    // somebody runs one, each of those pairs has nothing to divide. `no_spend_recorded` is the honest
+    // answer, and it is the one the per-pair read gives: the customer will declare what each of these
+    // transitions cost them per lead, so spend arrives later rather than never.
+    for (const funnelKey of ["sales_meetings_from_conversation", "sales_meetings_from_website"] as const) {
+      const result = pricePair(
+        input({
+          funnelKey,
+          evidence: { totalSpentUsd: 0, conversationsProduced: 0, websiteVisitsProduced: 0, brandCount: 0 },
+          unitCosts: { clickUsd: null, replyUsd: null },
+        }),
+      );
+      expect(result, funnelKey).toEqual({ measured: false, reason: "no_spend_recorded" });
+    }
+  });
+
   it("no brand declared the chain's rates → no_economics_declared", () => {
     expect(pricePair(input({ economics: null }))).toEqual({ measured: false, reason: "no_economics_declared" });
   });
