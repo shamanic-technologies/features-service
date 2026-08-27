@@ -344,14 +344,14 @@ describe("buildCustomerHealthBoard", () => {
     expect(row.ltrUsd).toBeNull();
     expect(row.economics).toBeNull();
     expect(row.currentEconomics).toEqual({ committedSpendUsd: null, realizedSpendUsd: null, expectedPipelineUsd: null, currentCacUsd: null, roiMultiple: null, cacPct: null });
-    // The website-purchase chain converts on the CLIENT's site, so it DOES need a tracker there — and
+    // The website-purchase funnel converts on the CLIENT's site, so it DOES need a tracker there — and
     // with no observed conversions the tracker reads not-firing (0), never null.
     expect(row.conversionTracker.needed).toBe(true);
     expect(row.conversionTracker.observedConversions).toBe(0);
     expect(row.conversionTracker.firing).toBe(false);
-    // audience rollup still computed (chain-independent)
+    // audience rollup still computed (funnel-independent)
     expect(row.audiences.totalSize).toBe(100);
-    // a declared chain IS present, so bestAudience is picked
+    // a declared funnel IS present, so bestAudience is picked
     expect(row.bestAudience?.audienceId).toBe("z");
     // ROI unknown + active → yellow (not green)
     expect(row.health.badge).toBe("yellow");

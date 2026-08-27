@@ -11,7 +11,7 @@ import type { SalesFunnelKey } from "./sales-funnels.js";
  * ── ONLY A DECLARED FUNNEL'S LEGS CARRY VALUE ─────────────────────────────────────────────────────
  *
  * A lead used to earn expected revenue from its FURTHEST reached stage, from Contacted onward — an
- * email that merely LANDED was worth a slice of a lifetime contract, chained down through the
+ * email that merely LANDED was worth a slice of a lifetime contract, funneled down through the
  * platform-global open/click/reply rates. On one prod brand that made 5,122 merely-delivered
  * organisations worth $8,772 of a $23,547 pipeline (37%), on a brand whose ONE declared funnel is
  * `Positive reply → Meeting booked → Meeting attended → Paid client`, where neither a delivery nor a
@@ -22,10 +22,10 @@ import type { SalesFunnelKey } from "./sales-funnels.js";
  *  - **contacted / sent / delivered / opened are MILESTONES, not paths.** They are a step of NO funnel
  *    in brand-service's catalogue, for any brand, so they carry no revenue field to price — see
  *    `FunnelMilestone`. That is why the platform-global email rates left this module entirely: they
- *    existed only to chain a delivery down to a close, and nothing chains down from a delivery now.
+ *    existed only to funnel a delivery down to a close, and nothing funnels down from a delivery now.
  *  - **a conversion leg prices a brand only when one of its DECLARED funnels contains it** —
- *    `restrictPathsToDeclaredLegs`. A website visit prices a brand that declared a website-led chain
- *    and prices nothing for a brand that declared only the conversation chain.
+ *    `restrictPathsToDeclaredLegs`. A website visit prices a brand that declared a website-led funnel
+ *    and prices nothing for a brand that declared only the conversation funnel.
  *
  * Sales is wired first. press / hiring / investors plug in here with their own funnel once
  * their economics exist (brand-service will generalise sales-economics → feature-economics).
@@ -45,8 +45,8 @@ export interface SalesEconomics {
   /**
    * ATTENDED meeting → paying client. The rate `meetingToClosePct` carries is BOOKED → paid: on a
    * declared meeting funnel it is already the composition `attended% × show-up%`
-   * (`meetingChainCloseRate`), and on the brand-wide economics row it is the close rate alone, because
-   * that row has no show-up column at all. The two rungs of the meeting chain therefore need two
+   * (`meetingFunnelCloseRate`), and on the brand-wide economics row it is the close rate alone, because
+   * that row has no show-up column at all. The two rungs of the meeting funnel therefore need two
    * numbers, and this is the one a lead who ACTUALLY ATTENDED is priced on.
    *
    * Optional, and the fallback is deliberate: a brand that declared no show-up rate has said nothing
@@ -85,7 +85,7 @@ export interface FunnelDefinition {
   /** Signals the funnel reads off each lead (the milestones it tags + the legs it scores). */
   signals: string[];
   /**
-   * The pre-funnel delivery markers, ascending. They are a step of no declared chain, so they carry
+   * The pre-funnel delivery markers, ascending. They are a step of no declared funnel, so they carry
    * no revenue field and can contribute nothing — they only tag a lead's position and keep it in the
    * `leads[]` snapshot the Overview count series are built from.
    */
@@ -239,7 +239,7 @@ export function projectOutcomeCosts(
   // per click. The reply route closes via meetings (purchases), not direct signups.
   const signupsPerBudget = costs.clickUsd != null ? (1 / costs.clickUsd) * econ.v2s : 0;
 
-  // SIGNUP goal paid-client — chains the signup's OWN funnel (visit → signup → paid), CLICK route only:
+  // SIGNUP goal paid-client — funnels the signup's OWN funnel (visit → signup → paid), CLICK route only:
   //   paid clients per budget = (1/clickUsd)·v2s·s2pc   ⟹ costPerSignupPaidClient = costPerSignup / s2pc.
   // Coherent BY CONSTRUCTION: always ≥ costPerSignup. Do NOT reuse costPerPurchase (meeting/close funnel)
   // for the signup goal — its rates are unrelated to the signup step and can read incoherently below it.
@@ -253,7 +253,7 @@ export function projectOutcomeCosts(
     (costs.clickUsd != null ? (1 / costs.clickUsd) * econ.v2m * econ.m2c : 0) +
     (costs.replyUsd != null ? (1 / costs.replyUsd) * econ.r2m * econ.m2c : 0);
 
-  // SINGLE-STEP goals — one rate applied to ONE channel (no funnel chaining):
+  // SINGLE-STEP goals — one rate applied to ONE channel (no multi-step composition):
   //   website_visits  → click channel only: (1/clickUsd)·v2pc paid clients per budget.
   //   positive_replies→ reply channel only: (1/replyUsd)·r2pc paid clients per budget.
   const visitPaidPerBudget =
@@ -361,7 +361,7 @@ export function formSubmissionRatesDecimal(economics: SalesEconomics): { v2fs: n
 
 /**
  * The pre-funnel delivery markers, ascending. `open` sits between delivered and the first funnel leg.
- * None of them is a step of any chain in `SALES_FUNNELS`, so none carries a revenue field.
+ * None of them is a step of any funnel in `SALES_FUNNELS`, so none carries a revenue field.
  */
 const SALES_MILESTONES: readonly FunnelMilestone[] = [
   { tag: "contacted", signal: "contacted" },
@@ -382,7 +382,7 @@ const SALES_MILESTONES: readonly FunnelMilestone[] = [
  * drops the weaker route, undercounting the pipeline).
  *
  * Each path EV = LTR × pClose_leg, and every path is itemised in the events ledger. The four legs
- * below are the union of what the catalogue's chains buy; which of them actually prices a given brand
+ * below are the union of what the catalogue's funnels buy; which of them actually prices a given brand
  * is decided by `restrictPathsToDeclaredLegs` from that brand's OWN declaration.
  */
 const salesFunnel: FunnelDefinition = {
@@ -410,15 +410,15 @@ const salesFunnel: FunnelDefinition = {
     const pCloseMeeting = pct(e.meetingToClosePct); // a BOOKED meeting closes at the booked→paid rate
     // A meeting somebody ATTENDED is a rung of its own, and it is worth more than one they booked and
     // missed. `meetingToClosePct` is booked→paid — on a declared funnel it already carries the show-up
-    // rate folded in (`meetingChainCloseRate`) — so the attended rung is priced on the rate that does
+    // rate folded in (`meetingFunnelCloseRate`) — so the attended rung is priced on the rate that does
     // NOT carry it. A brand that declared no show-up rate has said nothing that tells the two apart, so
     // the composed rate stands in and both rungs are worth the same: honest, not a free 100%.
     const pCloseAttended = pct(e.meetingAttendedToPaidClientPct ?? e.meetingToClosePct);
     // Post-engagement legs, each fired by what a human OBSERVED for the lead:
     //   meeting         EV = LTR × P(paid | meeting booked).
     //   meetingAttended EV = LTR × P(paid | meeting attended).
-    //   closeWin        = realized revenue (full LTR) — the terminal every chain ends at.
-    // Monotonic EV up the chain: reply ≤ meeting ≤ meetingAttended ≤ closeWin.
+    //   closeWin        = realized revenue (full LTR) — the terminal every funnel ends at.
+    // Monotonic EV up the funnel: reply ≤ meeting ≤ meetingAttended ≤ closeWin.
     return [
       // click + reply are INDEPENDENT engagement routes to the same close (a lead can do both, and
       // we don't yet know which fires) → `engagementRoute` so the engine COMBINES them as independent
@@ -435,7 +435,7 @@ const salesFunnel: FunnelDefinition = {
 };
 
 /**
- * WHICH SIGNAL BUYS WHICH STEP of each declared chain — the whole content of "a signal that is not a
+ * WHICH SIGNAL BUYS WHICH STEP of each declared funnel — the whole content of "a signal that is not a
  * step of a declared funnel contributes nothing".
  *
  * Read straight off `SALES_FUNNELS[key].steps`, one entry per step that a lead signal can evidence:
@@ -447,9 +447,9 @@ const salesFunnel: FunnelDefinition = {
  * "Meeting attended" USED to have no signal of its own — nothing in the fleet could observe somebody
  * showing up, so it survived only folded into the booked→paid rate. A human states it now, so it is a
  * leg like any other: a rung a lead can stand on, and a step a lead can be declared DEAD at.
- * `signup` / `formSubmission` are listed because they ARE legs of their chains; no path scores them
+ * `signup` / `formSubmission` are listed because they ARE legs of their funnels; no path scores them
  * today (they are per-lead display outcomes), and if one is ever added it prices exactly the brands
- * whose chain contains it, with no further change here.
+ * whose funnel contains it, with no further change here.
  */
 const FUNNEL_LEG_SIGNALS: Record<SalesFunnelKey, readonly string[]> = {
   sales_meetings_from_conversation: ["positiveReply", "meeting", "meetingAttended", "closeWin"],
@@ -459,20 +459,20 @@ const FUNNEL_LEG_SIGNALS: Record<SalesFunnelKey, readonly string[]> = {
 };
 
 /**
- * A dead STEP expanded into every leg it kills — the whole content of "a `never` kills the CHAIN, not
+ * A dead STEP expanded into every leg it kills — the whole content of "a `never` kills the FUNNEL, not
  * the step".
  *
  * A human stating that a lead will never book a meeting has not merely removed one rung: they have
- * said the lead has no path to a paying client through any chain that goes through a booked meeting.
- * Everything that lead already fired ON those chains — the positive reply, the click that was going to
+ * said the lead has no path to a paying client through any funnel that goes through a booked meeting.
+ * Everything that lead already fired ON those funnels — the positive reply, the click that was going to
  * lead somewhere — was a FORECAST of exactly the thing now ruled out, so it is worth nothing too.
  *
- * A chain the dead step is NOT on survives untouched, and that is the whole reason this is computed
+ * A funnel the dead step is NOT on survives untouched, and that is the whole reason this is computed
  * per declared funnel rather than as a flat "steps at or after this one": a brand selling both a
- * conversation chain and a self-serve website chain keeps the website chain's value for a lead who
+ * conversation funnel and a self-serve website funnel keeps the website funnel's value for a lead who
  * will never take a meeting. They may still buy the thing.
  *
- * `closeWin` is a leg of EVERY chain, so a lost deal empties them all — which is the answer we want:
+ * `closeWin` is a leg of EVERY funnel, so a lost deal empties them all — which is the answer we want:
  * a lead somebody marked as lost is worth zero, not a lingering fraction of the meeting it once had.
  */
 export function deadLegSignalsFor(
@@ -482,11 +482,11 @@ export function deadLegSignalsFor(
   const deadSteps = new Set(deadStepSignals);
   const killed = new Set<string>();
   if (deadSteps.size === 0) return killed;
-  // No declaration ⇒ EVERY chain is in play, exactly as `restrictPathsToDeclaredLegs` prices every leg
-  // for such a brand. Reading an empty declaration as "no chain contains this step" would make a lost
+  // No declaration ⇒ EVERY funnel is in play, exactly as `restrictPathsToDeclaredLegs` prices every leg
+  // for such a brand. Reading an empty declaration as "no funnel contains this step" would make a lost
   // deal worth its meeting for the one kind of brand we know least about.
-  const chains = keys.length > 0 ? keys : (Object.keys(FUNNEL_LEG_SIGNALS) as SalesFunnelKey[]);
-  for (const key of chains) {
+  const funnels = keys.length > 0 ? keys : (Object.keys(FUNNEL_LEG_SIGNALS) as SalesFunnelKey[]);
+  for (const key of funnels) {
     const legs = FUNNEL_LEG_SIGNALS[key];
     if (!legs) continue;
     if (!legs.some((leg) => deadSteps.has(leg))) continue;
@@ -507,12 +507,12 @@ export function declaredLegSignals(keys: readonly SalesFunnelKey[]): Set<string>
  *
  * A brand that declared SEVERAL funnels is priced on ALL of their legs (the union). A read narrowed to
  * ONE funnel — a caller's `?funnel=`, or the funnel a campaign itself states — is priced on that
- * chain's legs alone, because that is the chain being sold.
+ * funnel's legs alone, because that is the funnel being sold.
  *
  * `[]` in ⇒ paths unchanged. An empty set means the brand declared nothing we could read, and we do
- * not know which chain it sells; inventing one to narrow against would be the same fiction the
+ * not know which funnel it sells; inventing one to narrow against would be the same fiction the
  * defaulted goal produced. That brand keeps today's behaviour on every conversion leg — it simply no
- * longer earns anything from a delivery, which is a step of no chain for anybody.
+ * longer earns anything from a delivery, which is a step of no funnel for anybody.
  */
 export function restrictPathsToDeclaredLegs(
   paths: ResolvedPath[],
@@ -528,8 +528,8 @@ export const FUNNEL_REGISTRY: Record<string, FunnelDefinition> = {
   // their own funnel + economics once defined — until then they return a null pipeline.
   "sales-cold-email-outreach": salesFunnel,
   // Same medium, same measurement, different OFFER (a feedback request rather than a pitch), so it
-  // prices on the same funnel. Which CHAIN a given brand is sold this feature through is narrowed
-  // separately by the catalogue's per-feature `salesFunnels` (the conversation chain alone here),
+  // prices on the same funnel. Which FUNNEL a given brand is sold this feature through is narrowed
+  // separately by the catalogue's per-feature `salesFunnels` (the conversation funnel alone here),
   // and by `restrictPathsToDeclaredLegs` at pricing time.
   "feedback-request-cold-email-outreach": salesFunnel,
 };

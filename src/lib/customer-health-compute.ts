@@ -88,9 +88,9 @@ interface CurrentEconomics {
 }
 
 interface ConversionTracker {
-  /** Whether the funnel the brand sells through terminates in a client-site conversion that needs a tracker (website purchase / form magnet → true; a sales-meeting chain → false). */
+  /** Whether the funnel the brand sells through terminates in a client-site conversion that needs a tracker (website purchase / form magnet → true; a sales-meeting funnel → false). */
   needed: boolean;
-  /** Observed attributed conversions of that funnel's kind (lead-service tracker). null when the chain terminates in no discrete tracked event, or when the brand has declared no funnel. */
+  /** Observed attributed conversions of that funnel's kind (lead-service tracker). null when the funnel terminates in no discrete tracked event, or when the brand has declared no funnel. */
   observedConversions: number | null;
   /** INFERRED tracker health: observedConversions > 0. null when `needed` is false (n/a) or no count is available. A clean installed-and-verified boolean is a KNOWN GAP — this is the best-effort approximation, always `inferred:true`. */
   firing: boolean | null;
@@ -112,7 +112,7 @@ interface AudiencesRollup {
 interface BestAudience {
   audienceId: string;
   name: string;
-  /** The audience's CAC (cost per chain outcome) in USD — cpc for a click-bought chain, cppr for a reply-bought one. null when unmeasured. */
+  /** The audience's CAC (cost per funnel outcome) in USD — cpc for a click-bought funnel, cppr for a reply-bought one. null when unmeasured. */
   cacUsd: number | null;
   /** Addressable member count. */
   size: number;
@@ -194,7 +194,7 @@ export interface CustomerHealthRow {
 
   // ── What the brand sells through + conversion tracker ───────────────────────
   /** The SALES FUNNELS this (org, brand) DECLARED it sells through, catalogue order. `[]` when the
-   * declaration is missing or unreadable — a producer gap, never a substituted chain. Replaces the
+   * declaration is missing or unreadable — a producer gap, never a substituted funnel. Replaces the
    * retired `optimizationGoal`, which was a single defaulted column and therefore said "website
    * purchases" for brands that had chosen nothing. */
   salesFunnels: SalesFunnelKey[];
@@ -270,17 +270,17 @@ export interface CustomerHealthDeps {
   savedEconomics: (brandId: string, orgId: string) => Promise<{ economics: SalesEconomics | null }>;
   /** The SALES FUNNELS this (org, brand) declared it sells through, catalogue order. Fail-loud; the
    * builder wraps it soft (an unreadable / empty declaration → `[]`, and every funnel-keyed field on the
-   * row then reads null rather than being computed on a substituted chain). */
+   * row then reads null rather than being computed on a substituted funnel). */
   declaredFunnels: (brandId: string, orgId: string) => Promise<SalesFunnelKey[]>;
   conversionCounts: (brandId: string) => Promise<ConversionCounts>;
   /** Realized ROI/spend for one (org, brand) via the revenue engine. Called ONLY with own economics
-   * present. `declaredFunnels` names the chains whose LEGS carry expected value — a signal that is not
+   * present. `declaredFunnels` names the funnels whose LEGS carry expected value — a signal that is not
    * a step of one of them is not pipeline. `[]` (an unreadable declaration) prices every conversion
    * leg, the same degrade the Overview takes. */
   brandRevenue: (featureSlug: string, brandId: string, orgId: string, economics: SalesEconomics, declaredFunnels: SalesFunnelKey[]) => Promise<BrandRevenueResult>;
   /** Ranked audience evidence for one (org, brand, sales funnel). null when the feature is unknown (404). */
   audienceStats: (featureSlug: string, brandId: string, orgId: string, funnel: SalesFunnelKey) => Promise<AudienceStatsEnvelope | null>;
-  /** Workflow projection for one (org, brand, sales funnel) — priced on that chain's own channel. */
+  /** Workflow projection for one (org, brand, sales funnel) — priced on that funnel's own channel. */
   workflowProjection: (featureSlug: string, brandId: string, orgId: string, funnel: SalesFunnelKey) => Promise<WorkflowProjectionResponse>;
   /** Per-org dashboard-return signal for the WHOLE fleet (PostHog), keyed on the Clerk org id (= orgExternalId). Fail-loud; the builder wraps it soft. */
   dashboardReturns: (now: Date) => Promise<Map<string, DashboardReturnSignal>>;
@@ -334,7 +334,7 @@ const REAL_DEPS: CustomerHealthDeps = {
     return result.envelope;
   },
   workflowProjection: async (featureSlug, brandId, orgId, funnel) => {
-    // Priced on the funnel's OWN chain — `meetingChannel` is the whole difference between a meeting
+    // Priced on the funnel's OWN funnel — `meetingChannel` is the whole difference between a meeting
     // bought with a reply and one bought with a click, which one blended goal could never express.
     const { objective, goalEcho, singleStepGoal, formSubmissionGoal, meetingChannel } = funnelToProjectionInputs(funnel);
     return computeWorkflowProjection({
@@ -352,16 +352,16 @@ const REAL_DEPS: CustomerHealthDeps = {
   },
 };
 
-/** Sales funnels whose chain passes through a conversion on the CLIENT's own site, so they need a
- * tracker installed there. A meeting chain does not: the meeting is booked and qualified on our side. */
+/** Sales funnels whose funnel passes through a conversion on the CLIENT's own site, so they need a
+ * tracker installed there. A meeting funnel does not: the meeting is booked and qualified on our side. */
 const TRACKER_NEEDED_FUNNELS: ReadonlySet<SalesFunnelKey> = new Set<SalesFunnelKey>(["website_purchases", "form_magnet"]);
 
-/** Map a sales funnel to the observed conversion-count of the event its chain converts on
+/** Map a sales funnel to the observed conversion-count of the event its funnel converts on
  * (lead-service tracker). null when the brand has declared no funnel. */
 function observedConversionsForFunnel(funnel: SalesFunnelKey | null, counts: ConversionCounts): number | null {
   switch (funnel) {
     case "website_purchases":
-      // visit → signup → paid: the signup IS the chain's tracked conversion.
+      // visit → signup → paid: the signup IS the funnel's tracked conversion.
       return counts.signup;
     case "form_magnet":
       return counts.form_submission;
@@ -369,7 +369,7 @@ function observedConversionsForFunnel(funnel: SalesFunnelKey | null, counts: Con
     case "sales_meetings_from_website":
       return counts.meeting_booked;
     default:
-      // No declared funnel → no chain, so no count applies. Never a fabricated 0.
+      // No declared funnel → no funnel, so no count applies. Never a fabricated 0.
       return null;
   }
 }
@@ -399,9 +399,9 @@ function summarizeAudiences(
     pctUsed: totalSize > 0 ? (totalContacted / totalSize) * 100 : null,
   };
 
-  // Best = the first row (envelope.audiences is sorted ascending by the chain's sort metric). Only
-  // meaningful with a funnel the brand actually declared; a placeholder chain (used only to fetch the
-  // rollup) → no best, because ranking on a chain nobody declared would name a winner for a race the
+  // Best = the first row (envelope.audiences is sorted ascending by the funnel's sort metric). Only
+  // meaningful with a funnel the brand actually declared; a placeholder funnel (used only to fetch the
+  // rollup) → no best, because ranking on a funnel nobody declared would name a winner for a race the
   // brand never entered.
   let best: BestAudience | null = null;
   if (funnelPresent) {
@@ -581,15 +581,15 @@ export async function buildCustomerHealthBoard(
       conversionCounts = counts;
 
       if (featureSlug) {
-        // Audience rollup is chain-independent (the evidence is); a placeholder funnel only sets the
+        // Audience rollup is funnel-independent (the evidence is); a placeholder funnel only sets the
         // sort metric, and best-audience is nulled when the brand declared none (see summarizeAudiences).
         const funnelForAudience: SalesFunnelKey = primaryFunnel ?? "sales_meetings_from_website";
         const [audienceRes, revenueRes, workflowRes] = await Promise.all([
           deps.audienceStats(featureSlug, account.brandId, account.orgId, funnelForAudience),
           // Realized ROI only with the brand's OWN economics (else pipeline would be a cross-brand average).
           economics ? deps.brandRevenue(featureSlug, account.brandId, account.orgId, economics, declaredFunnels) : Promise.resolve<BrandRevenueResult | null>(null),
-          // Best workflow needs a chain the brand actually declared — it selects which outcome's cost is
-          // being minimised, and the two meeting chains do not have the same answer.
+          // Best workflow needs a funnel the brand actually declared — it selects which outcome's cost is
+          // being minimised, and the two meeting funnels do not have the same answer.
           primaryFunnel ? deps.workflowProjection(featureSlug, account.brandId, account.orgId, primaryFunnel) : Promise.resolve<WorkflowProjectionResponse | null>(null),
         ]);
         audienceEnvelope = audienceRes;

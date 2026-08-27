@@ -41,7 +41,7 @@ const AUTH = {
 const SALES_FEATURE = { id: "feat-1", slug: "sales-cold-email-outreach", name: "Sales", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
 
 // LTR $1000. Per funnel: website_purchases paid = click / (4% × 50%); the conversation meeting funnel
-// pays reply / (40% × 30%); the website meeting funnel pays click / (5% × 30%) — same chain, different
+// pays reply / (40% × 30%); the website meeting funnel pays click / (5% × 30%) — same funnel, different
 // channel, which is exactly what a goal could not express.
 const ECONOMICS = {
   lifetimeRevenueUsd: 1000,
@@ -215,7 +215,7 @@ describe("GET /features/:featureSlug/funnel-ranking", () => {
       funnels: [
         declaredFunnel("website_purchases"),
         declaredFunnel("sales_meetings_from_conversation"),
-        // Declared but priced at a 0% close: there is no path to a paying client through this chain.
+        // Declared but priced at a 0% close: there is no path to a paying client through this funnel.
         declaredFunnel("form_magnet", { rates: { visitToFormSubmissionPct: 10, formSubmissionToPaidClientPct: 0 } }),
       ],
       audiences: [{ id: "aud-1" }],
@@ -302,7 +302,7 @@ describe("GET /features/:featureSlug/funnel-ranking", () => {
 
   it("the TWO MEETING FUNNELS get two different costs from the SAME evidence — the whole point", async () => {
     // Both echo `meetingBooked`, so before the retirement this brand was told one blended price for
-    // both chains and could not see which of the two to fund.
+    // both funnels and could not see which of the two to fund.
     mockFetch({
       funnels: [declaredFunnel("sales_meetings_from_conversation"), declaredFunnel("sales_meetings_from_website")],
     });
@@ -328,7 +328,7 @@ describe("GET /features/:featureSlug/funnel-ranking", () => {
       .set(AUTH)).body;
 
     // BOTH channels fund it: on dyn-b that is (1/$100)·5% + (1/$10)·40% = 0.0405 meetings per dollar,
-    // i.e. $24.69 — a blend that is neither of the two chains' real prices ($25 and $200), which is
+    // i.e. $24.69 — a blend that is neither of the two funnels' real prices ($25 and $200), which is
     // precisely why a brand running only one of them could not read its own cost off it.
     const best = byGoal.rows
       .filter((r: any) => r.audienceId === null && r.resolved.costPerOutcomeUsd > 0)
@@ -393,7 +393,7 @@ describe("GET /features/:featureSlug/funnel-ranking", () => {
   });
 
   it("the declared meeting show-up rate lowers the meeting goal's return — it is not a free 100%", async () => {
-    // The meeting chain is reply → BOOKED → attended → paid. Our meetingToClosePct is BOOKED → paid,
+    // The meeting funnel is reply → BOOKED → attended → paid. Our meetingToClosePct is BOOKED → paid,
     // brand-service's funnel prices ATTENDED → paid, so a declared show-up rate must divide the return.
     const meetingFunnel = (rates: Record<string, number | null>) =>
       declaredFunnel("sales_meetings_from_conversation", { rates });

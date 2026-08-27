@@ -133,9 +133,9 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
 
     // ── Brand economics: effective (both surfaces) + INTERNAL saved (the declared goal) ────
     if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
-      // What the brand DECLARED it sells through — the chain the spend columns are priced on. An empty
+      // What the brand DECLARED it sells through — the funnel the spend columns are priced on. An empty
       // list is brand-service's "this org never stated a set": the client throws on it, and the columns
-      // degrade to observed rather than being priced on a substituted chain.
+      // degrade to observed rather than being priced on a substituted funnel.
       return json({
         funnels: brandFunnels.map((funnelKey) => ({
           funnelKey, name: funnelKey, steps: [], rates: {}, lifetimeRevenueUsd: null,
@@ -311,8 +311,8 @@ describe("aggregate cost coherence: /revenue spend ↔ /workflow-projection", ()
     // cost per signup = clickUsd / visitToSignupPct(20%) — the brand's own economics through the
     // winner's click cost, not a dollar total.
     expect(spend.cpsCents / 100).toBeCloseTo(BENCHMARK_CPC_USD / 0.2, 9);
-    // A funnel column whose rate this chain's projection does not resolve (cost per form submission is
-    // only projected for the form-magnet chain) has NO expected cost — so it stays null rather than
+    // A funnel column whose rate this funnel's projection does not resolve (cost per form submission is
+    // only projected for the form-magnet funnel) has NO expected cost — so it stays null rather than
     // falling back to the raw dollar total, which would be the units error all over again.
     expect(spend.cpfsCents).toBeNull();
   });
@@ -327,8 +327,8 @@ describe("aggregate cost coherence: /revenue spend ↔ /workflow-projection", ()
     expect(spend.cpfsCents).not.toBe(spend.totalSpentCents);
   });
 
-  // NO DECLARED FUNNEL → there is no chain to be coherent with, so the columns stay OBSERVED (null at 0
-  // outcomes). "We could not estimate this" — never a substituted chain, and never the raw spend total.
+  // NO DECLARED FUNNEL → there is no funnel to be coherent with, so the columns stay OBSERVED (null at 0
+  // outcomes). "We could not estimate this" — never a substituted funnel, and never the raw spend total.
   it("a brand that has declared NO sales funnel keeps the observed (null) behaviour", async () => {
     brandFunnels = [];
 

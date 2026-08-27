@@ -12,9 +12,9 @@
  * leak this closes. A caller with no org has no question to ask, so `orgId` is fail-loud.
  *
  * SHAPE IS THE PRODUCER'S. Everything below conforms to what brand-service actually deploys; nothing
- * here is authored by features-service. A funnel is ONE chain from the first signal outreach can buy
+ * here is authored by features-service. A funnel is ONE funnel from the first signal outreach can buy
  * (a positive reply, or a click onto the site) down to a paid client, and it carries the goal it
- * optimizes for plus the economics that chain is priced on.
+ * optimizes for plus the economics that funnel is priced on.
  *
  * Three of brand-service's rules are load-bearing here and must not be softened:
  *  - **Nothing is defaulted.** A value the brand never declared reads `null`, which never means zero.
@@ -51,11 +51,11 @@ export class SalesFunnelsUnavailableError extends Error {
  */
 export interface DeclaredSalesFunnel {
   funnelKey: SalesFunnelKey;
-  /** Whether the org currently sells through this chain. The INTERNAL read serves only active ones. */
+  /** Whether the org currently sells through this funnel. The INTERNAL read serves only active ones. */
   active?: boolean;
   name: string;
   steps: string[];
-  /** Exactly the rates THIS funnel's chain prices, in chain order. Values may be null (undeclared). */
+  /** Exactly the rates THIS funnel's funnel prices, in funnel order. Values may be null (undeclared). */
   rates: Record<string, number | null>;
   lifetimeRevenueUsd: number | null;
   destinationUrl: string | null;
@@ -63,7 +63,7 @@ export interface DeclaredSalesFunnel {
   updatedAt: string;
 }
 
-/** Raised when brand-service serves a funnel key this service has no chain for. Fails loud: pricing a
+/** Raised when brand-service serves a funnel key this service has no funnel for. Fails loud: pricing a
  * funnel we cannot model would put a number under a name we do not understand, and dropping it would
  * silently rank a smaller set than the brand declared. */
 export class UnknownSalesFunnelError extends Error {
@@ -87,7 +87,7 @@ export async function fetchDeclaredSalesFunnels(
   /**
    * WHICH offer's funnels — and therefore whose lifetime revenue and whose rates. A declared funnel
    * hangs off an OFFER, because a brand selling a $200 self-serve plan and a $20k contract converts
-   * and is worth completely different numbers on the same chain (brand-service#473).
+   * and is worth completely different numbers on the same funnel (brand-service#473).
    *
    * Omitted keeps today's answer for every brand selling one thing, which is 100% of live traffic:
    * brand-service resolves the sole offer, and refuses (409) for a brand selling several rather than

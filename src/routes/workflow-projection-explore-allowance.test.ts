@@ -51,7 +51,7 @@ const app = (await import("../index.js")).default;
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const FEATURE = { id: "feat-1", slug: "x", name: "X", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
 
-// The brand's declared conversation-chain rates, as brand-service serves them.
+// The brand's declared conversation-funnel rates, as brand-service serves them.
 const ECONOMICS = {
   lifetimeRevenueUsd: 5000,
   replyToMeetingPct: 40,

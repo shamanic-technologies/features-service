@@ -41,7 +41,7 @@ describe("the funnel key is the whole vocabulary", () => {
 
   it("resolves a word that names no funnel to null — the caller fails loud rather than guessing one", () => {
     expect(matchSalesFunnelKey("telepathy")).toBeNull();
-    // A GOAL is not a funnel. `meetingBooked` names two different chains, which is the whole reason the
+    // A GOAL is not a funnel. `meetingBooked` names two different funnels, which is the whole reason the
     // goal was retired; accepting it here would silently pick one of them.
     expect(matchSalesFunnelKey("meetingBooked")).toBeNull();
     expect(matchSalesFunnelKey("signup")).toBeNull();
@@ -84,7 +84,7 @@ describe("declaredFunnelsToRank", () => {
     expect(declaredFunnelsToRank([funnel({ rates: {}, lifetimeRevenueUsd: null })])[0].economics).toBeNull();
   });
 
-  it("keeps the TWO meeting funnels apart — they are two chains, and the customer funds each separately", () => {
+  it("keeps the TWO meeting funnels apart — they are two funnels, and the customer funds each separately", () => {
     // They used to collapse into one goal-grain entry, because the answer was a single elected goal.
     // The answer is a RANKING per funnel now, and each funnel carries its own budget, so merging them
     // would leave the customer unable to see which of the two is worth funding.
@@ -112,7 +112,7 @@ describe("declaredFunnelsToRank", () => {
   });
 
   it("COMPOSES the meeting show-up rate into booked→paid — the shared field name means two things", () => {
-    // brand-service's chain is `… → Meeting booked → Meeting attended → Paid client`, so its
+    // brand-service's funnel is `… → Meeting booked → Meeting attended → Paid client`, so its
     // meetingToClosePct is ATTENDED→paid. Ours is BOOKED→paid (the projection multiplies it by
     // visitToMeeting / replyToMeeting, which produce BOOKED meetings). 50% show-up × 40% close = 20%.
     const parsed = declaredFunnelsToRank([
@@ -137,7 +137,7 @@ describe("declaredFunnelsToRank", () => {
     expect(parsed[0].economics).toEqual({ visitToMeetingPct: 4, meetingToClosePct: 40, meetingAttendedToPaidClientPct: 40 });
   });
 
-  it("a show-up rate with NO close rate contributes nothing — half a chain is not a close rate", () => {
+  it("a show-up rate with NO close rate contributes nothing — half a funnel is not a close rate", () => {
     const parsed = declaredFunnelsToRank([
       funnel({
         funnelKey: "sales_meetings_from_conversation",
@@ -149,7 +149,7 @@ describe("declaredFunnelsToRank", () => {
 
   it("carries NO goal, and reads nothing about FUNDING", () => {
     // No goal: the funnel key is what this is priced on, and a goal beside it would be a second
-    // vocabulary for the same thing — the one that could not tell the two meeting chains apart.
+    // vocabulary for the same thing — the one that could not tell the two meeting funnels apart.
     // No funding: ranking is about history. Whether a funnel currently carries a daily ceiling is
     // billing's data and campaign-service's question at run time; it must not reach this path at all.
     const [entry] = declaredFunnelsToRank([funnel({})]);

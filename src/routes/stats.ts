@@ -1136,7 +1136,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     // acquisition channel), campaign-service's own key — so the rows one campaign was split across
     // when workflow selection switched workflows read as the one campaign they are. All four parts
     // come from campaign-service; none is re-derived here, and the funnel is never inferred from a
-    // goal (two funnels answer to one goal, so that inference prints a chain the campaign never
+    // goal (two funnels answer to one goal, so that inference prints a funnel the campaign never
     // stated). Fail-soft: with campaign-service unreachable every campaign is its own family and the
     // response is exactly what it was before this feature.
     const preIdentity: Identity = { userId, runId, brandId, campaignId, featureSlug: headerFeatureSlug };

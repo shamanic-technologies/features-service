@@ -11,12 +11,12 @@
  *                slug→dynasty. Every active audience is enumerated (`fetchAudienceGrainEvidence`).
  *
  * Both brand + audience reads are ORG-SCOPED (x-org-id) and fail loud (throw → handler 502). No silent
- * fallback, no synthesized data. The dynasty rollup reuses buildUpgradeChains / aggregateAcrossChains so
+ * fallback, no synthesized data. The dynasty rollup reuses buildWorkflowDynasties / aggregateAcrossDynasties so
  * a workflow's evidence includes its predecessor versions', identical to crossOrg.
  */
 
 import { fetchWithRetry } from "./fetch-retry.js";
-import { buildUpgradeChains, aggregateAcrossChains } from "../routes/public.js";
+import { buildWorkflowDynasties, aggregateAcrossDynasties } from "../routes/public.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
 import { fetchActiveAudiences } from "./human-client.js";
 import { mapWithConcurrency } from "./concurrency.js";
@@ -124,7 +124,7 @@ function extractBroadcastRecipientStats(group: Record<string, unknown>): Record<
   };
 }
 
-/** Per-workflow-dynasty aggregated evidence (cost + contacted/clicks/replies), rolled up over the upgrade chain. */
+/** Per-workflow-dynasty aggregated evidence (cost + contacted/clicks/replies), rolled up over the upgrade funnel. */
 export interface WorkflowGrainEvidence {
   totalCostInUsdCents: number;
   completedRuns: number;
@@ -135,7 +135,7 @@ export interface WorkflowGrainEvidence {
 
 /**
  * BRAND-grain evidence per active workflow dynasty for one (brand, feature): the SAME data path as
- * crossOrg (fetchPublicCosts/fetchPublicEmailStats + aggregateAcrossChains) but scoped to `brandId`.
+ * crossOrg (fetchPublicCosts/fetchPublicEmailStats + aggregateAcrossDynasties) but scoped to `brandId`.
  * Keyed by active workflow slug (the dynasty's active version). A dynasty the brand never ran is absent
  * from the map → the handler omits the brand grain for that dynasty (spentUsd = 0 rule).
  */
@@ -156,9 +156,9 @@ export async function fetchBrandWorkflowEvidence(
     fetchBrandCostGroups(brandId, featureSlug, "workflowSlug", identity),
     fetchBrandEmailStats(brandId, featureSlug, identity),
   ]);
-  const chains = buildUpgradeChains(workflows);
-  const { costMap, aggregatedOutcomes } = aggregateAcrossChains(
-    chains,
+  const dynasties = buildWorkflowDynasties(workflows);
+  const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(
+    dynasties,
     // Select gross vs frozen-net cost per group BEFORE the dynasty rollup, so the aggregated brand-grain
     // cost is net-or-gross end to end (no post-hoc multiply).
     costGroups.map((g) => ({ dimensions: g.dimensions, totalCostInUsdCents: selectCostCentsString(g, "totalCostInUsdCents", pricing, basis), runCount: g.runCount })),

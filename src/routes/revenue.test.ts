@@ -197,7 +197,7 @@ function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; lead
       return new Response(costGroups(opts.costCents ?? 0), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     // brand-service GET /internal/brands/:brandId/sales-funnels — what the brand DECLARED it sells
-    // through, each funnel carrying the terms ITS chain is priced on. Absent option → a 404, the
+    // through, each funnel carrying the terms ITS funnel is priced on. Absent option → a 404, the
     // shape a brand that has declared nothing produces, so the pipeline EV falls through to the
     // brand-wide economics (the legacy behaviour every other case in this file asserts).
     if (url.includes("/sales-funnels")) {
@@ -526,7 +526,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("a merely-delivered lead is worth NOTHING — no pipeline, no organization, no event", async () => {
     // An email that only LANDED is a step of no funnel in the catalogue, so it buys nothing. It used
-    // to earn a chained-down slice of the lifetime contract (15.42836 here); on prod that made 5,122
+    // to earn a funneled-down slice of the lifetime contract (15.42836 here); on prod that made 5,122
     // merely-delivered organisations 37% of one brand's pipeline.
     mockFetch({
       economics: ECONOMICS,
@@ -625,7 +625,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(byId.lc.conversionProbabilityPct).toBeCloseTo(3.47, 6); // same as website_purchase
   });
 
-  // SINGLE-STEP lenses: EV per lead = one paid-client rate × LTR (no funnel chaining).
+  // SINGLE-STEP lenses: EV per lead = one paid-client rate × LTR (no multi-step composition).
   const SINGLE_STEP_ECON = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 20 };
 
   it("lens=sales (COMBINED) — per-lead sale probability = probabilistic OR of visit→paid & reply→paid; OR < sum & ≤ 1×LTR", async () => {
@@ -896,7 +896,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(0); // an open buys no step of any chain
+    expect(res.body.headline.totalPipelineUsd).toBe(0); // an open buys no step of any funnel
     expect(res.body.leads[0].expectedRevenueUsd).toBe(0);
     expect(res.body.leads[0].tags).toEqual(["opened"]); // still the lead's honest position
   });
@@ -945,7 +945,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       economics: ECONOMICS,
       leads: [REPLY_ONLY()],
       timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(30) } },
-      // The declared chain: 50% reply→meeting × 70% attended→paid = 35% reply→paid.
+      // The declared funnel: 50% reply→meeting × 70% attended→paid = 35% reply→paid.
       salesFunnels: [declaredFunnel({ rates: { replyToMeetingPct: 50, meetingToClosePct: 70 } })],
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
@@ -963,10 +963,10 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(150); // 1000 × 0.50 × 0.30 — never 0, never half a chain
+    expect(res.body.headline.totalPipelineUsd).toBe(150); // 1000 × 0.50 × 0.30 — never 0, never half a funnel
   });
 
-  it("composes the meeting chain: a declared show-up rate is NOT a free 100%", async () => {
+  it("composes the meeting funnel: a declared show-up rate is NOT a free 100%", async () => {
     mockFetch({
       economics: ECONOMICS,
       leads: [REPLY_ONLY()],
@@ -991,7 +991,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.headline.totalPipelineUsd).toBe(875); // 2500 × 0.35 — the brief's per-reply figure
   });
 
-  it("`?funnel=` names which declared chain to price on", async () => {
+  it("`?funnel=` names which declared funnel to price on", async () => {
     mockFetch({
       economics: ECONOMICS,
       leads: [REPLY_ONLY()],
@@ -1001,28 +1001,28 @@ describe("GET /features/:featureSlug/revenue", () => {
         declaredFunnel({ funnelKey: "sales_meetings_from_website", name: "Meetings from the website", rates: { replyToMeetingPct: 10, meetingToClosePct: 10 } }),
       ],
     });
-    // Unqualified → the FIRST declared funnel in catalogue order (the conversation chain).
+    // Unqualified → the FIRST declared funnel in catalogue order (the conversation funnel).
     const first = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(first.body.headline.totalPipelineUsd).toBe(350);
-    // Named → that chain alone, on its own terms AND its own legs. A positive reply is not a step of
-    // the WEBSITE chain (Website visit → Meeting booked → …), so this lead buys nothing under it.
+    // Named → that funnel alone, on its own terms AND its own legs. A positive reply is not a step of
+    // the WEBSITE funnel (Website visit → Meeting booked → …), so this lead buys nothing under it.
     const named = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&funnel=sales_meetings_from_website").set(AUTH);
     expect(named.body.headline.totalPipelineUsd).toBe(0);
   });
 
-  it("a conversion signal prices a brand only when it is a leg of one of its DECLARED chains", async () => {
+  it("a conversion signal prices a brand only when it is a leg of one of its DECLARED funnels", async () => {
     const CLICK_AND_REPLY = [
       leadRow({ leadId: "lr", email: "reply@x.com", replied: true, replyClassification: "positive", lead: { firstName: "Re", lastName: "Ply", photoUrl: null, organization: { id: "or", name: "OrgR", logoUrl: null } } }),
       leadRow({ leadId: "lc", email: "click@x.com", clicked: true, lead: { firstName: "Cl", lastName: "Ick", photoUrl: null, organization: { id: "oc", name: "OrgC", logoUrl: null } } }),
     ];
-    // Declares ONLY the conversation chain: the reply is a leg, the website visit is not.
+    // Declares ONLY the conversation funnel: the reply is a leg, the website visit is not.
     mockFetch({ economics: ECONOMICS, leads: CLICK_AND_REPLY, salesFunnels: [declaredFunnel({ rates: {} })] });
     const conversation = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(conversation.status).toBe(200);
     expect(conversation.body.headline.totalPipelineUsd).toBe(120); // the reply alone, brand-wide 12%
     expect(conversation.body.organizations.map((o: any) => o.orgId)).toEqual(["or"]);
 
-    // Declares ONLY a website chain: now the visit is a leg and the reply is not.
+    // Declares ONLY a website funnel: now the visit is a leg and the reply is not.
     mockFetch({
       economics: ECONOMICS,
       leads: CLICK_AND_REPLY,
@@ -1380,7 +1380,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     // itself proof of concurrency; a regression to sequential awaits times out.
     // The Overview path fires THREE concurrent calls: fetchSpendBreakdown makes TWO /stats/costs calls
     // (per-source costName + today's spend), plus leads. The platform-global email rates left the wave
-    // with the delivery stages they used to chain down to a close — nothing chains down from a
+    // with the delivery stages they used to funnel down to a close — nothing funnels down from a
     // delivery any more, so nothing fetches them.
     //
     // Economics is deliberately NOT in this wave any more: it is resolved ONCE on the request path ahead

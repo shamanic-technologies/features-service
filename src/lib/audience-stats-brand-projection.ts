@@ -32,7 +32,7 @@
  *     `max(spend, parent)` is a real rankable number, and the Strategy page's `pickBestBrandRow` ranks it
  *     too. (A `grainHasObservedOutcome` gate lived here from v0.106.3 until v0.107.5; it made this module
  *     crown a different workflow than the dashboard for the same brand+goal, which IS the incoherence.)
- *   - Version chains collapse first (`buildUpgradeChains` + `aggregateAcrossChains`, the SAME rollup
+ *   - Version dynasties collapse first (`buildWorkflowDynasties` + `aggregateAcrossDynasties`, the SAME rollup
  *     crossOrg/brand use in workflow-projection) so a dynasty's versions are one workflow, not several.
  *
  * The module ALSO returns, per audience, that audience's FUNNEL costs at the AUDIENCE grain
@@ -64,7 +64,7 @@
  */
 
 import { fetchPublicCosts, fetchPublicEmailStats, fetchPublicWorkflows } from "./public-stats-clients.js";
-import { buildUpgradeChains, aggregateAcrossChains } from "../routes/public.js";
+import { buildWorkflowDynasties, aggregateAcrossDynasties } from "../routes/public.js";
 import { fetchEffectiveEconomics } from "./sales-economics-client.js";
 import {
   projectOutcomeCosts,
@@ -96,9 +96,9 @@ export interface AudienceProjectedCostsUsd {
   cpsaleUsd: number | null; // cost per sale (goal=sales → best-channel; goal=websitePurchase → close funnel)
   /**
    * What it costs THIS audience to win one PAYING CLIENT — its own unit costs pushed through the
-   * queried goal's chain by the SAME `paidClientCostForGoal` `/workflow-projection` and
+   * queried goal's funnel by the SAME `paidClientCostForGoal` `/workflow-projection` and
    * `/funnel-ranking` route through. The denominator of the audience's return per dollar. null when
-   * the chain has no path to a paying client on the brand's declared rates (never 0, which would
+   * the funnel has no path to a paying client on the brand's declared rates (never 0, which would
    * read as an infinite return).
    */
   costPerPaidClientUsd: number | null;
@@ -111,15 +111,15 @@ export interface AudienceProjectedCostsUsd {
 /**
  * Why a projection carries no defined RETURN. Same vocabulary `/funnel-ranking` reports per declared
  * funnel (`UnrankableReason`), deliberately spelled the same so a consumer reads one set of words for
- * "this chain could not be priced" wherever it meets it. Never a substituted number — the reason IS the
+ * "this funnel could not be priced" wherever it meets it. Never a substituted number — the reason IS the
  * answer.
  */
 export type FunnelPricingReason =
   /** No effective economics for this brand (cold start) — nothing to normalise through. */
   | "no_economics"
-  /** No workflow carries a usable cost of this chain's outcome. */
+  /** No workflow carries a usable cost of this funnel's outcome. */
   | "no_workflow_evidence"
-  /** The chain has no defined path to a paying client (a leg is undeclared or sits at 0). */
+  /** The funnel has no defined path to a paying client (a leg is undeclared or sits at 0). */
   | "no_paid_client_path"
   /** A paid-client cost exists but the brand states no lifetime revenue, so there is no return. */
   | "no_return_defined";
@@ -158,7 +158,7 @@ export interface BrandProjectedParentsUsd {
   lifetimeRevenueUsd: number | null;
   /**
    * Null ⟺ this projection HAS a defined, positive return (`lifetimeRevenueUsd / costPerPaidClientUsd`).
-   * Otherwise the reason it does not — so a consumer combining several chains can say which of the
+   * Otherwise the reason it does not — so a consumer combining several funnels can say which of the
    * brand's funnels went into a figure and why the others did not, instead of showing a silent gap.
    */
   pricingReason: FunnelPricingReason | null;
@@ -286,8 +286,8 @@ function grainUnitCosts(ev: WorkflowGrainEvidence, parent: DynastyUnitCosts | nu
  * audience, the FUNNEL columns' value under that winning workflow. Rebuilds workflow-projection's
  * BRAND-LEVEL rows from the SAME sources (workflow-service `/public/workflows` + runs
  * `/v1/stats/public/costs` + email-gateway `/public/stats` for the crossOrg grain, the brand-scoped twins
- * for the brand grain, plus the brand's effective economics), rolls version chains into dynasties with the
- * SAME `buildUpgradeChains` / `aggregateAcrossChains` rollup, and takes the winner of the queried goal.
+ * for the brand grain, plus the brand's effective economics), rolls version funnels into dynasties with the
+ * SAME `buildWorkflowDynasties` / `aggregateAcrossDynasties` rollup, and takes the winner of the queried goal.
  * It then continues the SAME ladder one grain finer — the winner's per-(audience × dynasty) send-tag
  * evidence — so every audience's derived columns equal what workflow-projection resolves for it.
  * Fails loud on any downstream error (no silent fallback; NET fail-loud via fetchPublicCosts). Cross-org
@@ -348,7 +348,7 @@ export async function fetchBrandProjectedParents(
   audienceIds?: string[],
   // The SALES FUNNEL the caller asked to be priced on, when it named one. It OVERRIDES `goal`: the goal
   // cannot distinguish a meeting bought with a reply from one bought with a click, and this parent is
-  // the number every per-audience cost floors against, so it must be priced on the same chain the row is.
+  // the number every per-audience cost floors against, so it must be priced on the same funnel the row is.
   funnelKey?: SalesFunnelKey,
   // That funnel's OWN declared terms, merged over the brand's effective economics — the SAME merge the
   // ranking does. Without it this parent prices on the brand-wide rates while the projection row prices
@@ -360,7 +360,7 @@ export async function fetchBrandProjectedParents(
 }
 
 /**
- * The PURE half: price one already-fetched evidence set through ONE chain (a funnel when named, else the
+ * The PURE half: price one already-fetched evidence set through ONE funnel (a funnel when named, else the
  * goal). No IO — so a caller may run it once per declared funnel over the same evidence.
  */
 export function projectBrandParents(
@@ -371,11 +371,11 @@ export function projectBrandParents(
 ): BrandProjectedParentsUsd {
   const { workflows, slugToDynasty, fleetCostGroups, fleetEmail, effective, brandGrain, audienceGrain } = evidence;
 
-  // Collapse each workflow's version chain into ONE dynasty before comparing — the EXACT rollup
+  // Collapse each workflow's version funnel into ONE dynasty before comparing — the EXACT rollup
   // workflow-projection's crossOrg/brand grains use, so "a workflow" means the same thing on both
   // surfaces (treating versioned slugs as independent workflows would corrupt the best pick).
-  const { costMap, aggregatedOutcomes } = aggregateAcrossChains(
-    buildUpgradeChains(workflows),
+  const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(
+    buildWorkflowDynasties(workflows),
     fleetCostGroups,
     fleetEmail,
     "workflowSlug",
@@ -415,7 +415,7 @@ export function projectBrandParents(
   }
 
   // A FUNNEL, when the caller named one, decides the pricing outright — the goal is the coarser question
-  // and cannot tell the two meeting chains apart. `meetingChannel` is the whole difference between them,
+  // and cannot tell the two meeting funnels apart. `meetingChannel` is the whole difference between them,
   // and it MUST thread into this parent too: an audience row floored against a both-channel benchmark
   // while its own row is priced on one channel is the same two-prices-for-one-thing split this module
   // exists to close, reappearing one grain down.
@@ -472,7 +472,7 @@ export function projectBrandParents(
       costPerPaidClientUsd: null,
       lifetimeRevenueUsd: economics?.lifetimeRevenueUsd ?? null,
       // Told apart because a combining caller reports them apart: "this brand has no economics" and "no
-      // workflow carries a cost of this chain's outcome" are different gaps with different fixes.
+      // workflow carries a cost of this funnel's outcome" are different gaps with different fixes.
       pricingReason: econ ? "no_workflow_evidence" : "no_economics",
     };
   }
@@ -567,7 +567,7 @@ export function projectBrandParents(
     byAudience,
     costPerPaidClientUsd: brandLevel.costPerPaidClientUsd,
     lifetimeRevenueUsd: economics?.lifetimeRevenueUsd ?? null,
-    // A chain with no path to a paying client and one whose brand states no lifetime revenue both carry
+    // A funnel with no path to a paying client and one whose brand states no lifetime revenue both carry
     // no return, and they are NOT the same gap: the first is a leg the brand never declared, the second
     // is a price it never put on a customer.
     pricingReason:

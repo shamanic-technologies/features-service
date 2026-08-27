@@ -91,7 +91,7 @@ describe("the producer door is GONE — nothing reads a brand's optimization goa
     const ranked = declaredFunnelsToRank([
       {
         funnelKey: "sales_meetings_from_conversation",
-        name: "Reply chain",
+        name: "Reply funnel",
         steps: [],
         rates: { replyToMeetingPct: 40 },
         lifetimeRevenueUsd: 5000,
@@ -118,14 +118,14 @@ describe("the caller door survives, unchanged, as a deprecation", () => {
 });
 
 describe("bucket membership is decided by DECLARED FUNNELS, never by a goal", () => {
-  it("the website-purchase chain feeds the purchase + signup + CPC buckets, and not the meeting one", () => {
+  it("the website-purchase funnel feeds the purchase + signup + CPC buckets, and not the meeting one", () => {
     expect(funnelsInObjectiveBucket("websitePurchase", ["website_purchases"])).toBe(true);
     expect(funnelsInObjectiveBucket("signup", ["website_purchases"])).toBe(true);
     expect(funnelsInObjectiveBucket("websiteVisit", ["website_purchases"])).toBe(true);
     expect(funnelsInObjectiveBucket("meetingBooked", ["website_purchases"])).toBe(false);
   });
 
-  it("the two meeting chains both feed the meeting bucket; only the click-bought one feeds CPC", () => {
+  it("the two meeting funnels both feed the meeting bucket; only the click-bought one feeds CPC", () => {
     expect(funnelsInObjectiveBucket("meetingBooked", ["sales_meetings_from_conversation"])).toBe(true);
     expect(funnelsInObjectiveBucket("meetingBooked", ["sales_meetings_from_website"])).toBe(true);
     expect(funnelsInObjectiveBucket("websiteVisit", ["sales_meetings_from_conversation"])).toBe(false);
@@ -170,7 +170,7 @@ describe("the request door: `?funnel=` is sufficient, `?goal=` still works besid
     if (both.ok) expect(both.funnelKey).toBe("form_magnet");
   });
 
-  it("neither one is the BRAND-LEVEL read (goal null, no chain named); an unrecognised funnel/goal is still 400", () => {
+  it("neither one is the BRAND-LEVEL read (goal null, no funnel named); an unrecognised funnel/goal is still 400", () => {
     // A brand runs several funnels at once, so at brand level there is no goal — the read is combined
     // over the brand's DECLARED set and carries no goal at all. It is a request, not a missing parameter.
     const neither = validateAudienceStatsQuery(req({ brandId: "b1" }));
@@ -181,7 +181,7 @@ describe("the request door: `?funnel=` is sufficient, `?goal=` still works besid
     }
 
     // A NAMED-but-unrecognised value stays a 400 — never a silent fall back to the brand-level read,
-    // which would answer a chain-specific question with a brand-wide number and look right.
+    // which would answer a funnel-specific question with a brand-wide number and look right.
     const bogusGoal = validateAudienceStatsQuery(req({ brandId: "b1", goal: "not_a_goal" }));
     expect(bogusGoal.ok).toBe(false);
     if (!bogusGoal.ok) expect(bogusGoal.status).toBe(400);

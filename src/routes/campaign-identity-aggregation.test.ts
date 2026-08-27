@@ -394,8 +394,8 @@ describe("campaign figures are the campaign IDENTITY's figures", () => {
 });
 
 /**
- * A campaign STATES the chain it sells (campaign-service stores `funnel_key` on the row), so a read
- * scoped to that campaign is priced on THAT chain — its legs and its terms — not on the brand's first
+ * A campaign STATES the funnel it sells (campaign-service stores `funnel_key` on the row), so a read
+ * scoped to that campaign is priced on THAT funnel — its legs and its terms — not on the brand's first
  * declared funnel. The brand-scoped read keeps the deterministic first-declared pick it has today.
  */
 describe("a campaign is priced on ITS OWN declared funnel, not the brand's first", () => {
@@ -404,12 +404,12 @@ describe("a campaign is priced on ITS OWN declared funnel, not the brand's first
   });
   afterEach(() => vi.restoreAllMocks());
 
-  /** Two campaigns on the same brand, each stating a different chain. */
-  const TWO_CHAINS = [
+  /** Two campaigns on the same brand, each stating a different funnel. */
+  const TWO_FUNNELS = [
     { id: "conv", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-06-01T00:00:00.000Z" },
     { id: "web", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "website_purchases", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-06-02T00:00:00.000Z" },
   ];
-  // The conversation chain is FIRST in catalogue order, so it is what the brand-scoped read prices on.
+  // The conversation funnel is FIRST in catalogue order, so it is what the brand-scoped read prices on.
   const DECLARED = [
     {
       funnelKey: "sales_meetings_from_conversation", active: true, name: "Meetings from conversations",
@@ -425,14 +425,14 @@ describe("a campaign is priced on ITS OWN declared funnel, not the brand's first
     },
   ];
 
-  /** A lead that only CLICKED — a leg of the website chain, of no step of the conversation one. */
+  /** A lead that only CLICKED — a leg of the website funnel, of no step of the conversation one. */
   function clickLead(campaignId: string, leadId: string): Record<string, unknown> {
     return { ...replyLead(campaignId, leadId), replied: false, replyClassification: null, clicked: true };
   }
 
-  it("each campaign prices its own chain's legs, and the brand prices the first declared one", async () => {
+  it("each campaign prices its own funnel's legs, and the brand prices the first declared one", async () => {
     const fixture = {
-      campaigns: TWO_CHAINS,
+      campaigns: TWO_FUNNELS,
       costByCampaign: { conv: 1000, web: 1000 },
       leads: [replyLead("conv", "lr"), clickLead("web", "lc")],
       salesFunnels: DECLARED,
@@ -446,14 +446,14 @@ describe("a campaign is priced on ITS OWN declared funnel, not the brand's first
 
     // The website-purchase campaign: its visit is a leg, priced on ITS declared visit→paid 4% (the
     // meeting terms fall through to the brand-wide record): 2500 × orP(0.04, 0.05 × 0.30) = 136. Had it
-    // been priced on the brand's FIRST declared chain, a click would have bought nothing at all.
+    // been priced on the brand's FIRST declared funnel, a click would have bought nothing at all.
     mockFetch(fixture);
     const web = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&campaignId=web").set(AUTH);
     expect(web.status).toBe(200);
     expect(web.body.headline.totalPipelineUsd).toBeCloseTo(136, 6);
 
-    // The BRAND-scoped read is priced on every declared chain's legs — both leads count — with the
-    // FIRST declared funnel's terms, exactly as before: the click now runs the conversation chain's
+    // The BRAND-scoped read is priced on every declared funnel's legs — both leads count — with the
+    // FIRST declared funnel's terms, exactly as before: the click now runs the conversation funnel's
     // 70% meeting→paid over the brand-wide 2% self-serve, 2500 × orP(0.02, 0.05 × 0.70) = 135.75.
     mockFetch(fixture);
     const brand = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
@@ -461,9 +461,9 @@ describe("a campaign is priced on ITS OWN declared funnel, not the brand's first
     expect(brand.body.headline.totalPipelineUsd).toBeCloseTo(875 + 135.75, 6);
   });
 
-  it("an explicit `?funnel=` still wins over the campaign's own chain (the caller asked for it)", async () => {
+  it("an explicit `?funnel=` still wins over the campaign's own funnel (the caller asked for it)", async () => {
     mockFetch({
-      campaigns: TWO_CHAINS,
+      campaigns: TWO_FUNNELS,
       costByCampaign: { conv: 1000, web: 1000 },
       leads: [replyLead("conv", "lr")],
       salesFunnels: DECLARED,
@@ -472,7 +472,7 @@ describe("a campaign is priced on ITS OWN declared funnel, not the brand's first
       .get("/features/sales-cold-email-outreach/revenue?brandId=b1&campaignId=conv&funnel=website_purchases")
       .set(AUTH);
     expect(res.status).toBe(200);
-    // A positive reply is a step of no website chain → nothing.
+    // A positive reply is a step of no website funnel → nothing.
     expect(res.body.headline.totalPipelineUsd).toBe(0);
   });
 
@@ -485,6 +485,6 @@ describe("a campaign is priced on ITS OWN declared funnel, not the brand's first
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&campaignId=live").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(875); // the first declared chain's own terms
+    expect(res.body.headline.totalPipelineUsd).toBe(875); // the first declared funnel's own terms
   });
 });

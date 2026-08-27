@@ -1,7 +1,7 @@
 /**
  * THE SALES FUNNEL IS THE VOCABULARY — features-service's mirror of brand-service's deployed catalogue.
  *
- * A funnel is ONE chain, from the first signal outreach can buy (a positive reply, or a click onto the
+ * A funnel is ONE funnel, from the first signal outreach can buy (a positive reply, or a click onto the
  * brand's site) down to a paying client. brand-service OWNS the catalogue; everything here CONFORMS to
  * what it deploys (`GET /internal/brands/:brandId/sales-funnels`, `src/services/salesFunnelCatalogue.ts`
  * in `shamanic-technologies/brand-service`) and nothing here is authored by features-service.
@@ -52,19 +52,19 @@ const LEGACY_SALES_FUNNEL_KEYS: Record<string, SalesFunnelKey> = {
   visit_form: "form_magnet",
 };
 
-/** Which engagement channel a funnel's chain buys its first signal through, when that is the ONE thing
- * distinguishing two otherwise-identical chains. Only the two meeting funnels carry it. */
+/** Which engagement channel a funnel's funnel buys its first signal through, when that is the ONE thing
+ * distinguishing two otherwise-identical funnels. Only the two meeting funnels carry it. */
 export type MeetingChannel = "click" | "reply";
 
 export interface SalesFunnelDef {
   key: SalesFunnelKey;
-  /** brand-service's own label for the chain, used when the producer serves no name. */
+  /** brand-service's own label for the funnel, used when the producer serves no name. */
   name: string;
-  /** The chain, in order — brand-service's `steps`, mirrored for readability of the mapping below. */
+  /** The funnel, in order — brand-service's `steps`, mirrored for readability of the mapping below. */
   steps: readonly string[];
   /**
    * The channel THIS funnel buys through, when the funnel's identity depends on it. `null` means the
-   * chain's own math already names its channel (a signup / form chain is click-driven by construction).
+   * funnel's own math already names its channel (a signup / form funnel is click-driven by construction).
    */
   meetingChannel: MeetingChannel | null;
 }
@@ -106,7 +106,7 @@ const isSalesFunnelKey = (value: string): value is SalesFunnelKey =>
  * Resolve any spelling a caller or the producer may send to its canonical key — the canonical four, the
  * four pre-retirement ones, and separator/case variance on either (`Reply Meeting`, `form-magnet`).
  * Returns `null` for a word that names no funnel; every caller FAILS LOUD on that rather than guessing
- * a funnel, because guessing one would price a brand on a chain it never said it sells through.
+ * a funnel, because guessing one would price a brand on a funnel it never said it sells through.
  */
 export function matchSalesFunnelKey(raw: string): SalesFunnelKey | null {
   const normalised = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
@@ -123,12 +123,12 @@ export const salesFunnelIndex = (key: SalesFunnelKey): number => SALES_FUNNEL_KE
  * A goal is the poorer word and it is retired as an INPUT: both meeting funnels echo `meetingBooked`,
  * so the echo is lossy by construction and can never be read back as a funnel's identity. It exists
  * only so the fields consumers still read (`arbitration.goal`, `rows[].workflow`, the projection's
- * `goal` / `objective` echoes, the conversion columns a chain terminates in) keep resolving while the
+ * `goal` / `objective` echoes, the conversion columns a funnel terminates in) keep resolving while the
  * fleet migrates to the funnel key.
  *
- * `website_purchases` echoes `signup`, NOT `websitePurchase`: its chain is visit → signup → paid, and
+ * `website_purchases` echoes `signup`, NOT `websitePurchase`: its funnel is visit → signup → paid, and
  * the `websitePurchase` goal is the full self-serve-plus-meeting close funnel, whose rates are not this
- * chain's. That is the same routing `funnelToProjectionInputs` applies.
+ * funnel's. That is the same routing `funnelToProjectionInputs` applies.
  *
  * ⚠️ DO NOT add the inverse map. A goal→funnel table would be exactly the compatibility layer this
  * retirement exists to avoid, and it could not be written honestly anyway (one `meetingBooked` maps to

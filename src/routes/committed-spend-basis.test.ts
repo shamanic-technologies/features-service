@@ -63,7 +63,7 @@ const ECONOMICS = {
   signupToPaidClientPct: 10,
   visitToClosePct: 2,
   // The positive-reply lens is a SINGLE-STEP goal: 12% of replies pay, so a lensed lead is worth the
-  // same $120 the meeting chain prices it at — which is why the lens and the brand read must agree.
+  // same $120 the meeting funnel prices it at — which is why the lens and the brand read must agree.
   replyToPaidClientPct: 12,
   visitToPaidClientPct: 1,
 };
