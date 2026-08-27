@@ -37,8 +37,8 @@ interface ScopeChannel {
 /**
  * How the rows were ordered.
  *
- * `cpc` / `cppr` are the SINGLE-FUNNEL orders: the caller named the chain, so the rows sort on the cost
- * of that chain's driving outcome. `returnPerDollar` is the BRAND-LEVEL order, and it is the only honest
+ * `cpc` / `cppr` are the SINGLE-FUNNEL orders: the caller named the funnel, so the rows sort on the cost
+ * of that funnel's driving outcome. `returnPerDollar` is the BRAND-LEVEL order, and it is the only honest
  * one there: at brand level there is no goal — the brand sells through every funnel it declared at once —
  * so the question the page asks is what each audience RETURNS, and cost per outcome cannot answer it
  * (it ranks by cheapness, so an audience that converts to nothing outranks an expensive one that pays).
@@ -143,7 +143,7 @@ export interface AudienceStatsRow {
    * evidence to price and inherits `envelope.brandProjection` verbatim — the same brand-level
    * fallback every derived cost column already takes — rather than being blanked or invented.
    *
-   * All three fields are null (never 0) when the brand states no lifetime revenue, when the chain has
+   * All three fields are null (never 0) when the brand states no lifetime revenue, when the funnel has
    * no path to a paying client, or at cold start. A consumer renders a dash and says it could not be
    * measured; a 0 would read as "this audience returns nothing" / "winning a customer costs nothing",
    * which are different claims.
@@ -151,15 +151,15 @@ export interface AudienceStatsRow {
   projection: {
     /**
      * WHICH declared funnel this row's return was priced through, on the BRAND-LEVEL (funnel-less) read:
-     * the audience's own best-returning chain, so an audience that pays best through a different funnel
+     * the audience's own best-returning funnel, so an audience that pays best through a different funnel
      * than the brand's headline says so rather than being silently priced on the brand's. `null` on a
-     * single-funnel read (the caller named the chain) and when nothing could be priced.
+     * single-funnel read (the caller named the funnel) and when nothing could be priced.
      */
     basisFunnelKey?: SalesFunnelKey | null;
     /**
      * The lifetime revenue this row's return was divided by — the NUMERATOR of `returnPerDollar`,
      * carried per row because on the brand-level read two audiences can legitimately be priced through
-     * two chains the brand values differently (a $200 self-serve plan and a $20k contract). A consumer
+     * two funnels the brand values differently (a $200 self-serve plan and a $20k contract). A consumer
      * can therefore never pair a return with an LTR this projection did not use.
      */
     lifetimeRevenueUsd?: number | null;
@@ -184,7 +184,7 @@ export interface AudienceStatsRow {
  * At brand level there is no goal: a brand runs several sales funnels at once, and the only thing that
  * matters is what came back per dollar. So a brand-level return is combined over the brand's DECLARED
  * funnels as the BEST-RETURNING one — the same combination doctrine as the combined-`sales` cost (a sale
- * is won through the chain that converts it best, never a blend), and the reason it reconciles with
+ * is won through the funnel that converts it best, never a blend), and the reason it reconciles with
  * `/funnel-ranking` by construction: its rank-1 funnel IS this maximum, on the identical
  * `returnPerDollar` definition and the identical evidence.
  */
@@ -201,10 +201,10 @@ export interface AudienceStatsFunnelCoverage {
     reason: FunnelPricingReason | null;
   }>;
   /**
-   * The funnel whose chain every cost-per-outcome COLUMN on this payload is denominated in — the brand's
+   * The funnel whose funnel every cost-per-outcome COLUMN on this payload is denominated in — the brand's
    * best-returning declared funnel, falling back to its first declared funnel in catalogue order when
-   * none could be priced. A cost per outcome is denominated in a chain's OWN outcome, so it cannot be
-   * combined across chains the way a return can; naming the one it was priced on is the honest answer.
+   * none could be priced. A cost per outcome is denominated in a funnel's OWN outcome, so it cannot be
+   * combined across funnels the way a return can; naming the one it was priced on is the honest answer.
    */
   pricingBasisFunnelKey: SalesFunnelKey | null;
 }
@@ -221,7 +221,7 @@ export interface AudienceStatsEnvelope {
   featureSlug: string;
   brandId: string;
   /**
-   * The chain's goal ECHO on a single-funnel read. **null on the BRAND-LEVEL read** — a brand has no
+   * The funnel's goal ECHO on a single-funnel read. **null on the BRAND-LEVEL read** — a brand has no
    * goal, and echoing one of its funnels' goals there would be exactly the arbitrary pick this read
    * exists to remove.
    */
@@ -380,11 +380,11 @@ function sortMetricForGoal(goal: Goal): SortMetric {
     : "cppr";
 }
 
-/** One chain's return for one grain, in the three units of one statement. */
+/** One funnel's return for one grain, in the three units of one statement. */
 interface ResolvedProjection {
   basisFunnelKey?: SalesFunnelKey | null;
   /** The LTR this grain's return was divided by — carried per grain because on the brand-level read two
-   * audiences can legitimately be priced through two chains with two different lifetime revenues. */
+   * audiences can legitimately be priced through two funnels with two different lifetime revenues. */
   lifetimeRevenueUsd: number | null;
   costPerPaidClientUsd: number | null;
   returnPerDollar: number | null;
@@ -392,7 +392,7 @@ interface ResolvedProjection {
 }
 
 /**
- * ONE chain's projection for a grain: the audience's own measured evidence when it has some, else the
+ * ONE funnel's projection for a grain: the audience's own measured evidence when it has some, else the
  * brand-level figure — the SAME inheritance the derived cost columns take, so the two families can never
  * disagree about which evidence priced the row. `audienceId: null` asks for the brand grain itself.
  */
@@ -416,15 +416,15 @@ interface PricedFunnel {
 }
 
 /**
- * COMBINE the brand's declared funnels into ONE return for a grain: the BEST-RETURNING chain.
+ * COMBINE the brand's declared funnels into ONE return for a grain: the BEST-RETURNING funnel.
  *
- * A dollar spent on this audience buys a customer through whichever of the brand's chains converts it
+ * A dollar spent on this audience buys a customer through whichever of the brand's funnels converts it
  * best, so the brand-level return is the maximum, never a blend and never a sum — the same doctrine as
  * the combined-`sales` cost (`min` over channels, i.e. `max` over returns), and the reason no combined
- * figure can read better than the honest single-chain one. Ties break on the canonical funnel-catalogue
+ * figure can read better than the honest single-funnel one. Ties break on the canonical funnel-catalogue
  * order, so the same evidence always yields the same answer.
  *
- * When NO chain has a defined return, the grain still reports the CHEAPEST defined path to a paying
+ * When NO funnel has a defined return, the grain still reports the CHEAPEST defined path to a paying
  * client (with a null return) rather than blanking everything: "we know what a customer costs, we do not
  * know what they are worth" is a different statement from "we know nothing", and neither is a zero.
  */
@@ -469,7 +469,7 @@ function combineDeclaredFunnels(priced: PricedFunnel[], audienceId: string | nul
 
 /** What a brand-level (or single-funnel) projection pass yields for the rest of the compute. */
 interface DeclaredFunnelProjection {
-  /** The parents every COST column floors against — one chain's, always. */
+  /** The parents every COST column floors against — one funnel's, always. */
   parents: BrandProjectedParentsUsd;
   /** Every declared funnel priced, on the brand-level read; `null` on a single-funnel read. */
   priced: PricedFunnel[] | null;
@@ -482,10 +482,10 @@ interface DeclaredFunnelProjection {
  * The declared set is read from brand-service and never accepted from the caller or inferred; an empty
  * or unreadable declaration THROWS (`SalesFunnelsUnavailableError` → the route's 502), because "this org
  * never stated what it sells through" is a producer gap, not an answer, and a brand that has declared
- * nothing must be distinguishable from one whose chains return nothing.
+ * nothing must be distinguishable from one whose funnels return nothing.
  *
  * The COST columns cannot be combined the way a return can — a cost per outcome is denominated in each
- * chain's own outcome — so they are priced on ONE chain and the response names it: the best-returning
+ * funnel's own outcome — so they are priced on ONE funnel and the response names it: the best-returning
  * declared funnel, else (nothing priced) the first declared funnel in catalogue order, which is the same
  * deterministic pick `/revenue` makes over a brand's own declarations. Never an inference, never a
  * default nobody stated.
@@ -508,7 +508,7 @@ async function projectDeclaredFunnels(
   const priced: PricedFunnel[] = rankable.map((funnel) => ({
     funnelKey: funnel.funnelKey,
     name: funnel.name,
-    // Each chain on its OWN terms — the funnel's declared economics merged over the brand's effective
+    // Each funnel on its OWN terms — the funnel's declared economics merged over the brand's effective
     // set, and its own channel (`meetingChannel` inside `projectBrandParents`), which is the whole
     // difference between a meeting bought with a reply and one bought with a click.
     parents: projectBrandParents(
@@ -524,7 +524,7 @@ async function projectDeclaredFunnels(
   const parents = priced.find((p) => p.funnelKey === basisKey)?.parents;
 
   return {
-    // With no priced chain at all there is nothing to floor against — the cost columns then degrade to
+    // With no priced funnel at all there is nothing to floor against — the cost columns then degrade to
     // each audience's own spend, exactly as they do at cold start. Never a fabricated parent.
     parents: parents ?? {
       cpcUsd: null, cpprUsd: null, cpfsUsd: null, cpsUsd: null, cpsaleUsd: null, cpsmUsd: null,
@@ -1040,7 +1040,7 @@ export async function computeAudienceStats(
     // the fleet benchmark is campaign-agnostic); same gross/net basis as the rest of the payload.
     //
     // BRAND LEVEL (no funnel, no goal): the SAME evidence, priced once per DECLARED funnel and combined
-    // as the best-returning chain. The fan-out is paid ONCE (`fetchBrandProjectionEvidence`) and the N
+    // as the best-returning funnel. The fan-out is paid ONCE (`fetchBrandProjectionEvidence`) and the N
     // projections are pure — exactly how /funnel-ranking ranks N funnels off one evidence set — so
     // answering the brand-level question costs no more IO than answering a single-funnel one.
     // A BENCHMARK IS A CHANNEL'S BENCHMARK. When the read spans several channels it is resolved once per
@@ -1059,7 +1059,7 @@ export async function computeAudienceStats(
               identity,
               pricing,
               audienceIds,
-              // When the caller named a funnel, the floor parent is priced on THAT chain AND on that funnel's
+              // When the caller named a funnel, the floor parent is priced on THAT funnel AND on that funnel's
               // own declared terms — same overrides the per-row projection takes, so the two can never disagree
               // for one audience.
               funnelKey,
@@ -1076,7 +1076,7 @@ export async function computeAudienceStats(
   const coverage = projected.coverage;
   /**
    * The return for one grain: on a single-funnel read, that funnel's own figure (byte-identical to
-   * before); on the brand-level read, the best-returning of the brand's declared chains.
+   * before); on the brand-level read, the best-returning of the brand's declared funnels.
    */
   const resolveProjection = (audienceId: string | null): ResolvedProjection =>
     projected.priced
@@ -1194,7 +1194,7 @@ export async function computeAudienceStats(
   }
 
   // A brand has no goal, so the brand-level read ranks on the only thing that matters at that grain:
-  // what each audience RETURNS per dollar. A single-funnel read keeps its chain's cost order verbatim.
+  // what each audience RETURNS per dollar. A single-funnel read keeps its funnel's cost order verbatim.
   const sortMetric: SortMetric = normalizedGoal === null ? "returnPerDollar" : sortMetricForGoal(normalizedGoal);
   rows.sort((a, b) => compareByMetric(sortMetric, a, b));
   const audiencesOut = parsedLimit !== undefined ? rows.slice(0, parsedLimit) : rows;

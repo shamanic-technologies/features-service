@@ -151,7 +151,7 @@ export interface Spend {
  * The AGGREGATE (brand / campaign grain) twin of /audience-stats' per-audience floor parents — the
  * fleet-backed projected cost-per-outcome of the workflow that the SALES FUNNEL being priced crowns, one
  * value per cost column, in USD. `null` for the whole block when the brand has declared no funnel (there
- * is no chain to be coherent with) or when the projection read degrades (below).
+ * is no funnel to be coherent with) or when the projection read degrades (below).
  */
 type SpendCostParents = BrandProjectedParentsUsd | null;
 
@@ -160,17 +160,17 @@ type SpendCostParents = BrandProjectedParentsUsd | null;
  *
  * **PRICED ON A SALES FUNNEL, never on a goal.** This used to read the brand's `optimizationGoal` to
  * pick the winning workflow. That column carries a NOT NULL server default, so a brand that never chose
- * a goal was priced through the website-purchase chain nobody had said it sells through — and
- * brand-service is dropping the column. The chain now comes from what the brand DECLARED it sells
+ * a goal was priced through the website-purchase funnel nobody had said it sells through — and
+ * brand-service is dropping the column. The funnel now comes from what the brand DECLARED it sells
  * through (`GET /internal/brands/:brandId/sales-funnels`):
  *
- *   - the caller's `?funnel=` when it named one (the dashboard knows which chain the customer is
+ *   - the caller's `?funnel=` when it named one (the dashboard knows which funnel the customer is
  *     looking at, and a brand selling through several has a different price for each), else
  *   - the brand's FIRST DECLARED funnel in catalogue order — a deterministic pick over the brand's OWN
  *     declarations, not a default and not an inference.
  *
  * The funnel's OWN declared terms ride with it (`declaredEconomicsForFunnel`), the same merge the
- * ranking applies, so these columns price on exactly the chain `/workflow-projection?funnel=` prices on.
+ * ranking applies, so these columns price on exactly the funnel `/workflow-projection?funnel=` prices on.
  *
  * NO DECLARED FUNNEL → null (and the fetch is skipped): "what they sell through" does not exist yet, so
  * there is no expected cost to floor against and the columns stay OBSERVED (null at 0 outcomes) exactly
@@ -183,7 +183,7 @@ type SpendCostParents = BrandProjectedParentsUsd | null;
  * Overview path: a projection blip (or an unreadable declaration) degrades the cost columns to today's
  * OBSERVED behaviour ("-", i.e. "we could not estimate this") rather than 502-ing the customer's
  * Overview. It NEVER degrades to the raw-spend floor — that is the exact "cost per reply == total spent"
- * output this feature removes — and it never degrades to a guessed chain.
+ * output this feature removes — and it never degrades to a guessed funnel.
  */
 function fetchSpendCostParentsSoft(
   brandId: string,
@@ -204,7 +204,7 @@ function fetchSpendCostParentsSoft(
     .then(async (declared) => {
       const declaredKeys = declared.map((f) => f.funnelKey).sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
       // An explicit `?funnel=` is honoured only when the brand actually declared it — pricing a brand on
-      // a chain it never said it sells through would be the same fiction the goal default produced.
+      // a funnel it never said it sells through would be the same fiction the goal default produced.
       const funnelKey =
         requestedFunnel && declaredKeys.includes(requestedFunnel)
           ? requestedFunnel
@@ -217,7 +217,7 @@ function fetchSpendCostParentsSoft(
           brandId,
           slug,
           // The goal ECHO, derived FROM the funnel purely because the projection's internal routing still
-          // speaks it. The funnel key below OVERRIDES it, so the two meeting chains stay priced apart.
+          // speaks it. The funnel key below OVERRIDES it, so the two meeting funnels stay priced apart.
           SALES_FUNNEL_GOAL_ECHO[funnelKey],
           { orgId: headers.orgId, userId: headers.userId, runId: headers.runId, campaignId, featureSlug: headers.featureSlug },
           pricing,
@@ -248,13 +248,13 @@ function fetchSpendCostParentsSoft(
  * THE LEGS. The paths that carry value are exactly the legs of the funnels being priced — a signal
  * that is not a step of one contributes nothing (`restrictPathsToDeclaredLegs`). A brand that declared
  * several funnels is priced on ALL of their legs. A read NARROWED to one funnel is priced on that
- * chain's legs alone; two things narrow it, in this precedence:
+ * funnel's legs alone; two things narrow it, in this precedence:
  *
  *   - the caller's `?funnel=` when it named one the brand actually declared (the dashboard knows which
- *     chain the customer is looking at), else
- *   - the funnel the CAMPAIGN itself states, on a campaign-scoped read. A campaign sells one chain and
+ *     funnel the customer is looking at), else
+ *   - the funnel the CAMPAIGN itself states, on a campaign-scoped read. A campaign sells one funnel and
  *     campaign-service stores which (`campaignIdentity.funnelKey`), so a campaign's figures are that
- *     chain's figures — not the brand's first declared one.
+ *     funnel's figures — not the brand's first declared one.
  *
  * THE TERMS. The narrowed funnel when there is one, else the brand's FIRST DECLARED funnel in
  * catalogue order — a deterministic pick over the brand's OWN declarations, not a default and not an
@@ -271,9 +271,9 @@ function fetchSpendCostParentsSoft(
  * they cannot diverge again.
  *
  * A term the funnel does not state falls through to the brand-wide value (never to 0, which would
- * zero-collapse the chain). NO DECLARED FUNNEL → the brand-wide economics apply unchanged and every
+ * zero-collapse the funnel). NO DECLARED FUNNEL → the brand-wide economics apply unchanged and every
  * conversion leg is priced, i.e. byte-identical to before on everything except the delivery
- * milestones, which are a step of no chain for anybody and are gone for everybody.
+ * milestones, which are a step of no funnel for anybody and are gone for everybody.
  */
 export interface FunnelPricedEconomics {
   /** The brand-wide economics with the priced funnel's own declared terms merged over them. */
@@ -282,7 +282,7 @@ export interface FunnelPricedEconomics {
    * The funnels whose LEGS carry expected value on this read. One key when a funnel was named (the
    * caller's `?funnel=`, or the funnel a campaign itself states); the brand's WHOLE declared set
    * otherwise; `[]` when the brand declared none / the declaration could not be read — in which case
-   * every conversion leg is priced, exactly as before (there is no chain to narrow against, and
+   * every conversion leg is priced, exactly as before (there is no funnel to narrow against, and
    * inventing one is the fiction this whole retirement removes).
    */
   pricedFunnelKeys: SalesFunnelKey[];
@@ -320,7 +320,7 @@ export async function fetchDeclaredFunnelsSoft(
 }
 
 /**
- * PURE: pick the chain this read is priced on, and merge its own declared terms over the brand-wide
+ * PURE: pick the funnel this read is priced on, and merge its own declared terms over the brand-wide
  * economics. No IO — the declaration is read ONCE per request and every campaign group reuses it.
  */
 export function priceOnDeclaredFunnel(
@@ -329,7 +329,7 @@ export function priceOnDeclaredFunnel(
   requestedFunnel: SalesFunnelKey | undefined,
 ): FunnelPricedEconomics {
   const declaredKeys = declared.map((f) => f.funnelKey).sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
-  // A funnel the brand never declared is ignored rather than honoured: pricing a brand on a chain it
+  // A funnel the brand never declared is ignored rather than honoured: pricing a brand on a funnel it
   // never said it sells through would be the same fiction the defaulted goal produced.
   const named = requestedFunnel && declaredKeys.includes(requestedFunnel) ? requestedFunnel : null;
   const pricedFunnelKeys = named ? [named] : declaredKeys;
@@ -913,7 +913,7 @@ export async function computeFeatureRevenue(
   // The brand's DECLARED-funnel pricing — the merged economics AND which funnels' legs carry value.
   // Both are brand-scoped (brand-service serves them per brand, not per campaign), so the route
   // resolves them ONCE and passes the result here: N campaign groups don't each re-hit brand-service,
-  // and each group can still narrow to its OWN campaign's chain off that one read. Omitted → resolved
+  // and each group can still narrow to its OWN campaign's funnel off that one read. Omitted → resolved
   // in Wave A as before.
   economicsOverride?: FunnelPricedEconomics,
   // When true (the unlensed Overview path), fetch the canonical spend breakdown (per-source actual +
@@ -931,8 +931,8 @@ export async function computeFeatureRevenue(
   requestedFunnel?: SalesFunnelKey,
   // WHICH OFFER this read is about, when the caller knows one (the offer grain does; a brand- or
   // channel-scoped read does not). It names the offer on the declared-funnel read behind the spend
-  // block's cost-per-outcome benchmark, so those columns are priced on the SAME chains the offer's ROI
-  // is — a benchmark read on the brand's chains beside a return read on the offer's would be one body
+  // block's cost-per-outcome benchmark, so those columns are priced on the SAME funnels the offer's ROI
+  // is — a benchmark read on the brand's funnels beside a return read on the offer's would be one body
   // answering about two different propositions.
   offerId?: string,
 ): Promise<RevenueBody> {
@@ -1046,8 +1046,8 @@ export async function computeFeatureRevenue(
   }
 
   // ONLY THE LEGS OF THE FUNNELS BEING PRICED. A signal that is not a step of one of the brand's
-  // declared chains contributes nothing — it is not decayed and not discounted, it is simply not a
-  // priced path. The delivery milestones never enter here at all (they are a step of no chain, for
+  // declared funnels contributes nothing — it is not decayed and not discounted, it is simply not a
+  // priced path. The delivery milestones never enter here at all (they are a step of no funnel, for
   // anybody) and reach the engine as `funnel.milestones`, which carry no revenue field to price.
   const paths = restrictPathsToDeclaredLegs(funnel.resolvePaths({ economics }), priced.pricedFunnelKeys);
 
@@ -1188,8 +1188,8 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
 
   // `?funnel=` names the SALES FUNNEL the spend block's cost-per-outcome columns are priced on — the
   // vocabulary a brand actually declares, and the only one that tells a meeting bought with a reply from
-  // one bought with a click. Omitted → the brand's first declared funnel (never a default chain).
-  // An unknown value 400s: a silent fall-back would answer about a chain the caller did not ask for.
+  // one bought with a click. Omitted → the brand's first declared funnel (never a default funnel).
+  // An unknown value 400s: a silent fall-back would answer about a funnel the caller did not ask for.
   let requestedFunnel: SalesFunnelKey | undefined;
   if (funnelParam != null && funnelParam !== "") {
     const matched = matchSalesFunnelKey(funnelParam);
@@ -1246,7 +1246,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     // Priced on the DECLARED funnel (brand-wide only for the terms it does not state), so the
     // fingerprint below covers the funnel's own rates too — a funnel re-declaration lands on a new
     // cell instead of replaying a price the brand no longer states. The DECLARATION itself is read
-    // once here and reused by every campaign group, so a group can narrow to its OWN campaign's chain
+    // once here and reused by every campaign group, so a group can narrow to its OWN campaign's funnel
     // without a second brand-service call.
     const [declaredFunnels, brandEconomics] = funnel
       ? await Promise.all([fetchDeclaredFunnelsSoft(brandId, orgId), fetchEffectiveEconomics(brandId, headers)])
@@ -1254,13 +1254,13 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     const brandPriced = brandEconomics ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, requestedFunnel) : undefined;
     const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
     // WHICH legs carry value is decided by the declared SET, which is not derivable from the economics
-    // fingerprint (two brands can share rates and declare different chains), so it rides the key too.
+    // fingerprint (two brands can share rates and declare different funnels), so it rides the key too.
     const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
 
     /**
-     * The pricing for one campaign identity. A campaign states the chain it sells, so a campaign-scoped
-     * read is priced on THAT chain — not on the brand's first declared one. An explicit `?funnel=`
-     * still wins (the caller asked for a specific chain); a campaign that states none, or one the brand
+     * The pricing for one campaign identity. A campaign states the funnel it sells, so a campaign-scoped
+     * read is priced on THAT funnel — not on the brand's first declared one. An explicit `?funnel=`
+     * still wins (the caller asked for a specific funnel); a campaign that states none, or one the brand
      * no longer declares, falls back to the brand-level pick. Pure — reuses the one declaration read.
      */
     const pricingForIdentity = (identityFunnelKey: string | null | undefined): FunnelPricedEconomics | undefined => {
@@ -1281,7 +1281,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       const payload = await servedCached({
         view: "revenue-by-workflow",
         // No `campaignId` and no `funnel`: the grain is the brand's whole spend, priced on the
-        // brand's own declared chains (a workflow states none of its own). `econ` + `decl` carry the
+        // brand's own declared funnels (a workflow states none of its own). `econ` + `decl` carry the
         // economics + declaration the pipeline is priced on, exactly as the sibling grains do.
         scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "workflow", pricing, econ, decl }),
         orgId,
@@ -1323,8 +1323,8 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       const payload = await servedCached({
         view: "revenue-by-offer",
         // No `campaignId` and no `funnel`: the grain is the brand's whole spend, priced on the brand's
-        // own declared chains (this service knows which campaigns sell an offer, never which funnels
-        // the offer itself states — brand-service owns that, and inventing it here would price a chain
+        // own declared funnels (this service knows which campaigns sell an offer, never which funnels
+        // the offer itself states — brand-service owns that, and inventing it here would price a funnel
         // the offer never declared). `econ` + `decl` carry the economics + declaration exactly as the
         // sibling grains do.
         scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "offerId", pricing, econ, decl }),
@@ -1338,7 +1338,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
             offers.offerIds.map(async (id) => {
               const campaignIds = offers.campaignIdsOf(id);
               // `pricingForIdentity(null)` is the BRAND's pick, deliberately: an offer states no funnel
-              // to this service, and its campaigns may state several, so pricing on one member's chain
+              // to this service, and its campaigns may state several, so pricing on one member's funnel
               // would answer for the offer with one campaign's vocabulary.
               const body = await computeFeatureRevenue(featureSlug, brandId, campaignIds, funnel, headers, undefined, pricingForIdentity(null), false, pricing, requestedFunnel);
               return { offerId: id, campaignIds, headline: body.headline, costEconomics: body.costEconomics };

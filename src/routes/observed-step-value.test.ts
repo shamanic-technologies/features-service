@@ -108,7 +108,7 @@ interface Opts {
   outcomes?: Partial<Record<"meeting_booked" | "meeting_attended" | "sale", Outcome[]>>;
   /** step → the emails a human ruled out at it. */
   deadByStep?: Record<string, string[]>;
-  /** The chains the brand declared. Absent ⇒ 404, i.e. declared nothing. */
+  /** The funnels the brand declared. Absent ⇒ 404, i.e. declared nothing. */
   salesFunnels?: unknown[];
   outcomesFail?: boolean;
 }
@@ -203,7 +203,7 @@ const pipeline = async (): Promise<number> => {
  *
  *   - a rung somebody OBSERVED replaces the forecast that was pointing at it, and the forecast is
  *     extinguished rather than added to it;
- *   - a rung somebody RULED OUT is worth nothing, along with the whole chain it sits on;
+ *   - a rung somebody RULED OUT is worth nothing, along with the whole funnel it sits on;
  *   - a deal somebody PRICED is worth what they said, not the brand's average.
  *
  * Every case below is driven from ONE lead and ONE set of economics, so the numbers are comparable
@@ -284,9 +284,9 @@ describe("a lead is worth what a human observed, not what we forecast", () => {
     expect(await pipeline()).toBeCloseTo(1000, 5);
   });
 
-  // ── A ruled-out step kills its chain ──────────────────────────────────────
+  // ── A ruled-out step kills its funnel ──────────────────────────────────────
 
-  it("a LOST deal is worth nothing — every chain ends at a paying client", async () => {
+  it("a LOST deal is worth nothing — every funnel ends at a paying client", async () => {
     mockFetch({
       outcomes: { meeting_booked: [{ email: "jane@acme.com" }] },
       deadByStep: { sale: ["jane@acme.com"] },
@@ -296,7 +296,7 @@ describe("a lead is worth what a human observed, not what we forecast", () => {
     expect(await pipeline()).toBe(0);
   });
 
-  it("a lead that will NEVER book a meeting loses the chain that needs one, and keeps one that does not", async () => {
+  it("a lead that will NEVER book a meeting loses the funnel that needs one, and keeps one that does not", async () => {
     const dead = { deadByStep: { meeting_booked: ["jane@acme.com"] } };
 
     // Sells ONLY through conversations → the reply was a forecast of the meeting now ruled out.
@@ -308,7 +308,7 @@ describe("a lead is worth what a human observed, not what we forecast", () => {
 
     vi.restoreAllMocks();
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as never);
-    // Also sells self-serve on the website → that chain never touches a meeting, so the click it
+    // Also sells self-serve on the website → that funnel never touches a meeting, so the click it
     // already made is still worth exactly what it was. They may still just buy the thing.
     mockFetch({
       ...dead,

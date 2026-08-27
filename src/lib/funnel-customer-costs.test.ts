@@ -1,5 +1,5 @@
 /**
- * THE CUSTOMER'S OWN MONEY, PARTITIONED BY SALES CHAIN — the rules, without a network in the way.
+ * THE CUSTOMER'S OWN MONEY, PARTITIONED BY SALES FUNNEL — the rules, without a network in the way.
  *
  * What they pin: a statement lands in the row whose campaign set contains its campaign and in no
  * other; one that cannot be placed is reported apart rather than dropped or parked on a default; a
@@ -7,57 +7,57 @@
  * than the least-covered scope supports.
  */
 import { describe, it, expect } from "vitest";
-import { partitionCustomerCosts, coverageOf, summariseCoverage } from "./chain-customer-costs.js";
+import { partitionCustomerCosts, coverageOf, summariseCoverage } from "./funnel-customer-costs.js";
 
-const CHAINS = [
+const FUNNELS = [
   { key: "conversation", campaignIds: ["c1", "c1b"] },
   { key: "website", campaignIds: ["c2"] },
 ];
 
 describe("partitionCustomerCosts", () => {
-  it("puts a statement in the chain whose campaign set holds its campaign, and in no other", () => {
-    const { byChain, unattributed } = partitionCustomerCosts(
+  it("puts a statement in the funnel whose campaign set holds its campaign, and in no other", () => {
+    const { byFunnel, unattributed } = partitionCustomerCosts(
       [
         { campaignId: "c1", costCents: 12_000 },
         { campaignId: "c1b", costCents: 3_000 },
         { campaignId: "c2", costCents: 500 },
       ],
-      CHAINS,
+      FUNNELS,
     );
-    expect(byChain.conversation).toEqual({ costCents: 15_000, statedCount: 2, unstatedCount: 0 });
-    expect(byChain.website).toEqual({ costCents: 500, statedCount: 1, unstatedCount: 0 });
+    expect(byFunnel.conversation).toEqual({ costCents: 15_000, statedCount: 2, unstatedCount: 0 });
+    expect(byFunnel.website).toEqual({ costCents: 500, statedCount: 1, unstatedCount: 0 });
     expect(unattributed).toEqual({ costCents: 0, statedCount: 0, unstatedCount: 0 });
   });
 
-  it("reports a statement it cannot place APART — never dropped, never parked on a default chain", () => {
-    const { byChain, unattributed } = partitionCustomerCosts(
+  it("reports a statement it cannot place APART — never dropped, never parked on a default funnel", () => {
+    const { byFunnel, unattributed } = partitionCustomerCosts(
       [
         { campaignId: null, costCents: 100 },
         { campaignId: "another-offers-campaign", costCents: 900 },
       ],
-      CHAINS,
+      FUNNELS,
     );
-    expect(byChain.conversation.costCents).toBe(0);
-    expect(byChain.website.costCents).toBe(0);
+    expect(byFunnel.conversation.costCents).toBe(0);
+    expect(byFunnel.website.costCents).toBe(0);
     expect(unattributed).toEqual({ costCents: 1_000, statedCount: 2, unstatedCount: 0 });
   });
 
   it("counts a STATED ZERO as an answer and an UNSTATED leg as one nobody was ever asked", () => {
-    const { byChain } = partitionCustomerCosts(
+    const { byFunnel } = partitionCustomerCosts(
       [
         { campaignId: "c1", costCents: 0 },
         { campaignId: "c1", costCents: null },
       ],
-      CHAINS,
+      FUNNELS,
     );
     // Nothing is fabricated for the unstated one: it raises the count that says the sum is incomplete.
-    expect(byChain.conversation).toEqual({ costCents: 0, statedCount: 1, unstatedCount: 1 });
+    expect(byFunnel.conversation).toEqual({ costCents: 0, statedCount: 1, unstatedCount: 1 });
   });
 
-  it("gives every chain a row, so a chain nobody stated a cost for reads zeros rather than absent", () => {
-    const { byChain } = partitionCustomerCosts([], CHAINS);
-    expect(Object.keys(byChain).sort()).toEqual(["conversation", "website"]);
-    expect(byChain.conversation).toEqual({ costCents: 0, statedCount: 0, unstatedCount: 0 });
+  it("gives every funnel a row, so a funnel nobody stated a cost for reads zeros rather than absent", () => {
+    const { byFunnel } = partitionCustomerCosts([], FUNNELS);
+    expect(Object.keys(byFunnel).sort()).toEqual(["conversation", "website"]);
+    expect(byFunnel.conversation).toEqual({ costCents: 0, statedCount: 0, unstatedCount: 0 });
   });
 });
 

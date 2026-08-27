@@ -1,10 +1,10 @@
 /**
  * WHAT THE CUSTOMER SPENT ON THE LEGS THEY WORKED THEMSELVES — lead-service's per-statement record.
  *
- * The platform automates the first link of a sales chain and BILLS for it; the customer performs the
+ * The platform automates the first link of a sales funnel and BILLS for it; the customer performs the
  * rest — they run the meeting, they close the deal — so they are the only one who knows what those
- * legs cost. Every money figure this service reports about a chain used to count only the link the
- * platform paid for, which makes every chain ending in a human leg read cheaper than it truly is and
+ * legs cost. Every money figure this service reports about a funnel used to count only the link the
+ * platform paid for, which makes every funnel ending in a human leg read cheaper than it truly is and
  * its return too good.
  *
  * THIS IS NOT PLATFORM SPEND, AND IT MUST NEVER BE FOLDED INTO IT. Nothing here was charged to the
@@ -86,7 +86,7 @@ export async function fetchBrandStepCosts(brandId: string): Promise<BrandStepCos
 /**
  * The DISPLAY posture: `null` when the read could not be made at all.
  *
- * A chain's charged spend, its volume and its platform-priced return are all correct without this, so
+ * A funnel's charged spend, its volume and its platform-priced return are all correct without this, so
  * an unreadable statement set degrades the customer half rather than 502-ing a read whose every other
  * number is right — the same fail-soft-with-a-loud-log posture the conversion-count tiles take. Null
  * is distinguishable from an empty set on the wire, so "nobody stated a cost" and "we could not read

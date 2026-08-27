@@ -91,7 +91,7 @@
                 "form_magnet"
               ]
             },
-            "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared chain states all four keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
+            "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states all four keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
           },
           "supersededBySlug": {
             "type": "string",
@@ -3000,7 +3000,7 @@
                     "no_paid_client_path",
                     "no_return_defined"
                   ],
-                  "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client — a leg of its OWN chain is undeclared or sits at 0. Note a channel-scoped meeting funnel lands here whenever ITS channel has no rate, which a goal-keyed score used to hide behind the other channel's contribution. `no_workflow_evidence` = no history to compare it on yet. Null ⟺ rankable."
+                  "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client — a leg of its OWN funnel is undeclared or sits at 0. Note a channel-scoped meeting funnel lands here whenever ITS channel has no rate, which a goal-keyed score used to hide behind the other channel's contribution. `no_workflow_evidence` = no history to compare it on yet. Null ⟺ rankable."
                 },
                 "returnPerDollar": {
                   "type": "number",
@@ -4015,7 +4015,7 @@
               "formSubmission",
               "whatsappConversation"
             ],
-            "description": "The chain's goal ECHO on a single-funnel read. NULL on the BRAND-LEVEL read (neither `funnel` nor `goal` sent): a brand has no goal — it sells through every funnel it declared at once — and echoing one of them there would be exactly the arbitrary pick that read exists to remove."
+            "description": "The funnel's goal ECHO on a single-funnel read. NULL on the BRAND-LEVEL read (neither `funnel` nor `goal` sent): a brand has no goal — it sells through every funnel it declared at once — and echoing one of them there would be exactly the arbitrary pick that read exists to remove."
           },
           "funnelCoverage": {
             "type": "object",
@@ -4025,7 +4025,7 @@
                 "enum": [
                   "best_returning_declared_funnel"
                 ],
-                "description": "How the money figures were combined across the brand's declared funnels: a dollar spent buys a customer through whichever chain converts it best, so a return is the MAXIMUM over the declared set — never a blend, never a sum. Same doctrine as the combined-`sales` cost (min over channels = max over returns), and the reason this reconciles with /features/{slug}/funnel-ranking by construction: its rank-1 funnel IS this maximum, on the identical returnPerDollar definition and the identical evidence."
+                "description": "How the money figures were combined across the brand's declared funnels: a dollar spent buys a customer through whichever funnel converts it best, so a return is the MAXIMUM over the declared set — never a blend, never a sum. Same doctrine as the combined-`sales` cost (min over channels = max over returns), and the reason this reconciles with /features/{slug}/funnel-ranking by construction: its rank-1 funnel IS this maximum, on the identical returnPerDollar definition and the identical evidence."
               },
               "funnels": {
                 "type": "array",
@@ -4066,7 +4066,7 @@
               "pricingBasisFunnelKey": {
                 "type": "string",
                 "nullable": true,
-                "description": "The funnel whose chain every cost-per-outcome COLUMN on this payload is denominated in — the brand's best-returning declared funnel, falling back to its FIRST declared funnel in catalogue order when none could be priced. A cost per outcome is denominated in a chain's own outcome, so unlike a return it cannot be combined across chains; naming the one it was priced on is the honest answer."
+                "description": "The funnel whose funnel every cost-per-outcome COLUMN on this payload is denominated in — the brand's best-returning declared funnel, falling back to its FIRST declared funnel in catalogue order when none could be priced. A cost per outcome is denominated in a funnel's own outcome, so unlike a return it cannot be combined across funnels; naming the one it was priced on is the honest answer."
               }
             },
             "required": [
@@ -4334,17 +4334,17 @@
                     "basisFunnelKey": {
                       "type": "string",
                       "nullable": true,
-                      "description": "BRAND-LEVEL read only (neither `funnel` nor `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning chain, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the chain); null when nothing could be priced."
+                      "description": "BRAND-LEVEL read only (neither `funnel` nor `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning funnel, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the funnel); null when nothing could be priced."
                     },
                     "lifetimeRevenueUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two chains the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
+                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
                     },
                     "costPerPaidClientUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's chain on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the chain has no path to a paying client or at cold start."
+                      "description": "PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's funnel on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the funnel has no path to a paying client or at cold start."
                     },
                     "returnPerDollar": {
                       "type": "number",
@@ -4392,7 +4392,7 @@
               "costPerPaidClientUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the chain has no path to a paying client."
+                "description": "PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the funnel has no path to a paying client."
               },
               "returnPerDollar": {
                 "type": "number",
@@ -5604,7 +5604,7 @@
           "channels"
         ]
       },
-      "OfferChainsResponse": {
+      "OfferFunnelsResponse": {
         "type": "object",
         "properties": {
           "offerId": {
@@ -5627,7 +5627,7 @@
               "platform_and_customer_spend",
               "platform_and_partial_customer_spend"
             ],
-            "description": "Which dollars the payload AS A WHOLE is made of — the WEAKEST coverage among its rows, because the marker is an admission: a payload holding one fully-costed chain and one that could not be costed at all is not a fully-costed payload. The platform automates the first link of a chain and charges for it; the customer performs the rest and states what those legs cost them, so a chain ending in a human leg is only fully costed once every one of its statements carries a figure."
+            "description": "Which dollars the payload AS A WHOLE is made of — the WEAKEST coverage among its rows, because the marker is an admission: a payload holding one fully-costed funnel and one that could not be costed at all is not a fully-costed payload. The platform automates the first link of a funnel and charges for it; the customer performs the rest and states what those legs cost them, so a funnel ending in a human leg is only fully costed once every one of its statements carries a figure."
           },
           "customerCost": {
             "type": "object",
@@ -5666,7 +5666,7 @@
                   "statedCount",
                   "unstatedCount"
                 ],
-                "description": "Statements naming no campaign, or a campaign belonging to no chain of this offer. They are in NO row and stated here, so a reader sees the difference rather than wondering where they went."
+                "description": "Statements naming no campaign, or a campaign belonging to no funnel of this offer. They are in NO row and stated here, so a reader sees the difference rather than wondering where they went."
               }
             },
             "required": [
@@ -5677,32 +5677,32 @@
             ],
             "description": "The customer's own declared money across this offer, rows and leftovers together. NULL means the statements could not be READ; zeros mean nobody has stated one — two different things a consumer acts on differently, so they are never collapsed. None of this was charged to the organisation and none of it reaches billing."
           },
-          "chains": {
+          "funnels": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
                 "funnelKey": {
                   "type": "string",
-                  "description": "The sales chain, canonicalised onto this service's catalogue."
+                  "description": "The sales funnel, canonicalised onto this service's catalogue."
                 },
                 "name": {
                   "type": "string",
-                  "description": "The chain's buyer-facing name."
+                  "description": "The funnel's buyer-facing name."
                 },
                 "steps": {
                   "type": "array",
                   "items": {
                     "type": "string"
                   },
-                  "description": "The chain's steps in order, so a row renders without the consumer knowing the catalogue."
+                  "description": "The funnel's steps in order, so a row renders without the consumer knowing the catalogue."
                 },
                 "campaignIds": {
                   "type": "array",
                   "items": {
                     "type": "string"
                   },
-                  "description": "Every campaign of the offer selling through this chain, ascending. ONE today; one per STEP as the product moves — the row is the same computation over the larger set."
+                  "description": "Every campaign of the offer selling through this funnel, ascending. ONE today; one per STEP as the product moves — the row is the same computation over the larger set."
                 },
                 "channels": {
                   "type": "array",
@@ -5726,11 +5726,11 @@
                       "campaignIds"
                     ]
                   },
-                  "description": "The acquisition channels carrying this chain, ascending by slug."
+                  "description": "The acquisition channels carrying this funnel, ascending by slug."
                 },
                 "priced": {
                   "type": "boolean",
-                  "description": "Whether this chain's money could be turned into a return. False leaves every money-derived figure null and names the missing ingredient below."
+                  "description": "Whether this funnel's money could be turned into a return. False leaves every money-derived figure null and names the missing ingredient below."
                 },
                 "unpricedReason": {
                   "type": "string",
@@ -5738,9 +5738,9 @@
                   "enum": [
                     "no_channel_funnel",
                     "no_economics_declared",
-                    "chain_not_declared"
+                    "funnel_not_declared"
                   ],
-                  "description": "Why the return is null, checked in this order so the plain thing is said first. no_channel_funnel: no channel carrying this chain measures anything (no funnel wired), so the leads are never read and `outcomes` is null too. no_economics_declared: the brand states no economics, or its declaration could not be read, so this chain has no rates and no lifetime revenue of its own. chain_not_declared: the declaration IS readable and does not contain this chain. In all three the SPEND is real and reported — the customer paid it — and the pipeline, the return and the cost of acquisition are null, never 0 and never the brand-wide record the un-narrowed reads legitimately fall back to (pricing one chain on a server-defaulted brand row is the fiction the retired goal produced, one grain finer)."
+                  "description": "Why the return is null, checked in this order so the plain thing is said first. no_channel_funnel: no channel carrying this funnel measures anything (no funnel wired), so the leads are never read and `outcomes` is null too. no_economics_declared: the brand states no economics, or its declaration could not be read, so this funnel has no rates and no lifetime revenue of its own. funnel_not_declared: the declaration IS readable and does not contain this funnel. In all three the SPEND is real and reported — the customer paid it — and the pipeline, the return and the cost of acquisition are null, never 0 and never the brand-wide record the un-narrowed reads legitimately fall back to (pricing one funnel on a server-defaulted brand row is the fiction the retired goal produced, one grain finer)."
                 },
                 "headline": {
                   "type": "object",
@@ -5832,7 +5832,7 @@
                     "statedCount",
                     "unstatedCount"
                   ],
-                  "description": "What the CUSTOMER states the legs they worked themselves cost them, for this chain's campaign set. Never charged, in no ledger of ours, and it never reaches billing — it is reported BESIDE `costEconomics`, never inside it, so a consumer renders either without inferring one from the other. Null ONLY when the statements could not be read at all; a brand nobody has stated a cost for reads zeros, which is a different answer."
+                  "description": "What the CUSTOMER states the legs they worked themselves cost them, for this funnel's campaign set. Never charged, in no ledger of ours, and it never reaches billing — it is reported BESIDE `costEconomics`, never inside it, so a consumer renders either without inferring one from the other. Null ONLY when the statements could not be read at all; a brand nobody has stated a cost for reads zeros, which is a different answer."
                 },
                 "costCoverage": {
                   "type": "string",
@@ -5841,7 +5841,7 @@
                     "platform_and_customer_spend",
                     "platform_and_partial_customer_spend"
                   ],
-                  "description": "Which dollars the figures on this ROW are made of. platform_spend_only: no statement is attributable to this chain, so it reads exactly as it did before customer costs existed. platform_and_customer_spend: every attributable statement carries a cost. platform_and_partial_customer_spend: some legs were never stated, so the customer half is a floor — a chain we cannot fully cost says so rather than guessing at the rest."
+                  "description": "Which dollars the figures on this ROW are made of. platform_spend_only: no statement is attributable to this funnel, so it reads exactly as it did before customer costs existed. platform_and_customer_spend: every attributable statement carries a cost. platform_and_partial_customer_spend: some legs were never stated, so the customer half is a floor — a funnel we cannot fully cost says so rather than guessing at the rest."
                 },
                 "combinedCostEconomics": {
                   "type": "object",
@@ -5879,7 +5879,7 @@
                     "roiMultiple",
                     "costPerAcquisitionUsd"
                   ],
-                  "description": "The chain's cost of acquisition WITH the customer's own legs in it, and the return that divides by it. The byte-same three ratios costEconomics computes, off the summed basis and the SAME lifetime revenue — so with nothing declared this block is identical to the charged one, and the day a cost is stated the whole ladder moves together instead of one figure drifting from the others. Reported apart from the charged block because what we charged and what they spent are two questions with two owners, and one of them is what we bill."
+                  "description": "The funnel's cost of acquisition WITH the customer's own legs in it, and the return that divides by it. The byte-same three ratios costEconomics computes, off the summed basis and the SAME lifetime revenue — so with nothing declared this block is identical to the charged one, and the day a cost is stated the whole ladder moves together instead of one figure drifting from the others. Reported apart from the charged block because what we charged and what they spent are two questions with two owners, and one of them is what we bill."
                 },
                 "outcomes": {
                   "type": "object",
@@ -5944,14 +5944,14 @@
                 "outcomes"
               ]
             },
-            "description": "One LEAN row per chain the offer sells through, in the catalogue's canonical order. Lean (headline + costEconomics + outcomes) because a table polls it: a full body per chain would repeat the whole lead population once per row."
+            "description": "One LEAN row per funnel the offer sells through, in the catalogue's canonical order. Lean (headline + costEconomics + outcomes) because a table polls it: a full body per funnel would repeat the whole lead population once per row."
           },
           "unattributedCampaignIds": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Campaigns of this offer that state no chain (or one the catalogue does not know), ascending. Their spend is in NO row and still in the offer's own total, which narrows by nothing — stated so a reader sees the difference rather than wondering why the rows do not add up to the offer."
+            "description": "Campaigns of this offer that state no funnel (or one the catalogue does not know), ascending. Their spend is in NO row and still in the offer's own total, which narrows by nothing — stated so a reader sees the difference rather than wondering why the rows do not add up to the offer."
           }
         },
         "required": [
@@ -5960,7 +5960,7 @@
           "costBasis",
           "costCoverage",
           "customerCost",
-          "chains",
+          "funnels",
           "unattributedCampaignIds"
         ]
       },
@@ -5993,7 +5993,7 @@
               "formSubmission",
               "whatsappConversation"
             ],
-            "description": "The chain's goal ECHO on a single-funnel read. NULL on the BRAND-LEVEL read (neither `funnel` nor `goal` sent): a brand has no goal — it sells through every funnel it declared at once — and echoing one of them there would be exactly the arbitrary pick that read exists to remove."
+            "description": "The funnel's goal ECHO on a single-funnel read. NULL on the BRAND-LEVEL read (neither `funnel` nor `goal` sent): a brand has no goal — it sells through every funnel it declared at once — and echoing one of them there would be exactly the arbitrary pick that read exists to remove."
           },
           "funnelCoverage": {
             "type": "object",
@@ -6003,7 +6003,7 @@
                 "enum": [
                   "best_returning_declared_funnel"
                 ],
-                "description": "How the money figures were combined across the brand's declared funnels: a dollar spent buys a customer through whichever chain converts it best, so a return is the MAXIMUM over the declared set — never a blend, never a sum. Same doctrine as the combined-`sales` cost (min over channels = max over returns), and the reason this reconciles with /features/{slug}/funnel-ranking by construction: its rank-1 funnel IS this maximum, on the identical returnPerDollar definition and the identical evidence."
+                "description": "How the money figures were combined across the brand's declared funnels: a dollar spent buys a customer through whichever funnel converts it best, so a return is the MAXIMUM over the declared set — never a blend, never a sum. Same doctrine as the combined-`sales` cost (min over channels = max over returns), and the reason this reconciles with /features/{slug}/funnel-ranking by construction: its rank-1 funnel IS this maximum, on the identical returnPerDollar definition and the identical evidence."
               },
               "funnels": {
                 "type": "array",
@@ -6044,7 +6044,7 @@
               "pricingBasisFunnelKey": {
                 "type": "string",
                 "nullable": true,
-                "description": "The funnel whose chain every cost-per-outcome COLUMN on this payload is denominated in — the brand's best-returning declared funnel, falling back to its FIRST declared funnel in catalogue order when none could be priced. A cost per outcome is denominated in a chain's own outcome, so unlike a return it cannot be combined across chains; naming the one it was priced on is the honest answer."
+                "description": "The funnel whose funnel every cost-per-outcome COLUMN on this payload is denominated in — the brand's best-returning declared funnel, falling back to its FIRST declared funnel in catalogue order when none could be priced. A cost per outcome is denominated in a funnel's own outcome, so unlike a return it cannot be combined across funnels; naming the one it was priced on is the honest answer."
               }
             },
             "required": [
@@ -6312,17 +6312,17 @@
                     "basisFunnelKey": {
                       "type": "string",
                       "nullable": true,
-                      "description": "BRAND-LEVEL read only (neither `funnel` nor `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning chain, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the chain); null when nothing could be priced."
+                      "description": "BRAND-LEVEL read only (neither `funnel` nor `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning funnel, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the funnel); null when nothing could be priced."
                     },
                     "lifetimeRevenueUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two chains the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
+                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
                     },
                     "costPerPaidClientUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's chain on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the chain has no path to a paying client or at cold start."
+                      "description": "PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's funnel on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the funnel has no path to a paying client or at cold start."
                     },
                     "returnPerDollar": {
                       "type": "number",
@@ -6370,7 +6370,7 @@
               "costPerPaidClientUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the chain has no path to a paying client."
+                "description": "PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the funnel has no path to a paying client."
               },
               "returnPerDollar": {
                 "type": "number",
@@ -8013,7 +8013,7 @@
               "formSubmission",
               "whatsappConversation"
             ],
-            "description": "The chain's goal ECHO on a single-funnel read. NULL on the BRAND-LEVEL read (neither `funnel` nor `goal` sent): a brand has no goal — it sells through every funnel it declared at once — and echoing one of them there would be exactly the arbitrary pick that read exists to remove."
+            "description": "The funnel's goal ECHO on a single-funnel read. NULL on the BRAND-LEVEL read (neither `funnel` nor `goal` sent): a brand has no goal — it sells through every funnel it declared at once — and echoing one of them there would be exactly the arbitrary pick that read exists to remove."
           },
           "funnelCoverage": {
             "type": "object",
@@ -8023,7 +8023,7 @@
                 "enum": [
                   "best_returning_declared_funnel"
                 ],
-                "description": "How the money figures were combined across the brand's declared funnels: a dollar spent buys a customer through whichever chain converts it best, so a return is the MAXIMUM over the declared set — never a blend, never a sum. Same doctrine as the combined-`sales` cost (min over channels = max over returns), and the reason this reconciles with /features/{slug}/funnel-ranking by construction: its rank-1 funnel IS this maximum, on the identical returnPerDollar definition and the identical evidence."
+                "description": "How the money figures were combined across the brand's declared funnels: a dollar spent buys a customer through whichever funnel converts it best, so a return is the MAXIMUM over the declared set — never a blend, never a sum. Same doctrine as the combined-`sales` cost (min over channels = max over returns), and the reason this reconciles with /features/{slug}/funnel-ranking by construction: its rank-1 funnel IS this maximum, on the identical returnPerDollar definition and the identical evidence."
               },
               "funnels": {
                 "type": "array",
@@ -8064,7 +8064,7 @@
               "pricingBasisFunnelKey": {
                 "type": "string",
                 "nullable": true,
-                "description": "The funnel whose chain every cost-per-outcome COLUMN on this payload is denominated in — the brand's best-returning declared funnel, falling back to its FIRST declared funnel in catalogue order when none could be priced. A cost per outcome is denominated in a chain's own outcome, so unlike a return it cannot be combined across chains; naming the one it was priced on is the honest answer."
+                "description": "The funnel whose funnel every cost-per-outcome COLUMN on this payload is denominated in — the brand's best-returning declared funnel, falling back to its FIRST declared funnel in catalogue order when none could be priced. A cost per outcome is denominated in a funnel's own outcome, so unlike a return it cannot be combined across funnels; naming the one it was priced on is the honest answer."
               }
             },
             "required": [
@@ -8332,17 +8332,17 @@
                     "basisFunnelKey": {
                       "type": "string",
                       "nullable": true,
-                      "description": "BRAND-LEVEL read only (neither `funnel` nor `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning chain, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the chain); null when nothing could be priced."
+                      "description": "BRAND-LEVEL read only (neither `funnel` nor `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning funnel, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the funnel); null when nothing could be priced."
                     },
                     "lifetimeRevenueUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two chains the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
+                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
                     },
                     "costPerPaidClientUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's chain on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the chain has no path to a paying client or at cold start."
+                      "description": "PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's funnel on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the funnel has no path to a paying client or at cold start."
                     },
                     "returnPerDollar": {
                       "type": "number",
@@ -8390,7 +8390,7 @@
               "costPerPaidClientUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the chain has no path to a paying client."
+                "description": "PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the funnel has no path to a paying client."
               },
               "returnPerDollar": {
                 "type": "number",
@@ -9167,7 +9167,7 @@
                       "form_magnet"
                     ]
                   },
-                  "description": "The SALES FUNNELS this (org, brand) DECLARED it sells through, catalogue order. Replaces the retired optimizationGoal, which was a single NOT NULL server-defaulted column and therefore read 'website purchases' for brands that had chosen nothing. `[]` when the declaration is missing or unreadable — a producer gap surfaced, never a substituted chain (every funnel-keyed field on the row then reads null)."
+                  "description": "The SALES FUNNELS this (org, brand) DECLARED it sells through, catalogue order. Replaces the retired optimizationGoal, which was a single NOT NULL server-defaulted column and therefore read 'website purchases' for brands that had chosen nothing. `[]` when the declaration is missing or unreadable — a producer gap surfaced, never a substituted funnel (every funnel-keyed field on the row then reads null)."
                 },
                 "primarySalesFunnel": {
                   "type": "string",
@@ -10371,7 +10371,7 @@
                     "label",
                     "description"
                   ],
-                  "description": "The step this channel takes a lead OUT of. NULL is 'from nothing' — the lead was not on the chain at all until this channel produced its first step, which is the SPECIAL case rather than the rule."
+                  "description": "The step this channel takes a lead OUT of. NULL is 'from nothing' — the lead was not on the funnel at all until this channel produced its first step, which is the SPECIAL case rather than the rule."
                 },
                 "to": {
                   "type": "object",
@@ -10410,7 +10410,7 @@
                 "to"
               ]
             },
-            "description": "Every LEG this channel performs: which step it moves a lead FROM and which step it moves it TO. A chain is sold leg by leg, not only end to end — booking a meeting, getting it held, and closing it are three separate things to buy. `from: null` means the channel moves a lead from nothing onto the chain's first step."
+            "description": "Every LEG this channel performs: which step it moves a lead FROM and which step it moves it TO. A funnel is sold leg by leg, not only end to end — booking a meeting, getting it held, and closing it are three separate things to buy. `from: null` means the channel moves a lead from nothing onto the funnel's first step."
           },
           "producibleSteps": {
             "type": "array",
@@ -10444,7 +10444,7 @@
                 "description"
               ]
             },
-            "description": "The steps this channel produces FROM NOTHING — DERIVED as the `to` of its `from: null` legs, and unchanged in meaning from before a channel could state an internal leg. A channel that only performs internal legs of a chain legitimately produces none."
+            "description": "The steps this channel produces FROM NOTHING — DERIVED as the `to` of its `from: null` legs, and unchanged in meaning from before a channel could state an internal leg. A channel that only performs internal legs of a funnel legitimately produces none."
           },
           "salesFunnels": {
             "type": "array",
@@ -10470,7 +10470,7 @@
                 "steps"
               ]
             },
-            "description": "The sales funnels this channel may be SOLD THROUGH — DERIVED as every declared chain containing one of its `stepTransitions` as a leg, so it can never drift from them. An empty list is a real statement (no deployed chain takes any step this channel performs), not a gap."
+            "description": "The sales funnels this channel may be SOLD THROUGH — DERIVED as every declared funnel containing one of its `stepTransitions` as a leg, so it can never drift from them. An empty list is a real statement (no deployed funnel takes any step this channel performs), not a gap."
           }
         },
         "required": [
@@ -10528,7 +10528,7 @@
                 "description"
               ]
             },
-            "description": "The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a chain's. It spans EVERY step of every chain, not only the ones a chain can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a chain starts at."
+            "description": "The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at."
           }
         },
         "required": [
@@ -10578,7 +10578,7 @@
                           "properties": {
                             "step": {
                               "type": "string",
-                              "description": "The step, worded exactly as brand-service words it in the chain."
+                              "description": "The step, worded exactly as brand-service words it in the funnel."
                             },
                             "milestone": {
                               "type": "boolean",
@@ -10865,7 +10865,7 @@
                                 "form_magnet"
                               ]
                             },
-                            "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared chain states all four keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
+                            "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states all four keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
                           },
                           "supersededBySlug": {
                             "type": "string",
@@ -11047,7 +11047,7 @@
                               "form_magnet"
                             ]
                           },
-                          "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared chain states all four keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
+                          "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states all four keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
                         },
                         "supersededBySlug": {
                           "type": "string",
@@ -12014,10 +12014,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The SALES FUNNEL the spend block's cost-per-outcome columns are priced on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`). Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. Omitted → the brand's FIRST DECLARED funnel in catalogue order (a deterministic pick over the brand's own declarations, never a default chain); a brand that has declared nothing keeps OBSERVED columns (null at 0 outcomes), never a substituted chain. A value the brand never declared is ignored in favour of that same pick. An unrecognised value is a 400."
+              "description": "The SALES FUNNEL the spend block's cost-per-outcome columns are priced on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`). Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. Omitted → the brand's FIRST DECLARED funnel in catalogue order (a deterministic pick over the brand's own declarations, never a default funnel); a brand that has declared nothing keeps OBSERVED columns (null at 0 outcomes), never a substituted funnel. A value the brand never declared is ignored in favour of that same pick. An unrecognised value is a 400."
             },
             "required": false,
-            "description": "The SALES FUNNEL the spend block's cost-per-outcome columns are priced on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`). Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. Omitted → the brand's FIRST DECLARED funnel in catalogue order (a deterministic pick over the brand's own declarations, never a default chain); a brand that has declared nothing keeps OBSERVED columns (null at 0 outcomes), never a substituted chain. A value the brand never declared is ignored in favour of that same pick. An unrecognised value is a 400.",
+            "description": "The SALES FUNNEL the spend block's cost-per-outcome columns are priced on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`). Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. Omitted → the brand's FIRST DECLARED funnel in catalogue order (a deterministic pick over the brand's own declarations, never a default funnel); a brand that has declared nothing keeps OBSERVED columns (null at 0 outcomes), never a substituted funnel. A value the brand never declared is ignored in favour of that same pick. An unrecognised value is a 400.",
             "name": "funnel",
             "in": "query"
           },
@@ -12918,7 +12918,7 @@
     "/features/{featureSlug}/funnel-ranking": {
       "get": {
         "summary": "Rank the brand's DECLARED sales funnels by return per dollar (a recommendation, not a selection)",
-        "description": "NAMED FOR WHAT IT DOES. This endpoint was `/goal-arbitration`, back when it WAS the decision (campaign-service asked which goal to work and ran the answer). It arbitrates nothing now, and the objective is not a variable — it is always maximise return per dollar — so it ranks the funnels a brand declared it sells through. `/features/{featureSlug}/goal-arbitration` remains mounted as a DEPRECATED alias serving a byte-identical body while callers migrate; its removal is a separate change. ONE answer per brand: EVERY sales funnel the brand DECLARED, ranked by what it returns per dollar, plus the best workflow and the per-audience evidence for the best-returning one — so a consumer never issues one request per funnel and never ranks economics itself. IT IS ADVICE, NOT A GATE. Which funnel actually runs is decided by what the customer FUNDS: each funnel carries its own daily ceiling (billing-service) and campaign-service works every funded funnel, pacing each against its own ceiling. This endpoint answers the other question — which funnel has returned best, and how do the others compare — so a customer can decide where to move their money. The value is the COMPARISON in `ranking`; `recommendation` is simply its head. AN UNFUNDED FUNNEL IS STILL RANKED. Ranking is about history: what a funnel has returned is what makes it comparable, and being unfunded is a decision the customer just made, not a reason to hide how it performed. features-service never asks billing which funnels are funded. RANKING BASIS: returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-funnel-comparable number — a cost per outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting), so normalising through each funnel's own chain to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. Rankable funnels sort on returnPerDollar descending, ties broken by the canonical funnel-catalogue order, so the same evidence + the same economics always produce the same list. Per funnel, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a funnel, since the outcome→paid rate is a constant for it), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. EACH FUNNEL IS PRICED ON ITS OWN CHAIN, keyed on funnelKey and not on a goal. A funnel carries no goal since brand-service retired the vocabulary, and the goal could not have answered this: sales_meetings_from_conversation and sales_meetings_from_website both mapped onto `meetingBooked`, so the two were charged one blended both-channel price and a brand running the reply-driven chain was benchmarked against clicks it never buys. The conversation funnel now prices replyUsd / replyToMeetingPct and the website one clickUsd / visitToMeetingPct, so a brand declaring both gets two different costs — and often two different best workflows. A funnel with NO defined return is ranked LAST, never dropped: a chain whose own legs are undeclared or sit at 0 has no path to a paying client, and a funnel with no economics / no workflow evidence / a non-positive return is likewise listed with rank=null, rankable=false and its reason. When nothing can be ranked at all the response is arbitration.status='unrankable' with a reason — distinguishable from a recommendation, never an error that hides why. ONE ENTRY PER FUNNEL: the two meeting funnels (booked from a reply, booked from a website visit) are ranked SEPARATELY and each priced on its own channel and its own declared terms, because the customer funds them separately — a merged row could not answer 'where should I move my budget?' for either. A rate a funnel does not state falls back to the brand's effective economics, never to zero. The DECLARED SET is brand-service's to own, read from brand-service, never accepted from the caller and never inferred (a brand no longer has an optimizationGoal at all — that column was NOT NULL with a server default, so it said 'website purchases' for brands that had chosen nothing — and the brand-wide economics row cannot stand in either, every rate of which is server-defaulted and so signals nothing). When that declaration cannot be READ — transport, a non-OK response, or an empty list, i.e. this org has never STATED what it sells through — the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set. Cost: two small brand-service reads (the effective economics and the declared funnels) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — ranking N funnels adds zero IO over reading one. /workflow-projection itself is unchanged.",
+        "description": "NAMED FOR WHAT IT DOES. This endpoint was `/goal-arbitration`, back when it WAS the decision (campaign-service asked which goal to work and ran the answer). It arbitrates nothing now, and the objective is not a variable — it is always maximise return per dollar — so it ranks the funnels a brand declared it sells through. `/features/{featureSlug}/goal-arbitration` remains mounted as a DEPRECATED alias serving a byte-identical body while callers migrate; its removal is a separate change. ONE answer per brand: EVERY sales funnel the brand DECLARED, ranked by what it returns per dollar, plus the best workflow and the per-audience evidence for the best-returning one — so a consumer never issues one request per funnel and never ranks economics itself. IT IS ADVICE, NOT A GATE. Which funnel actually runs is decided by what the customer FUNDS: each funnel carries its own daily ceiling (billing-service) and campaign-service works every funded funnel, pacing each against its own ceiling. This endpoint answers the other question — which funnel has returned best, and how do the others compare — so a customer can decide where to move their money. The value is the COMPARISON in `ranking`; `recommendation` is simply its head. AN UNFUNDED FUNNEL IS STILL RANKED. Ranking is about history: what a funnel has returned is what makes it comparable, and being unfunded is a decision the customer just made, not a reason to hide how it performed. features-service never asks billing which funnels are funded. RANKING BASIS: returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-funnel-comparable number — a cost per outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting), so normalising through each funnel's own funnel to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. Rankable funnels sort on returnPerDollar descending, ties broken by the canonical funnel-catalogue order, so the same evidence + the same economics always produce the same list. Per funnel, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a funnel, since the outcome→paid rate is a constant for it), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. EACH FUNNEL IS PRICED ON ITS OWN FUNNEL, keyed on funnelKey and not on a goal. A funnel carries no goal since brand-service retired the vocabulary, and the goal could not have answered this: sales_meetings_from_conversation and sales_meetings_from_website both mapped onto `meetingBooked`, so the two were charged one blended both-channel price and a brand running the reply-driven funnel was benchmarked against clicks it never buys. The conversation funnel now prices replyUsd / replyToMeetingPct and the website one clickUsd / visitToMeetingPct, so a brand declaring both gets two different costs — and often two different best workflows. A funnel with NO defined return is ranked LAST, never dropped: a funnel whose own legs are undeclared or sit at 0 has no path to a paying client, and a funnel with no economics / no workflow evidence / a non-positive return is likewise listed with rank=null, rankable=false and its reason. When nothing can be ranked at all the response is arbitration.status='unrankable' with a reason — distinguishable from a recommendation, never an error that hides why. ONE ENTRY PER FUNNEL: the two meeting funnels (booked from a reply, booked from a website visit) are ranked SEPARATELY and each priced on its own channel and its own declared terms, because the customer funds them separately — a merged row could not answer 'where should I move my budget?' for either. A rate a funnel does not state falls back to the brand's effective economics, never to zero. The DECLARED SET is brand-service's to own, read from brand-service, never accepted from the caller and never inferred (a brand no longer has an optimizationGoal at all — that column was NOT NULL with a server default, so it said 'website purchases' for brands that had chosen nothing — and the brand-wide economics row cannot stand in either, every rate of which is server-defaulted and so signals nothing). When that declaration cannot be READ — transport, a non-OK response, or an empty list, i.e. this org has never STATED what it sells through — the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set. Cost: two small brand-service reads (the effective economics and the declared funnels) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — ranking N funnels adds zero IO over reading one. /workflow-projection itself is unchanged.",
         "tags": [
           "Stats"
         ],
@@ -13076,7 +13076,7 @@
                               "no_paid_client_path",
                               "no_return_defined"
                             ],
-                            "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client — a leg of its OWN chain is undeclared or sits at 0. Note a channel-scoped meeting funnel lands here whenever ITS channel has no rate, which a goal-keyed score used to hide behind the other channel's contribution. `no_workflow_evidence` = no history to compare it on yet. Null ⟺ rankable."
+                            "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client — a leg of its OWN funnel is undeclared or sits at 0. Note a channel-scoped meeting funnel lands here whenever ITS channel has no rate, which a goal-keyed score used to hide behind the other channel's contribution. `no_workflow_evidence` = no history to compare it on yet. Null ⟺ rankable."
                           },
                           "returnPerDollar": {
                             "type": "number",
@@ -13954,10 +13954,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "IANA timezone used for calendar day ordering and today's event bucket. Any spelling the runtime accepts is accepted here, aliases included (`Asia/Saigon` as well as `Asia/Ho_Chi_Minh`). A name that is valid IANA but that the day-bucketing chain cannot actually serve comes back as a 400 naming this parameter — never an opaque upstream failure."
+              "description": "IANA timezone used for calendar day ordering and today's event bucket. Any spelling the runtime accepts is accepted here, aliases included (`Asia/Saigon` as well as `Asia/Ho_Chi_Minh`). A name that is valid IANA but that the day-bucketing funnel cannot actually serve comes back as a 400 naming this parameter — never an opaque upstream failure."
             },
             "required": true,
-            "description": "IANA timezone used for calendar day ordering and today's event bucket. Any spelling the runtime accepts is accepted here, aliases included (`Asia/Saigon` as well as `Asia/Ho_Chi_Minh`). A name that is valid IANA but that the day-bucketing chain cannot actually serve comes back as a 400 naming this parameter — never an opaque upstream failure.",
+            "description": "IANA timezone used for calendar day ordering and today's event bucket. Any spelling the runtime accepts is accepted here, aliases included (`Asia/Saigon` as well as `Asia/Ho_Chi_Minh`). A name that is valid IANA but that the day-bucketing funnel cannot actually serve comes back as a 400 naming this parameter — never an opaque upstream failure.",
             "name": "timezone",
             "in": "query"
           },
@@ -14245,7 +14245,7 @@
             }
           },
           "400": {
-            "description": "Missing/invalid brandId, days, timezone, or pricing — including a timezone that is a valid IANA name but that the day-bucketing chain cannot serve (body carries `parameter: \"timezone\"`)",
+            "description": "Missing/invalid brandId, days, timezone, or pricing — including a timezone that is a valid IANA name but that the day-bucketing funnel cannot serve (body carries `parameter: \"timezone\"`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -14304,7 +14304,7 @@
     "/features/{featureSlug}/audience-stats": {
       "get": {
         "summary": "Audience-level return and cost evidence for a brand + feature (optionally narrowed to one sales funnel)",
-        "description": "SEND NEITHER `funnel` NOR `goal` FOR THE BRAND-LEVEL READ. A brand runs several sales funnels at once, so at brand level there is no goal — the only thing that matters is what came back per dollar. That read prices each audience through EVERY funnel the brand DECLARED (read from brand-service, never named by the caller) and reports, per audience, `projection.returnPerDollar`, `projection.costPerPaidClientUsd` and `projection.costOfAcquisitionPct` combined as the BEST-RETURNING chain, with `funnelCoverage` stating which funnels went in and which could not be priced, and `goal: null`. It reconciles by construction with /features/{slug}/funnel-ranking (its rank-1 funnel is this maximum) and with the per-funnel figures for the same brand at the same moment (a `?funnel=` read of the winning chain returns the identical numbers). A brand whose declaration cannot be READ — including the empty declaration, which is a producer gap and not an answer — is a 502 with reason='declared_funnels_unavailable', never a zero return. NAMING A FUNNEL still behaves exactly as it did: one chain, its own cost columns, its own sort metric. Returns ranked human-service audience rows for dashboard ranking. Each row is based on producer-side attribution of runs/outcomes to audienceId/brandProfileId/goal/workflow, never hash assignment or equal splitting of brand totals. Rows carry raw spend and outcome evidence so the dashboard can compute CPC (spend / websiteClicks) and CPPR (spend / positiveReplies). Rows with missing audienceId attribution are omitted. brandProfileId is echoed from the explicit query param when provided, else null (brand-service retired versioned brand-profile storage — features-service no longer reads a current profile).",
+        "description": "SEND NEITHER `funnel` NOR `goal` FOR THE BRAND-LEVEL READ. A brand runs several sales funnels at once, so at brand level there is no goal — the only thing that matters is what came back per dollar. That read prices each audience through EVERY funnel the brand DECLARED (read from brand-service, never named by the caller) and reports, per audience, `projection.returnPerDollar`, `projection.costPerPaidClientUsd` and `projection.costOfAcquisitionPct` combined as the BEST-RETURNING funnel, with `funnelCoverage` stating which funnels went in and which could not be priced, and `goal: null`. It reconciles by construction with /features/{slug}/funnel-ranking (its rank-1 funnel is this maximum) and with the per-funnel figures for the same brand at the same moment (a `?funnel=` read of the winning funnel returns the identical numbers). A brand whose declaration cannot be READ — including the empty declaration, which is a producer gap and not an answer — is a 502 with reason='declared_funnels_unavailable', never a zero return. NAMING A FUNNEL still behaves exactly as it did: one funnel, its own cost columns, its own sort metric. Returns ranked human-service audience rows for dashboard ranking. Each row is based on producer-side attribution of runs/outcomes to audienceId/brandProfileId/goal/workflow, never hash assignment or equal splitting of brand totals. Rows carry raw spend and outcome evidence so the dashboard can compute CPC (spend / websiteClicks) and CPPR (spend / positiveReplies). Rows with missing audienceId attribution are omitted. brandProfileId is echoed from the explicit query param when provided, else null (brand-service retired versioned brand-profile storage — features-service no longer reads a current profile).",
         "tags": [
           "Stats"
         ],
@@ -14364,10 +14364,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `funnel` is the CANONICAL parameter for a SINGLE-CHAIN read (a campaign genuinely sells one funnel): name it and nothing else. OMIT it entirely for the BRAND-LEVEL read, where the brand sells through every funnel it declared and the answer is combined over the declared set. It decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal."
+              "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `funnel` is the CANONICAL parameter for a SINGLE-FUNNEL read (a campaign genuinely sells one funnel): name it and nothing else. OMIT it entirely for the BRAND-LEVEL read, where the brand sells through every funnel it declared and the answer is combined over the declared set. It decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal."
             },
             "required": false,
-            "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `funnel` is the CANONICAL parameter for a SINGLE-CHAIN read (a campaign genuinely sells one funnel): name it and nothing else. OMIT it entirely for the BRAND-LEVEL read, where the brand sells through every funnel it declared and the answer is combined over the declared set. It decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal.",
+            "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `funnel` is the CANONICAL parameter for a SINGLE-FUNNEL read (a campaign genuinely sells one funnel): name it and nothing else. OMIT it entirely for the BRAND-LEVEL read, where the brand sells through every funnel it declared and the answer is combined over the declared set. It decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal.",
             "name": "funnel",
             "in": "query"
           },
@@ -14499,7 +14499,7 @@
                         "formSubmission",
                         "whatsappConversation"
                       ],
-                      "description": "The chain's goal ECHO on a single-funnel read. NULL on the BRAND-LEVEL read (neither `funnel` nor `goal` sent): a brand has no goal — it sells through every funnel it declared at once — and echoing one of them there would be exactly the arbitrary pick that read exists to remove."
+                      "description": "The funnel's goal ECHO on a single-funnel read. NULL on the BRAND-LEVEL read (neither `funnel` nor `goal` sent): a brand has no goal — it sells through every funnel it declared at once — and echoing one of them there would be exactly the arbitrary pick that read exists to remove."
                     },
                     "funnelCoverage": {
                       "type": "object",
@@ -14509,7 +14509,7 @@
                           "enum": [
                             "best_returning_declared_funnel"
                           ],
-                          "description": "How the money figures were combined across the brand's declared funnels: a dollar spent buys a customer through whichever chain converts it best, so a return is the MAXIMUM over the declared set — never a blend, never a sum. Same doctrine as the combined-`sales` cost (min over channels = max over returns), and the reason this reconciles with /features/{slug}/funnel-ranking by construction: its rank-1 funnel IS this maximum, on the identical returnPerDollar definition and the identical evidence."
+                          "description": "How the money figures were combined across the brand's declared funnels: a dollar spent buys a customer through whichever funnel converts it best, so a return is the MAXIMUM over the declared set — never a blend, never a sum. Same doctrine as the combined-`sales` cost (min over channels = max over returns), and the reason this reconciles with /features/{slug}/funnel-ranking by construction: its rank-1 funnel IS this maximum, on the identical returnPerDollar definition and the identical evidence."
                         },
                         "funnels": {
                           "type": "array",
@@ -14550,7 +14550,7 @@
                         "pricingBasisFunnelKey": {
                           "type": "string",
                           "nullable": true,
-                          "description": "The funnel whose chain every cost-per-outcome COLUMN on this payload is denominated in — the brand's best-returning declared funnel, falling back to its FIRST declared funnel in catalogue order when none could be priced. A cost per outcome is denominated in a chain's own outcome, so unlike a return it cannot be combined across chains; naming the one it was priced on is the honest answer."
+                          "description": "The funnel whose funnel every cost-per-outcome COLUMN on this payload is denominated in — the brand's best-returning declared funnel, falling back to its FIRST declared funnel in catalogue order when none could be priced. A cost per outcome is denominated in a funnel's own outcome, so unlike a return it cannot be combined across funnels; naming the one it was priced on is the honest answer."
                         }
                       },
                       "required": [
@@ -14818,17 +14818,17 @@
                               "basisFunnelKey": {
                                 "type": "string",
                                 "nullable": true,
-                                "description": "BRAND-LEVEL read only (neither `funnel` nor `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning chain, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the chain); null when nothing could be priced."
+                                "description": "BRAND-LEVEL read only (neither `funnel` nor `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning funnel, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the funnel); null when nothing could be priced."
                               },
                               "lifetimeRevenueUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two chains the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
+                                "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
                               },
                               "costPerPaidClientUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's chain on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the chain has no path to a paying client or at cold start."
+                                "description": "PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's funnel on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the funnel has no path to a paying client or at cold start."
                               },
                               "returnPerDollar": {
                                 "type": "number",
@@ -14876,7 +14876,7 @@
                         "costPerPaidClientUsd": {
                           "type": "number",
                           "nullable": true,
-                          "description": "PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the chain has no path to a paying client."
+                          "description": "PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the funnel has no path to a paying client."
                         },
                         "returnPerDollar": {
                           "type": "number",
@@ -15149,10 +15149,10 @@
         }
       }
     },
-    "/offers/{offerId}/chains": {
+    "/offers/{offerId}/funnels": {
       "get": {
-        "summary": "What each of an offer's sales chains cost and returned",
-        "description": "The (offer x sales chain) grain: one row per chain the offer is sold through, each carrying that chain's own spend, pipeline, return per dollar and cost of acquisition. It is the grain the product needs as it moves to ONE CAMPAIGN PER STEP — a campaign then buys a single link and has no return of its own, because the lifetime revenue sits at the end of the chain. Correct under both shapes with no switch: the row is scoped to the chain's CAMPAIGN SET, so a chain served by one campaign (every chain in production today) is byte-equal to that campaign's own answer, and a chain served by one campaign per step is the same row over the larger set. Each chain's cost of acquisition is stated twice, apart: `costEconomics` is what the customer was CHARGED, `customerCost` is what they state the legs they worked themselves cost them, and `combinedCostEconomics` is the two together with the return that divides by that sum. `costCoverage` says which dollars a figure is made of, per row and for the payload, so the stated basis is always true rather than always the same. Each chain is priced on its OWN declared terms — its own rates and its own lifetime revenue — so a $200 self-serve chain and a $20k contract chain are never blended. A chain we cannot price says which ingredient is missing (`unpricedReason`) and reports its real spend beside a null return. The composition happens here: nothing on this response is meant to be summed in a browser, and the rows deliberately do not sum on the people half.",
+        "summary": "What each of an offer's sales funnels cost and returned",
+        "description": "The (offer x sales funnel) grain: one row per funnel the offer is sold through, each carrying that funnel's own spend, pipeline, return per dollar and cost of acquisition. It is the grain the product needs as it moves to ONE CAMPAIGN PER STEP — a campaign then buys a single link and has no return of its own, because the lifetime revenue sits at the end of the funnel. Correct under both shapes with no switch: the row is scoped to the funnel's CAMPAIGN SET, so a funnel served by one campaign (every funnel in production today) is byte-equal to that campaign's own answer, and a funnel served by one campaign per step is the same row over the larger set. Each funnel's cost of acquisition is stated twice, apart: `costEconomics` is what the customer was CHARGED, `customerCost` is what they state the legs they worked themselves cost them, and `combinedCostEconomics` is the two together with the return that divides by that sum. `costCoverage` says which dollars a figure is made of, per row and for the payload, so the stated basis is always true rather than always the same. Each funnel is priced on its OWN declared terms — its own rates and its own lifetime revenue — so a $200 self-serve funnel and a $20k contract funnel are never blended. A funnel we cannot price says which ingredient is missing (`unpricedReason`) and reports its real spend beside a null return. The composition happens here: nothing on this response is meant to be summed in a browser, and the rows deliberately do not sum on the people half.",
         "tags": [
           "Stats"
         ],
@@ -15235,11 +15235,11 @@
         ],
         "responses": {
           "200": {
-            "description": "One row per sales chain the offer is sold through",
+            "description": "One row per sales funnel the offer is sold through",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OfferChainsResponse"
+                  "$ref": "#/components/schemas/OfferFunnelsResponse"
                 }
               }
             }
@@ -15281,7 +15281,7 @@
             }
           },
           "409": {
-            "description": "A chain is carried by channels that price on different funnels (reason: offer_channels_price_differently), so its money cannot honestly be answered as one figure",
+            "description": "A funnel is carried by channels that price on different funnels (reason: offer_channels_price_differently), so its money cannot honestly be answered as one figure",
             "content": {
               "application/json": {
                 "schema": {
@@ -16747,7 +16747,7 @@
                                 "form_magnet"
                               ]
                             },
-                            "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared chain states all four keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
+                            "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states all four keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
                           },
                           "supersededBySlug": {
                             "type": "string",
@@ -18347,7 +18347,7 @@
     "/public/channels": {
       "get": {
         "summary": "Every acquisition channel, its commercial terms and what it can produce (public, no auth)",
-        "description": "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), which LEG of a chain it performs (the step it moves a lead FROM and the step it moves it TO), who operates it, and the sales funnels that follow from those legs. A chain is sellable LEG BY LEG rather than only end to end, so the catalogue publishes channels for the internal steps a human performs — the ones a specialist of ours runs and the ones the customer runs themselves. A channel the CUSTOMER operates spends none of the platform's money, so its daily operating cost is 0 and `operatedBy` is what makes that zero legible. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
+        "description": "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), which LEG of a funnel it performs (the step it moves a lead FROM and the step it moves it TO), who operates it, and the sales funnels that follow from those legs. A funnel is sellable LEG BY LEG rather than only end to end, so the catalogue publishes channels for the internal steps a human performs — the ones a specialist of ours runs and the ones the customer runs themselves. A channel the CUSTOMER operates spends none of the platform's money, so its daily operating cost is 0 and `operatedBy` is what makes that zero legible. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
         "tags": [
           "Public"
         ],
@@ -18368,7 +18368,7 @@
     "/public/channel-funnel-economics": {
       "get": {
         "summary": "Measured economics per (sales funnel, acquisition channel) pair, or an explicit not-enough-data (public, no auth)",
-        "description": "One row per (sales funnel, acquisition channel) PAIR: either the pair's MEASURED economics — cost per each STEP of that funnel, cost per SALE, and return per dollar — or an explicit statement that there is not enough data, naming which ingredient is missing. A customer buys a PAIR, and the same chain costs a very different amount through a phone channel than through paid search, so neither a brand-level nor a channel-level aggregate can answer this. Evidence is the SAME cross-org per-brand dataset every other public cost surface reads, and a chain is priced through its OWN channel (the conversation chain on replies, the click-driven chains on visits), so a public per-pair figure and a customer's own dashboard can never print two prices for one chain. Nothing is fabricated: a pair with no spend, no produced entry step, or no declared economics returns `measured: false` with its reason.",
+        "description": "One row per (sales funnel, acquisition channel) PAIR: either the pair's MEASURED economics — cost per each STEP of that funnel, cost per SALE, and return per dollar — or an explicit statement that there is not enough data, naming which ingredient is missing. A customer buys a PAIR, and the same funnel costs a very different amount through a phone channel than through paid search, so neither a brand-level nor a channel-level aggregate can answer this. Evidence is the SAME cross-org per-brand dataset every other public cost surface reads, and a funnel is priced through its OWN channel (the conversation funnel on replies, the click-driven funnels on visits), so a public per-pair figure and a customer's own dashboard can never print two prices for one funnel. Nothing is fabricated: a pair with no spend, no produced entry step, or no declared economics returns `measured: false` with its reason.",
         "tags": [
           "Public"
         ],

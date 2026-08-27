@@ -21,7 +21,7 @@ import {
   fetchConversionCountsByDay,
   type ConversionCountsByDay,
 } from "../lib/conversion-counts-by-day-client.js";
-import { aggregateAcrossChains, buildUpgradeChains } from "./public.js";
+import { aggregateAcrossDynasties, buildWorkflowDynasties } from "./public.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 
@@ -292,7 +292,7 @@ function readStatsNumber(value: unknown, label: string): number {
 
 /**
  * The day-bucketing read failed for the CALLER'S timezone specifically — the identical read with `UTC`
- * succeeds, so the brand, the feature, the identity and the whole downstream chain are healthy and the
+ * succeeds, so the brand, the feature, the identity and the whole downstream funnel are healthy and the
  * one input we cannot serve is the `timezone` query parameter. Carried as its own type so the route can
  * answer 400 NAMING that parameter instead of an opaque upstream-failure status.
  *
@@ -350,7 +350,7 @@ async function fetchDailyBroadcastActivity(
     // Which input is at fault? Re-run the SAME read with UTC — the one parameter we can always serve. If
     // that answers, the outage is not ours and not the brand's: it is this timezone spelling, and the
     // caller deserves to be told exactly that (a customer whose browser reports `Asia/Saigon` rather than
-    // `Asia/Ho_Chi_Minh` spent a day looking like a generic gateway fault). If UTC fails too, the chain is
+    // `Asia/Ho_Chi_Minh` spent a day looking like a generic gateway fault). If UTC fails too, the funnel is
     // genuinely down and the original failure is the honest one to raise.
     if (timezone !== "UTC") {
       const probe = await fetchWithRetry(requestUrl("UTC"), { headers: requestHeaders }).catch(() => null);
@@ -458,13 +458,13 @@ async function buildWorkflowActivityUnits(
     fetchPublicEmailStats(featureSlug, "workflowSlug"),
   ]);
 
-  const chains = buildUpgradeChains(workflows);
-  const { costMap, aggregatedOutcomes } = aggregateAcrossChains(chains, costGroups, emailStats, "workflowSlug");
+  const dynasties = buildWorkflowDynasties(workflows);
+  const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(dynasties, costGroups, emailStats, "workflowSlug");
   const workflowBySlug = new Map(workflows.map((workflow) => [workflow.workflowSlug, workflow]));
   const unitsByWorkflowSlug = new Map<string, WorkflowActivityUnit>();
   const projectionInputs = economicsToProjectionInputs(economics);
 
-  for (const [activeSlug, chainSlugs] of chains) {
+  for (const [activeSlug, versionSlugs] of dynasties) {
     const cost = costMap.get(activeSlug);
     if (!cost) continue;
     const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
@@ -476,7 +476,7 @@ async function buildWorkflowActivityUnits(
 
     const unit: WorkflowActivityUnit = {
       workflowDynastySlug: workflowBySlug.get(activeSlug)?.workflowDynastySlug ?? activeSlug,
-      workflowSlugs: Array.from(new Set([...chainSlugs, activeSlug])),
+      workflowSlugs: Array.from(new Set([...versionSlugs, activeSlug])),
       outreachUsd: costUsd > 0 && contacted > 0 ? costUsd / contacted : null,
       clickUsd,
       costPerSignupUsd: projectOutcomeCosts(projectionInputs, { clickUsd, replyUsd: null }).costPerSignupUsd,
@@ -484,7 +484,7 @@ async function buildWorkflowActivityUnits(
       clickPerOutreach: ratio(clicked, contacted),
     };
 
-    for (const slug of chainSlugs) unitsByWorkflowSlug.set(slug, unit);
+    for (const slug of versionSlugs) unitsByWorkflowSlug.set(slug, unit);
     unitsByWorkflowSlug.set(activeSlug, unit);
   }
 

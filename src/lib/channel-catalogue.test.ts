@@ -23,7 +23,7 @@ const CHANNEL = {
   terms: { dailyOperatingCostCents: 800, minimumCommitmentDays: 30, maxDaysToFirstProduction: 14 },
 };
 
-/** A channel that performs an INTERNAL leg: it moves a lead that is already on the chain. */
+/** A channel that performs an INTERNAL leg: it moves a lead that is already on the funnel. */
 const CLOSER = {
   family: "conversion",
   operatedBy: "customer",
@@ -115,7 +115,7 @@ describe("building the public catalogue", () => {
       "website_purchases",
       "form_magnet",
     ]);
-    // A funnel arrives with its chain, so a row renders without the consumer knowing the catalogue.
+    // A funnel arrives with its funnel, so a row renders without the consumer knowing the catalogue.
     expect(channel.salesFunnels[0].steps).toEqual([
       "Positive reply",
       "Meeting booked",
@@ -125,7 +125,7 @@ describe("building the public catalogue", () => {
   });
 
   it("a channel producing only an on-platform step publishes an EMPTY funnel list, and still publishes", () => {
-    // No deployed chain starts from a platform form yet. The channel is still bookable and still
+    // No deployed funnel starts from a platform form yet. The channel is still bookable and still
     // listed with its terms; what it cannot do today is be PAIRED, and it says that as an empty list.
     const [channel] = buildChannelCatalogue([
       row({ acquisitionChannel: { ...CHANNEL, stepTransitions: [{ from: null, to: "in_ad_form_submission" }] } }),
@@ -167,10 +167,10 @@ describe("building the public catalogue", () => {
     expect(channelStepCatalogue().map((s) => s.key)).toEqual([...CHANNEL_STEP_KEYS]);
   });
 
-  it("a channel performing an INTERNAL leg publishes it, produces nothing, and still sells its chains", () => {
+  it("a channel performing an INTERNAL leg publishes it, produces nothing, and still sells its funnels", () => {
     // This is the shape the catalogue could not express before: it starts somewhere that is not the
-    // beginning of a chain, so it produces no entry step at all — and it is still sellable, through
-    // every chain that contains its leg.
+    // beginning of a funnel, so it produces no entry step at all — and it is still sellable, through
+    // every funnel that contains its leg.
     const [channel] = buildChannelCatalogue([row({ slug: "closing", acquisitionChannel: CLOSER })]);
     expect(channel.producibleSteps).toEqual([]);
     expect(channel.stepTransitions).toEqual([

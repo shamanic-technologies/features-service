@@ -4,7 +4,7 @@
  *
  * These cases drive one fixture through both halves: the three ways a pair can be unmeasurable (each
  * naming the ingredient we are missing), and the pricing itself, where the load-bearing property is
- * that a chain is priced through its OWN channel and that a step whose rate nobody declared says so
+ * that a funnel is priced through its OWN channel and that a step whose rate nobody declared says so
  * rather than reading as free.
  */
 import { describe, it, expect } from "vitest";
@@ -45,22 +45,22 @@ describe("not enough data is an answer, and it names the missing ingredient", ()
     expect(result).toEqual({ measured: false, reason: "no_spend_recorded" });
   });
 
-  it("spent, but the chain's own entry step was never produced → no_entry_step_produced", () => {
-    // A channel that has only ever produced website visits cannot price the conversation chain, even
+  it("spent, but the funnel's own entry step was never produced → no_entry_step_produced", () => {
+    // A channel that has only ever produced website visits cannot price the conversation funnel, even
     // though it has plenty of spend and plenty of the OTHER step.
     const result = pricePair(input({ unitCosts: { clickUsd: 2, replyUsd: null } }));
     expect(result).toEqual({ measured: false, reason: "no_entry_step_produced" });
 
-    // ...and the reverse, for a click-driven chain on a conversation-only channel.
+    // ...and the reverse, for a click-driven funnel on a conversation-only channel.
     const website = pricePair(
       input({ funnelKey: "sales_meetings_from_website", unitCosts: { clickUsd: null, replyUsd: 10 } }),
     );
     expect(website).toEqual({ measured: false, reason: "no_entry_step_produced" });
   });
 
-  it("a LEG channel nobody has run yet says the plain thing, on every chain its leg belongs to", () => {
-    // A channel that picks a lead up MID-chain (booking the meeting, closing it) is sellable through
-    // every chain containing that leg, so it has pairs from the day it is published — and until
+  it("a LEG channel nobody has run yet says the plain thing, on every funnel its leg belongs to", () => {
+    // A channel that picks a lead up MID-funnel (booking the meeting, closing it) is sellable through
+    // every funnel containing that leg, so it has pairs from the day it is published — and until
     // somebody runs one, each of those pairs has nothing to divide. `no_spend_recorded` is the honest
     // answer, and it is the one the per-pair read gives: the customer will declare what each of these
     // transitions cost them per lead, so spend arrives later rather than never.
@@ -76,7 +76,7 @@ describe("not enough data is an answer, and it names the missing ingredient", ()
     }
   });
 
-  it("no brand declared the chain's rates → no_economics_declared", () => {
+  it("no brand declared the funnel's rates → no_economics_declared", () => {
     expect(pricePair(input({ economics: null }))).toEqual({ measured: false, reason: "no_economics_declared" });
   });
 
@@ -93,8 +93,8 @@ describe("not enough data is an answer, and it names the missing ingredient", ()
   });
 });
 
-describe("a measured pair prices every step of its own chain", () => {
-  it("the conversation chain prices on REPLIES, and the click channel cannot dilute it", () => {
+describe("a measured pair prices every step of its own funnel", () => {
+  it("the conversation funnel prices on REPLIES, and the click channel cannot dilute it", () => {
     const result = pricePair(input());
     expect(result.measured).toBe(true);
     if (!result.measured) throw new Error("unreachable");
@@ -105,7 +105,7 @@ describe("a measured pair prices every step of its own chain", () => {
     // A conversation costs what the channel paid for one: $10.
     expect(steps[0].costPerStepUsd).toBeCloseTo(10, 10);
     // A booked meeting costs replyUsd / r2m = 10 / 0.5 = $20. Priced through the REPLY channel alone:
-    // blending the $2 clicks in would have made it look far cheaper than this chain can actually buy.
+    // blending the $2 clicks in would have made it look far cheaper than this funnel can actually buy.
     expect(steps[1].costPerStepUsd).toBeCloseTo(20, 10);
     // A paid client costs replyUsd / (r2m x m2c) = 10 / 0.2 = $50.
     expect(steps[3].costPerStepUsd).toBeCloseTo(50, 10);
@@ -127,7 +127,7 @@ describe("a measured pair prices every step of its own chain", () => {
     }
   });
 
-  it("the website meeting chain prices on CLICKS — same evidence, a different number", () => {
+  it("the website meeting funnel prices on CLICKS — same evidence, a different number", () => {
     const result = pricePair(input({ funnelKey: "sales_meetings_from_website" }));
     if (!result.measured) throw new Error("unreachable");
     const { steps, costPerSaleUsd } = result.economics;
@@ -135,7 +135,7 @@ describe("a measured pair prices every step of its own chain", () => {
     expect(steps[1].costPerStepUsd).toBeCloseTo(20, 10); // clickUsd / v2m = 2 / 0.1
     expect(costPerSaleUsd).toBeCloseTo(50, 10); // / m2c = 20 / 0.4
 
-    // The whole reason the two chains are priced apart: they buy the same milestone through different
+    // The whole reason the two funnels are priced apart: they buy the same milestone through different
     // channels, so the same evidence gives each its own cost per conversation-bought vs click-bought
     // step, and neither is benchmarked against a step it never buys.
     const conversation = pricePair(input());
@@ -143,7 +143,7 @@ describe("a measured pair prices every step of its own chain", () => {
     expect(conversation.economics.steps[0].costPerStepUsd).not.toBeCloseTo(steps[0].costPerStepUsd!, 5);
   });
 
-  it("the purchase chain prices visit → signup → paid", () => {
+  it("the purchase funnel prices visit → signup → paid", () => {
     const result = pricePair(input({ funnelKey: "website_purchases" }));
     if (!result.measured) throw new Error("unreachable");
     const { steps, costPerSaleUsd } = result.economics;
@@ -153,7 +153,7 @@ describe("a measured pair prices every step of its own chain", () => {
     expect(costPerSaleUsd).toBeCloseTo(40, 10); // / s2pc = 8 / 0.2
   });
 
-  it("the form chain prices visit → form filled → paid", () => {
+  it("the form funnel prices visit → form filled → paid", () => {
     const result = pricePair(input({ funnelKey: "form_magnet" }));
     if (!result.measured) throw new Error("unreachable");
     const { steps, costPerSaleUsd } = result.economics;
@@ -162,7 +162,7 @@ describe("a measured pair prices every step of its own chain", () => {
     expect(costPerSaleUsd).toBeCloseTo(100, 10); // / fs2pc = 10 / 0.1
   });
 
-  it("a SALE costs at least as much as the milestone that leads to it, on every chain", () => {
+  it("a SALE costs at least as much as the milestone that leads to it, on every funnel", () => {
     for (const funnelKey of ["sales_meetings_from_conversation", "sales_meetings_from_website", "website_purchases", "form_magnet"] as const) {
       const result = pricePair(input({ funnelKey }));
       if (!result.measured) throw new Error("unreachable");
@@ -198,8 +198,8 @@ describe("a measured pair prices every step of its own chain", () => {
   });
 });
 
-describe("which channel a chain is bought through", () => {
-  it("only the conversation chain buys with a reply", () => {
+describe("which channel a funnel is bought through", () => {
+  it("only the conversation funnel buys with a reply", () => {
     expect(funnelEntryChannel("sales_meetings_from_conversation")).toBe("reply");
     for (const key of ["sales_meetings_from_website", "website_purchases", "form_magnet"] as const) {
       expect(funnelEntryChannel(key), key).toBe("click");

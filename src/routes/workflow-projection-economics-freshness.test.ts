@@ -15,7 +15,7 @@ import request from "supertest";
  * reproduce the stale window.
  */
 
-// ── Stateful drizzle-chain mock: features lookup + the view-cache snapshot row ──────────────────
+// ── Stateful drizzle-funnel mock: features lookup + the view-cache snapshot row ──────────────────
 // `body` round-trips through JSON to mirror the real jsonb column — a Map stored in jsonb comes back as
 // `{}`, so this also guards the evidence shape's serializability.
 let storedRow: Record<string, unknown> | undefined;

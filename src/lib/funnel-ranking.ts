@@ -32,7 +32,7 @@
  * i.e. expected revenue per dollar of spend — the EXISTING `roiMultiple` (= 100 / cacPct). It is the
  * ONLY cross-funnel-comparable number: a cost per outcome is denominated in the funnel's OWN outcome (a
  * click, a reply, a booked meeting), so comparing two funnels' cost-per-outcome compares two different
- * things. Normalising each funnel through its OWN chain to the same terminal unit — a paying client's
+ * things. Normalising each funnel through its OWN funnel to the same terminal unit — a paying client's
  * lifetime revenue — makes them commensurable.
  *
  * Per funnel, the BEST WORKFLOW is `argmin resolved.costPerOutcomeUsd` over the BRAND-LEVEL rows
@@ -46,7 +46,7 @@
  *
  * ── A FUNNEL WITH NO DEFINED RETURN IS RANKED LAST, NEVER DROPPED ─────────────────────────────────
  *
- * A funnel whose chain collapses — the brand declared no rate on one of its legs, or no lifetime
+ * A funnel whose funnel collapses — the brand declared no rate on one of its legs, or no lifetime
  * revenue for a client won through it — has no defined return. Not zero, and never "borrow another
  * funnel's". It still appears in `ranking`, with `rankable: false`, its reason, and whatever IS known
  * about it (its own outcome cost and best workflow); it just carries no `rank`. Same for a funnel with
@@ -79,7 +79,7 @@ export type UnrankableReason =
   | "no_economics"
   /** No workflow has a usable cost of this funnel's outcome (no brand-level row with a positive cost). */
   | "no_workflow_evidence"
-  /** The funnel has no defined path to a paying client (a leg of its own chain sits at 0 / undeclared). */
+  /** The funnel has no defined path to a paying client (a leg of its own funnel sits at 0 / undeclared). */
   | "no_paid_client_path"
   /** A paid-client cost exists but the return is not a positive finite number (e.g. no lifetime revenue). */
   | "no_return_defined";
@@ -196,7 +196,7 @@ interface ScoredFunnel {
 }
 
 /**
- * Score ONE declared funnel: project the shared evidence through that funnel's chain, take the brand's
+ * Score ONE declared funnel: project the shared evidence through that funnel's funnel, take the brand's
  * best workflow for it, and read the funnel's return per dollar off that row. Pure — no IO.
  *
  * Throws when the funnel needs a conversion rate the brand's economics do not carry (the SAME fail-loud
@@ -276,7 +276,7 @@ function scoreFunnel(input: {
     workflow,
   };
 
-  // No path to a paying client → no return to compare. Any chain with an undeclared or zero leg lands
+  // No path to a paying client → no return to compare. Any funnel with an undeclared or zero leg lands
   // here — including a meeting funnel whose OWN channel has no rate, which is exactly the case a
   // goal-keyed score used to hide behind the other channel's contribution.
   if (!isPositiveFinite(best.resolved.costPerPaidClientUsd)) return unrankable("no_paid_client_path", withRow);

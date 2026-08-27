@@ -36,7 +36,7 @@ const BACKOFF_MS = [250, 500, 1000, 2000, 4000, 8000];
 /**
  * A transient network error from `fetch` is wrapped in `cause` (and for
  * happy-eyeballs, an `AggregateError` with per-address sub-errors under
- * `.errors`). Walk both chains, guarding against cycles.
+ * `.errors`). Walk both funnels, guarding against cycles.
  */
 function isTransient(err: unknown): boolean {
   const seen = new Set<unknown>();

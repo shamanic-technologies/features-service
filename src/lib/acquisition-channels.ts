@@ -1,5 +1,5 @@
 /**
- * AN ACQUISITION CHANNEL IS A FEATURE SLUG, AND IT STATES ITS COMMERCIAL TERMS + WHICH STEP OF A CHAIN
+ * AN ACQUISITION CHANNEL IS A FEATURE SLUG, AND IT STATES ITS COMMERCIAL TERMS + WHICH STEP OF A FUNNEL
  * IT MOVES A LEAD FROM AND TO.
  *
  * distribute sells reach through more than one channel, and a channel in this fleet's vocabulary IS a
@@ -12,29 +12,29 @@
  *     by a specialist carries that salary), the minimum commitment in days, and an UPPER BOUND on how
  *     long after booking it starts producing. We SET these; nothing measures them.
  *  2. **WHICH STEP IT MOVES A LEAD FROM, AND WHICH STEP IT MOVES IT TO** — its `stepTransitions`. A
- *     sales funnel is a chain of steps, so a channel is sellable through a chain when it can perform
- *     one of that chain's LEGS.
+ *     sales funnel is a funnel of steps, so a channel is sellable through a funnel when it can perform
+ *     one of that funnel's LEGS.
  *
- * ── A CHAIN IS SOLD LEG BY LEG, AND "FROM NOTHING" IS THE SPECIAL CASE ────────────────────────────
+ * ── A FUNNEL IS SOLD LEG BY LEG, AND "FROM NOTHING" IS THE SPECIAL CASE ────────────────────────────
  *
  * Every channel that shipped before this one stated only what it could PRODUCE — a conversation, a
- * website visit — which is to say it moved a lead from NOTHING to the step a chain starts from. That
+ * website visit — which is to say it moved a lead from NOTHING to the step a funnel starts from. That
  * reads as the whole model only because it was the only kind of channel in the catalogue. It is not:
- * a four-step chain has three more legs after its entry, every one of them a thing somebody does, and
+ * a four-step funnel has three more legs after its entry, every one of them a thing somebody does, and
  * each is sellable on its own terms with its own daily budget and its own stats.
  *
  * So a transition is `{ from, to }` and `from: null` means "from nothing" — the lead did not exist on
- * this chain until this channel produced it. That is the SPECIAL CASE, written as the special case,
+ * this funnel until this channel produced it. That is the SPECIAL CASE, written as the special case,
  * rather than the shape everything else has to be bent into.
  *
  * ── THE JOIN IS STILL DERIVED, IT JUST WORKS ON EVERY LEG NOW ─────────────────────────────────────
  *
- * Which (chain, channel) pairs are sellable still falls out of two facts joined — it is never a second
+ * Which (funnel, channel) pairs are sellable still falls out of two facts joined — it is never a second
  * list somebody maintains. What changed is the join's grain: it used to compare a channel's produced
- * steps against each chain's ENTRY step, and it now compares a channel's transitions against each
- * chain's LEGS, of which the entry is simply the first. Every channel published before this reads the
- * identical list of chains, because a leg `{ from: null, to: <the chain's first step> }` matches
- * exactly the chains whose entry step it produced.
+ * steps against each funnel's ENTRY step, and it now compares a channel's transitions against each
+ * funnel's LEGS, of which the entry is simply the first. Every channel published before this reads the
+ * identical list of funnels, because a leg `{ from: null, to: <the funnel's first step> }` matches
+ * exactly the funnels whose entry step it produced.
  *
  * ── WHO OPERATES IT, AND WHY A ZERO DAILY COST IS NOT A HOLE ──────────────────────────────────────
  *
@@ -65,18 +65,18 @@ import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-f
 // ── The steps a channel can move a lead between ─────────────────────────────────────────────────────
 
 /**
- * Every step a channel can move a lead FROM or TO. Seven of them are steps of a deployed chain, and the
- * remaining two are produced INSIDE AN AD UNIT and start no chain we sell yet.
+ * Every step a channel can move a lead FROM or TO. Seven of them are steps of a deployed funnel, and the
+ * remaining two are produced INSIDE AN AD UNIT and start no funnel we sell yet.
  *
  * This list used to hold four keys, because a channel could only ever say what it PRODUCED and only
- * four steps can start a chain. A channel that performs an internal leg needs to name the step it moves
- * a lead OUT OF as well, and those are steps a chain reaches rather than starts from — so the
+ * four steps can start a funnel. A channel that performs an internal leg needs to name the step it moves
+ * a lead OUT OF as well, and those are steps a funnel reaches rather than starts from — so the
  * vocabulary is the union of every step in the catalogue, not the subset that happens to come first.
  *
  * ── WHY THE `in_ad_` PREFIX, AND WHY NEITHER SHORTER NAME WORKS ───────────────────────────────────
  *
  * The prefix is LOAD-BEARING and must not be dropped. "Form filled" and "Meeting booked" ALREADY exist
- * in the deployed funnel catalogue as INTERMEDIATE steps (`form_magnet` step 2, both meeting chains'
+ * in the deployed funnel catalogue as INTERMEDIATE steps (`form_magnet` step 2, both meeting funnels'
  * milestone), reached through a click or a reply onto the brand's own site — and they are now in this
  * very list under `form_filled` and `meeting_booked`. What an ad produces is an ENTRY step reached
  * without ever getting there. Naming ours `form_submission` / `booked_meeting` would collide with those
@@ -145,7 +145,7 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
   paid_client: {
     key: "paid_client",
     label: "Paid client",
-    description: "A buyer pays. This is the SALE every chain terminates in.",
+    description: "A buyer pays. This is the SALE every funnel terminates in.",
   },
   in_ad_form_submission: {
     key: "in_ad_form_submission",
@@ -172,9 +172,9 @@ export function matchChannelStepKey(raw: string): ChannelStepKey | null {
 /**
  * One leg a channel can perform: it takes a lead sitting at `from` and moves it to `to`.
  *
- * `from: null` is "from nothing" — the lead was not on the chain at all until this channel produced its
+ * `from: null` is "from nothing" — the lead was not on the funnel at all until this channel produced its
  * first step. Every channel published before this file gained transitions states only legs of that
- * shape, which is why they all still read the same list of sellable chains.
+ * shape, which is why they all still read the same list of sellable funnels.
  */
 export interface ChannelStepTransition {
   from: ChannelStepKey | null;
@@ -194,13 +194,13 @@ export function producibleStepsOf(transitions: readonly ChannelStepTransition[])
   return transitions.filter((t) => t.from === null).map((t) => t.to);
 }
 
-// ── The chains, expressed as legs ───────────────────────────────────────────────────────────────────
+// ── The funnels, expressed as legs ───────────────────────────────────────────────────────────────────
 
 /**
- * brand-service's own wording for each step, resolved to our key. A chain is a list of LABELS
- * (`SALES_FUNNELS[key].steps`, mirrored from the producer), so this is what lets a chain be read as a
- * list of legs. Guarded in `acquisition-channels.test.ts`: every label of every deployed chain must
- * resolve here, so a chain whose wording changes fails loudly rather than silently losing a leg.
+ * brand-service's own wording for each step, resolved to our key. A funnel is a list of LABELS
+ * (`SALES_FUNNELS[key].steps`, mirrored from the producer), so this is what lets a funnel be read as a
+ * list of legs. Guarded in `acquisition-channels.test.ts`: every label of every deployed funnel must
+ * resolve here, so a funnel whose wording changes fails loudly rather than silently losing a leg.
  */
 export const FUNNEL_STEP_LABEL_TO_KEY: Record<string, ChannelStepKey> = {
   "Positive reply": "conversation",
@@ -212,8 +212,8 @@ export const FUNNEL_STEP_LABEL_TO_KEY: Record<string, ChannelStepKey> = {
   "Paid client": "paid_client",
 };
 
-/** Thrown when a deployed chain contains a step this module cannot name. FAIL LOUD: a silently-dropped
- *  leg would quietly stop a channel being sellable through a chain it can genuinely serve. */
+/** Thrown when a deployed funnel contains a step this module cannot name. FAIL LOUD: a silently-dropped
+ *  leg would quietly stop a channel being sellable through a funnel it can genuinely serve. */
 export class UnknownFunnelStepLabelError extends Error {
   constructor(funnelKey: SalesFunnelKey, label: string) {
     super(`Sales funnel "${funnelKey}" contains a step this catalogue cannot name: ${JSON.stringify(label)}`);
@@ -221,7 +221,7 @@ export class UnknownFunnelStepLabelError extends Error {
   }
 }
 
-/** One chain, read as the ordered list of steps it is made of. */
+/** One funnel, read as the ordered list of steps it is made of. */
 export function funnelStepKeys(key: SalesFunnelKey): ChannelStepKey[] {
   return SALES_FUNNELS[key].steps.map((label) => {
     const step = FUNNEL_STEP_LABEL_TO_KEY[label];
@@ -231,8 +231,8 @@ export function funnelStepKeys(key: SalesFunnelKey): ChannelStepKey[] {
 }
 
 /**
- * Every leg of one chain: the entry leg (from nothing to the chain's first step), then one leg per
- * consecutive pair. A channel is sellable through this chain when it can perform ANY of them.
+ * Every leg of one funnel: the entry leg (from nothing to the funnel's first step), then one leg per
+ * consecutive pair. A channel is sellable through this funnel when it can perform ANY of them.
  */
 export function funnelLegs(key: SalesFunnelKey): ChannelStepTransition[] {
   const steps = funnelStepKeys(key);
@@ -241,8 +241,8 @@ export function funnelLegs(key: SalesFunnelKey): ChannelStepTransition[] {
   return legs;
 }
 
-/** The step that STARTS each declared sales funnel — the `to` of its entry leg, derived from the chain
- *  itself so the mirror cannot drift from the chain it claims to describe. */
+/** The step that STARTS each declared sales funnel — the `to` of its entry leg, derived from the funnel
+ *  itself so the mirror cannot drift from the funnel it claims to describe. */
 export const SALES_FUNNEL_ENTRY_STEP: Record<SalesFunnelKey, ChannelStepKey> = Object.fromEntries(
   SALES_FUNNEL_KEYS.map((key) => [key, funnelStepKeys(key)[0]]),
 ) as Record<SalesFunnelKey, ChannelStepKey>;
@@ -250,10 +250,10 @@ export const SALES_FUNNEL_ENTRY_STEP: Record<SalesFunnelKey, ChannelStepKey> = O
 const legKey = (t: ChannelStepTransition): string => `${t.from ?? ""}>${t.to}`;
 
 /**
- * The sales funnels a channel performing `transitions` may be SOLD THROUGH — every declared chain that
+ * The sales funnels a channel performing `transitions` may be SOLD THROUGH — every declared funnel that
  * contains at least one of them as a leg, in the catalogue's canonical order so the same channel always
- * reads the same list. An empty result is a real statement ("performs no leg of any declared chain"),
- * not a gap: it happens exactly when nothing the channel does is a step any deployed chain takes.
+ * reads the same list. An empty result is a real statement ("performs no leg of any declared funnel"),
+ * not a gap: it happens exactly when nothing the channel does is a step any deployed funnel takes.
  */
 export function sellableFunnelsFor(transitions: readonly ChannelStepTransition[]): SalesFunnelKey[] {
   const performed = new Set(transitions.map(legKey));
@@ -308,7 +308,7 @@ export interface AcquisitionChannel {
 }
 
 /**
- * The chain a funnel prices through, expressed as its steps with the MILESTONE named. Used by the public
+ * The funnel a funnel prices through, expressed as its steps with the MILESTONE named. Used by the public
  * per-pair economics read so a consumer never has to know the catalogue to render a row.
  */
 export function funnelSteps(key: SalesFunnelKey): readonly string[] {

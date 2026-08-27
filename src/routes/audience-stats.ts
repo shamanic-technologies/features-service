@@ -54,7 +54,7 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
 
     // A funnel the brand never declared has no cost to serve — "we could not estimate this" and "it
     // costs zero" are different statements, and only the first is true. 404 with the reason rather than
-    // pricing a chain the org never said it sells through. Fires ONLY on `?funnel=`, so every existing
+    // pricing a funnel the org never said it sells through. Fires ONLY on `?funnel=`, so every existing
     // goal-keyed request takes no extra read.
     if (validated.funnelKey) {
       let declared: string[];
@@ -83,7 +83,7 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // path, not worth threading an override down through fetchBrandProjectedParents).
     //
     // Fail-soft, via a real try/catch rather than a trailing `.catch()`: `fetchEffectiveEconomics`
-    // validates its env and can throw SYNCHRONOUSLY before its first await, which a chained `.catch()`
+    // validates its env and can throw SYNCHRONOUSLY before its first await, which a funneled `.catch()`
     // would not see. This read feeds a cache KEY, not the response, so its failure must not change the
     // endpoint's HTTP semantics — degrade to "no fingerprint in the key" and let the compute (which reads
     // economics fail-loud) decide the status.

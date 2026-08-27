@@ -1,6 +1,6 @@
 # Features Service — CLAUDE.md
 
-## A LEAD IS WORTH WHAT A HUMAN OBSERVED, NOT WHAT WE FORECAST — the observed rung replaces the rate chain, a ruled-out step is worth nothing, and a priced deal is worth what somebody said
+## A LEAD IS WORTH WHAT A HUMAN OBSERVED, NOT WHAT WE FORECAST — the observed rung replaces the rate ladder, a ruled-out step is worth nothing, and a priced deal is worth what somebody said
 
 Every money figure this service reports about a lead was a FORECAST: its chance of one day becoming a
 paying client, obtained by multiplying declared conversion rates through whatever the lead last did.
@@ -19,7 +19,7 @@ happen there is nothing left to estimate.
   (`maxPositionEv`) for exactly that reason.
 - **"MEETING ATTENDED" IS A PRICED RUNG NOW, and that is the change with teeth.** It had no signal
   anywhere in the fleet, so it survived only FOLDED into the booked→paid rate
-  (`meetingChainCloseRate` = attended% × show-up%) — which meant a no-show and a meeting somebody sat
+  (`meetingFunnelCloseRate` = attended% × show-up%) — which meant a no-show and a meeting somebody sat
   through were worth the same number. `SalesEconomics.meetingAttendedToPaidClientPct` carries the
   UN-composed rate (`meetingAttendedCloseRate`, brand-service's raw `meetingToClosePct`), so booked is
   priced through the show-up rate and attended is not. **A brand that declared no show-up rate has said
@@ -27,18 +27,18 @@ happen there is nothing left to estimate.
   honest, not a free 100%. The rung is statable BY HAND ONLY: attendance happens off the client's
   website, so no page-load tag can observe it, which is why the show-up rate brand-service has always
   priced with could never be checked against reality until now.
-- **A `never` KILLS THE CHAIN, NOT THE STEP** (`deadLegSignalsFor`). A human stating that a lead will
+- **A `never` KILLS THE FUNNEL, NOT THE STEP** (`deadLegSignalsFor`). A human stating that a lead will
   never book a meeting has not removed one rung: they have said the lead has no path to a paying client
-  through any chain that goes through a booked meeting — so everything it already fired ON those chains
-  is worth nothing too, because that value was a forecast of the thing now ruled out. A chain the dead
+  through any funnel that goes through a booked meeting — so everything it already fired ON those funnels
+  is worth nothing too, because that value was a forecast of the thing now ruled out. A funnel the dead
   step is NOT on survives untouched, which is why the expansion is per declared funnel: a brand selling
-  both a conversation chain and a self-serve website chain keeps the website chain's value for a lead
-  who will never take a meeting. **`closeWin` is a leg of EVERY chain, so a lost deal is worth 0** —
-  never a lingering fraction of the meeting it once had. **NO DECLARATION ⇒ EVERY chain is in play**,
-  matching `restrictPathsToDeclaredLegs`; reading an empty declaration as "no chain contains this step"
+  both a conversation funnel and a self-serve website funnel keeps the website funnel's value for a lead
+  who will never take a meeting. **`closeWin` is a leg of EVERY funnel, so a lost deal is worth 0** —
+  never a lingering fraction of the meeting it once had. **NO DECLARATION ⇒ EVERY funnel is in play**,
+  matching `restrictPathsToDeclaredLegs`; reading an empty declaration as "no funnel contains this step"
   would make a lost deal worth its meeting for the one kind of brand we know least about.
 - **A STATED VALUE SCALES THE WHOLE LADDER, not only the rung it was stated at.** Every path EV is
-  `value × a rate chain`, so `EnginePerson.valueUsd` is a per-lead LTR OVERRIDE: a lead somebody priced
+  `value × a rate ladder`, so `EnginePerson.valueUsd` is a per-lead LTR OVERRIDE: a lead somebody priced
   at $49k is worth more at every rung than one priced on a $1k average, which is the point of stating
   it. The TERMINAL leg is special-cased (`ResolvedPath.terminal`): a won deal carrying an amount IS that
   amount, read straight rather than scaled, so realized revenue does not depend on the brand having
@@ -80,10 +80,10 @@ happen there is nothing left to estimate.
   every case, so the numbers are comparable line by line (clicked $34.70, replied $120, booked $150,
   attended $300, closed $1,000): the forecast baseline unchanged; a booked meeting extinguishing the
   routes; attended worth exactly twice booked under a 50% show-up rate; a stated amount at the terminal
-  rung and at an earlier one; a lost deal at 0; a dead meeting step killing the conversation chain while
-  the website chain keeps its click; an empty disqualification set changing nothing; the legacy source
+  rung and at an earlier one; a lost deal at 0; a dead meeting step killing the conversation funnel while
+  the website funnel keeps its click; an empty disqualification set changing nothing; the legacy source
   still landing; a statement winning over it; and the fail-soft degrade. Plus `funnel-registry.test.ts`
-  (the five legs, the per-chain leg sets) and `declared-funnels.test.ts` (the composed rate beside its
+  (the five legs, the per-funnel leg sets) and `declared-funnels.test.ts` (the composed rate beside its
   un-composed half). (Set 2026-08-26.)
 
 ## `?groupBy=campaignId` STATES HOW MUCH EVIDENCE ITS MONEY RESTS ON — `outcomes`, the volume half, at the CAMPAIGN grain
@@ -205,50 +205,79 @@ view, not the workflow PERFORMANCE view.**
   200, still today's number; the budget-projection read takes incurred while the displayed one does
   not; and the selectors compose with gross/net rather than replacing it. (Set 2026-08-25.)
 
-## `GET /offers/:offerId/chains` — WHAT EACH OF AN OFFER'S SALES CHAINS COST AND RETURNED; the chain is the smallest scope whose money divides into a RETURN, and one-campaign-per-step is why
+## THERE IS ONE WORD FOR A SALES FUNNEL AND IT IS "FUNNEL" — "chain" is banned everywhere, including prose
+
+A sales funnel is `funnelKey` in every producer, `SALES_FUNNELS` in this catalogue, brand-service's
+declared set, and "Sales funnels" on the customer's own screen. It was ALSO called a **chain** for two
+days — the route segment (`/offers/:offerId/chains`), the response key, the types, the unpriced reason,
+the cache view, the dashboard folder and, most of all, the prose. Nothing was broken by it and every
+test passed, which is exactly why it spread: a second word for one concept costs nothing until a reader
+has to work out whether the two things are the same, and then it costs every reader forever.
+
+- **The word is GONE, in identifiers AND in comments.** `git grep -i chain` over this repo returns
+  nothing. Do NOT reintroduce it for a sales funnel, a funnel's legs, a funnel's rates, or a funnel's
+  steps — those are the funnel, its legs, its rates and its steps. A ladder of rates is a **rate
+  ladder**; a workflow's versions are a **dynasty** (`buildWorkflowDynasties` /
+  `aggregateAcrossDynasties`, renamed from `buildUpgradeChains` / `aggregateAcrossChains` for the same
+  reason); a sequence of service calls is a **path**.
+- **The only justification for a different word is a different THING.** If it is a sales funnel, it is
+  a funnel. There is no case where "chain" is the more precise word for one, and the rename found none.
+- **The wire moved with it**, in three repos on the same day and with no alias on the producer side:
+  `GET /offers/:offerId/funnels`, body key `funnels`, `unpricedReason: "funnel_not_declared"` (the same
+  spelling `/workflow-projection` and `/audience-stats` already 404 with — one vocabulary, two
+  contexts), cache view `offer-funnels`, and every type/file named for the grain. api-service mounted
+  the new spelling beside the old and dropped the old once this shipped (api-service#886); the
+  dashboard read the new key with a transitional fallback and then deleted it.
+- Cost 2026-08-27: the grain shipped as "chain" in the morning and was renamed across
+  features-service, api-service and distribute.you the same afternoon — three PRs, a transitional
+  read, and a rollout window, for a word. Kevin: *"Pourquoi le mot chains, pourquoi avoir introduit un
+  new concept?"* Name a new grain with the vocabulary the fleet already speaks, on the first ship.
+  (Set 2026-08-27.)
+
+## `GET /offers/:offerId/funnels` — WHAT EACH OF AN OFFER'S SALES FUNNELS COST AND RETURNED; the funnel is the smallest scope whose money divides into a RETURN, and one-campaign-per-step is why
 
 Money answers at the brand grain, the offer grain, the campaign grain and the workflow grain. The grain
-that was missing is **(offer × sales chain)**, and it stops being optional the moment the product ships
-ONE CAMPAIGN PER STEP of a chain. A campaign then buys a single LINK — a reply, a booked meeting, an
+that was missing is **(offer × sales funnel)**, and it stops being optional the moment the product ships
+ONE CAMPAIGN PER STEP of a funnel. A campaign then buys a single LINK — a reply, a booked meeting, an
 attended meeting — so it has a cost per step and **no return of its own**: the lifetime revenue sits at
-the END of the chain, and hanging it on whichever link happened to be last would wildly overstate that
-link. The chain is the smallest scope that spans a whole path to a paying client, so it is the smallest
+the END of the funnel, and hanging it on whichever link happened to be last would wildly overstate that
+link. The funnel is the smallest scope that spans a whole path to a paying client, so it is the smallest
 scope at which a return is computable at all.
 
-- **CORRECT UNDER BOTH SHAPES WITH NO SWITCH, because the row is scoped to the chain's CAMPAIGN SET.**
-  A chain served by ONE campaign — every chain in production today — is **byte-equal to that campaign's
+- **CORRECT UNDER BOTH SHAPES WITH NO SWITCH, because the row is scoped to the funnel's CAMPAIGN SET.**
+  A funnel served by ONE campaign — every funnel in production today — is **byte-equal to that campaign's
   own `/features/:slug/revenue?campaignId=` answer** (guarded), because the per-campaign read already
-  prices on the funnel the campaign itself states. A chain served by one campaign per step is the same
-  row over a larger set: the money adds, the leads dedupe, and the return is the chain's. Nothing
+  prices on the funnel the campaign itself states. A funnel served by one campaign per step is the same
+  row over a larger set: the money adds, the leads dedupe, and the return is the funnel's. Nothing
   branches on which shape is live.
-- **THE PARTITION IS THE PRODUCER'S** (`lib/offer-chains.ts`): a campaign states its own `funnelKey` and
-  campaign-service owns it. **NEVER inferred from the goal** — both meeting chains answer to
-  `meetingBooked`, so that inference prints a chain the campaign never stated. A campaign stating NO
-  chain (or one the catalogue does not know) is in NO row and its id rides `unattributedCampaignIds`:
+- **THE PARTITION IS THE PRODUCER'S** (`lib/offer-funnels.ts`): a campaign states its own `funnelKey` and
+  campaign-service owns it. **NEVER inferred from the goal** — both meeting funnels answer to
+  `meetingBooked`, so that inference prints a funnel the campaign never stated. A campaign stating NO
+  funnel (or one the catalogue does not know) is in NO row and its id rides `unattributedCampaignIds`:
   never parked on a default, never dropped in silence.
-- **MONEY ADDS, PEOPLE DO NOT.** A campaign belongs to exactly one chain, so `Σ chains +
+- **MONEY ADDS, PEOPLE DO NOT.** A campaign belongs to exactly one funnel, so `Σ funnels +
   Σ unattributed` IS the offer's own spend (guarded against `/offers/:offerId/revenue`). A lead worked
-  through two chains is ONE lead to the offer and is in BOTH rows, so the rows do not sum on the
+  through two funnels is ONE lead to the offer and is in BOTH rows, so the rows do not sum on the
   pipeline half — the counting-people property every grain here carries, and the reason the offer read
   stays the number to trust for "what did this offer do".
-- **EACH CHAIN IS PRICED ON ITS OWN DECLARED TERMS** — its own rates and its own lifetime revenue, via
-  the SAME `priceOnDeclaredFunnel` merge every other funnel-narrowed read uses, with the chain's key as
+- **EACH FUNNEL IS PRICED ON ITS OWN DECLARED TERMS** — its own rates and its own lifetime revenue, via
+  the SAME `priceOnDeclaredFunnel` merge every other funnel-narrowed read uses, with the funnel's key as
   the requested funnel. A $1k conversation contract and a $4k website one are never blended, and only
-  the chain's OWN legs carry expected value (`restrictPathsToDeclaredLegs`).
-- **A CHAIN WE CANNOT PRICE SAYS WHICH INGREDIENT IS MISSING** — `priced: false` +
+  the funnel's OWN legs carry expected value (`restrictPathsToDeclaredLegs`).
+- **A FUNNEL WE CANNOT PRICE SAYS WHICH INGREDIENT IS MISSING** — `priced: false` +
   `unpricedReason`, checked in this order so the plain thing is said first: `no_channel_funnel` (no
   channel carrying it measures anything; the leads are never read, so `outcomes` is null too) →
   `no_economics_declared` (the brand states none, or the declaration could not be read) →
-  `chain_not_declared` (the declaration IS readable and does not contain this chain). In all three the
+  `funnel_not_declared` (the declaration IS readable and does not contain this funnel). In all three the
   SPEND is real and reported and the pipeline / return / $CAC are **null, never 0**. **Do NOT fall back
   to the brand-wide economics record here** — the un-narrowed reads legitimately do, but every rate on
-  that row is server-defaulted, so pricing chain A on it is the retired-goal fiction one grain finer.
+  that row is server-defaulted, so pricing funnel A on it is the retired-goal fiction one grain finer.
   The two unpriced-but-measurable reasons still read the leads (the engine's cold-start path), because
   "we could not price this" and "this reached nobody" are different statements.
 - **THE CUSTOMER'S OWN MONEY IS IN THE COST OF ACQUISITION NOW, AND IT IS TOLD APART FROM WHAT WE
   CHARGED (supersedes the `platform_spend_only`-forever note).** The platform automates the first link
   and CHARGES for it; the customer runs the meeting and closes the deal, and lead-service records what
-  those legs cost THEM (`GET /internal/brands/:brandId/step-costs`, service-auth, deployed). A chain
+  those legs cost THEM (`GET /internal/brands/:brandId/step-costs`, service-auth, deployed). A funnel
   ending in a human leg used to read cheaper than it truly is and return better than it truly does,
   which is the single most misleading figure a customer can be shown about their own money. Three
   fields, never two: `costEconomics` (CHARGED — a billing fact, byte-unchanged, and none of their money
@@ -258,11 +287,11 @@ scope at which a return is computable at all.
   ENUM and it is an admission**: `platform_spend_only` / `platform_and_customer_spend` /
   `platform_and_partial_customer_spend`, per ROW and — as the WEAKEST of its rows — for the payload.
   **A statement is attributed by CAMPAIGN** (it is made on a lead row, which belongs to a campaign,
-  which states exactly one chain), so the campaign set scoping a row's charged money scopes its
-  declared money too; one naming no campaign, or a campaign in no chain of this offer, rides
+  which states exactly one funnel), so the campaign set scoping a row's charged money scopes its
+  declared money too; one naming no campaign, or a campaign in no funnel of this offer, rides
   `customerCost.unattributed` — never dropped, never parked. **A STATED ZERO IS AN ANSWER, AN UNSTATED
   LEG IS NOT**: null contributes nothing and raises `unstatedCount`, which is what flips the row to
-  `partial` — a chain we cannot fully cost says so instead of guessing. The read is FAIL-SOFT with a
+  `partial` — a funnel we cannot fully cost says so instead of guessing. The read is FAIL-SOFT with a
   loud log, and its `null` ("could not read") is deliberately distinguishable from zeros ("nobody
   stated one"). Do NOT widen `committedCostUsd` to swallow it and do NOT let any of it reach billing.
 - **NO CONSUMER-SIDE AGGREGATION.** The composition happens here; a grain the dashboard has to assemble
@@ -270,14 +299,14 @@ scope at which a return is computable at all.
   `includeSpend: false`) because a table polls them.
 - **The api-service gateway forwards `/offers/*` per SUFFIX, explicitly, with no wildcard**, so this
   read needs its own line there or it 404s at the gateway.
-- Guards: `src/routes/offer-chain-revenue.test.ts` — ONE fixture drives the grain, the single-campaign
-  byte-equality, the one-campaign-per-step chain, money-adds-while-people-do-not, each chain on its own
+- Guards: `src/routes/offer-funnel-revenue.test.ts` — ONE fixture drives the grain, the single-campaign
+  byte-equality, the one-campaign-per-step funnel, money-adds-while-people-do-not, each funnel on its own
   declared terms, both unpriced reasons, the unattributed campaign, the lean key set, the named 404,
   the fail-loud parses, and every existing grain answering unchanged; plus the customer-money suite in
-  the same file (the combined return SMALLER than the charged one, a chain with none byte-equal to
+  the same file (the combined return SMALLER than the charged one, a funnel with none byte-equal to
   today, the unstated leg turning the row partial, attribution by campaign, the unplaceable statement,
-  and the degrade). Plus `lib/offer-chains.ts` for the partition itself and
-  `lib/chain-customer-costs.test.ts` for the statement partition + the coverage marker.
+  and the degrade). Plus `lib/offer-funnels.ts` for the partition itself and
+  `lib/funnel-customer-costs.test.ts` for the statement partition + the coverage marker.
   (Set 2026-08-27; customer-declared cost same day.)
 
 ## `GET /brands/:brandId/offers` — THE BRAND'S OFFERS TABLE, EACH ROW AT THE OFFER GRAIN; it is the offer read N times, LEAN, not a new computation
@@ -492,17 +521,17 @@ Prod 2026-08-20, brand `75d7e3e8…` offer `d5ecba00…`: months of `sales-cold-
   per-feature read unchanged; the named 404), `src/lib/offer-channels.ts` + `src/lib/offer-parents.ts` +
   `src/lib/feature-scope.ts` for the rules themselves. (Set 2026-08-20.)
 
-## A SALES CHAIN IS SOLD LEG BY LEG — a channel states which step it moves a lead FROM and which step it moves it TO, and "from nothing" is the SPECIAL case (supersedes the produces-an-entry-step model)
+## A SALES FUNNEL IS SOLD LEG BY LEG — a channel states which step it moves a lead FROM and which step it moves it TO, and "from nothing" is the SPECIAL case (supersedes the produces-an-entry-step model)
 
-A four-step chain used to be sellable only end to end, because a channel could state nothing but the
-kinds of step it could PRODUCE, and every one of those is a step a chain STARTS from. That reads as the
+A four-step funnel used to be sellable only end to end, because a channel could state nothing but the
+kinds of step it could PRODUCE, and every one of those is a step a funnel STARTS from. That reads as the
 whole model only because it was the only kind of channel in the catalogue. It is not: booking a meeting
 off a reply, getting that meeting actually held, and closing it are three separate things somebody does,
 each with its own channel, its own daily budget and its own stats. Campaign provisioning already works
-per funded (chain, channel) pair, so the catalogue was the only thing in the way.
+per funded (funnel, channel) pair, so the catalogue was the only thing in the way.
 
 - **A CHANNEL STATES ITS `stepTransitions` — `{ from, to }` — AND `from: null` IS "FROM NOTHING".** The
-  lead was not on the chain at all until this channel produced its first step. Every channel published
+  lead was not on the funnel at all until this channel produced its first step. Every channel published
   before this states only legs of that shape, which is written as one line by `producesFromNothing(...)`.
   Do NOT reintroduce a bare `producibleSteps` on the STORED blob: that is the special case wearing the
   clothes of the general one, which is exactly what made an internal leg unsayable.
@@ -510,17 +539,17 @@ per funded (chain, channel) pair, so the catalogue was the only thing in the way
   the `to` of the `from: null` legs). A channel that only performs internal legs produces NOTHING, and
   `[]` there is a real answer rather than a gap.
 - **THE JOIN IS STILL DERIVED — ONLY ITS GRAIN MOVED.** `sellableFunnelsFor` used to compare a channel's
-  produced steps against each chain's ENTRY step; it now compares its transitions against each chain's
+  produced steps against each funnel's ENTRY step; it now compares its transitions against each funnel's
   LEGS, of which the entry (`{from: null, to: steps[0]}`) is simply the first. `funnelLegs` reads those
-  straight off `SALES_FUNNELS[key].steps` through `FUNNEL_STEP_LABEL_TO_KEY`, and a chain containing a
+  straight off `SALES_FUNNELS[key].steps` through `FUNNEL_STEP_LABEL_TO_KEY`, and a funnel containing a
   step this catalogue cannot name THROWS (`UnknownFunnelStepLabelError`) rather than silently losing a
-  leg — which would quietly stop a channel being sellable through a chain it can genuinely serve.
-- **EVERY CHANNEL PUBLISHED BEFORE THIS READS THE IDENTICAL LIST OF CHAINS**, verified row by row
+  leg — which would quietly stop a channel being sellable through a funnel it can genuinely serve.
+- **EVERY CHANNEL PUBLISHED BEFORE THIS READS THE IDENTICAL LIST OF FUNNELS**, verified row by row
   against `origin/main` before shipping: 40 feature rows, zero drift. Cold email and CRM email still all
   four, the feedback request still `sales_meetings_from_conversation` alone, a non-channel still `[]`.
-- **THE STEP VOCABULARY IS NOW THE UNION OF EVERY CHAIN'S STEPS, not the entry subset**
+- **THE STEP VOCABULARY IS NOW THE UNION OF EVERY FUNNEL'S STEPS, not the entry subset**
   (`CHANNEL_STEP_KEYS`, nine): a channel performing an internal leg has to name the step it moves a lead
-  OUT of, and that step is never one a chain starts at. `meeting_booked` / `meeting_attended` / `signup`
+  OUT of, and that step is never one a funnel starts at. `meeting_booked` / `meeting_attended` / `signup`
   / `form_filled` / `paid_client` joined the four that were there. This is precisely why the `in_ad_`
   prefix was load-bearing all along — `form_filled` and `meeting_booked` are now real keys in the same
   list, so the shorter spellings would COLLIDE outright.
@@ -537,7 +566,7 @@ per funded (chain, channel) pair, so the catalogue was the only thing in the way
   `managed-meeting-booking` / `in-house-meeting-booking`, `managed-meeting-attendance` /
   `in-house-meeting-attendance`, `managed-closing-calls` / `founder-led-closing`,
   `managed-signup-conversion` / `in-house-signup-conversion`. Each pair states the IDENTICAL legs and
-  therefore the identical sellable chains; only the operator and the price differ. They carry the new
+  therefore the identical sellable funnels; only the operator and the price differ. They carry the new
   `conversion` family — nothing here finds anybody.
 - **A LEG CHANNEL IS PAIRED FROM DAY ONE AND ANSWERS `no_spend_recorded`.** `channel.salesFunnels` is
   what `/public/channel-funnel-economics` builds pairs from, so these get their rows immediately; with
@@ -548,11 +577,11 @@ per funded (chain, channel) pair, so the catalogue was the only thing in the way
   the CHANNEL that gained this capability, and the blob's key set is pinned to
   `{family, operatedBy, stepTransitions, terms}`.
 - Guards: the widened-join cases in `src/lib/acquisition-channels.test.ts` (an internal leg sells its
-  chain; the two meeting chains share every leg after the booking; a leg no chain takes, and a backwards
+  funnel; the two meeting funnels share every leg after the booking; a leg no funnel takes, and a backwards
   leg, sell nothing), `src/lib/channel-catalogue.test.ts` (an unstated `from` and a leg-to-itself both
   FAIL LOUD; a customer-operated channel with a daily cost fails; an internal-leg channel produces
   nothing and still sells), and the two new suites in
-  `src/seed/acquisition-channel-catalogue.test.ts` (the three legs of a meeting chain as three products;
+  `src/seed/acquisition-channel-catalogue.test.ts` (the three legs of a meeting funnel as three products;
   the ours-vs-theirs pairs agreeing on legs and disagreeing on price). (Set 2026-08-27.)
 
 ## A CHANNEL PUBLISHES ITS COMMERCIAL TERMS AND WHAT IT CAN PRODUCE; WHICH FUNNELS IT SELLS THROUGH IS DERIVED, NEVER A SECOND LIST
@@ -564,7 +593,7 @@ this section's "kinds of STEP it can PRODUCE" is the `from: null` half of that).
 are published, all bookable from day one, and a public marketing site is generated from them.
 
 - **`salesFunnels` IS DERIVED (`sellableFunnelsFor`) AND MUST STAY DERIVED.** A channel states which leg
-  it performs; a funnel states its chain (`funnelLegs`, mirrored from brand-service and pinned against
+  it performs; a funnel states its funnel (`funnelLegs`, mirrored from brand-service and pinned against
   `SALES_FUNNELS[key].steps`); a pairing is possible when the two meet. Hand-writing `salesFunnels`
   again would restore the drift the derivation removes. The wire field is UNCHANGED and every existing
   row reads byte-identically: cold email and CRM email still all four, the feedback request still
@@ -573,7 +602,7 @@ are published, all bookable from day one, and a public marketing site is generat
   (hiring, VC and accelerator outreach, outlet discovery, press-kit generation, AI visibility). It
   acquires something other than a customer, or is internal tooling, so there is nothing to pair it with.
   Journalist outreach and both expert-quote features MOVED to the channel side: they are earned channels
-  producing website visits, so they now sell through the three click-driven chains where they used to
+  producing website visits, so they now sell through the three click-driven funnels where they used to
   sell through nothing.
 - **THERE IS NO "COMING SOON", AND NO FLAG MAY BE ADDED FOR ONE.** Every published channel is
   `implemented: true` / `status: "active"`. A channel we are slower to deliver says so through its OWN
@@ -584,13 +613,13 @@ are published, all bookable from day one, and a public marketing site is generat
   produce).
 - **THE TWO IN-AD STEPS ARE STATED BEFORE THEIR FUNNELS EXIST, ON PURPOSE.**
   `in_ad_form_submission` and `in_ad_booked_meeting` are produced INSIDE THE AD UNIT rather than on the
-  brand's site, and no deployed chain starts from either yet (brand-service ships them in parallel).
+  brand's site, and no deployed funnel starts from either yet (brand-service ships them in parallel).
   A channel producing only those sells through nothing TODAY and starts selling the moment the funnel
-  mirror gains the chain, with no change here. What a channel can produce is a fact about the channel,
+  mirror gains the funnel, with no change here. What a channel can produce is a fact about the channel,
   not about what we happen to sell through it.
   **THE `in_ad_` PREFIX IS LOAD-BEARING — do not shorten it to `form_submission` / `booked_meeting`.**
   "Form filled" and "Meeting booked" ALREADY exist in the deployed catalogue as INTERMEDIATE steps
-  (`form_magnet` step 2, both meeting chains' milestone), reached through a click or a reply onto the
+  (`form_magnet` step 2, both meeting funnels' milestone), reached through a click or a reply onto the
   brand's site; an ad produces an ENTRY step reached without ever getting there, so the bare names
   invite a consumer to read such a channel as able to START `form_magnet`, which it cannot. Since the
   leg-by-leg change those two are LITERAL KEYS in `CHANNEL_STEP_KEYS` (`form_filled`, `meeting_booked`),
@@ -636,12 +665,12 @@ from what we actually charge and actually measured.
 
 - **`/public/channels`** serves the catalogue: terms, `operatedBy`, the LEGS the channel performs (each
   side with buyer-facing wording, `from: null` for "from nothing"), the derived `producibleSteps`, and
-  the derived funnels, each carrying its own chain so a row renders without the consumer knowing the
+  the derived funnels, each carrying its own funnel so a row renders without the consumer knowing the
   catalogue. The step vocabulary rides the payload under `steps` (renamed from `producibleSteps` when it
   widened past the entry subset; the gateway does not proxy `/public/*`, so it had no outside consumer)
   so nothing hardcodes it.
 - **`/public/channel-funnel-economics`** serves ONE ROW PER PAIR — the grain the marketing site prints.
-  A customer buys a PAIR, and the same chain costs a very different amount through a phone channel than
+  A customer buys a PAIR, and the same funnel costs a very different amount through a phone channel than
   through paid search, so a brand-level or channel-level aggregate cannot answer it. `?channelSlug=`
   narrows; an unknown slug is a 404, never an empty pair list (which would read as "sells through
   nothing").
@@ -650,12 +679,12 @@ from what we actually charge and actually measured.
   fresh channel says the plain thing. The same rule runs one level down: a STEP whose rate nobody
   declared reads `costPerStepUsd: null` with its own `unpricedReason`, never 0. **"Meeting attended" is
   permanently unpriced** — brand-service folds the show-up rate into booked→paid
-  (`meetingChainCloseRate`), so pricing it would assert a 100% show-up rate, the exact bug that
+  (`meetingFunnelCloseRate`), so pricing it would assert a 100% show-up rate, the exact bug that
   composition exists to prevent.
-- **A CHAIN IS PRICED THROUGH ITS OWN CHANNEL**, via the same `projectOutcomeCosts` + channel mask every
+- **A FUNNEL IS PRICED THROUGH ITS OWN CHANNEL**, via the same `projectOutcomeCosts` + channel mask every
   other cost surface uses, and `returnPerDollar` is the IDENTICAL definition `/funnel-ranking` ranks a
   brand's declared funnels on. So a public per-pair figure and a customer's own dashboard can never
-  print two prices for one chain. Evidence is the SAME cross-org per-brand dataset
+  print two prices for one funnel. Evidence is the SAME cross-org per-brand dataset
   (`getFunnelBucketDatasetCached`) the other public cost surfaces read, so a channel nobody has run yet
   reaches "not enough data" by the data being absent, never by a special case.
 - Both ride `LIFETIME_AGGREGATE_WINDOWS` through `servedPublicCached` (15 min fresh / 6 h stale,
@@ -668,10 +697,10 @@ from what we actually charge and actually measured.
   **STEP**, the step a funnel is named after is its **MILESTONE**. "Outcome" is deprecated (it named a
   retired per-brand optimization goal) and nothing new here uses it.
 - Guards: `src/lib/acquisition-channels.test.ts` (the join, and the entry-step mirror pinned against the
-  chain's own first step), `src/seed/acquisition-channel-catalogue.test.ts` (every named channel present,
+  funnel's own first step), `src/seed/acquisition-channel-catalogue.test.ts` (every named channel present,
   slugs unmoved, no availability flag, terms whole and self-consistent, `salesFunnels` derived, the
   cold-email family unwidened), `src/lib/channel-catalogue.test.ts` (fail-loud parsing) and
-  `src/lib/channel-funnel-economics.test.ts` (the three unmeasured reasons, per-chain pricing, the
+  `src/lib/channel-funnel-economics.test.ts` (the three unmeasured reasons, per-funnel pricing, the
   permanently-unpriced attended step, no false $0). (Set 2026-08-19.)
 
 
@@ -760,12 +789,12 @@ needs a new call.
 - **"SELLS THROUGH NONE" AND "SELLS THROUGH ALL" ARE DIFFERENT STATEMENTS, and BOTH are written out.**
   A consumer that could not tell them apart would offer nonsense pairs, so nothing is left unstated: a
   non-sales feature (PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert
-  quotes) states `[]`, and a sales feature sold through every declared chain states all four keys
+  quotes) states `[]`, and a sales feature sold through every declared funnel states all four keys
   explicitly. A SHORTER list is a real restriction, not a gap. The column is `NOT NULL DEFAULT '[]'`, so
   the only row the default can ever cover is one the seed has not reached — and it reads as the
   restrictive side, which is the recoverable mistake.
 - **The feedback request states `sales_meetings_from_conversation` ALONE.** Its offer buys a
-  CONVERSATION, and the other three chains buy their first step with a website CLICK — it has no
+  CONVERSATION, and the other three funnels buy their first step with a website CLICK — it has no
   website step to sell. That single-funnel restriction is the whole reason the per-feature answer
   exists.
 - **The keys are brand-service's, unchanged.** Nothing here invents a funnel; the values are
@@ -841,21 +870,21 @@ either stated, or absent — and absent is a producer gap we surface, never fill
   funnel in catalogue order** — a deterministic pick over the brand's OWN declarations, not a default and
   not an inference. A funnel the brand never declared is ignored in favour of that pick. **No declared
   funnel ⇒ the columns stay OBSERVED (null at 0 outcomes)**, exactly as they did for a brand with no
-  goal; a chain is never substituted. Still fail-SOFT with a loud log (display enrichment on the
+  goal; a funnel is never substituted. Still fail-SOFT with a loud log (display enrichment on the
   Overview), and it still never degrades to the raw-spend floor.
 - **`/internal/stats/customer-health`**: `optimizationGoal` is REPLACED by `salesFunnels` (the whole
   declared set) + `primarySalesFunnel` (the first, which the row's single-valued fields — conversion
-  tracker, best audience, best workflow — are computed on). The tracker is needed for the chains that
-  convert on the CLIENT's own site (`website_purchases`, `form_magnet`); a meeting chain qualifies on
+  tracker, best audience, best workflow — are computed on). The tracker is needed for the funnels that
+  convert on the CLIENT's own site (`website_purchases`, `form_magnet`); a meeting funnel qualifies on
   ours. An unreadable/empty declaration soft-degrades to `[]` and nulls the funnel-keyed fields — the row
   is still LISTED.
 - **The cross-org cost buckets are keyed on DECLARED FUNNELS** (`OBJECTIVE_FUNNEL_BUCKET`,
   `funnelsInObjectiveBucket`, `fetchFunnelBucketDataset` — renamed from the goal-bucket trio). The
   objective vocabulary is UNCHANGED: it names the OUTCOME being priced, not a brand's goal, and the
   public/staff response contract is untouched. Only bucket MEMBERSHIP moved. CPC = every CLICK-bought
-  chain (the reply-bought meeting chain stays excluded, same reasoning as #499); `signup` /
+  funnel (the reply-bought meeting funnel stays excluded, same reasoning as #499); `signup` /
   `websitePurchase` = `website_purchases`; `formSubmission` = `form_magnet`; `meetingBooked` = BOTH
-  meeting chains; `sales` = every chain (each terminates in a paying client); `positiveReply` stays
+  meeting funnels; `sales` = every funnel (each terminates in a paying client); `positiveReply` stays
   FLEET-WIDE (raw measured, publicly claimed "across every brand"). **`whatsappConversation`'s bucket is
   EMPTY on purpose** — its outcome needs a WhatsApp link that no funnel expresses, so there is no honest
   way to identify those brands now; an empty bucket reads `null` ("could not compute"), which is the
@@ -884,8 +913,8 @@ the day either side changes.
   dynasty-keyed benchmark — a version-grain answer would be a second, unjoinable vocabulary.
   `workflowSlugs` lists what was folded in, so nothing is hidden.
 - **A slug workflow-service does not describe is its OWN dynasty of one** — never dropped, never folded
-  on a guess. Do NOT reuse `buildUpgradeChains`/`aggregateAcrossChains` here: those are built from
-  ACTIVE workflows and emit only chains with runs, so a RETIRED lineage vanishes with its spend — and a
+  on a guess. Do NOT reuse `buildWorkflowDynasties`/`aggregateAcrossDynasties` here: those are built from
+  ACTIVE workflows and emit only funnels with runs, so a RETIRED lineage vanishes with its spend — and a
   retired workflow is exactly the one a "what burned money" question is asking about. workflow-service
   unreachable ⇒ every slug is its own dynasty (fail-SOFT, loud log): a poorer GROUPING of the same
   correct numbers, never a fabricated one.
@@ -961,7 +990,7 @@ IDENTITY — campaign-service's own key (its `uniq_campaigns_org_brand_funnel_ch
   together before anything is displayed.
 - **All four parts come from campaign-service** (`GET /campaigns?brandId=&featureSlug=`,
   `src/lib/campaign-identity-client.ts` → `campaign-identity.ts`). **NEVER infer the funnel from the
-  goal** — two funnels answer to `meetingBooked`, so that inference prints a chain the campaign never
+  goal** — two funnels answer to `meetingBooked`, so that inference prints a funnel the campaign never
   stated. An UNSTATED funnel (`funnelKey: null`) is a REAL state: those pool together (the producer's
   own `coalesce(funnel_key,'')` rule) and never fold onto a campaign that DID state one.
 - **A row that states no brand or no channel** (predating migration 0044) is its OWN family of one —
@@ -1116,7 +1145,7 @@ returnPerDollar(funnel) = lifetimeRevenueUsd / costPerPaidClientUsd(funnel, its 
 = the EXISTING `workflow-projection` `roiMultiple` (= 100 / `cacPct`). It is the ONLY cross-funnel-comparable
 number: a cost-per-outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting),
 so comparing two funnels' cost-per-outcome compares two different things. Normalising each funnel through ITS
-OWN chain to the same terminal unit — a paying client's lifetime revenue — is what makes them commensurable.
+OWN funnel to the same terminal unit — a paying client's lifetime revenue — is what makes them commensurable.
 Rankable funnels sort on `returnPerDollar` desc; ties break on the canonical funnel-catalogue order
 (`salesFunnelIndex`), so the same evidence + the same economics always produce the same list.
 
@@ -1127,7 +1156,7 @@ Rankable funnels sort on `returnPerDollar` desc; ties break on the canonical fun
   a mix-up: within one funnel `costPerPaidClient = costPerOutcome / (outcome→paid rate)` and that rate is a
   constant for it, so the two argmins are the SAME ordering — the cost keeps coherence with the live
   surfaces, and the return falls out of the winning row.
-- **A funnel with no defined return is ranked LAST, never dropped.** A chain whose own legs are
+- **A funnel with no defined return is ranked LAST, never dropped.** A funnel whose own legs are
   undeclared or sit at 0 has no path to a paying client, so its return is undefined — not zero, and never
   "borrow another funnel's". Note a channel-scoped meeting funnel now lands here whenever ITS channel has
   no rate, which the blended score used to hide behind the other channel's contribution. It stays in
@@ -1149,23 +1178,23 @@ Rankable funnels sort on `returnPerDollar` desc; ties break on the canonical fun
 this.** brand-service#434 retired the goal from every funnel read because it was the poorer word:
 `sales_meetings_from_conversation` and `sales_meetings_from_website` both mapped onto one `meetingBooked`,
 so this service charged a meeting won from a REPLY and one won on the WEBSITE the same blended
-both-channel price, and a brand running the reply chain was benchmarked against clicks it never buys.
+both-channel price, and a brand running the reply funnel was benchmarked against clicks it never buys.
 `src/lib/sales-funnels.ts` mirrors the deployed catalogue (`sales_meetings_from_conversation`,
 `sales_meetings_from_website`, `website_purchases`, `form_magnet`) and `funnelToProjectionInputs`
 (`workflow-projection.ts`) maps each key to its compute inputs, incl. **`meetingChannel`** — the whole
-difference between the two meeting chains. Everything downstream MASKS the other channel's unit cost and
+difference between the two meeting funnels. Everything downstream MASKS the other channel's unit cost and
 observed evidence away (`maskUnitCostsForChannel`), so the conversation funnel prices
 `replyUsd / replyToMeetingPct` and the website one `clickUsd / visitToMeetingPct` against the identical
 evidence, and they routinely crown DIFFERENT workflows. `goal` / `objective` survive as ECHOES derived
 from the key; they are lossy by construction (both meeting funnels echo `meetingBooked`) and must never be
 read as a row's identity — `funnelKey` is. Note `website_purchases` maps to the **signup** objective, not
-the `websitePurchase` goal: its chain is visit → signup → paid, and the purchase goal's rates are a
+the `websitePurchase` goal: its funnel is visit → signup → paid, and the purchase goal's rates are a
 different funnel entirely.
 
 **TRANSITION TOLERANCE, both directions.** On the way IN, `matchSalesFunnelKey` accepts the four
 canonical keys AND the four pre-retirement spellings (`reply_meeting`, `visit_meeting`, `visit_signup`,
 `visit_form`) forever, plus case/separator variance; a word naming NO funnel returns null and every caller
-fails loud rather than guessing a chain. On the way OUT, **a consumer that still sends `?goal=` gets a
+fails loud rather than guessing a funnel. On the way OUT, **a consumer that still sends `?goal=` gets a
 byte-identical answer** — `goalToProjectionInputs` is untouched, `meetingChannel` defaults to null, and no
 `funnelKey` appears on the body. Only `?funnel=` narrows. It is accepted on `/workflow-projection` and
 `/audience-stats`, WINS over `goal` when both are sent, threads into the audience floor parent
@@ -1222,21 +1251,21 @@ across the whole fleet plus a mapping for the objectives that have no funnel at 
 - **PER-FUNNEL economics** are merged OVER the brand's effective set for THAT funnel only. A rate the
   brand never declared arrives as `null` and is **DROPPED** — never coerced to 0, which would
   zero-collapse the funnel. Nothing declared ⇒ the brand's effective economics apply unchanged.
-- **A SHARED FIELD NAME IS NOT A SHARED MEANING — the meeting chain COMPOSES** (`meetingChainCloseRate`).
+- **A SHARED FIELD NAME IS NOT A SHARED MEANING — the meeting funnel COMPOSES** (`meetingFunnelCloseRate`).
   Every funnel rate key lines up 1:1 with `SalesEconomics` EXCEPT `meetingToClosePct`. Our projection
   multiplies it by `visitToMeetingPct`/`replyToMeetingPct`, both of which produce a meeting **BOOKED**,
-  so ours is BOOKED→paid. brand-service's chains are `… → Meeting booked → Meeting attended → Paid
+  so ours is BOOKED→paid. brand-service's funnels are `… → Meeting booked → Meeting attended → Paid
   client` with `legs[i]` between `steps[i]` and `steps[i+1]`, so ITS `meetingToClosePct` is
   **ATTENDED→paid** and `meetingBookedToAttendedPct` is the show-up rate in between. So the override is
   `booked→paid = attended% × close%`; the show-up rate never reaches `SalesEconomics` under its own name
-  (there is no field for it), and a show-up rate with NO close rate contributes nothing (half a chain is
+  (there is no field for it), and a show-up rate with NO close rate contributes nothing (half a funnel is
   not a close rate). No show-up rate declared ⇒ the close rate stands alone — exactly the brand-wide
   semantics, whose economics row has no show-up column at all — never discarded.
   **Do NOT "simplify" this back to a name-match copy.** #707 did (reasoning that we model no show-up
   step, so importing it would rename a rate we never read) — but the effect of dropping it is asserting
   a **100% show-up rate**: a brand declaring 50% show-up and 40% attended→close scored 40% booked→paid
   instead of 20%, halving its cost per paid client and DOUBLING the return `meetingBooked` is ranked on.
-  Guard: the `meetingChainCloseRate` cases in `declared-funnels.test.ts` + the route-level "not a free
+  Guard: the `meetingFunnelCloseRate` cases in `declared-funnels.test.ts` + the route-level "not a free
   100%" test, which drives the SAME funnel with and without the show-up rate and asserts the return halves.
 - **Consumer-conforms-to-producer, learned the expensive way (2026-07-31):** the first ship guessed the
   producer would put the set on the effective-economics payload under one of several plausible names and
@@ -1259,7 +1288,7 @@ and `/audience-stats` are UNTOUCHED.** Guard suites: `src/lib/goal-arbitration.t
 arbitration-equals-ranking-head, two funnels on one goal ranked apart, never-rank-undefined-return,
 determinism/tie-break incl. funnelKey, no-funding-input, recommended-pairing rows),
 `src/lib/declared-funnels.test.ts` (the catalogue, legacy-spelling tolerance, a goal is NOT a funnel, NO
-merge, null rates dropped, meeting-chain compose, entry shape carries neither a goal nor funding), `src/routes/goal-arbitration.test.ts` (drives BOTH endpoints from
+merge, null rates dropped, meeting-funnel compose, entry shape carries neither a goal nor funding), `src/routes/goal-arbitration.test.ts` (drives BOTH endpoints from
 ONE fixture: the recommended workflow equals the single-goal read's own argmin, the deployed
 campaign-service fields still resolve, and no billing URL is ever requested). (Set 2026-08-02; supersedes
 the goal-grain election documented 2026-07-31.)
@@ -1312,7 +1341,7 @@ moment** (prod: $8.33 vs $2.64 on brand `7604c385…`, a ~3x split, both audienc
 verbatim because each had 0 clicks and own spend below it).
 
 **It takes the same `?funnel=` override the projection does** (last arg, canonical key) — priced on that
-chain's own channel, so the audience row and the projection row stay one number per funnel. Absent →
+funnel's own channel, so the audience row and the projection row stay one number per funnel. Absent →
 goal-keyed, byte-identical to before.
 
 `fetchBrandProjectedParents` **rebuilds workflow-projection's BRAND-LEVEL rows** (the `audienceId: null`
@@ -1341,7 +1370,7 @@ column would price off the cheapest-click workflow while the Strategy page shows
   filter to keep a barely-spent workflow from winning: the floor is the exploration device (it rises as
   the workflow spends), and honesty lives on the LABEL — `resolvePick` still tags a floored row `crossOrg`
   (benchmark), never "this brand's own results".
-- **Version chains collapse FIRST** via `buildUpgradeChains` + `aggregateAcrossChains` — the SAME rollup
+- **Version funnels collapse FIRST** via `buildWorkflowDynasties` + `aggregateAcrossDynasties` — the SAME rollup
   workflow-projection's crossOrg/brand grains use — so "a workflow" means one dynasty on both surfaces.
   Treating versioned slugs as independent workflows would corrupt the pick.
 - **Cold start** (no economics, or no eligible dynasty scores the goal): workflow-projection reports no
@@ -1713,8 +1742,8 @@ the ranking.
 rate, not 0%), while a rate that is MULTIPLIED into a product needs **0** on 0-denom or it poisons the
 product with NaN. Same observed/projected-style polymorphism as cost: a multiplied rate needs a number, a
 displayed rate needs null. Neither is buggy. (`platform-rates-client` was the multiplied case; it is
-DELETED — the platform-global email rates existed only to chain a delivery down to a close, and nothing
-chains down from a delivery any more. See the funnel-legs section.)
+DELETED — the platform-global email rates existed only to funnel a delivery down to a close, and nothing
+funnels down from a delivery any more. See the funnel-legs section.)
 
 **A surface uses `projected` only where it HAS a coarser grain to floor against inside the endpoint;
 a top-grain surface with no coarser grain fetched uses `observed`.** workflow-projection has the full
@@ -1729,9 +1758,9 @@ parent is absent). workflow-projection never hits this (grains built only at spe
 
 All three wirings kept response shapes unchanged → no OpenAPI change. (Set 2026-07-07.)
 
-## Per-goal `costPerPaidClient` chains through THAT goal's OWN funnel — coherent by construction (≥ the goal's outcome cost)
+## Per-goal `costPerPaidClient` funnels through THAT goal's OWN funnel — coherent by construction (≥ the goal's outcome cost)
 
-`workflow-projection`'s displayed **cost / paid client** (drives `roiMultiple` + `cacPct`) MUST chain
+`workflow-projection`'s displayed **cost / paid client** (drives `roiMultiple` + `cacPct`) MUST funnel
 through the SAME funnel as the goal's outcome metric, so `costPerPaidClient ≥ costPerOutcome` ALWAYS —
 a paid client is downstream of the outcome (a signup, a booked meeting). `paidClientCostForGoal`
 (`src/routes/workflow-projection.ts`) routes by goal, single-sourced through `projectOutcomeCosts`
@@ -1848,7 +1877,7 @@ or default them (a brand-service gap → fail loud, never a substituted 0).
 paid-client rate is applied to ONE channel — `websiteVisit` → click channel only
 (`costPerVisitPaidClientUsd = clickUsd / (visitToPaidClientPct/100)`), `positiveReply` → reply channel
 only (`costPerReplyPaidClientUsd = replyUsd / (replyToPaidClientPct/100)`). EV per lead =
-`(rate/100) × LTR`. No funnel chaining, no orP — the OTHER channel does NOT fund it. A `0` rate is a
+`(rate/100) × LTR`. No multi-step composition, no orP — the OTHER channel does NOT fund it. A `0` rate is a
 valid zero-denominator gate → null cost (renders "-"), never a false $0; a genuinely-ABSENT rate field
 fails loud via `singleStepRateDecimal` (502), never NaN / zero-collapse.
 
@@ -2039,7 +2068,7 @@ estimatesByGrain:{crossOrg?, brand?, audience?}, resolved }`. `economics` (brand
   spend yields a FLOOR = `spentUsd` (the front renders `">$X"`); this is deliberate, NOT a bug.
 - A grain with `spentUsd == 0` is **OMITTED** entirely.
 - `projected` per grain = `projectOutcomeCosts(brandEcon, unitCosts)` (null ONLY at cold start).
-- crossOrg + brand grains reuse `fetchPublicCosts` (version-grain) + `aggregateAcrossChains` local
+- crossOrg + brand grains reuse `fetchPublicCosts` (version-grain) + `aggregateAcrossDynasties` local
   dynasty rollup; the brand grain adds a `brandId` filter. The audience grain is audience-WIDE — NOT
   split per-workflow (send/engagement is not workflow-tagged; fleet gap #366/#367).
 
@@ -2240,7 +2269,7 @@ basis service-wide 2026-08-18, features-service#779.)
 
 Cross-org, fleet-wide projection of how many outreach emails will be SENT per calendar day over a
 past+future window (`?days=N`, default 14 future + fixed 7-day past tail). Answers Kevin's question
-"combien d'emails seront envoyés sur les N prochains jours, sachant les brands actives + leur budget".
+"combien d'emails seront envoyés sur les N profunnels jours, sachant les brands actives + leur budget".
 Handler `handleSendForecast` in `src/routes/public.ts`, pure assembly in
 `src/lib/send-forecast-compute.ts` (`buildSendForecast`), série-3 aggregation in
 `src/lib/send-forecast-aggregate.ts`, cross-org reads in `src/lib/send-forecast-client.ts`. 60s
@@ -2534,10 +2563,10 @@ sends/day for a reality of ~2-3. (Set 2026-07-30.)
 
 ## `pipeline-activity` never answers an un-servable `timezone` with an opaque failure — it 400s NAMING the parameter, and it returns 500 (not 502) because the edge eats a 502's body
 
-A timezone this service accepts as valid must be one the whole chain can serve, and when it is not, the
+A timezone this service accepts as valid must be one the whole funnel can serve, and when it is not, the
 caller has to be TOLD WHICH INPUT — not handed a gateway-shaped error that reads as an outage.
 
-- **The chain refuses a family of legacy IANA aliases.** `pipeline-activity` forwards the caller's
+- **The funnel refuses a family of legacy IANA aliases.** `pipeline-activity` forwards the caller's
   `timezone` verbatim to email-gateway `/orgs/stats?groupBy=day` → instantly-service, and instantly 500s
   for `Asia/Saigon` / `Asia/Calcutta` / `Europe/Kiev` / `America/Buenos_Aires` / `Asia/Rangoon` /
   `US/Pacific` / `Japan` (and ~15 more) while answering for the MODERN spelling of the identical zone.
@@ -2546,7 +2575,7 @@ caller has to be TOLD WHICH INPUT — not handed a gateway-shaped error that rea
   instantly-service's (features-service#741); this service's job is to stop laundering it into a mystery.
 - **Attribution, never a fallback.** On a non-OK day-bucket read `fetchDailyBroadcastActivity` re-runs the
   SAME request with `UTC` — the one spelling always servable. UTC answers ⇒ the fault is this timezone ⇒
-  `TimezoneNotServableError` ⇒ **400** carrying `parameter: "timezone"`. UTC fails too ⇒ the chain is
+  `TimezoneNotServableError` ⇒ **400** carrying `parameter: "timezone"`. UTC fails too ⇒ the funnel is
   genuinely down ⇒ the original error stands. The probe's buckets are DISCARDED: day boundaries are the
   entire point of the parameter, so serving UTC days under an `Asia/Saigon` request would be silently
   wrong data, which is worse than a loud refusal. The probe runs on the ERROR path only — a healthy
@@ -2563,8 +2592,8 @@ caller has to be TOLD WHICH INPUT — not handed a gateway-shaped error that rea
   not. The generic catch now returns 500 with `detail` + the `query` it was computed with. Fail-loud is
   unchanged — only the status and the body are.
 - Guards (`pipeline-activity.test.ts`): both spellings of one zone driven from ONE fixture must produce
-  identical `days` + `summary`; a chain that refuses only the alias yields a 400 naming `timezone` and NO
-  days; a chain down for every timezone yields a 500 with a body and NO `parameter` (an outage is not the
+  identical `days` + `summary`; a funnel that refuses only the alias yields a 400 naming `timezone` and NO
+  days; a funnel down for every timezone yields a 500 with a body and NO `parameter` (an outage is not the
   caller's fault).
 - **Verifying a deploy of this service: `GET /openapi.json` is generated at RUNTIME from
   `src/lib/openapi.ts` (`res.json(openApiDocument)`), so grepping the SERVED document for a string only
@@ -2890,11 +2919,11 @@ extraction-quality prompt**, not just UI help text — it's what brand-service's
 the value. Pick a clear `extractKey`; org name/url/logo are already known by construction (don't
 ask), prefer extraction over user-entry for anything scrapeable.
 
-## AT BRAND LEVEL THERE IS NO GOAL — `/audience-stats` with NEITHER `funnel` NOR `goal` prices each audience across EVERY funnel the brand DECLARED, combined as the BEST-RETURNING chain
+## AT BRAND LEVEL THERE IS NO GOAL — `/audience-stats` with NEITHER `funnel` NOR `goal` prices each audience across EVERY funnel the brand DECLARED, combined as the BEST-RETURNING funnel
 
 A brand runs several sales funnels at once, so the only thing that matters at that grain is return:
 what came back per dollar. Until now exactly one of `funnel` / `goal` was REQUIRED, and the funnel
-decides the whole cost basis — so a brand-level consumer had to PICK one of the brand's chains and
+decides the whole cost basis — so a brand-level consumer had to PICK one of the brand's funnels and
 price every audience through it. The dashboard picked the one the RETIRED brand column implies, which
 is worse than arbitrary: that column is server-defaulted (`funnel-ranking` says so at the top of this
 file), so a brand that chose nothing read as "website purchases" and its Audiences table was ranked and
@@ -2905,31 +2934,31 @@ priced through a funnel it may never have declared.
 carries `returnPerDollar` / `costPerPaidClientUsd` / `costOfAcquisitionPct` for the brand as a whole.
 
 - **THE COMBINATION RULE IS THE BEST-RETURNING DECLARED FUNNEL — `max`, never a blend and never a sum.**
-  A dollar buys a customer through whichever of the brand's chains converts it best. Same doctrine as
+  A dollar buys a customer through whichever of the brand's funnels converts it best. Same doctrine as
   the combined-`sales` cost (`min` over channels ⟺ `max` over returns), and the reason no combined
-  figure can read better than the honest single-chain one. Ties break on the canonical funnel-catalogue
+  figure can read better than the honest single-funnel one. Ties break on the canonical funnel-catalogue
   order, so the same evidence always gives the same answer.
 - **It RECONCILES by construction, both ways, and the test drives all three surfaces from ONE fixture**
   (`routes/audience-brand-return.test.ts`). `brandProjection.returnPerDollar` IS the head of
   `/funnel-ranking` (identical `returnPerDollar` definition, identical evidence, so the maximum over the
   declared set is the same number), and an audience's return IS its return on a `?funnel=` read of the
-  chain it was combined through. Nothing is asserted twice.
-- **The row names its OWN chain — `projection.basisFunnelKey` — and it is routinely NOT the brand's.**
-  An audience whose replies are cheap pays through the conversation chain while the brand's headline
+  funnel it was combined through. Nothing is asserted twice.
+- **The row names its OWN funnel — `projection.basisFunnelKey` — and it is routinely NOT the brand's.**
+  An audience whose replies are cheap pays through the conversation funnel while the brand's headline
   pays through the website one; inheriting the brand's basis would print a number the audience does not
   earn. `projection.lifetimeRevenueUsd` rides each row for the same reason: two audiences can be priced
-  through chains the brand values differently ($200 self-serve vs a $20k contract), so a consumer can
+  through funnels the brand values differently ($200 self-serve vs a $20k contract), so a consumer can
   never pair a return with an LTR this projection did not use.
 - **The response STATES WHAT IT COVERS — `funnelCoverage`.** Every DECLARED funnel is listed with
   `priced` and, when false, its `reason` (`no_economics` / `no_workflow_evidence` /
   `no_paid_client_path` / `no_return_defined` — the SAME vocabulary `/funnel-ranking` reports, exported
   as `FunnelPricingReason` from `audience-stats-brand-projection.ts`). A reader who cannot tell what
   went in cannot trust the number.
-- **COST COLUMNS are denominated in ONE chain and the response names it** (`pricingBasisFunnelKey`):
+- **COST COLUMNS are denominated in ONE funnel and the response names it** (`pricingBasisFunnelKey`):
   the best-returning declared funnel, else the FIRST declared in catalogue order. A cost per outcome is
-  denominated in a chain's own outcome, so unlike a return it cannot be combined across chains. The
+  denominated in a funnel's own outcome, so unlike a return it cannot be combined across funnels. The
   funnel-denominated conversion columns (`cpfsCents`/`cpsCents`/`cpsaleCents`) stay `null` on this read
-  — "cost per signup" is a question only a signup chain asks.
+  — "cost per signup" is a question only a signup funnel asks.
 - **ONE evidence fan-out, N pure projections.** `fetchBrandProjectedParents` split into
   `fetchBrandProjectionEvidence` (all the IO, goal- AND funnel-independent) + `projectBrandParents`
   (pure), exactly as `/funnel-ranking` ranks N funnels off one `WorkflowProjectionEvidence`. Pricing 4
@@ -2938,9 +2967,9 @@ carries `returnPerDollar` / `costPerPaidClientUsd` / `costOfAcquisitionPct` for 
 - **A brand that declared NOTHING has no answer here, and it is distinguishable: 502
   `reason: "declared_funnels_unavailable"`** — the same producer-gap doctrine as `/funnel-ranking` (an
   empty declaration is a gap, not "sells through nothing"), never a zero return and never a substituted
-  set. A brand whose chains price but state no lifetime revenue reads `null` on every return field with
+  set. A brand whose funnels price but state no lifetime revenue reads `null` on every return field with
   `reason: "no_return_defined"` — a different statement from an unreadable declaration, and neither is 0.
-- **NAMING A FUNNEL IS UNCHANGED, byte for byte** — one chain, its own cost columns, its own `cpc`/`cppr`
+- **NAMING A FUNNEL IS UNCHANGED, byte for byte** — one funnel, its own cost columns, its own `cpc`/`cppr`
   order, no `funnelCoverage`, no `basisFunnelKey`. The campaign level genuinely sells ONE funnel, so that
   read stays correct and stays supported; this is an additional way to ask. Guarded by a case in the same
   suite. A NAMED-but-unrecognised `goal`/`funnel` is still a 400 — only omitting BOTH is the brand read.
@@ -3032,18 +3061,18 @@ a dash beside real numbers — which reads as a broken card, not a scoping decis
 ## ONLY A DECLARED FUNNEL'S LEGS ARE PIPELINE — an outreach that produced no conversion carries no value
 
 A brand's pipeline counts only what its OWN declared funnels say is worth counting. The paths that carry
-expected value are exactly the LEGS of those chains; a signal that is not a step of one contributes
+expected value are exactly the LEGS of those funnels; a signal that is not a step of one contributes
 nothing — it is not decayed, not discounted, it simply is not a priced path.
 
 **The bug.** Verified on prod brand `75d7e3e8…`: pipeline $23,547, of which **$8,772 (37%) came from
 5,122 organisations whose only signal was that an email REACHED them**, and another $525 from 42 that
 clicked. That brand declares exactly ONE funnel — `sales_meetings_from_conversation`
 (Positive reply → Meeting booked → Meeting attended → Paid client) — where neither a delivery nor a
-click is a step at all. Every merely-delivered lead was earning a chained-down slice of a lifetime
+click is a step at all. Every merely-delivered lead was earning a funneled-down slice of a lifetime
 contract through the platform-global open/click/reply rates.
 
 - **contacted / sent / delivered / opened are MILESTONES, not paths — for EVERY brand.** They are a step
-  of no chain in brand-service's catalogue, so `FunnelMilestone` (`revenue-engine.ts`) carries **no
+  of no funnel in brand-service's catalogue, so `FunnelMilestone` (`revenue-engine.ts`) carries **no
   revenue field at all**: nothing on it can be zeroed or weighted down, because there is nothing on it to
   price. This is the ONE part of the change that is universal rather than declaration-scoped — a delivery
   is a step of no funnel for anybody, so there is no brand for whom it could be one. A milestone still
@@ -3058,37 +3087,37 @@ contract through the platform-global open/click/reply rates.
   `FUNNEL_LEG_SIGNALS` + `restrictPathsToDeclaredLegs` (`funnel-registry.ts`), read straight off
   `SALES_FUNNELS[key].steps`: Positive reply→`positiveReply`, Website visit→`clicked`, Meeting
   booked→`meeting`, Signup→`signup`, Form filled→`formSubmission`, Paid client→`closeWin`. So a website
-  visit prices a brand that declared a website-led chain and prices NOTHING for one that declared only
-  the conversation chain. "Meeting attended" needs no entry (it is folded into the booked→paid rate by
-  `meetingChainCloseRate`); `signup`/`formSubmission` are listed because they ARE legs, and no path
+  visit prices a brand that declared a website-led funnel and prices NOTHING for one that declared only
+  the conversation funnel. "Meeting attended" needs no entry (it is folded into the booked→paid rate by
+  `meetingFunnelCloseRate`); `signup`/`formSubmission` are listed because they ARE legs, and no path
   scores them today — if one is added it prices exactly the right brands with no further change.
-  **`closeWin` is always a leg** — every chain terminates in a paid client.
+  **`closeWin` is always a leg** — every funnel terminates in a paid client.
 - **Which funnels are "being priced"** is `FunnelPricedEconomics.pricedFunnelKeys` (`routes/revenue.ts`).
   A brand that declared SEVERAL is priced on the UNION of their legs. A read NARROWED to one funnel is
-  priced on that chain's legs alone, in this precedence: the caller's `?funnel=` when the brand declared
+  priced on that funnel's legs alone, in this precedence: the caller's `?funnel=` when the brand declared
   it, else **the funnel the CAMPAIGN itself states** on a campaign-scoped read
-  (`campaignIdentity.funnelKey`, `matchSalesFunnelKey`) — a campaign sells one chain, so its figures are
-  that chain's figures, not the brand's first-declared one. The brand-scoped read keeps the deterministic
+  (`campaignIdentity.funnelKey`, `matchSalesFunnelKey`) — a campaign sells one funnel, so its figures are
+  that funnel's figures, not the brand's first-declared one. The brand-scoped read keeps the deterministic
   first-declared pick for the TERMS.
-- **NO DECLARED FUNNEL ⇒ every conversion leg is priced, exactly as before.** We do not know which chain
+- **NO DECLARED FUNNEL ⇒ every conversion leg is priced, exactly as before.** We do not know which funnel
   the brand sells, and inventing one to narrow against is the same fiction the defaulted goal produced.
-  The only thing that changes for such a brand is the delivery milestones, which were never a chain's
+  The only thing that changes for such a brand is the delivery milestones, which were never a funnel's
   step for anybody. Same for an unreadable declaration (fail-SOFT with a loud log,
   `fetchDeclaredFunnelsSoft`) — the Overview degrades, it never 502s.
 - **The declaration is read ONCE per request** and reused by every campaign group
   (`priceOnDeclaredFunnel` is pure), so the grouped path stays at one brand-service call. The declared
   KEY SET rides the Gold `scope_key` as `decl`: two brands can share economics and declare different
-  chains, so the `econ` fingerprint cannot stand in for it.
+  funnels, so the `econ` fingerprint cannot stand in for it.
 - **`platform-rates-client.ts` is DELETED** and `FunnelInputs` no longer carries `platformRates`. Those
-  rates existed only to chain contacted→sent→delivered down to a close; nothing chains down from a
+  rates existed only to funnel contacted→sent→delivered down to a close; nothing funnels down from a
   delivery now, so the whole read left Wave A (one fewer IO per Overview). `ResolvedPath.kind` is gone
   too — every path is a funnel leg, and "delivery" is `FunnelMilestone`.
-- Guards: `funnel-registry.test.ts` (four legs only, a milestone has no revenue field, per-chain leg sets,
+- Guards: `funnel-registry.test.ts` (four legs only, a milestone has no revenue field, per-funnel leg sets,
   the union, closeWin always, no declaration ⇒ unchanged) + `revenue-engine.test.ts` (a milestone-only
   lead is tagged, present in `leads[]`, and in no org / event / series / total) +
   `routes/revenue.test.ts` (a merely-delivered lead is worth nothing while `recipientsContacted` still
-  counts it; a conversion signal prices a brand only under a chain that contains it, both directions and
-  the union) + `campaign-identity-aggregation.test.ts` (each campaign priced on its own stated chain,
+  counts it; a conversion signal prices a brand only under a funnel that contains it, both directions and
+  the union) + `campaign-identity-aggregation.test.ts` (each campaign priced on its own stated funnel,
   `?funnel=` still wins, an unstated funnel falls back to the brand pick). (Set 2026-08-13.)
 ## THE REVENUE ENGINE HAS NO DECAY, AND IS NOT TIME-DEPENDENT — an outcome that happened stays counted, and the pipeline is priced on the brand's DECLARED FUNNEL
 
@@ -3132,7 +3161,7 @@ brand-wide 50% × 25% = **12.5%** — $312.50 a reply where the brand had stated
   else the brand's FIRST DECLARED funnel in catalogue order. Do NOT write a second resolution here —
   two implementations is exactly how the two prices appeared.
 - A term the funnel does not state falls through to the brand-wide value, never to 0 (which would
-  zero-collapse the chain). The meeting chain COMPOSES (`meetingChainCloseRate`): booked→paid =
+  zero-collapse the funnel). The meeting funnel COMPOSES (`meetingFunnelCloseRate`): booked→paid =
   attended% × show-up%, so a declared show-up rate is never a free 100%.
 - **NO declared funnel ⇒ byte-identical to before** — the brand-wide economics apply unchanged.
 - Resolved ONCE in the route and threaded down as `economicsOverride`, so it costs one brand-service
@@ -3143,7 +3172,7 @@ brand-wide 50% × 25% = **12.5%** — $312.50 a reply where the brand had stated
   Overview. Note an EMPTY declaration THROWS at the client (a producer gap, not "sells through
   nothing") and lands here as that same degrade — which IS the required no-declared-funnel behaviour.
 - Guards: the declared-funnel pricing block in `routes/revenue.test.ts` (own terms win, unstated terms
-  fall through, the show-up rate composes, the funnel's own LTR is used, `?funnel=` selects the chain,
+  fall through, the show-up rate composes, the funnel's own LTR is used, `?funnel=` selects the funnel,
   no declaration is unchanged). (Set 2026-08-13.)
 
 ## Public cost-per-outcome is PROJECTED (EV math), NOT the real tracked meeting/closed counts
@@ -3197,7 +3226,7 @@ database instance under load still does) — **any new off-request-path fan-out 
    re-warm on every miss — that contends with the request path.
 
 Genuinely-unbacked dynasty (no recent clicks) → null, never a false $0. Depends on the org-less dynasty
-resolution chain: workflow-service `/workflows/dynasty/slugs` api-key-only (v0.38.0) + email-gateway
+resolution funnel: workflow-service `/workflows/dynasty/slugs` api-key-only (v0.38.0) + email-gateway
 sending `workflowDynastySlug` (v0.25.1). (Set 2026-07-10.)
 
 ## `workflow-cost-per-outcome` 0-outcome = OWN SPEND (crossOrg is the top grain — NO cross-workflow fleet parent); the LANDING headlines the best model, filtered observed>0 (features-service#612)

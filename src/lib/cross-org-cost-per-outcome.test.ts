@@ -395,7 +395,7 @@ function brand(brandId: string, funnels: SalesFunnelKey[], spend: number, clicks
 }
 
 describe("OBJECTIVE_FUNNEL_BUCKET", () => {
-  it("cpc = every CLICK-bought chain; the reply-bought meeting chain is excluded", () => {
+  it("cpc = every CLICK-bought funnel; the reply-bought meeting funnel is excluded", () => {
     expect(OBJECTIVE_FUNNEL_BUCKET.websiteVisit).toEqual([
       "sales_meetings_from_website",
       "website_purchases",
@@ -403,23 +403,23 @@ describe("OBJECTIVE_FUNNEL_BUCKET", () => {
     ]);
     expect(OBJECTIVE_FUNNEL_BUCKET.websiteVisit).not.toContain("sales_meetings_from_conversation");
   });
-  it("each single-outcome objective takes the chain that step belongs to", () => {
+  it("each single-outcome objective takes the funnel that step belongs to", () => {
     expect(OBJECTIVE_FUNNEL_BUCKET.positiveReply).toEqual(["sales_meetings_from_conversation"]);
     expect(OBJECTIVE_FUNNEL_BUCKET.signup).toEqual(["website_purchases"]);
     expect(OBJECTIVE_FUNNEL_BUCKET.formSubmission).toEqual(["form_magnet"]);
     expect(OBJECTIVE_FUNNEL_BUCKET.websitePurchase).toEqual(["website_purchases"]);
   });
-  it("meeting bucket = BOTH meeting chains — each priced apart elsewhere, both bought meetings here", () => {
+  it("meeting bucket = BOTH meeting funnels — each priced apart elsewhere, both bought meetings here", () => {
     expect(OBJECTIVE_FUNNEL_BUCKET.meetingBooked).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
     ]);
   });
-  it("sales = every chain (each terminates in a paying client); whatsapp = EMPTY, no funnel expresses it", () => {
+  it("sales = every funnel (each terminates in a paying client); whatsapp = EMPTY, no funnel expresses it", () => {
     expect(OBJECTIVE_FUNNEL_BUCKET.sales).toHaveLength(4);
     expect(OBJECTIVE_FUNNEL_BUCKET.whatsappConversation).toEqual([]);
   });
-  it("funnelsInObjectiveBucket agrees with the table, and a multi-funnel brand matches on ANY chain", () => {
+  it("funnelsInObjectiveBucket agrees with the table, and a multi-funnel brand matches on ANY funnel", () => {
     expect(funnelsInObjectiveBucket("websiteVisit", ["website_purchases"])).toBe(true);
     expect(funnelsInObjectiveBucket("websiteVisit", ["sales_meetings_from_conversation"])).toBe(false);
     expect(funnelsInObjectiveBucket("websiteVisit", ["sales_meetings_from_conversation", "form_magnet"])).toBe(true);
@@ -438,7 +438,7 @@ describe("bucketBrandsForObjective + merge", () => {
     brand("b-both-meetings", ["sales_meetings_from_conversation", "sales_meetings_from_website"], 500, 8, 2),
   ];
 
-  it("cpc bucket excludes the reply-bought chain, and keeps a brand that also declares a click-bought one", () => {
+  it("cpc bucket excludes the reply-bought funnel, and keeps a brand that also declares a click-bought one", () => {
     const bucket = bucketBrandsForObjective(brands, "websiteVisit");
     expect(bucket.map((b) => b.brandId).sort()).toEqual(["b-both-meetings", "b-form", "b-purchase", "b-web-meeting"]);
     expect(bucket.map((b) => b.brandId)).not.toContain("b-reply-meeting");
@@ -447,12 +447,12 @@ describe("bucketBrandsForObjective + merge", () => {
     expect(mergeOutcomesByDay(bucket).get("2026-07-08")).toEqual({ clicks: 108, replies: 5 });
   });
 
-  it("signup bucket = the website-purchase chain only (the form chain is excluded)", () => {
+  it("signup bucket = the website-purchase funnel only (the form funnel is excluded)", () => {
     const bucket = bucketBrandsForObjective(brands, "signup");
     expect(bucket.map((b) => b.brandId)).toEqual(["b-purchase"]);
   });
 
-  it("meeting bucket = every brand selling through EITHER meeting chain", () => {
+  it("meeting bucket = every brand selling through EITHER meeting funnel", () => {
     const bucket = bucketBrandsForObjective(brands, "meetingBooked");
     expect(bucket.map((b) => b.brandId).sort()).toEqual(["b-both-meetings", "b-reply-meeting", "b-web-meeting"]);
     expect(mergeSpendByDay(bucket).get("2026-07-08")).toBe(1200); // 300 + 400 + 500
@@ -462,7 +462,7 @@ describe("bucketBrandsForObjective + merge", () => {
     expect(bucketBrandsForObjective(brands, "whatsappConversation")).toEqual([]);
   });
 
-  it("positiveReply is FLEET-WIDE: pools replies across ALL brands, not just the reply-bought chain", () => {
+  it("positiveReply is FLEET-WIDE: pools replies across ALL brands, not just the reply-bought funnel", () => {
     // A positive reply is produced by every cold-email brand regardless of what it sells through, so the
     // bucket = the whole dataset (never filtered to the conversation funnel).
     const bucket = bucketBrandsForObjective(brands, "positiveReply");
@@ -501,7 +501,7 @@ describe("buildBucketedLifetimeAverages", () => {
     expect(avgs.websiteVisit).toBeCloseTo(2, 5);
   });
 
-  it("positiveReply is FLEET-WIDE: pooled CPPR over EVERY brand's spend ÷ replies, not just reply-bought chains", () => {
+  it("positiveReply is FLEET-WIDE: pooled CPPR over EVERY brand's spend ÷ replies, not just reply-bought funnels", () => {
     const brands = [
       brand("b-visit", ["website_purchases"], 100, 50, 0), // 0 replies — its $100 STILL counts toward fleet CPPR
       brand("b-reply", ["sales_meetings_from_conversation"], 900, 0, 30),
@@ -589,7 +589,7 @@ describe("buildCostPerOutcomeDistribution", () => {
     expect(dist.max).toBe(4);
   });
 
-  it("funnel-bucketed inputs excluded upstream: callers pass bucketBrandsForObjective — off-chain brands never contribute", () => {
+  it("funnel-bucketed inputs excluded upstream: callers pass bucketBrandsForObjective — off-funnel brands never contribute", () => {
     // a positiveReply brand carries no CPC data point even if it has spend
     const brands = [
       brand("b-visit-1", ["website_purchases"], 200, 100, 0), // CPC 2

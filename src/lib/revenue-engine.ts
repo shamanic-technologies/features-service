@@ -44,7 +44,7 @@ export interface ResolvedPath {
   tag: string;
   /** Key into a person's `signals` map that triggers this path. */
   signal: string;
-  /** LTR × rate-chain — the expected revenue this path contributes when its signal fired. */
+  /** LTR × the funnel's rate ladder — the expected revenue this path contributes when its signal fired. */
   expectedRevenueUsd: number;
   /**
    * Marks an INDEPENDENT engagement route (e.g. click, reply) — a non-mutually-exclusive shot at
@@ -57,7 +57,7 @@ export interface ResolvedPath {
   /** Whether a fired event of this path is itemised in the events ledger. Defaults to true. */
   ledger?: boolean;
   /**
-   * Marks the TERMINAL leg — the paying client every chain ends at, worth the whole close value rather
+   * Marks the TERMINAL leg — the paying client every funnel ends at, worth the whole close value rather
    * than a fraction of it. When a human stated what this particular deal was worth, that amount IS the
    * contribution, read straight instead of scaled through the brand's average: realized revenue is a
    * fact, so it must not depend on the brand having declared a lifetime revenue at all.
@@ -69,7 +69,7 @@ export interface ResolvedPath {
  * A DELIVERY MILESTONE — a thing that happened on the way to the funnel, and NOT a leg of one.
  *
  * Contacted / sent / delivered / opened are steps of NO funnel in brand-service's catalogue: every
- * chain a brand can declare starts at a positive reply or a website visit. So a milestone has NO
+ * funnel a brand can declare starts at a positive reply or a website visit. So a milestone has NO
  * revenue field at all — it cannot be priced, weighted down or zeroed, because there is nothing on it
  * to price. It exists for exactly two jobs:
  *
@@ -139,7 +139,7 @@ export interface EnginePerson {
    * WHAT THIS PERSON IS WORTH, when somebody said so — overriding the brand's / offer's average
    * lifetime revenue for this lead alone.
    *
-   * Every path's expected revenue is `value × a rate chain`, so this scales the whole ladder rather
+   * Every path's expected revenue is `value × a rate ladder`, so this scales the whole ladder rather
    * than only the terminal rung: a lead stated at $49k is worth more at every rung than a lead priced
    * on a $4k average, and that is the point of stating it. A won deal MUST carry one (the producer
    * refuses a sale with no amount) — realized revenue is the one figure with no excuse to be an
@@ -155,13 +155,13 @@ export interface EnginePerson {
    *
    * A "never" is not an outcome and nothing counts it; what it does is tell a lead that is DEAD at a
    * step from one still PENDING, which no count could ever express. A pending lead legitimately keeps
-   * the forecast its evidence earns; a dead one has no path left through the chains that contain that
-   * step, so those chains' legs are worth nothing for it — including the legs it already fired, whose
+   * the forecast its evidence earns; a dead one has no path left through the funnels that contain that
+   * step, so those funnels' legs are worth nothing for it — including the legs it already fired, whose
    * whole value was a forecast of the thing that has now been ruled out.
    *
-   * It is the CHAIN that dies, not just the one step: the caller expands a dead step into every leg
+   * It is the FUNNEL that dies, not just the one step: the caller expands a dead step into every leg
    * of every declared funnel containing it (see `deadLegSignalsFor`), so a brand that also sells a
-   * chain the dead step is not on keeps that chain's value for this lead. Empty / absent = nothing was
+   * funnel the dead step is not on keeps that funnel's value for this lead. Empty / absent = nothing was
    * ruled out, which is every lead today.
    */
   deadSignals?: readonly string[];
@@ -516,7 +516,7 @@ function evForPerson(
   let furthestMilestoneTag: string | null = null;
   let reachedPosition = false;
 
-  // WHAT THIS PERSON IS WORTH. Every path EV is `value × a rate chain`, so a stated per-lead value
+  // WHAT THIS PERSON IS WORTH. Every path EV is `value × a rate ladder`, so a stated per-lead value
   // scales the whole ladder rather than only its terminal rung — a lead somebody priced at $49k is
   // worth more at every rung than one priced on a $4k average. Nobody said ⇒ the brand's own number,
   // unscaled, which is every lead today.
@@ -527,8 +527,8 @@ function evForPerson(
   const scale = statedValueUsd !== null && closeValueUsd > 0 ? statedValueUsd / closeValueUsd : 1;
   const scaledCloseValueUsd = closeValueUsd * scale;
 
-  // Steps a human ruled out for this person. Expanded by the caller into every leg of every chain
-  // containing the dead step, so a chain that never touches it keeps its value.
+  // Steps a human ruled out for this person. Expanded by the caller into every leg of every funnel
+  // containing the dead step, so a funnel that never touches it keeps its value.
   const dead = person.deadSignals && person.deadSignals.length > 0 ? new Set(person.deadSignals) : null;
 
   // Milestones first — listed in ascending funnel order, so the last fired is the furthest reached.
@@ -540,7 +540,7 @@ function evForPerson(
 
   for (const path of paths) {
     if (!person.signals[path.signal]) continue;
-    // A leg of a chain a human ruled this person out of carries nothing — not even the legs already
+    // A leg of a funnel a human ruled this person out of carries nothing — not even the legs already
     // fired, whose whole value was a forecast of the thing that has now been ruled out. It is not in
     // the ledger either: there is no expected revenue to itemise.
     if (dead?.has(path.signal)) continue;

@@ -163,7 +163,7 @@ function fleetEconResponse(url: string): Response | null {
   return null;
 }
 
-/** Build a fleet workflow-metadata entry (dynasty defaults to its own slug; `upgradedTo` chains versions). */
+/** Build a fleet workflow-metadata entry (dynasty defaults to its own slug; `upgradedTo` funnels versions). */
 function fleetWorkflow(slug: string, over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: `id-${slug}`,
@@ -1250,7 +1250,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(res.body.audiences[0].metrics.cpcCents).not.toBe(200);
   });
 
-  it("collapses a workflow's version chain into ONE dynasty before picking the best", async () => {
+  it("collapses a workflow's versions into ONE dynasty before picking the best", async () => {
     // dyn-x spans two versions: v1 $600/10 clicks, v2 $400/90 clicks. Rolled up the DYNASTY is
     // $1000/100 clicks = $10.00 (1000¢). dyn-y is $1200/100 clicks = $12.00. Best dynasty = dyn-x, 1000¢.
     // Treating the versions as independent workflows would crown v2 alone ($400/90 = $4.44 = 444¢) — the

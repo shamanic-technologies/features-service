@@ -37,7 +37,7 @@ const STEP_TO_SIGNAL: Record<LeadStepOutcome, string> = {
 /**
  * The steps a PATH is priced on today, most advanced LAST.
  *
- * `signup` / `form_submission` are legs of their chains and a lead can be ruled out at them, but no
+ * `signup` / `form_submission` are legs of their funnels and a lead can be ruled out at them, but no
  * path scores them yet (they are per-lead display outcomes served from their own counts), so stating
  * one must not silently invent a rung. They are deliberately absent here and present in the dead map.
  */
@@ -71,8 +71,8 @@ export interface ObservedLeadFacts {
  * service already joins leads on.
  *
  * Six reads, all brand-scoped and all cheap, and they are read TOGETHER on purpose: a lead's rung and
- * the fact that its chain is dead are two halves of one answer, and fetching them apart would let a
- * transient failure price a lead on a rung its chain no longer has.
+ * the fact that its funnel is dead are two halves of one answer, and fetching them apart would let a
+ * transient failure price a lead on a rung its funnel no longer has.
  *
  * A row the producer could not give an email for is SKIPPED here rather than dropped upstream — the
  * producer keeps it so its own counts stay self-consistent, and we skip it because a lead we cannot
