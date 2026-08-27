@@ -1,0 +1,96 @@
+/**
+ * THE CUSTOMER'S OWN MONEY, PARTITIONED BY SALES CHAIN — the rules, without a network in the way.
+ *
+ * What they pin: a statement lands in the row whose campaign set contains its campaign and in no
+ * other; one that cannot be placed is reported apart rather than dropped or parked on a default; a
+ * stated zero is an answer while an unstated leg is not; and the coverage marker never claims more
+ * than the least-covered scope supports.
+ */
+import { describe, it, expect } from "vitest";
+import { partitionCustomerCosts, coverageOf, summariseCoverage } from "./chain-customer-costs.js";
+
+const CHAINS = [
+  { key: "conversation", campaignIds: ["c1", "c1b"] },
+  { key: "website", campaignIds: ["c2"] },
+];
+
+describe("partitionCustomerCosts", () => {
+  it("puts a statement in the chain whose campaign set holds its campaign, and in no other", () => {
+    const { byChain, unattributed } = partitionCustomerCosts(
+      [
+        { campaignId: "c1", costCents: 12_000 },
+        { campaignId: "c1b", costCents: 3_000 },
+        { campaignId: "c2", costCents: 500 },
+      ],
+      CHAINS,
+    );
+    expect(byChain.conversation).toEqual({ costCents: 15_000, statedCount: 2, unstatedCount: 0 });
+    expect(byChain.website).toEqual({ costCents: 500, statedCount: 1, unstatedCount: 0 });
+    expect(unattributed).toEqual({ costCents: 0, statedCount: 0, unstatedCount: 0 });
+  });
+
+  it("reports a statement it cannot place APART — never dropped, never parked on a default chain", () => {
+    const { byChain, unattributed } = partitionCustomerCosts(
+      [
+        { campaignId: null, costCents: 100 },
+        { campaignId: "another-offers-campaign", costCents: 900 },
+      ],
+      CHAINS,
+    );
+    expect(byChain.conversation.costCents).toBe(0);
+    expect(byChain.website.costCents).toBe(0);
+    expect(unattributed).toEqual({ costCents: 1_000, statedCount: 2, unstatedCount: 0 });
+  });
+
+  it("counts a STATED ZERO as an answer and an UNSTATED leg as one nobody was ever asked", () => {
+    const { byChain } = partitionCustomerCosts(
+      [
+        { campaignId: "c1", costCents: 0 },
+        { campaignId: "c1", costCents: null },
+      ],
+      CHAINS,
+    );
+    // Nothing is fabricated for the unstated one: it raises the count that says the sum is incomplete.
+    expect(byChain.conversation).toEqual({ costCents: 0, statedCount: 1, unstatedCount: 1 });
+  });
+
+  it("gives every chain a row, so a chain nobody stated a cost for reads zeros rather than absent", () => {
+    const { byChain } = partitionCustomerCosts([], CHAINS);
+    expect(Object.keys(byChain).sort()).toEqual(["conversation", "website"]);
+    expect(byChain.conversation).toEqual({ costCents: 0, statedCount: 0, unstatedCount: 0 });
+  });
+});
+
+describe("coverageOf / summariseCoverage — the stated basis is always TRUE", () => {
+  it("says platform_spend_only when nothing is attributable, including when the read failed", () => {
+    expect(coverageOf(null)).toBe("platform_spend_only");
+    expect(coverageOf({ costCents: 0, statedCount: 0, unstatedCount: 0 })).toBe("platform_spend_only");
+  });
+
+  it("says whole only when every attributable statement carries a cost", () => {
+    expect(coverageOf({ costCents: 12_000, statedCount: 2, unstatedCount: 0 })).toBe("platform_and_customer_spend");
+    // A stated zero still counts as answered — a leg somebody did for free is a costed leg.
+    expect(coverageOf({ costCents: 0, statedCount: 1, unstatedCount: 0 })).toBe("platform_and_customer_spend");
+  });
+
+  it("admits a partial cost the moment one leg was never stated", () => {
+    expect(coverageOf({ costCents: 12_000, statedCount: 1, unstatedCount: 1 })).toBe(
+      "platform_and_partial_customer_spend",
+    );
+    expect(coverageOf({ costCents: 0, statedCount: 0, unstatedCount: 3 })).toBe(
+      "platform_and_partial_customer_spend",
+    );
+  });
+
+  it("summarises to the WEAKEST row, because the marker is an admission", () => {
+    expect(summariseCoverage(["platform_and_customer_spend", "platform_spend_only"])).toBe("platform_spend_only");
+    expect(
+      summariseCoverage(["platform_spend_only", "platform_and_partial_customer_spend"]),
+    ).toBe("platform_and_partial_customer_spend");
+    expect(summariseCoverage(["platform_and_customer_spend", "platform_and_customer_spend"])).toBe(
+      "platform_and_customer_spend",
+    );
+    // No rows at all cannot claim customer money.
+    expect(summariseCoverage([])).toBe("platform_spend_only");
+  });
+});

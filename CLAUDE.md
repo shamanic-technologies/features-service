@@ -245,14 +245,26 @@ scope at which a return is computable at all.
   that row is server-defaulted, so pricing chain A on it is the retired-goal fiction one grain finer.
   The two unpriced-but-measurable reasons still read the leads (the engine's cold-start path), because
   "we could not price this" and "this reached nobody" are different statements.
-- **`costCoverage: "platform_spend_only"` IS ON THE WIRE, AND IT IS AN ADMISSION.** Some steps of a
-  chain are performed by a human on the CUSTOMER's side and the platform spends nothing on them, so a
-  chain whose last legs are manual reads cheaper here than it truly is — and a chain's true cost of
-  acquisition needs that money. lead-service is adding a customer-declared cost per step transition;
-  **it exposes none today** (verified against its deployed contract: `converted-leads`,
-  `step-disqualifications`, `conversion-counts{,-by-day}`, `converted-lead-emails`, and nothing else).
-  Inventing one, or leaving the basis unstated, is the fabricated figure this read refuses everywhere
-  else. When the producer ships it, the marker is what a consumer keys the change off.
+- **THE CUSTOMER'S OWN MONEY IS IN THE COST OF ACQUISITION NOW, AND IT IS TOLD APART FROM WHAT WE
+  CHARGED (supersedes the `platform_spend_only`-forever note).** The platform automates the first link
+  and CHARGES for it; the customer runs the meeting and closes the deal, and lead-service records what
+  those legs cost THEM (`GET /internal/brands/:brandId/step-costs`, service-auth, deployed). A chain
+  ending in a human leg used to read cheaper than it truly is and return better than it truly does,
+  which is the single most misleading figure a customer can be shown about their own money. Three
+  fields, never two: `costEconomics` (CHARGED — a billing fact, byte-unchanged, and none of their money
+  is folded into it), `customerCost` (what THEY state, in no ledger of ours, reaching billing never),
+  and `combinedCostEconomics` (the two together plus the return dividing by that sum, from the SAME
+  lifetime revenue, so with nothing declared it IS the charged block). **`costCoverage` is now an
+  ENUM and it is an admission**: `platform_spend_only` / `platform_and_customer_spend` /
+  `platform_and_partial_customer_spend`, per ROW and — as the WEAKEST of its rows — for the payload.
+  **A statement is attributed by CAMPAIGN** (it is made on a lead row, which belongs to a campaign,
+  which states exactly one chain), so the campaign set scoping a row's charged money scopes its
+  declared money too; one naming no campaign, or a campaign in no chain of this offer, rides
+  `customerCost.unattributed` — never dropped, never parked. **A STATED ZERO IS AN ANSWER, AN UNSTATED
+  LEG IS NOT**: null contributes nothing and raises `unstatedCount`, which is what flips the row to
+  `partial` — a chain we cannot fully cost says so instead of guessing. The read is FAIL-SOFT with a
+  loud log, and its `null` ("could not read") is deliberately distinguishable from zeros ("nobody
+  stated one"). Do NOT widen `committedCostUsd` to swallow it and do NOT let any of it reach billing.
 - **NO CONSUMER-SIDE AGGREGATION.** The composition happens here; a grain the dashboard has to assemble
   from N campaign calls is not a grain. Rows are LEAN (`headline` + `costEconomics` + `outcomes`,
   `includeSpend: false`) because a table polls them.
@@ -261,8 +273,12 @@ scope at which a return is computable at all.
 - Guards: `src/routes/offer-chain-revenue.test.ts` — ONE fixture drives the grain, the single-campaign
   byte-equality, the one-campaign-per-step chain, money-adds-while-people-do-not, each chain on its own
   declared terms, both unpriced reasons, the unattributed campaign, the lean key set, the named 404,
-  the fail-loud parses, and every existing grain answering unchanged. Plus `lib/offer-chains.ts` for
-  the partition itself. (Set 2026-08-27.)
+  the fail-loud parses, and every existing grain answering unchanged; plus the customer-money suite in
+  the same file (the combined return SMALLER than the charged one, a chain with none byte-equal to
+  today, the unstated leg turning the row partial, attribution by campaign, the unplaceable statement,
+  and the degrade). Plus `lib/offer-chains.ts` for the partition itself and
+  `lib/chain-customer-costs.test.ts` for the statement partition + the coverage marker.
+  (Set 2026-08-27; customer-declared cost same day.)
 
 ## `GET /brands/:brandId/offers` — THE BRAND'S OFFERS TABLE, EACH ROW AT THE OFFER GRAIN; it is the offer read N times, LEAN, not a new computation
 
