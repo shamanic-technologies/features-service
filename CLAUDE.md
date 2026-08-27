@@ -1420,19 +1420,24 @@ is reverted — the net/gross budget split (`grossDailyBudgetUsd`, `stats.gross*
 `fetchOrgUsageDiscountPct`, the `usage-discount` fetch) is **DELETED** (a config budget has ONE true value,
 no "net budget"; the admin only ever read `dailyBudgetUsd`, so the gross* twins had zero external consumers).
 
-- **`/internal/stats/accounts` (`buildAccountsAudit`)** — per-brand `dailyBudgetUsd` = the RAW configured
-  billing daily-budget (undiscounted). Fleet `stats.totalDailyBudgetUsd`/`mrrUsd`/`arrUsd` are pure budget
-  projections (Σ active budget, × 30, × 365) → undiscounted too. The ACTIVE verdict + row sort gate on this
-  same raw budget vs the actual balance (no separate gross field). `customer-health` reads `dailyBudgetUsd`
-  directly.
+- **`/internal/stats/accounts` (`buildAccountsAudit`)** — both per-brand budgets
+  (`configuredDailyBudgetUsd`, `runningDailyBudgetUsd`) are RAW, undiscounted figures. Fleet
+  `stats.totalRunningDailyBudgetUsd`/`mrrUsd`/`arrUsd` are pure budget projections (Σ active **running**
+  budget, × 30, × 365) → undiscounted too. The ACTIVE verdict + row sort gate on the running budget vs the
+  actual balance (no separate gross field). `customer-health` reads both directly.
 - **`/internal/stats/revenue`** — committed MRR/ARR (`currentMrrUsd`, `committedMrr.*`) are budget
-  projections (Σ active budget × 30) → **undiscounted** automatically (they read the accounts-audit
-  `stats.mrrUsd`/`totalDailyBudgetUsd`). **Realized-spend buckets STAY NET** (actual charges) — they read
+  projections (Σ active **running** budget × 30) → **undiscounted** automatically (they read the
+  accounts-audit `stats.mrrUsd`/`totalRunningDailyBudgetUsd`). **THE COMMITTED MRR/ARR SERIES BREAKS ON
+  2026-08-27 AND THAT STEP DOWN IS NOT CHURN.** Every daily snapshot recorded before that day was written
+  from the CONFIGURED budget — money posted on funnels with no ongoing campaign behind it — and a snapshot
+  cannot be replayed, so the history is not restatable. Measured at the cutover: **$3,450 → $2,610** MRR,
+  fleet daily budget **$138 configured → $87 running**. Anyone reading the curve, or writing copy about it,
+  must state the basis change at that date rather than read a lost customer. **Realized-spend buckets STAY NET** (actual charges) — they read
   runs' **frozen-NET twin `netActualCostInUsdCents`** on `/v1/stats/public/costs/timeseries`
   (`selectBucketActualCents`, `revenue-history-client.ts`); those are real billed spend, so net is correct.
   The distinction: budget-derived = undiscounted (config projection), realized-charge = net (money we bill).
 
-**Why in-place:** the admin renders `dailyBudgetUsd`/`mrrUsd` verbatim (no discount math of its own), so
+**Why in-place:** the admin renders the budget/`mrrUsd` figures verbatim (no discount math of its own), so
 fixing the value at the source corrects the admin display with ZERO dashboard change (distribute.you
 deploys to PROD straight off `main` — it has no staging buffer, so a dashboard-side fix could not be
 smoke-tested before customers saw it).
@@ -2124,13 +2129,16 @@ brand's features, budget counted ONCE — do NOT sum per (feature,brand), that d
 budget.**
 
 **Only ACTIVE accounts contribute — reuses `accountStatus()` from `accounts-compute.ts` (do NOT
-duplicate).** A (org, brand) enters `totalNewPerDay` iff `accountStatus(budget, balance, paused) ===
-"active"` — NOT paused (campaign-service brand pause) AND `dailyBudget > 0` AND `orgBalance > dailyBudget`
-(org spendable credit covers ≥1 more day). This is THE fix for the forecast OVER-count: before the gate,
-every brand that ever ran cold-email and still had a stale positive budget was summed in — incl. PAUSED
-brands and churned orgs with $0 credits — inflating the projection ~6× above the observed send rate.
-Org balance is fetched ONCE per org (shared across its brands); brand pause is read per (org, brand).
-Same status rule + same account universe as `/internal/stats/accounts`.
+duplicate).** A (org, brand) enters `totalNewPerDay` iff
+`accountStatus(configured, running, actualBalance, autoTopup) === "active"` — i.e. **RUNNING budget > 0**
+AND the org can fund it (auto-topup, or actual credit above a day of it). This is THE fix for the forecast
+OVER-count: before the gate, every brand that ever ran cold-email and still had a stale positive budget was
+summed in — incl. churned orgs with $0 credits — inflating the projection ~6× above the observed send rate.
+**`R_b` is built from the RUNNING budget too, not the configured one** — a ceiling with no ongoing campaign
+behind it launches no sequences, so counting it forecasts mail nobody will send. Org balance is fetched
+ONCE per org (shared across its brands); both budgets come from the one batched
+campaign-service `POST /brands/spendable-budget` call the audit makes. Same status rule + same account
+universe as `/internal/stats/accounts`.
 
 **Fleet enumeration = the 5 `*-cold-email-outreach` seed slugs** (`coldEmailOutreachSlugs`, derived at
 runtime from the `features` table, `slug.endsWith`) — the instantly cold-email sequences that série 2
@@ -2163,32 +2171,63 @@ injectable deps), new cross-org reads in `src/lib/accounts-client.ts`. 60s in-me
 (`__resetAccountsCache` seam), same pattern as the other `/internal/stats/*` audits. **All money +
 the active determination + MRR/ARR are computed HERE; the dashboard renders only.**
 
-Each row: `{ orgId, orgExternalId, ownerEmail, brandId, brandName, brandDomain, dailyBudgetUsd,
-orgBalanceUsd, orgActualBalanceUsd, autoTopupEnabled, status }`. Response also carries `stats {
-totalDailyBudgetUsd, mrrUsd, arrUsd, activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
+Each row: `{ orgId, orgExternalId, ownerEmail, brandId, brandName, brandDomain,
+configuredDailyBudgetUsd, runningDailyBudgetUsd, orgBalanceUsd, orgActualBalanceUsd, autoTopupEnabled,
+status }`. Response also carries `stats { totalRunningDailyBudgetUsd, totalConfiguredDailyBudgetUsd,
+mrrUsd, arrUsd, activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
 
-**STATUS rule (exact, single source `accountStatus(dailyBudget, actualBalance, autoTopup, paused)` — do
-NOT re-litigate). Precedence paused > active > inactive:** (1) `paused === true` (campaign-service brand
-pause) → `"paused"`; (2) else `dailyBudgetUsd != null && dailyBudgetUsd > 0 && (autoTopupEnabled ||
-orgActualBalanceUsd > dailyBudgetUsd)` → `"active"`; (3) else `"inactive"`. The credit test uses the
-**ACTUAL** balance (credited − ACTUALIZED usage), **NOT the spendable** figure — a provisioned hold is
-in-flight ACTIVE spend, so subtracting it wrongly read the busiest accounts "inactive" (the bug this
-fixed, features-service#502). An **auto-topup** org never runs dry → active regardless of the momentary
-balance (`has_auto_topup` is OPTIONAL on the balance read — absent ⇒ not-enabled, so the actual-balance
-path already corrects the verdict and auto-topup activates once billing ships it). A PAUSED brand keeps
-its budget but campaigns are HELD — so it is neither active nor plain-inactive (paused wins even over a
-funded budget). **All rows (active + paused + inactive) are LISTED — never dropped.**
-`stats.totalDailyBudgetUsd`/MRR(×30)/ARR(×365) sum ACTIVE rows ONLY (a paused brand is not spending).
-send-forecast's série-3 gate reuses `accountStatus` and counts only `"active"`.
+**AN ACCOUNT IS ACTIVE WHEN ITS MONEY IS RUNNING, NOT MERELY CONFIGURED — and the brand PAUSE FLAG is
+GONE from the rule, not kept as an override (supersedes the pause-first precedence of #427/#502).**
+Single source `accountStatus(configuredDailyBudgetUsd, runningDailyBudgetUsd, actualBalanceUsd,
+autoTopupEnabled)`, precedence **active > paused > inactive**: (1) `runningDailyBudgetUsd > 0 &&
+(autoTopupEnabled || orgActualBalanceUsd > runningDailyBudgetUsd)` → `"active"`; (2) else
+`configuredDailyBudgetUsd > 0` → `"paused"` (money POSTED with nothing running against it — the honest
+reading of a customer who set a ceiling and stopped, or never created, the campaign behind it); (3) else
+`"inactive"`.
+- **The pause flag LIED IN BOTH DIRECTIONS and is no longer written by any product surface.** That
+  customer control was removed; the campaign-service brand-pause table holds 8 rows, none written since
+  early August. Prod 2026-08-27: `a179bbd9` was flagged paused since 21 July while spending **$55.69 in
+  the prior 7 days** behind an ongoing campaign — so its money was excluded from MRR — while two brands
+  with a funded funnel and **no campaign at all** counted as active. Do NOT re-add it "just in case":
+  a stale flag that contradicts the running money is worse than no flag, and the running figure already
+  answers the question the flag was standing in for. `fetchBrandPause` is deleted, not disabled.
+- **The credit test is still the ACTUAL balance** (credited − ACTUALIZED usage), **never the spendable**
+  figure — a provisioned hold is in-flight ACTIVE spend, so subtracting it wrongly read the busiest
+  accounts "inactive" (features-service#502, unchanged). It gates on the RUNNING budget now, because
+  that is what a day of spending actually costs the org. An **auto-topup** org never runs dry → active
+  regardless of the momentary balance (`has_auto_topup` OPTIONAL, absent ⇒ not-enabled).
+- **All rows (active + paused + inactive) are LISTED — never dropped.** `stats.totalRunningDailyBudgetUsd`
+  and MRR(×30)/ARR(×365) sum **RUNNING** budget over ACTIVE rows only; `totalConfiguredDailyBudgetUsd`
+  rides alongside so a reader sees what those same customers POSTED and can never mistake one for the
+  other. send-forecast's série-3 gate reuses `accountStatus` and counts only `"active"`, so it projects
+  from the running budget too — a ceiling nobody spends against launches no sequences.
+- **Expect the fleet numbers to STEP DOWN on the day this deploys, and it is not churn.** Prod
+  2026-08-27, before → after: MRR **$3,450 → $2,610**, fleet daily budget **$138 configured → $87
+  running**, activeCount → **4**, which is exactly the number of brands that billed cold-email spend in
+  the prior 7 days. The committed MRR/ARR daily snapshots already recorded were written with the
+  inflated figure and **cannot be replayed** — see the staff-metrics section, which states the same
+  break beside the series it describes.
+- Guards: `src/lib/accounts-compute.test.ts` (the rule at each branch, the three production shapes, the
+  running-vs-configured split in `stats`) + `src/lib/accounts-client.test.ts` (pair keying, batching at
+  the producer's cap, and the unavailable-pair THROW). (Set 2026-08-27, features-service#837.)
 
 **Account universe = the SAME source send-forecast uses** — lead-service `/internal/feature-memberships`
 over the cold-email slugs (`coldEmailOutreachSlugs`), deduped to distinct (org, brand). Org-level reads
-(balance + Clerk id + owner email) run ONCE per org; the daily budget + the brand pause state are
-per-(org,brand); brand name/domain is one batched brand-service call. Fail loud on any read error.
+(balance + Clerk id + owner email) run ONCE per org; both budgets come back for EVERY pair in ONE
+batched call; brand name/domain is one batched brand-service call. Fail loud on any read error.
 
-- **paused** = campaign-service **`GET /brands/:brandId/pause`** → `{ paused }` (api-key + x-org-id; no
-  user/run). The brand pause lives in campaign-service (NOT brand/billing): a brand can be paused while
-  keeping a non-zero daily budget. No pause row → `paused:false` (active by default). Fail loud.
+- **configuredDailyBudgetUsd / runningDailyBudgetUsd** = campaign-service **`POST
+  /brands/spendable-budget`** (api-key, `{ brands: [{orgId, brandId}] }`, producer cap **500 pairs**
+  per request — `fetchSpendableBudgets`, `accounts-client.ts`). **Do NOT read billing's brand daily
+  budget here any more**: billing keys a ceiling on (funnel × channel × offer) and stores NO campaign
+  status, so its total is status-BLIND and counts money sitting on funnels whose campaign is stopped or
+  was never created. campaign-service owns the join of campaign status to per-funnel ceiling, so it is
+  the only service that can answer "running", and it returns BOTH figures plus `campaigns[]`/`rows[]`
+  decompositions — **never sum those; the producer already totalled them.** A ceiling written before the
+  offer level (`offerId: null`) still counts as RUNNING when a campaign on its funnel and channel is
+  ongoing. **A pair listed in the response's `unavailable[]` THROWS** — reading it as zero would
+  silently shrink a fleet total, which is the same reason the producer refuses to send a zero. The
+  BULK route exists precisely so a fleet audit does not fan out one request per brand.
 
 - **orgBalanceUsd / orgActualBalanceUsd / autoTopupEnabled** = billing **`GET
   /internal/accounts/by-org/:orgId/balance`** (user-less internal read — api-key only, org in path; NOT
@@ -2203,8 +2242,6 @@ per-(org,brand); brand name/domain is one batched brand-service call. Fail loud 
   auto-topup** (an org that never funded a wallet is inactive by the rule). That is a documented billing
   semantic, NOT a swallowed error — do NOT "fix" it to fail-loud (it would 500 the whole fleet audit on
   one unfunded org). Any OTHER non-OK fails loud.
-- **dailyBudgetUsd** = billing `GET /internal/brands/:brandId/daily-budget` (reuses
-  `fetchBrandDailyBudgetUsd`); `dailyBudgetCents:null` = unset/paused → row inactive.
 - **orgExternalId** (Clerk `org_...`) = client-service `GET /internal/orgs/:orgId` (NEW producer read,
   client-service). **ownerEmail** = client-service `GET /internal/users?orgId=` → earliest-created
   user's email (owner proxy; no staff flag exposed, so earliest-createdAt is the heuristic). A
@@ -2214,7 +2251,8 @@ per-(org,brand); brand name/domain is one batched brand-service call. Fail loud 
 - **brandName/brandDomain** = brand-service `GET /internal/brands?ids=` (batch, ≤100/req; missing ids
   omitted → null name/domain, still listed).
 
-Rows sort active-first, then daily budget desc (nulls last), tiebreak brandId. **Depends on the NEW
+Rows sort active-first, then RUNNING budget desc, then CONFIGURED budget desc (a paused row runs
+nothing, so its posted money is what ranks it), tiebreak brandId. **Depends on the NEW
 client-service `GET /internal/orgs/:orgId` + the SHARED `CLIENT_SERVICE_URL`/`CLIENT_SERVICE_API_KEY`
 in features-service's env file on the deploy host (`/root/distribute/env/features-service.env`), for
 both prod and staging.** Additive/dormant (no dashboard consumer yet). Reuses
@@ -2255,7 +2293,10 @@ an averaged ROI dressed as the brand's own) — and the revenue engine is not ev
 
 **Health badge (owned thresholds):** `red` = not active (paused/inactive/no budget); `green` = active AND
 ROI ≥ 1 AND audience not near-exhausted (`pctUsed < 80`); `yellow` = active but ROI < 1 (or unknown) OR
-audience `pctUsed ≥ 80`. The badge + its INPUTS are both returned (`health.inputs`).
+audience `pctUsed ≥ 80`. The badge + its INPUTS are both returned (`health.inputs`). **`hasBudget` reads
+the RUNNING budget** (`account.runningDailyBudgetUsd > 0`), the same rule `accountStatus` applies — a
+customer whose posted ceiling stands behind no ongoing campaign is not a green account. The row states
+BOTH budgets so a CSM can see the gap between what was posted and what is live.
 
 **Audience size/remaining/%used** derive from `AudienceStatsRow.evidence.memberCount` — a NEW field added to
 the audience evidence (`memberCount` = distinct member emails, ALREADY fetched for the outcome join, so free;
