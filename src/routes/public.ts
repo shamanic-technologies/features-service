@@ -63,7 +63,7 @@ import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } fro
 import { servedCached, PLATFORM_SCOPE_ORG_ID } from "../lib/view-cache.js";
 import {
   buildChannelCatalogue,
-  producibleStepCatalogue,
+  channelStepCatalogue,
   type PublicChannel,
 } from "../lib/channel-catalogue.js";
 import { pricePair, type PairResult } from "../lib/channel-funnel-economics.js";
@@ -2224,8 +2224,10 @@ async function loadPublishedChannels(): Promise<PublicChannel[]> {
 
 interface ChannelCataloguePayload {
   channels: PublicChannel[];
-  /** The step vocabulary itself, so a consumer never hardcodes it to join against a funnel's entry step. */
-  producibleSteps: ReturnType<typeof producibleStepCatalogue>;
+  /** The step vocabulary itself, so a consumer never hardcodes it to join a channel's legs against a
+   *  chain's. It spans EVERY step of every chain, not only the ones a chain can start from — a channel
+   *  that performs an internal leg names the step it moves a lead OUT of, and that step is never one. */
+  steps: ReturnType<typeof channelStepCatalogue>;
 }
 
 export async function handlePublicChannels(res: import("express").Response): Promise<void> {
@@ -2236,7 +2238,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
     label: "acquisition-channel catalogue",
     compute: async () => ({
       channels: await loadPublishedChannels(),
-      producibleSteps: producibleStepCatalogue(),
+      steps: channelStepCatalogue(),
     }),
   });
   res.json(payload);

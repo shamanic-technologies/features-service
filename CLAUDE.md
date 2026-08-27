@@ -476,19 +476,83 @@ Prod 2026-08-20, brand `75d7e3e8…` offer `d5ecba00…`: months of `sales-cold-
   per-feature read unchanged; the named 404), `src/lib/offer-channels.ts` + `src/lib/offer-parents.ts` +
   `src/lib/feature-scope.ts` for the rules themselves. (Set 2026-08-20.)
 
+## A SALES CHAIN IS SOLD LEG BY LEG — a channel states which step it moves a lead FROM and which step it moves it TO, and "from nothing" is the SPECIAL case (supersedes the produces-an-entry-step model)
+
+A four-step chain used to be sellable only end to end, because a channel could state nothing but the
+kinds of step it could PRODUCE, and every one of those is a step a chain STARTS from. That reads as the
+whole model only because it was the only kind of channel in the catalogue. It is not: booking a meeting
+off a reply, getting that meeting actually held, and closing it are three separate things somebody does,
+each with its own channel, its own daily budget and its own stats. Campaign provisioning already works
+per funded (chain, channel) pair, so the catalogue was the only thing in the way.
+
+- **A CHANNEL STATES ITS `stepTransitions` — `{ from, to }` — AND `from: null` IS "FROM NOTHING".** The
+  lead was not on the chain at all until this channel produced its first step. Every channel published
+  before this states only legs of that shape, which is written as one line by `producesFromNothing(...)`.
+  Do NOT reintroduce a bare `producibleSteps` on the STORED blob: that is the special case wearing the
+  clothes of the general one, which is exactly what made an internal leg unsayable.
+- **`producibleSteps` SURVIVES ON THE WIRE, DERIVED, WITH ITS MEANING INTACT** (`producibleStepsOf` =
+  the `to` of the `from: null` legs). A channel that only performs internal legs produces NOTHING, and
+  `[]` there is a real answer rather than a gap.
+- **THE JOIN IS STILL DERIVED — ONLY ITS GRAIN MOVED.** `sellableFunnelsFor` used to compare a channel's
+  produced steps against each chain's ENTRY step; it now compares its transitions against each chain's
+  LEGS, of which the entry (`{from: null, to: steps[0]}`) is simply the first. `funnelLegs` reads those
+  straight off `SALES_FUNNELS[key].steps` through `FUNNEL_STEP_LABEL_TO_KEY`, and a chain containing a
+  step this catalogue cannot name THROWS (`UnknownFunnelStepLabelError`) rather than silently losing a
+  leg — which would quietly stop a channel being sellable through a chain it can genuinely serve.
+- **EVERY CHANNEL PUBLISHED BEFORE THIS READS THE IDENTICAL LIST OF CHAINS**, verified row by row
+  against `origin/main` before shipping: 40 feature rows, zero drift. Cold email and CRM email still all
+  four, the feedback request still `sales_meetings_from_conversation` alone, a non-channel still `[]`.
+- **THE STEP VOCABULARY IS NOW THE UNION OF EVERY CHAIN'S STEPS, not the entry subset**
+  (`CHANNEL_STEP_KEYS`, nine): a channel performing an internal leg has to name the step it moves a lead
+  OUT of, and that step is never one a chain starts at. `meeting_booked` / `meeting_attended` / `signup`
+  / `form_filled` / `paid_client` joined the four that were there. This is precisely why the `in_ad_`
+  prefix was load-bearing all along — `form_filled` and `meeting_booked` are now real keys in the same
+  list, so the shorter spellings would COLLIDE outright.
+- **`operatedBy` SAYS WHO PUTS THE HOURS IN, and it is what makes a ZERO daily cost legible.** A leg a
+  human performs can be run by US (`platform` — the daily operating cost is that specialist's day) or by
+  the CUSTOMER (`customer` — their founder takes the call, their team confirms the meeting). A
+  customer-run channel spends none of the platform's money, so its `dailyOperatingCostCents` is
+  genuinely **0**, and the parser REFUSES a customer-operated channel that states anything else: we do
+  not charge for a day of work we do not do. **Do NOT invent a flat daily figure for those to make the
+  family look uniform** — what the leg costs THEM is stated per lead against lead-service, and a zero
+  nobody can read is indistinguishable from a field nobody filled in. Every channel that FINDS people
+  (any `from: null` leg) is `platform`-operated; a zero there WOULD be a hole, and is guarded.
+- **THE SAME LEG IS PUBLISHED TWICE, ours and theirs**, because those are two different things to buy:
+  `managed-meeting-booking` / `in-house-meeting-booking`, `managed-meeting-attendance` /
+  `in-house-meeting-attendance`, `managed-closing-calls` / `founder-led-closing`,
+  `managed-signup-conversion` / `in-house-signup-conversion`. Each pair states the IDENTICAL legs and
+  therefore the identical sellable chains; only the operator and the price differ. They carry the new
+  `conversion` family — nothing here finds anybody.
+- **A LEG CHANNEL IS PAIRED FROM DAY ONE AND ANSWERS `no_spend_recorded`.** `channel.salesFunnels` is
+  what `/public/channel-funnel-economics` builds pairs from, so these get their rows immediately; with
+  no run behind them the pooled evidence is empty and the pair states the honest missing ingredient.
+  Nothing was special-cased for them, and nothing here reads the per-lead declared costs a parallel
+  workspace is adding to lead-service — that reader belongs with the data.
+- **STILL NO AVAILABILITY FLAG, still no channel table, and no "convertor" beside "channel"** — it is
+  the CHANNEL that gained this capability, and the blob's key set is pinned to
+  `{family, operatedBy, stepTransitions, terms}`.
+- Guards: the widened-join cases in `src/lib/acquisition-channels.test.ts` (an internal leg sells its
+  chain; the two meeting chains share every leg after the booking; a leg no chain takes, and a backwards
+  leg, sell nothing), `src/lib/channel-catalogue.test.ts` (an unstated `from` and a leg-to-itself both
+  FAIL LOUD; a customer-operated channel with a daily cost fails; an internal-leg channel produces
+  nothing and still sells), and the two new suites in
+  `src/seed/acquisition-channel-catalogue.test.ts` (the three legs of a meeting chain as three products;
+  the ours-vs-theirs pairs agreeing on legs and disagreeing on price). (Set 2026-08-27.)
+
 ## A CHANNEL PUBLISHES ITS COMMERCIAL TERMS AND WHAT IT CAN PRODUCE; WHICH FUNNELS IT SELLS THROUGH IS DERIVED, NEVER A SECOND LIST
 
 An acquisition channel IS a feature slug — still no channel table, still no channel concept, and none
 may be introduced. What a feature now states is `acquisitionChannel`: the commercial terms a buyer
-commits to before anything is measured, and the kinds of STEP the channel can PRODUCE. Roughly thirty
-channels are published, all bookable from day one, and a public marketing site is generated from them.
+commits to before anything is measured, and the legs the channel can PERFORM (see the section above;
+this section's "kinds of STEP it can PRODUCE" is the `from: null` half of that). Roughly forty channels
+are published, all bookable from day one, and a public marketing site is generated from them.
 
-- **`salesFunnels` IS DERIVED (`sellableFunnelsFor`) AND MUST STAY DERIVED.** A channel states what it
-  produces; a funnel states what STARTS it (`SALES_FUNNEL_ENTRY_STEP`, mirrored from brand-service and
-  pinned against `SALES_FUNNELS[key].steps[0]`); a pairing is possible when the two meet. Hand-writing
-  `salesFunnels` again would restore the drift the derivation removes. The wire field is UNCHANGED and
-  every existing row reads byte-identically: cold email and CRM email still all four, the feedback
-  request still `sales_meetings_from_conversation` alone, a non-channel still `[]`.
+- **`salesFunnels` IS DERIVED (`sellableFunnelsFor`) AND MUST STAY DERIVED.** A channel states which leg
+  it performs; a funnel states its chain (`funnelLegs`, mirrored from brand-service and pinned against
+  `SALES_FUNNELS[key].steps`); a pairing is possible when the two meet. Hand-writing `salesFunnels`
+  again would restore the drift the derivation removes. The wire field is UNCHANGED and every existing
+  row reads byte-identically: cold email and CRM email still all four, the feedback request still
+  `sales_meetings_from_conversation` alone, a non-channel still `[]`.
 - **NULL ON `acquisitionChannel` IS A WRITTEN STATEMENT** — this feature is not an acquisition channel
   (hiring, VC and accelerator outreach, outlet discovery, press-kit generation, AI visibility). It
   acquires something other than a customer, or is internal tooling, so there is nothing to pair it with.
@@ -512,7 +576,9 @@ channels are published, all bookable from day one, and a public marketing site i
   "Form filled" and "Meeting booked" ALREADY exist in the deployed catalogue as INTERMEDIATE steps
   (`form_magnet` step 2, both meeting chains' milestone), reached through a click or a reply onto the
   brand's site; an ad produces an ENTRY step reached without ever getting there, so the bare names
-  invite a consumer to read such a channel as able to START `form_magnet`, which it cannot. `platform_`
+  invite a consumer to read such a channel as able to START `form_magnet`, which it cannot. Since the
+  leg-by-leg change those two are LITERAL KEYS in `CHANNEL_STEP_KEYS` (`form_filled`, `meeting_booked`),
+  so the shorter spellings would now collide outright rather than merely mislead. `platform_`
   (the first spelling, renamed 2026-08-19) is wrong because `platform` is this fleet's word for OUR OWN
   platform, and `ad_` alone reads as "attributed to an ad" — i.e. filled on the brand's site after the
   click, the very reading the prefix blocks.
@@ -552,9 +618,12 @@ channels are published, all bookable from day one, and a public marketing site i
 Both are public and identity-free by design: a site that restates the terms is a site that can drift
 from what we actually charge and actually measured.
 
-- **`/public/channels`** serves the catalogue: terms, producible steps (each with buyer-facing wording),
-  and the derived funnels, each carrying its own chain so a row renders without the consumer knowing the
-  catalogue. The step vocabulary rides the payload so nothing hardcodes it.
+- **`/public/channels`** serves the catalogue: terms, `operatedBy`, the LEGS the channel performs (each
+  side with buyer-facing wording, `from: null` for "from nothing"), the derived `producibleSteps`, and
+  the derived funnels, each carrying its own chain so a row renders without the consumer knowing the
+  catalogue. The step vocabulary rides the payload under `steps` (renamed from `producibleSteps` when it
+  widened past the entry subset; the gateway does not proxy `/public/*`, so it had no outside consumer)
+  so nothing hardcodes it.
 - **`/public/channel-funnel-economics`** serves ONE ROW PER PAIR — the grain the marketing site prints.
   A customer buys a PAIR, and the same chain costs a very different amount through a phone channel than
   through paid search, so a brand-level or channel-level aggregate cannot answer it. `?channelSlug=`

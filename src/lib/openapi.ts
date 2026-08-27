@@ -2277,10 +2277,25 @@ const channelTermsSchema = z.object({
   maxDaysToFirstProduction: z.number().int().describe("UPPER BOUND on how many days after booking the channel starts producing — a promise, not an estimate. A channel we are slower to deliver says so HERE; there is deliberately no availability or coming-soon flag anywhere on this payload."),
 });
 
-const producibleStepSchema = z.object({
-  key: z.enum(["conversation", "website_visit", "in_ad_form_submission", "in_ad_booked_meeting"]),
+const channelStepSchema = z.object({
+  key: z.enum([
+    "conversation",
+    "website_visit",
+    "meeting_booked",
+    "meeting_attended",
+    "signup",
+    "form_filled",
+    "paid_client",
+    "in_ad_form_submission",
+    "in_ad_booked_meeting",
+  ]),
   label: z.string(),
   description: z.string(),
+});
+
+const channelStepTransitionSchema = z.object({
+  from: channelStepSchema.nullable().describe("The step this channel takes a lead OUT of. NULL is 'from nothing' — the lead was not on the chain at all until this channel produced its first step, which is the SPECIAL case rather than the rule."),
+  to: channelStepSchema.describe("The step this channel moves the lead TO."),
 });
 
 const publicChannelSchema = registry.register(
@@ -2291,10 +2306,12 @@ const publicChannelSchema = registry.register(
     description: z.string(),
     icon: z.string(),
     displayOrder: z.number().int(),
-    family: z.enum(["outbound_one_to_one", "paid_reach", "earned"]),
+    family: z.enum(["outbound_one_to_one", "paid_reach", "earned", "conversion"]),
+    operatedBy: z.enum(["platform", "customer"]).describe("WHO puts the hours in. `platform` is us, and the daily operating cost is what that costs. `customer` is their own founder or team, so the platform spends nothing and the daily operating cost is 0 — a stated fact, not a blank. What such a leg costs THEM is declared per lead against lead-service; this catalogue never guesses at it."),
     terms: channelTermsSchema,
-    producibleSteps: z.array(producibleStepSchema).describe("The kinds of step this channel can PRODUCE. A sales funnel states what step STARTS it, so a consumer joins the two to decide which pairings are possible."),
-    salesFunnels: z.array(z.object({ key: z.string(), name: z.string(), steps: z.array(z.string()) })).describe("The sales funnels this channel may be SOLD THROUGH — DERIVED from what it produces, so it can never drift from `producibleSteps`. An empty list is a real statement (no deployed chain starts from anything this channel produces), not a gap."),
+    stepTransitions: z.array(channelStepTransitionSchema).describe("Every LEG this channel performs: which step it moves a lead FROM and which step it moves it TO. A chain is sold leg by leg, not only end to end — booking a meeting, getting it held, and closing it are three separate things to buy. `from: null` means the channel moves a lead from nothing onto the chain's first step."),
+    producibleSteps: z.array(channelStepSchema).describe("The steps this channel produces FROM NOTHING — DERIVED as the `to` of its `from: null` legs, and unchanged in meaning from before a channel could state an internal leg. A channel that only performs internal legs of a chain legitimately produces none."),
+    salesFunnels: z.array(z.object({ key: z.string(), name: z.string(), steps: z.array(z.string()) })).describe("The sales funnels this channel may be SOLD THROUGH — DERIVED as every declared chain containing one of its `stepTransitions` as a leg, so it can never drift from them. An empty list is a real statement (no deployed chain takes any step this channel performs), not a gap."),
   }),
 );
 
@@ -2302,7 +2319,7 @@ const channelCatalogueResponseSchema = registry.register(
   "ChannelCatalogueResponse",
   z.object({
     channels: z.array(publicChannelSchema),
-    producibleSteps: z.array(producibleStepSchema).describe("The step vocabulary itself, published so a consumer never hardcodes it to join against a funnel's entry step."),
+    steps: z.array(channelStepSchema).describe("The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a chain's. It spans EVERY step of every chain, not only the ones a chain can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a chain starts at."),
   }),
 );
 
@@ -2311,7 +2328,7 @@ registry.registerPath({
   path: "/public/channels",
   summary: "Every acquisition channel, its commercial terms and what it can produce (public, no auth)",
   description:
-    "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), the kinds of step it can PRODUCE, and the sales funnels that follow from those steps. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
+    "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), which LEG of a chain it performs (the step it moves a lead FROM and the step it moves it TO), who operates it, and the sales funnels that follow from those legs. A chain is sellable LEG BY LEG rather than only end to end, so the catalogue publishes channels for the internal steps a human performs — the ones a specialist of ours runs and the ones the customer runs themselves. A channel the CUSTOMER operates spends none of the platform's money, so its daily operating cost is 0 and `operatedBy` is what makes that zero legible. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
   tags: ["Public"],
   responses: {
     200: { description: "The acquisition-channel catalogue", content: { "application/json": { schema: channelCatalogueResponseSchema } } },
