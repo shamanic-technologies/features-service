@@ -143,6 +143,11 @@ interface Fixture {
   leads: Array<Record<string, unknown>>;
   /** What brand-service says the brand declared. `null` = the read fails (a producer gap). */
   declared?: typeof DECLARED | null;
+  /**
+   * What lead-service says the CUSTOMER spent on the legs they worked themselves, per statement.
+   * Omitted = a readable, empty set (nobody has stated one). `null` = the read fails.
+   */
+  stepCosts?: Array<{ campaignId: string | null; step: string; kind: "outcome" | "never"; costCents: number | null }> | null;
 }
 
 /**
@@ -226,6 +231,28 @@ function mockFetch(fixture: Fixture): void {
     }
     if (path.includes("/manual-qualifications")) return json({ qualifications: [] });
     if (path.includes("/converted-leads")) return json({ outcomes: [] });
+    if (path.includes("/step-costs")) {
+      const rows = fixture.stepCosts === undefined ? [] : fixture.stepCosts;
+      if (rows === null) return new Response("boom", { status: 502 });
+      return json({
+        brandId: BRAND,
+        totalCostCents: rows.reduce((n, r) => n + (r.costCents ?? 0), 0),
+        statedCount: rows.filter((r) => r.costCents !== null).length,
+        unstatedCount: rows.filter((r) => r.costCents === null).length,
+        byStep: {},
+        costs: rows.map((r) => ({
+          leadId: null,
+          leadCampaignId: null,
+          campaignId: r.campaignId,
+          email: null,
+          step: r.step,
+          kind: r.kind,
+          costCents: r.costCents,
+          statedByUserId: null,
+          occurredAt: null,
+        })),
+      });
+    }
     if (path.includes("/step-disqualifications")) return json({ disqualifications: [] });
     if (path.endsWith("/orgs/status")) return json({ results: [] });
     if (path.includes("/members")) return json({ members: [] });
@@ -263,6 +290,16 @@ type ChainRow = {
   unpricedReason: string | null;
   headline: { totalPipelineUsd: number | null };
   costEconomics: { committedCostUsd: number; roiMultiple: number | null; costOfAcquisitionPct: number | null; costPerAcquisitionUsd: number | null };
+  customerCost: { declaredCostUsd: number; statedCount: number; unstatedCount: number } | null;
+  costCoverage: string;
+  combinedCostEconomics: {
+    platformCommittedCostUsd: number;
+    customerDeclaredCostUsd: number;
+    committedCostUsd: number;
+    roiMultiple: number | null;
+    costOfAcquisitionPct: number | null;
+    costPerAcquisitionUsd: number | null;
+  };
   outcomes: { recipientsContacted: number } | null;
 };
 
@@ -473,7 +510,10 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
     expect(res.status).toBe(200);
 
     expect(Object.keys(res.body.chains[0]).sort()).toEqual(
-      ["campaignIds", "channels", "costEconomics", "funnelKey", "headline", "name", "outcomes", "priced", "steps", "unpricedReason"].sort(),
+      [
+        "campaignIds", "channels", "combinedCostEconomics", "costCoverage", "costEconomics", "customerCost",
+        "funnelKey", "headline", "name", "outcomes", "priced", "steps", "unpricedReason",
+      ].sort(),
     );
   });
 
@@ -510,5 +550,156 @@ describe("GET /offers/:offerId/chains — an offer's money, one row per sales ch
     expect(offers.status).toBe(200);
     expect(offers.body.offers).toHaveLength(1);
     expect(offers.body.offers[0].costEconomics.committedCostUsd).toBeCloseTo(50.39, 6);
+  });
+});
+
+/**
+ * A CHAIN'S COST OF ACQUISITION COUNTS WHAT THE CUSTOMER SPENT ON IT TOO.
+ *
+ * The platform automates the first link and CHARGES for it; the customer runs the meeting and closes
+ * the deal, and lead-service records what those legs cost THEM. Driven from the same one fixture, so
+ * the charged half and the declared half are two views of one campaign set rather than two
+ * computations to reconcile. What they pin:
+ *
+ *   - a chain whose customer-worked legs carry declared costs reports a cost of acquisition that
+ *     includes them, and a return computed from it;
+ *   - a chain with NONE reports exactly what it reported before this existed;
+ *   - the two kinds of money stay tellable apart — `costEconomics` never moves, and none of the
+ *     customer's money is folded into what we charged;
+ *   - a leg nobody stated a cost for is never fabricated: it raises `unstatedCount` and the chain says
+ *     it can only be partly costed;
+ *   - a statement is attributed by CAMPAIGN, so it lands in one row and nowhere else, and one that
+ *     cannot be placed is stated apart rather than dropped;
+ *   - the stated basis describes what the figures are actually made of, per row and for the payload;
+ *   - an unreadable statement set degrades the customer half and 502s nothing.
+ */
+describe("GET /offers/:offerId/chains — the customer's own money", () => {
+  beforeEach(withFeatures);
+  afterEach(() => vi.restoreAllMocks());
+
+  /** $40.07 charged on the conversation chain; the customer states $120 + $80 of their own legs. */
+  const WITH_CUSTOMER_COST: Fixture = {
+    ...ONE_CAMPAIGN_PER_CHAIN,
+    stepCosts: [
+      { campaignId: "c1", step: "meeting_attended", kind: "outcome", costCents: 12_000 },
+      { campaignId: "c1", step: "sale", kind: "never", costCents: 8_000 },
+    ],
+  };
+
+  it("a chain whose customer-worked legs carry declared costs is priced with them in", async () => {
+    mockFetch(WITH_CUSTOMER_COST);
+    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    expect(res.status).toBe(200);
+    const by = chainsOf(res.body);
+    const row = by[CONVERSATION];
+
+    // What we CHARGED is untouched — it is a billing fact and none of their money is folded into it.
+    expect(row.costEconomics.committedCostUsd).toBeCloseTo(40.07, 6);
+    // What THEY spent, stated apart. A "never" still cost: the meeting was run and went nowhere.
+    expect(row.customerCost).toEqual({ declaredCostUsd: 200, statedCount: 2, unstatedCount: 0 });
+    expect(row.costCoverage).toBe("platform_and_customer_spend");
+
+    // The two together, and the return that divides by the sum.
+    expect(row.combinedCostEconomics.platformCommittedCostUsd).toBeCloseTo(40.07, 6);
+    expect(row.combinedCostEconomics.customerDeclaredCostUsd).toBeCloseTo(200, 6);
+    expect(row.combinedCostEconomics.committedCostUsd).toBeCloseTo(240.07, 6);
+    // The whole point: a chain ending in a human leg is dearer, so its return is SMALLER than the one
+    // computed off the billed link alone — the overstatement is what this closes.
+    expect(row.combinedCostEconomics.roiMultiple).toBeLessThan(row.costEconomics.roiMultiple!);
+    expect(row.combinedCostEconomics.costOfAcquisitionPct).toBeGreaterThan(row.costEconomics.costOfAcquisitionPct!);
+    expect(row.combinedCostEconomics.costPerAcquisitionUsd).toBeGreaterThan(row.costEconomics.costPerAcquisitionUsd!);
+    // Same statement in two units, as everywhere else here.
+    expect(row.combinedCostEconomics.roiMultiple).toBeCloseTo(
+      100 / row.combinedCostEconomics.costOfAcquisitionPct!,
+      6,
+    );
+
+    // A statement is attributed by CAMPAIGN, so the other chain's row does not move at all.
+    expect(by[WEBSITE].customerCost).toEqual({ declaredCostUsd: 0, statedCount: 0, unstatedCount: 0 });
+    expect(by[WEBSITE].costCoverage).toBe("platform_spend_only");
+    expect(by[WEBSITE].combinedCostEconomics.committedCostUsd).toBeCloseTo(
+      by[WEBSITE].costEconomics.committedCostUsd,
+      6,
+    );
+
+    // The payload states the WEAKEST of its rows: one chain here is not costed at all.
+    expect(res.body.costCoverage).toBe("platform_spend_only");
+    expect(res.body.customerCost.declaredCostUsd).toBeCloseTo(200, 6);
+    expect(res.body.customerCost.unattributed).toEqual({ declaredCostUsd: 0, statedCount: 0, unstatedCount: 0 });
+  });
+
+  it("a chain with NO customer-declared cost answers exactly as it does today", async () => {
+    mockFetch(ONE_CAMPAIGN_PER_CHAIN);
+    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    expect(res.status).toBe(200);
+    const row = chainsOf(res.body)[CONVERSATION];
+
+    expect(row.costCoverage).toBe("platform_spend_only");
+    expect(row.customerCost).toEqual({ declaredCostUsd: 0, statedCount: 0, unstatedCount: 0 });
+    // Additive, not a re-pricing: the combined block IS the charged one when nobody spent anything.
+    expect(row.combinedCostEconomics.customerDeclaredCostUsd).toBe(0);
+    expect(row.combinedCostEconomics.committedCostUsd).toBeCloseTo(row.costEconomics.committedCostUsd, 6);
+    expect(row.combinedCostEconomics.roiMultiple).toBeCloseTo(row.costEconomics.roiMultiple!, 6);
+    expect(row.combinedCostEconomics.costPerAcquisitionUsd).toBeCloseTo(row.costEconomics.costPerAcquisitionUsd!, 6);
+    expect(res.body.costCoverage).toBe("platform_spend_only");
+  });
+
+  it("a leg nobody stated a cost for is NEVER fabricated — the chain says it is only partly costed", async () => {
+    mockFetch({
+      ...ONE_CAMPAIGN_PER_CHAIN,
+      stepCosts: [
+        { campaignId: "c1", step: "meeting_attended", kind: "outcome", costCents: 12_000 },
+        // Stated before the cost became mandatory: nobody was ever asked. Absent is absent.
+        { campaignId: "c1", step: "sale", kind: "outcome", costCents: null },
+        // A stated ZERO is an ANSWER, not an absence — somebody did that leg for free.
+        { campaignId: "c1", step: "meeting_booked", kind: "outcome", costCents: 0 },
+      ],
+    });
+    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    const row = chainsOf(res.body)[CONVERSATION];
+
+    expect(row.customerCost).toEqual({ declaredCostUsd: 120, statedCount: 2, unstatedCount: 1 });
+    expect(row.costCoverage).toBe("platform_and_partial_customer_spend");
+    expect(row.combinedCostEconomics.committedCostUsd).toBeCloseTo(160.07, 6);
+    expect(res.body.costCoverage).toBe("platform_and_partial_customer_spend");
+  });
+
+  it("a statement that belongs to no chain of this offer is stated apart, never dropped and never parked", async () => {
+    mockFetch({
+      ...ONE_CAMPAIGN_PER_CHAIN,
+      stepCosts: [
+        { campaignId: "c1", step: "sale", kind: "outcome", costCents: 5_000 },
+        // A campaign this offer does not sell through, and a statement naming none at all.
+        { campaignId: "elsewhere", step: "sale", kind: "outcome", costCents: 9_900 },
+        { campaignId: null, step: "sale", kind: "outcome", costCents: 100 },
+      ],
+    });
+    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    const by = chainsOf(res.body);
+
+    expect(by[CONVERSATION].customerCost!.declaredCostUsd).toBeCloseTo(50, 6);
+    expect(by[WEBSITE].customerCost!.declaredCostUsd).toBe(0);
+    expect(res.body.customerCost.unattributed).toEqual({
+      declaredCostUsd: 100,
+      statedCount: 2,
+      unstatedCount: 0,
+    });
+    // Nothing is lost: the rows plus the leftovers ARE the brand's statements for this offer's read.
+    expect(res.body.customerCost.declaredCostUsd).toBeCloseTo(150, 6);
+  });
+
+  it("an unreadable statement set degrades the customer half and 502s nothing", async () => {
+    mockFetch({ ...ONE_CAMPAIGN_PER_CHAIN, stepCosts: null });
+    const res = await request(app).get(`/offers/${OFFER}/chains?brandId=${BRAND}`).set(AUTH);
+    expect(res.status).toBe(200);
+    const row = chainsOf(res.body)[CONVERSATION];
+
+    // NULL is "we could not read the statements" — never confused with "nobody stated one" (zeros).
+    expect(row.customerCost).toBeNull();
+    expect(res.body.customerCost).toBeNull();
+    // The stated basis is still TRUE, and every charged figure is exactly what it was.
+    expect(res.body.costCoverage).toBe("platform_spend_only");
+    expect(row.costEconomics.committedCostUsd).toBeCloseTo(40.07, 6);
+    expect(row.combinedCostEconomics.committedCostUsd).toBeCloseTo(40.07, 6);
   });
 });

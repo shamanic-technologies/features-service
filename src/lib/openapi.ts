@@ -1079,6 +1079,18 @@ registry.registerPath({
 // in both rows — so the rows do not sum on the pipeline half and the offer read stays the number to
 // trust for "what did this offer do".
 
+const customerDeclaredCostSchema = z.object({
+  declaredCostUsd: z.number().describe("The sum of every STATED cost in this scope. A leg nobody was ever asked about contributes nothing rather than a fabricated zero."),
+  statedCount: z.number().describe("How many statements carried a cost. A stated 0 is an answer and is counted here."),
+  unstatedCount: z.number().describe("How many did not, because nobody was ever asked. Greater than 0 means this scope cannot be fully costed."),
+});
+
+const chainCostCoverageSchema = z.enum([
+  "platform_spend_only",
+  "platform_and_customer_spend",
+  "platform_and_partial_customer_spend",
+]);
+
 const offerChainRowSchema = z.object({
   funnelKey: z.string().describe("The sales chain, canonicalised onto this service's catalogue."),
   name: z.string().describe("The chain's buyer-facing name."),
@@ -1094,6 +1106,26 @@ const offerChainRowSchema = z.object({
     ),
   headline: featureRevenueResponseSchema.shape.headline,
   costEconomics: featureRevenueResponseSchema.shape.costEconomics,
+  customerCost: customerDeclaredCostSchema
+    .nullable()
+    .describe(
+      "What the CUSTOMER states the legs they worked themselves cost them, for this chain's campaign set. Never charged, in no ledger of ours, and it never reaches billing — it is reported BESIDE `costEconomics`, never inside it, so a consumer renders either without inferring one from the other. Null ONLY when the statements could not be read at all; a brand nobody has stated a cost for reads zeros, which is a different answer.",
+    ),
+  costCoverage: chainCostCoverageSchema.describe(
+    "Which dollars the figures on this ROW are made of. platform_spend_only: no statement is attributable to this chain, so it reads exactly as it did before customer costs existed. platform_and_customer_spend: every attributable statement carries a cost. platform_and_partial_customer_spend: some legs were never stated, so the customer half is a floor — a chain we cannot fully cost says so rather than guessing at the rest.",
+  ),
+  combinedCostEconomics: z
+    .object({
+      platformCommittedCostUsd: z.number().describe("What the platform CHARGED — byte-equal to costEconomics.committedCostUsd."),
+      customerDeclaredCostUsd: z.number().describe("What the customer states their own legs cost them. Never billed."),
+      committedCostUsd: z.number().describe("The two together — the basis the three figures below divide by."),
+      costOfAcquisitionPct: z.number().nullable(),
+      roiMultiple: z.number().nullable(),
+      costPerAcquisitionUsd: z.number().nullable(),
+    })
+    .describe(
+      "The chain's cost of acquisition WITH the customer's own legs in it, and the return that divides by it. The byte-same three ratios costEconomics computes, off the summed basis and the SAME lifetime revenue — so with nothing declared this block is identical to the charged one, and the day a cost is stated the whole ladder moves together instead of one figure drifting from the others. Reported apart from the charged block because what we charged and what they spent are two questions with two owners, and one of them is what we bill.",
+    ),
   outcomes: featureRevenueResponseSchema.shape.outcomes,
 });
 
@@ -1101,10 +1133,18 @@ const offerChainsResponseSchema = z.object({
   offerId: z.string(),
   brandId: z.string(),
   costBasis: z.literal("charged").describe("What the customer was CHARGED — a comped cost is not in it. Same accounting basis as every other org-scoped money read."),
-  costCoverage: z
-    .literal("platform_spend_only")
+  costCoverage: chainCostCoverageSchema.describe(
+    "Which dollars the payload AS A WHOLE is made of — the WEAKEST coverage among its rows, because the marker is an admission: a payload holding one fully-costed chain and one that could not be costed at all is not a fully-costed payload. The platform automates the first link of a chain and charges for it; the customer performs the rest and states what those legs cost them, so a chain ending in a human leg is only fully costed once every one of its statements carries a figure.",
+  ),
+  customerCost: customerDeclaredCostSchema
+    .extend({
+      unattributed: customerDeclaredCostSchema.describe(
+        "Statements naming no campaign, or a campaign belonging to no chain of this offer. They are in NO row and stated here, so a reader sees the difference rather than wondering where they went.",
+      ),
+    })
+    .nullable()
     .describe(
-      "Which dollars this cost is made of: the platform spend runs-service ledgers, and nothing else. Some steps of a chain are performed by a human on the customer's side and the platform spends nothing on them, so a chain whose last legs are manual reads cheaper here than it truly is. lead-service is adding a customer-declared cost per step transition and exposes none today; inventing one would be the fabricated figure this read refuses everywhere else, so the basis is stated on the wire instead.",
+      "The customer's own declared money across this offer, rows and leftovers together. NULL means the statements could not be READ; zeros mean nobody has stated one — two different things a consumer acts on differently, so they are never collapsed. None of this was charged to the organisation and none of it reaches billing.",
     ),
   chains: z.array(offerChainRowSchema).describe("One LEAN row per chain the offer sells through, in the catalogue's canonical order. Lean (headline + costEconomics + outcomes) because a table polls it: a full body per chain would repeat the whole lead population once per row."),
   unattributedCampaignIds: z
@@ -1121,6 +1161,7 @@ registry.registerPath({
   description:
     "The (offer x sales chain) grain: one row per chain the offer is sold through, each carrying that chain's own spend, pipeline, return per dollar and cost of acquisition. " +
     "It is the grain the product needs as it moves to ONE CAMPAIGN PER STEP — a campaign then buys a single link and has no return of its own, because the lifetime revenue sits at the end of the chain. Correct under both shapes with no switch: the row is scoped to the chain's CAMPAIGN SET, so a chain served by one campaign (every chain in production today) is byte-equal to that campaign's own answer, and a chain served by one campaign per step is the same row over the larger set. " +
+    "Each chain's cost of acquisition is stated twice, apart: `costEconomics` is what the customer was CHARGED, `customerCost` is what they state the legs they worked themselves cost them, and `combinedCostEconomics` is the two together with the return that divides by that sum. `costCoverage` says which dollars a figure is made of, per row and for the payload, so the stated basis is always true rather than always the same. " +
     "Each chain is priced on its OWN declared terms — its own rates and its own lifetime revenue — so a $200 self-serve chain and a $20k contract chain are never blended. A chain we cannot price says which ingredient is missing (`unpricedReason`) and reports its real spend beside a null return. " +
     "The composition happens here: nothing on this response is meant to be summed in a browser, and the rows deliberately do not sum on the people half.",
   tags: ["Stats"],

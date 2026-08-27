@@ -94,3 +94,65 @@ export function buildCostEconomics(input: {
     expectedPaidClients === null || expectedPaidClients === 0 ? null : committedCostUsd / expectedPaidClients;
   return { committedCostUsd, actualCostUsd, costOfAcquisitionPct, roiMultiple, costPerAcquisitionUsd };
 }
+
+/**
+ * THE SAME SCOPE'S MONEY WITH THE CUSTOMER'S OWN LEGS IN IT — reported BESIDE the charged figures,
+ * never inside them.
+ *
+ * The platform automates the first link of a sales chain and bills for it; the customer performs the
+ * rest, and lead-service records what those legs cost them. A cost of acquisition that counts only the
+ * billed link is too small for every chain that ends in a human leg, and the return that divides by it
+ * is too good — the single most misleading figure a customer can be shown about their own money.
+ *
+ * The two kinds of money stay TELLABLE APART, which is why this is a second block rather than a wider
+ * `committedCostUsd`. What we CHARGED them is a billing fact this service reports elsewhere and must
+ * keep reporting unchanged; what THEY spent is their own statement, owned by them, in no ledger of
+ * ours. Both spends are stated on this block, so a consumer renders either without inferring one from
+ * the other, and nothing here ever reaches billing.
+ *
+ * The ratios are the byte-same three `buildCostEconomics` computes, off the summed basis and the SAME
+ * lifetime revenue — so with nothing declared this block is identical to the charged one, and the day
+ * a customer states a cost the whole ladder moves together instead of one figure drifting from the
+ * others.
+ */
+export interface CombinedCostEconomics {
+  /** What the platform CHARGED for this scope, in dollars — byte-equal to `costEconomics.committedCostUsd`. */
+  platformCommittedCostUsd: number;
+  /** What the CUSTOMER states their own legs cost them, in dollars. Never charged, never billed. */
+  customerDeclaredCostUsd: number;
+  /** The two together — the basis the three figures below divide by. */
+  committedCostUsd: number;
+  costOfAcquisitionPct: number | null;
+  roiMultiple: number | null;
+  costPerAcquisitionUsd: number | null;
+}
+
+export function buildCombinedCostEconomics(input: {
+  /** The charged block for the same scope — its committed total is one half of the basis. */
+  charged: CostEconomics;
+  /** The customer's stated cost for the same scope, in cents. 0 when nobody stated one. */
+  customerDeclaredCostCents: number;
+  totalPipelineUsd: number | null;
+  lifetimeRevenueUsd?: number | null;
+}): CombinedCostEconomics {
+  const { charged, customerDeclaredCostCents, totalPipelineUsd, lifetimeRevenueUsd } = input;
+  const customerDeclaredCostUsd = customerDeclaredCostCents / 100;
+  const combined = buildCostEconomics({
+    // Cents in, cents out — the charged half is carried back at full precision rather than
+    // re-rounded, since runs-service returns fractional cents per group.
+    committedCostInUsdCents: charged.committedCostUsd * 100 + customerDeclaredCostCents,
+    // Reported only, and not by this block: an "actual" figure asserts BILLED money, and the customer's
+    // own spend was never billed. It is dropped here rather than quietly widened.
+    actualCostInUsdCents: 0,
+    totalPipelineUsd,
+    lifetimeRevenueUsd,
+  });
+  return {
+    platformCommittedCostUsd: charged.committedCostUsd,
+    customerDeclaredCostUsd,
+    committedCostUsd: combined.committedCostUsd,
+    costOfAcquisitionPct: combined.costOfAcquisitionPct,
+    roiMultiple: combined.roiMultiple,
+    costPerAcquisitionUsd: combined.costPerAcquisitionUsd,
+  };
+}

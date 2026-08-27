@@ -95,6 +95,15 @@ import {
 } from "../lib/offer-channels.js";
 import { buildOfferChains, type OfferChain } from "../lib/offer-chains.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
+import { fetchBrandStepCostsSoft } from "../lib/step-costs-client.js";
+import {
+  partitionCustomerCosts,
+  coverageOf,
+  summariseCoverage,
+  type ChainCostCoverage,
+  type CustomerDeclaredCost,
+} from "../lib/chain-customer-costs.js";
+import { buildCombinedCostEconomics } from "../lib/cost-economics.js";
 
 const router = Router();
 
@@ -437,14 +446,33 @@ router.get("/offers/:offerId/pipeline-activity", apiKeyAuth, async (req, res) =>
 // legitimately take: pricing chain A on a brand-wide record — whose every rate is server-defaulted —
 // is exactly the fiction the retired goal produced, one grain finer.
 //
-// ── WHAT THIS COST DOES NOT YET INCLUDE ────────────────────────────────────────────────────────
+// ── TWO OWNERS OF MONEY, TOLD APART ────────────────────────────────────────────────────────────
 //
-// `costCoverage: "platform_spend_only"`. Some steps of a chain are performed by a human on the
-// customer's side and the platform spends nothing on them, so a chain whose last legs are manual reads
-// cheaper here than it truly is. lead-service is adding a customer-declared cost per step transition;
-// it exposes none today (verified against its deployed contract), and inventing one would be the
-// fabricated figure this endpoint refuses everywhere else. The marker states the basis on the wire so
-// no consumer has to guess which dollars are in it.
+// The platform automates the first link of a chain and CHARGES for it; the customer performs the rest —
+// they run the meeting, they close the deal — and lead-service now records what those legs cost THEM
+// (`GET /internal/brands/:brandId/step-costs`). A cost of acquisition that counts only the billed link
+// is too small for every chain ending in a human leg, and the return dividing by it is too good.
+//
+// So the row states both, apart:
+//
+//   costEconomics          — what the customer was CHARGED. A billing fact, unchanged, unwidened.
+//   customerCost           — what THEY state their own legs cost. Never charged, in no ledger of ours,
+//                            and it never reaches billing.
+//   combinedCostEconomics  — the two together, and the return that divides by that sum.
+//
+// A statement is made on a lead row, which belongs to a CAMPAIGN, and a campaign states exactly one
+// chain — so the campaign set that scopes a row's charged spend scopes its declared spend too, with
+// nothing inferred. A statement naming no campaign, or a campaign in no chain of this offer, is
+// reported apart (`customerCost.unattributed`) rather than dropped or parked on a default.
+//
+// A STATED ZERO IS AN ANSWER; AN UNSTATED LEG IS NOT. A leg nobody was ever asked about contributes
+// nothing to the sum and raises `unstatedCount`, and the chain then says `platform_and_partial_customer_spend`
+// — a chain we cannot fully cost says so instead of guessing at the rest. With nothing declared at all
+// the row reads exactly as it did before this and the marker still says `platform_spend_only`, which
+// is why the basis on the wire is always TRUE rather than always the same.
+//
+// The read is fail-SOFT: an unreadable statement set degrades the customer half (null, loud log) rather
+// than 502-ing a row whose charged money, volume and platform-priced return are all correct.
 router.get("/offers/:offerId/chains", apiKeyAuth, async (req, res) => {
   try {
     const authed = req as AuthenticatedRequest & { params: { offerId: string } };
@@ -481,12 +509,22 @@ router.get("/offers/:offerId/chains", apiKeyAuth, async (req, res) => {
     // new cell instead of replaying the pre-write answer. Skipped entirely when no chain has a channel
     // that measures anything — there is then nothing to price.
     const anyFunnel = chains.some((chain) => distinctChannelFunnels(chain.channels).length > 0);
-    const [declaredFunnels, brandEconomics] = anyFunnel
+    // The customer's own statements are read whether or not a chain can be PRICED: what they spent on
+    // a leg is a fact about their money, not about our ability to turn it into a return. One
+    // brand-scoped read serves every row, exactly as the economics pair beside it does.
+    const [declaredFunnels, brandEconomics, stepCosts] = anyFunnel
       ? await Promise.all([
           fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId),
           fetchEffectiveEconomics(brandId, headers),
+          fetchBrandStepCostsSoft(brandId),
         ])
-      : [[], null];
+      : [[], null, await fetchBrandStepCostsSoft(brandId)];
+    const customerCosts = stepCosts
+      ? partitionCustomerCosts(
+          stepCosts.costs,
+          chains.map((chain) => ({ key: chain.funnelKey, campaignIds: chain.campaignIds })),
+        )
+      : null;
     const declaredKeys = new Set(declaredFunnels.map((f) => f.funnelKey));
     const decl = anyFunnel ? [...declaredKeys].sort().join("+") || "none" : undefined;
     const econ = brandEconomics ? economicsFingerprint(brandEconomics) : undefined;
@@ -502,6 +540,12 @@ router.get("/offers/:offerId/chains", apiKeyAuth, async (req, res) => {
           .map((chain) => `${chain.funnelKey}>${chain.channels.map((c) => c.featureSlug).join("+")}`)
           .join(","),
         unattributed: unattributedCampaignIds.join("+"),
+        // The customer's declared money is part of every combined figure below, so a new statement has
+        // to land on a NEW cell rather than replay the answer from before it was made — the same
+        // reasoning as the economics fingerprint beside it.
+        cust: stepCosts
+          ? `${stepCosts.costs.length}:${stepCosts.costs.reduce((n, c) => n + (c.costCents ?? 0), 0)}`
+          : "unavailable",
         decl,
         pricing,
         econ,
@@ -545,6 +589,11 @@ router.get("/offers/:offerId/chains", apiKeyAuth, async (req, res) => {
             chain.funnelKey,
             offerId,
           );
+          // The customer's own legs, scoped by the SAME campaign set the charged money is scoped by.
+          // `null` only when the statements could not be read at all — never when nobody stated one,
+          // which is a real answer and reads as zeros.
+          const customerCost: CustomerDeclaredCost | null = customerCosts?.byChain[chain.funnelKey] ?? null;
+          const coverage: ChainCostCoverage = coverageOf(customerCost);
           return {
             funnelKey: chain.funnelKey,
             name: chain.name,
@@ -555,6 +604,22 @@ router.get("/offers/:offerId/chains", apiKeyAuth, async (req, res) => {
             unpricedReason,
             headline: body.headline,
             costEconomics: body.costEconomics,
+            customerCost: customerCost
+              ? {
+                  declaredCostUsd: customerCost.costCents / 100,
+                  statedCount: customerCost.statedCount,
+                  unstatedCount: customerCost.unstatedCount,
+                }
+              : null,
+            costCoverage: coverage,
+            // The chain's OWN lifetime revenue — the same one its pipeline was priced on — so the
+            // combined return is the charged one moved by exactly the customer's money and nothing else.
+            combinedCostEconomics: buildCombinedCostEconomics({
+              charged: body.costEconomics,
+              customerDeclaredCostCents: customerCost?.costCents ?? 0,
+              totalPipelineUsd: body.headline.totalPipelineUsd,
+              lifetimeRevenueUsd: economicsOverride?.economics.economics?.lifetimeRevenueUsd ?? null,
+            }),
             outcomes: body.outcomes,
           };
         });
@@ -562,7 +627,32 @@ router.get("/offers/:offerId/chains", apiKeyAuth, async (req, res) => {
           offerId,
           brandId,
           costBasis: "charged" as const,
-          costCoverage: "platform_spend_only" as const,
+          // The WEAKEST coverage among the rows, because the marker is an admission: a payload holding
+          // one fully-costed chain and one that could not be costed at all is not a fully-costed payload.
+          costCoverage: summariseCoverage(groups.map((g) => g.costCoverage)),
+          // `null` = the statements could not be READ; zeros = nobody has stated one. Two different
+          // things a consumer acts on differently, so they are never collapsed.
+          customerCost: customerCosts
+            ? {
+                declaredCostUsd:
+                  (Object.values(customerCosts.byChain).reduce((n, c) => n + c.costCents, 0) +
+                    customerCosts.unattributed.costCents) /
+                  100,
+                statedCount:
+                  Object.values(customerCosts.byChain).reduce((n, c) => n + c.statedCount, 0) +
+                  customerCosts.unattributed.statedCount,
+                unstatedCount:
+                  Object.values(customerCosts.byChain).reduce((n, c) => n + c.unstatedCount, 0) +
+                  customerCosts.unattributed.unstatedCount,
+                // Statements naming no campaign, or a campaign in no chain of this offer. In NO row,
+                // stated here so a reader sees the difference rather than wondering where they went.
+                unattributed: {
+                  declaredCostUsd: customerCosts.unattributed.costCents / 100,
+                  statedCount: customerCosts.unattributed.statedCount,
+                  unstatedCount: customerCosts.unattributed.unstatedCount,
+                },
+              }
+            : null,
           chains: groups,
           unattributedCampaignIds,
         };
