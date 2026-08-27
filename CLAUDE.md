@@ -2675,6 +2675,46 @@ before baking is mandatory.**
 | `src/middleware/auth.ts` | API key + identity header auth |
 | `openapi.json` | Generated — never edit manually |
 
+## A CHANGE THAT SUPERSEDES A DOCUMENTED RULE UPDATES THIS FILE IN THE SAME PR
+
+Most sections here open by stating an invariant and then say "do NOT re-litigate". That wording is what
+makes the next agent trust them, so a section describing a rule the code no longer follows is worse than
+no section: it is a premise someone will build on. `tsc` and the suite cannot catch it — the tests were
+rewritten around the new rule and pass, while the doc keeps asserting the old one.
+
+Before opening a PR that changes a RULE (a verdict, a precedence, a basis, a producer, a field name a
+section names), `git grep` this file for the identifiers you touched and rewrite every section that
+answers with the old rule — including the SIBLING surfaces that share the code (`accountStatus` is read
+by the accounts audit, send-forecast and customer-health, so one rule change is three sections). State
+what it supersedes and why, so the reasoning that produced the old rule is not re-derived later.
+
+Cost 2026-08-27 (#837 → #838): the accounts audit moved to campaign-service's running budget and dropped
+the brand pause flag, and this file went on documenting the pause-first precedence, `dailyBudgetUsd`, and
+billing as the budget source in four places — a second PR the same day. Corollary the brief named
+explicitly: when a change BREAKS a recorded series (a snapshot basis that cannot be replayed), say so
+beside the section that DESCRIBES that series, not only in the section that caused it — a reader of the
+curve will not be reading the section that moved it.
+
+## A CHANGE THAT SUPERSEDES A DOCUMENTED RULE UPDATES THIS FILE IN THE SAME PR
+
+Most sections here open by stating an invariant and then say "do NOT re-litigate". That wording is what
+makes the next agent trust them, so a section describing a rule the code no longer follows is worse than
+no section: it is a premise someone will build on. `tsc` and the suite cannot catch it — the tests were
+rewritten around the new rule and pass, while the doc keeps asserting the old one.
+
+Before opening a PR that changes a RULE (a verdict, a precedence, a basis, a producer, a field name a
+section names), `git grep` this file for the identifiers you touched and rewrite every section that
+answers with the old rule — including the SIBLING surfaces that share the code (`accountStatus` is read
+by the accounts audit, send-forecast and customer-health, so one rule change is three sections). State
+what it supersedes and why, so the reasoning that produced the old rule is not re-derived later.
+
+Cost 2026-08-27 (#837 → #838): the accounts audit moved to campaign-service's running budget and dropped
+the brand pause flag, and this file went on documenting the pause-first precedence, `dailyBudgetUsd`, and
+billing as the budget source in four places — a second PR the same day. Corollary the brief named
+explicitly: when a change BREAKS a recorded series (a snapshot basis that cannot be replayed), say so
+beside the section that DESCRIBES that series, not only in the section that caused it — a reader of the
+curve will not be reading the section that moved it.
+
 ## OpenAPI Rule
 
 Every new or changed endpoint requires THREE changes in the same PR:
