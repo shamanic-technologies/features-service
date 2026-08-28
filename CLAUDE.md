@@ -2707,7 +2707,18 @@ caller has to be TOLD WHICH INPUT — not handed a gateway-shaped error that rea
   code it is executing, independent of the value under test and of whatever the deploy platform claims.
   Prefer it to any platform status/CLI read: this was learned when the Railway CLI (since retired) kept
   answering `Project is deleted` for a project that plainly existed, and the same reasoning holds for any
-  control-plane that reports a deploy as green while the old build is still serving. Note the served
+  control-plane that reports a deploy as green while the old build is still serving. **"A string only the
+  new build contains" is the load-bearing half, and it has to be CHECKED, not assumed — run the grep
+  against the CURRENTLY-SERVED document FIRST, and if it already hits, it is not a discriminator.** A
+  block's own NAME is the tempting marker and routinely the wrong one: the name of a thing you are adding
+  often already appears in the deployed spec as prose inside a neighbouring `.describe()`, so the poll
+  reports DEPLOYED on its first tick against the old build. Pick a leaf FIELD name instead (they are not
+  written into prose), and print the hit COUNT rather than a boolean so a false positive is visible.
+  Cost 2026-08-28 (v0.147.1 `funnelSteps`): the name matched twice in the pre-deploy document, the poll
+  said DEPLOYED immediately, and the clone was still on the previous commit with a 4-hour-old container;
+  re-polling on `recipientsReached` (0 → 20) showed the deploy landed several minutes later. Same family
+  as the "success pattern must not be matchable by its own error output" rule in the global config — a
+  pattern that can match something which is not the event is not a monitor. Note the served
   document does NOT match the committed `openapi.json` byte for byte (different size); compare CONTENT,
   never length. (Set 2026-08-08.)
 - **A code deploy does NOT change what a read returns — the Gold layer serves the PREVIOUS body first.
