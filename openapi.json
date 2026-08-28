@@ -1925,6 +1925,46 @@
                       "type": "number",
                       "nullable": true,
                       "description": "recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
+                    },
+                    "customerCost": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "costCents": {
+                          "type": "number",
+                          "description": "The sum of every STATED cost on this rung, in cents, for the scope being read. A crossing nobody was ever asked about contributes nothing rather than a fabricated zero."
+                        },
+                        "statedCount": {
+                          "type": "integer",
+                          "description": "How many statements on this rung carried a cost. A stated 0 is an answer and is counted here."
+                        },
+                        "unstatedCount": {
+                          "type": "integer",
+                          "description": "How many did not, because nobody was ever asked. Greater than 0 means this rung cannot be fully costed — which is what turns the coverage below to partial."
+                        },
+                        "coverage": {
+                          "type": "string",
+                          "enum": [
+                            "platform_spend_only",
+                            "platform_and_customer_spend",
+                            "platform_and_partial_customer_spend"
+                          ],
+                          "description": "Which dollars this rung's figure is made of. platform_spend_only: no statement is attributable to it — the legs the platform works itself (a website visit, a positive reply) are always this, and so is a rung nobody has been asked about yet. platform_and_customer_spend: every attributable statement carries a cost. platform_and_partial_customer_spend: some crossings were never stated, so the figure is a floor rather than a total."
+                        },
+                        "costPerReachCents": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one arrow of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."
+                        }
+                      },
+                      "required": [
+                        "costCents",
+                        "statedCount",
+                        "unstatedCount",
+                        "coverage",
+                        "costPerReachCents"
+                      ],
+                      "description": "What the CUSTOMER states THIS RUNG cost them — the legs they work themselves (they run the meeting, they close the deal), which the funnel-wide `customerCost` could only answer for the whole chain at once. Never charged, in no ledger of ours, never folded into costPerReachCents — it rides BESIDE it exactly as the funnel-wide figure rides beside costEconomics. NULL only when the statements could not be READ (the read is fail-soft) or were never fetched on this path; a rung nobody has ever been asked about reads zeros with coverage 'platform_spend_only' and a null average, because 'we have no figure' and 'it cost nothing' are different answers."
                     }
                   },
                   "required": [
@@ -1934,7 +1974,8 @@
                     "costPerReachCents",
                     "fromStep",
                     "fromRecipientsReached",
-                    "conversionFromPreviousPct"
+                    "conversionFromPreviousPct",
+                    "customerCost"
                   ]
                 },
                 "description": "The funnel's rungs in the funnel's own order, first to last — four for either meeting funnel (reply-or-visit → booked → attended → paid), three for website purchases (visit → signup → paid) and for the form magnet (visit → form filled → paid)."
@@ -1947,7 +1988,7 @@
               "contactedRecipients",
               "steps"
             ],
-            "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements."
+            "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."
           }
         },
         "required": [
@@ -5645,6 +5686,46 @@
                       "type": "number",
                       "nullable": true,
                       "description": "recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
+                    },
+                    "customerCost": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "costCents": {
+                          "type": "number",
+                          "description": "The sum of every STATED cost on this rung, in cents, for the scope being read. A crossing nobody was ever asked about contributes nothing rather than a fabricated zero."
+                        },
+                        "statedCount": {
+                          "type": "integer",
+                          "description": "How many statements on this rung carried a cost. A stated 0 is an answer and is counted here."
+                        },
+                        "unstatedCount": {
+                          "type": "integer",
+                          "description": "How many did not, because nobody was ever asked. Greater than 0 means this rung cannot be fully costed — which is what turns the coverage below to partial."
+                        },
+                        "coverage": {
+                          "type": "string",
+                          "enum": [
+                            "platform_spend_only",
+                            "platform_and_customer_spend",
+                            "platform_and_partial_customer_spend"
+                          ],
+                          "description": "Which dollars this rung's figure is made of. platform_spend_only: no statement is attributable to it — the legs the platform works itself (a website visit, a positive reply) are always this, and so is a rung nobody has been asked about yet. platform_and_customer_spend: every attributable statement carries a cost. platform_and_partial_customer_spend: some crossings were never stated, so the figure is a floor rather than a total."
+                        },
+                        "costPerReachCents": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one arrow of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."
+                        }
+                      },
+                      "required": [
+                        "costCents",
+                        "statedCount",
+                        "unstatedCount",
+                        "coverage",
+                        "costPerReachCents"
+                      ],
+                      "description": "What the CUSTOMER states THIS RUNG cost them — the legs they work themselves (they run the meeting, they close the deal), which the funnel-wide `customerCost` could only answer for the whole chain at once. Never charged, in no ledger of ours, never folded into costPerReachCents — it rides BESIDE it exactly as the funnel-wide figure rides beside costEconomics. NULL only when the statements could not be READ (the read is fail-soft) or were never fetched on this path; a rung nobody has ever been asked about reads zeros with coverage 'platform_spend_only' and a null average, because 'we have no figure' and 'it cost nothing' are different answers."
                     }
                   },
                   "required": [
@@ -5654,7 +5735,8 @@
                     "costPerReachCents",
                     "fromStep",
                     "fromRecipientsReached",
-                    "conversionFromPreviousPct"
+                    "conversionFromPreviousPct",
+                    "customerCost"
                   ]
                 },
                 "description": "The funnel's rungs in the funnel's own order, first to last — four for either meeting funnel (reply-or-visit → booked → attended → paid), three for website purchases (visit → signup → paid) and for the form magnet (visit → form filled → paid)."
@@ -5667,7 +5749,7 @@
               "contactedRecipients",
               "steps"
             ],
-            "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements."
+            "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."
           },
           "offerId": {
             "type": "string"
@@ -7994,6 +8076,46 @@
                       "type": "number",
                       "nullable": true,
                       "description": "recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
+                    },
+                    "customerCost": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "costCents": {
+                          "type": "number",
+                          "description": "The sum of every STATED cost on this rung, in cents, for the scope being read. A crossing nobody was ever asked about contributes nothing rather than a fabricated zero."
+                        },
+                        "statedCount": {
+                          "type": "integer",
+                          "description": "How many statements on this rung carried a cost. A stated 0 is an answer and is counted here."
+                        },
+                        "unstatedCount": {
+                          "type": "integer",
+                          "description": "How many did not, because nobody was ever asked. Greater than 0 means this rung cannot be fully costed — which is what turns the coverage below to partial."
+                        },
+                        "coverage": {
+                          "type": "string",
+                          "enum": [
+                            "platform_spend_only",
+                            "platform_and_customer_spend",
+                            "platform_and_partial_customer_spend"
+                          ],
+                          "description": "Which dollars this rung's figure is made of. platform_spend_only: no statement is attributable to it — the legs the platform works itself (a website visit, a positive reply) are always this, and so is a rung nobody has been asked about yet. platform_and_customer_spend: every attributable statement carries a cost. platform_and_partial_customer_spend: some crossings were never stated, so the figure is a floor rather than a total."
+                        },
+                        "costPerReachCents": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one arrow of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."
+                        }
+                      },
+                      "required": [
+                        "costCents",
+                        "statedCount",
+                        "unstatedCount",
+                        "coverage",
+                        "costPerReachCents"
+                      ],
+                      "description": "What the CUSTOMER states THIS RUNG cost them — the legs they work themselves (they run the meeting, they close the deal), which the funnel-wide `customerCost` could only answer for the whole chain at once. Never charged, in no ledger of ours, never folded into costPerReachCents — it rides BESIDE it exactly as the funnel-wide figure rides beside costEconomics. NULL only when the statements could not be READ (the read is fail-soft) or were never fetched on this path; a rung nobody has ever been asked about reads zeros with coverage 'platform_spend_only' and a null average, because 'we have no figure' and 'it cost nothing' are different answers."
                     }
                   },
                   "required": [
@@ -8003,7 +8125,8 @@
                     "costPerReachCents",
                     "fromStep",
                     "fromRecipientsReached",
-                    "conversionFromPreviousPct"
+                    "conversionFromPreviousPct",
+                    "customerCost"
                   ]
                 },
                 "description": "The funnel's rungs in the funnel's own order, first to last — four for either meeting funnel (reply-or-visit → booked → attended → paid), three for website purchases (visit → signup → paid) and for the form magnet (visit → form filled → paid)."
@@ -8016,7 +8139,7 @@
               "contactedRecipients",
               "steps"
             ],
-            "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements."
+            "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."
           },
           "offerId": {
             "type": "string"
@@ -10154,6 +10277,46 @@
                       "type": "number",
                       "nullable": true,
                       "description": "recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
+                    },
+                    "customerCost": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "costCents": {
+                          "type": "number",
+                          "description": "The sum of every STATED cost on this rung, in cents, for the scope being read. A crossing nobody was ever asked about contributes nothing rather than a fabricated zero."
+                        },
+                        "statedCount": {
+                          "type": "integer",
+                          "description": "How many statements on this rung carried a cost. A stated 0 is an answer and is counted here."
+                        },
+                        "unstatedCount": {
+                          "type": "integer",
+                          "description": "How many did not, because nobody was ever asked. Greater than 0 means this rung cannot be fully costed — which is what turns the coverage below to partial."
+                        },
+                        "coverage": {
+                          "type": "string",
+                          "enum": [
+                            "platform_spend_only",
+                            "platform_and_customer_spend",
+                            "platform_and_partial_customer_spend"
+                          ],
+                          "description": "Which dollars this rung's figure is made of. platform_spend_only: no statement is attributable to it — the legs the platform works itself (a website visit, a positive reply) are always this, and so is a rung nobody has been asked about yet. platform_and_customer_spend: every attributable statement carries a cost. platform_and_partial_customer_spend: some crossings were never stated, so the figure is a floor rather than a total."
+                        },
+                        "costPerReachCents": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one arrow of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."
+                        }
+                      },
+                      "required": [
+                        "costCents",
+                        "statedCount",
+                        "unstatedCount",
+                        "coverage",
+                        "costPerReachCents"
+                      ],
+                      "description": "What the CUSTOMER states THIS RUNG cost them — the legs they work themselves (they run the meeting, they close the deal), which the funnel-wide `customerCost` could only answer for the whole chain at once. Never charged, in no ledger of ours, never folded into costPerReachCents — it rides BESIDE it exactly as the funnel-wide figure rides beside costEconomics. NULL only when the statements could not be READ (the read is fail-soft) or were never fetched on this path; a rung nobody has ever been asked about reads zeros with coverage 'platform_spend_only' and a null average, because 'we have no figure' and 'it cost nothing' are different answers."
                     }
                   },
                   "required": [
@@ -10163,7 +10326,8 @@
                     "costPerReachCents",
                     "fromStep",
                     "fromRecipientsReached",
-                    "conversionFromPreviousPct"
+                    "conversionFromPreviousPct",
+                    "customerCost"
                   ]
                 },
                 "description": "The funnel's rungs in the funnel's own order, first to last — four for either meeting funnel (reply-or-visit → booked → attended → paid), three for website purchases (visit → signup → paid) and for the form magnet (visit → form filled → paid)."
@@ -10176,7 +10340,7 @@
               "contactedRecipients",
               "steps"
             ],
-            "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements."
+            "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."
           },
           "brandId": {
             "type": "string"

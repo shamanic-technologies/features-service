@@ -138,6 +138,10 @@ interface Fixture {
   legacyReadable?: boolean;
   /** `null` = the matched-lead email sets fail. */
   convertedReadable?: boolean;
+  /** What the CUSTOMER states each leg they worked themselves cost them, per campaign. */
+  stepCosts?: Array<{ campaignId: string | null; step: string; kind?: "outcome" | "never"; costCents: number | null }>;
+  /** `false` = the statement read fails (fail-soft) — every rung's customer half reads null. */
+  stepCostsReadable?: boolean;
   declared?: typeof ALL_DECLARED | null;
 }
 
@@ -256,7 +260,11 @@ function mockFetch(fixture: Fixture): void {
       });
     }
     if (path.includes("/step-costs")) {
-      return json({ brandId: BRAND, totalCostCents: 0, statedCount: 0, unstatedCount: 0, byStep: {}, costs: [] });
+      if (fixture.stepCostsReadable === false) return new Response("boom", { status: 502 });
+      return json({
+        brandId: BRAND,
+        costs: (fixture.stepCosts ?? []).map((c) => ({ kind: "outcome", ...c })),
+      });
     }
     if (path.includes("/step-disqualifications")) return json({ byStep: {} });
     if (path.includes("/conversion-counts")) {
@@ -286,6 +294,13 @@ type Step = {
   fromStep: string;
   fromRecipientsReached: number | null;
   conversionFromPreviousPct: number | null;
+  customerCost: {
+    costCents: number;
+    statedCount: number;
+    unstatedCount: number;
+    coverage: string;
+    costPerReachCents: number | null;
+  } | null;
 };
 type Breakdown = {
   funnelKey: string;
@@ -562,5 +577,182 @@ describe("a funnel read step by step", () => {
     const row = (table.body.funnels as Array<Record<string, unknown>>).find((f) => f.funnelKey === CONVERSATION)!;
     expect(row).not.toHaveProperty("funnelSteps");
     expect(row.headline).toEqual(res.body.headline);
+  });
+});
+
+/**
+ * WHAT THE CUSTOMER'S OWN WORK ON ONE ARROW COST THEM.
+ *
+ * The same four leads, with the customer's statements laid over them so every rung reads a different
+ * shape: booked carries two real figures, attended carries one figure and one crossing nobody was
+ * asked about, the sale carries only an unanswered one, and the reply — a leg the platform works and
+ * bills for — carries none at all. A band that mis-zips a statement onto the wrong rung, or that
+ * fabricates a zero for one, cannot pass by coincidence.
+ */
+const CUSTOMER_COST_FIXTURE: Fixture = {
+  ...CONVERSATION_FIXTURE,
+  stepCosts: [
+    { campaignId: "c1", step: "meeting_booked", costCents: 1500 },
+    { campaignId: "c1", step: "meeting_booked", costCents: 2500 },
+    { campaignId: "c1", step: "meeting_attended", costCents: 6000 },
+    { campaignId: "c1", step: "meeting_attended", costCents: null },
+    { campaignId: "c1", step: "sale", costCents: null },
+  ],
+};
+
+describe("what the customer states each rung of a funnel cost them", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    withFeatures();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("states the customer's own money PER RUNG, with an average per person who crossed it", async () => {
+    mockFetch(CUSTOMER_COST_FIXTURE);
+    const res = await funnelRevenue(CONVERSATION);
+    expect(res.status).toBe(200);
+    const band = res.body.funnelSteps as Breakdown;
+
+    // Two people booked; the customer stated $15 and $25 on that leg. So booking a meeting costs them
+    // $20 on average — the number a customer opening this arrow is asking for, SERVED not divided.
+    expect(band.steps[1].step).toBe("Meeting booked");
+    expect(band.steps[1].recipientsReached).toBe(2);
+    expect(band.steps[1].customerCost).toEqual({
+      costCents: 4000,
+      statedCount: 2,
+      unstatedCount: 0,
+      coverage: "platform_and_customer_spend",
+      costPerReachCents: 2000,
+    });
+
+    // Two attended, one statement carried a figure and one did not: the total is a FLOOR and the row
+    // says so, rather than guessing at the crossing nobody was asked about.
+    expect(band.steps[2].step).toBe("Meeting attended");
+    expect(band.steps[2].customerCost).toEqual({
+      costCents: 6000,
+      statedCount: 1,
+      unstatedCount: 1,
+      coverage: "platform_and_partial_customer_spend",
+      costPerReachCents: 3000,
+    });
+
+    // Nobody has answered for the close, so there is no figure — and no average, never a $0 that
+    // would say closing the deal was free.
+    expect(band.steps[3].step).toBe("Paid client");
+    expect(band.steps[3].customerCost).toEqual({
+      costCents: 0,
+      statedCount: 0,
+      unstatedCount: 1,
+      coverage: "platform_and_partial_customer_spend",
+      costPerReachCents: null,
+    });
+
+    // The reply is a leg the PLATFORM works and bills for. Nobody is ever asked what it cost them.
+    expect(band.steps[0].step).toBe("Positive reply");
+    expect(band.steps[0].customerCost).toEqual({
+      costCents: 0,
+      statedCount: 0,
+      unstatedCount: 0,
+      coverage: "platform_spend_only",
+      costPerReachCents: null,
+    });
+  });
+
+  it("never folds the customer's money into what we charged, and leaves the funnel-wide answer alone", async () => {
+    mockFetch(CUSTOMER_COST_FIXTURE);
+    const withCosts = (await funnelRevenue(CONVERSATION)).body;
+    mockFetch(CONVERSATION_FIXTURE);
+    const without = (await funnelRevenue(CONVERSATION)).body;
+
+    // Every CHARGED figure is byte-identical with and without the customer's statements.
+    const charged = (b: Record<string, unknown>) =>
+      (b.funnelSteps as Breakdown).steps.map((s) => [s.recipientsReached, s.costPerReachCents, s.conversionFromPreviousPct]);
+    expect(charged(withCosts)).toEqual(charged(without));
+    expect(withCosts.costEconomics).toEqual(without.costEconomics);
+    expect((withCosts.funnelSteps as Breakdown).committedSpentCents).toBe(12000);
+
+    // The funnel-WIDE answer a consumer already reads is exactly the sum of the same statements —
+    // unchanged in shape, and never replaced by the per-rung one.
+    expect(withCosts.customerCost).toEqual({ declaredCostUsd: 100, statedCount: 3, unstatedCount: 2 });
+    expect(withCosts.costCoverage).toBe("platform_and_partial_customer_spend");
+    expect(without.customerCost).toEqual({ declaredCostUsd: 0, statedCount: 0, unstatedCount: 0 });
+  });
+
+  it("tells a stated ZERO apart from a rung nobody was ever asked about", async () => {
+    mockFetch({
+      ...CONVERSATION_FIXTURE,
+      stepCosts: [{ campaignId: "c1", step: "meeting_booked", costCents: 0 }],
+    });
+    const band = (await funnelRevenue(CONVERSATION)).body.funnelSteps as Breakdown;
+
+    // Somebody ANSWERED, and the answer was zero: a real statement, counted.
+    expect(band.steps[1].customerCost).toMatchObject({
+      costCents: 0,
+      statedCount: 1,
+      unstatedCount: 0,
+      coverage: "platform_and_customer_spend",
+    });
+    // Nobody was asked about the close at all — the same zero cents, a different statement.
+    expect(band.steps[3].customerCost).toMatchObject({
+      costCents: 0,
+      statedCount: 0,
+      unstatedCount: 0,
+      coverage: "platform_spend_only",
+    });
+  });
+
+  it("says 'we could not read this' rather than zero when the statements degrade", async () => {
+    mockFetch({ ...CUSTOMER_COST_FIXTURE, stepCostsReadable: false });
+    const res = await funnelRevenue(CONVERSATION);
+    // The page still answers — every other number on it is right.
+    expect(res.status).toBe(200);
+    const band = res.body.funnelSteps as Breakdown;
+    expect(band.steps.every((s) => s.customerCost === null)).toBe(true);
+    expect(band.steps[1].recipientsReached).toBe(2);
+    expect(res.body.customerCost).toBeNull();
+  });
+
+  it("scopes a rung's statements by the SAME campaigns its committed cents are scoped by", async () => {
+    mockFetch({
+      campaigns: {
+        // c1 + c2 share ONE campaign identity (same brand, funnel and channel), so they are one
+        // campaign to the customer and their money totals together. c3 sells another funnel entirely.
+        c1: { featureSlug: PITCH, funnelKey: CONVERSATION, offerId: OFFER },
+        c2: { featureSlug: PITCH, funnelKey: CONVERSATION, offerId: OFFER },
+        c3: { featureSlug: PITCH, funnelKey: WEBSITE, offerId: OFFER },
+      },
+      costByCampaign: { c1: 6000, c2: 6000, c3: 6000 },
+      leads: [lead("c1", "l1", "reply"), lead("c2", "l2", "reply"), lead("c3", "l3", "click")],
+      stated: { meeting_booked: ["l1", "l2", "l3"] },
+      stepCosts: [
+        { campaignId: "c1", step: "meeting_booked", costCents: 1000 },
+        { campaignId: "c2", step: "meeting_booked", costCents: 9000 },
+        { campaignId: "c3", step: "meeting_booked", costCents: 4444 },
+        { campaignId: null, step: "meeting_booked", costCents: 7777 },
+      ],
+    });
+
+    // A campaign-narrowed read answers for the campaign's whole IDENTITY, exactly as its money does —
+    // so both members' statements count and c3's, which sells a different funnel, does not. A
+    // statement naming no campaign cannot be placed inside a narrowed scope, so it is left out rather
+    // than parked on a rung nobody attributed it to.
+    const narrowed = await request(app)
+      .get(`/features/${PITCH}/revenue?brandId=${BRAND}&funnel=${CONVERSATION}&campaignId=c1`)
+      .set(AUTH);
+    expect((narrowed.body.funnelSteps as Breakdown).steps[1].customerCost).toMatchObject({
+      costCents: 10000,
+      statedCount: 2,
+      costPerReachCents: 5000,
+    });
+
+    // The brand-wide read's spend leg is the brand's WHOLE spend, so its counterpart is every
+    // statement the brand has made — the unplaceable one included.
+    const brand = await request(app)
+      .get(`/features/${PITCH}/revenue?brandId=${BRAND}&funnel=${CONVERSATION}`)
+      .set(AUTH);
+    expect((brand.body.funnelSteps as Breakdown).steps[1].customerCost).toMatchObject({
+      costCents: 22221,
+      statedCount: 4,
+    });
   });
 });

@@ -23,6 +23,30 @@ dividing two served counts in the browser, so the rate had to be served or it co
   funnel, 3 for `website_purchases` and `form_magnet`. A length mismatch is a `FunnelStepShapeError`
   and a leg with no lead field is an `UnknownFunnelLegSignalError`: both FAIL LOUD, because the
   alternative is a rung silently mislabelled or dropped out of the middle of somebody's funnel.
+- **EACH RUNG ALSO STATES WHAT THE CUSTOMER'S OWN WORK ON IT COST — `customerCost`, per rung.** The
+  platform automates the first link and CHARGES for it; the customer runs the meeting and closes the
+  deal, and every time somebody moves a lead across an arrow on the dashboard they are asked what that
+  step cost them. That was answerable for a WHOLE FUNNEL (`customerCost` on the offer × funnel page)
+  and nowhere finer — but the question is per ARROW ("what does a booked meeting cost me?"), and one
+  funnel-wide total covers every arrow at once, so it cannot answer it. A statement already NAMES its
+  step (lead-service `/internal/brands/:brandId/step-costs` carries `step`), so the per-rung answer is
+  a PARTITION of the same rows (`customerCostsByStep`): no second producer, no inference, and the
+  funnel-wide figure is **byte-unchanged** beside it. It carries `costCents` / `statedCount` /
+  `unstatedCount` / `coverage` and **`costPerReachCents` — the stated total ÷ the rung's count**, the
+  average per person who crossed it, SERVED because a browser dividing two served numbers is the
+  client-computed metric this service exists to prevent. **NEVER folded into what we charged**: it
+  rides BESIDE `costPerReachCents`, exactly as the funnel-wide figure rides beside `costEconomics`,
+  and none of it reaches billing. **A rung nobody has been asked about reads ZEROS with
+  `platform_spend_only` and a NULL average, never a $0 that would say their work was free** — and the
+  two engagement rungs are always that, because nobody is asked what a website visit or a positive
+  reply cost them. The whole block is `null` only when the statements could not be READ (fail-soft,
+  loud log) or were never fetched on this path. **Statements are scoped by the SAME campaigns the
+  committed cents are** — so a campaign-scoped read answers for its campaign IDENTITY (both members'
+  statements, as its money totals), and a brand-wide read, whose spend leg is the brand's whole spend,
+  counts every statement including the ones naming no campaign. The read happens ONCE per request:
+  the offer × funnel page passes down the statements it already read for the funnel-wide figure, and a
+  plain `/revenue` reads them itself only when it both WALKS a funnel and is a full page (a lean
+  `?groupBy=` group discards `funnelSteps`, so fetching for it would buy nothing).
 - **COSTS ARE OBSERVED AND NEVER FLOORED.** `costPerReachCents` is committed spend ÷ the rung's count
   through the same OBSERVED engine `outcomes.cpcCents` rides — accounting, so a rung nobody reached is
   **null, never 0 and never a benchmark**. Every rung divides the SAME committed total on purpose: the
@@ -56,8 +80,13 @@ dividing two served counts in the browser, so the rate had to be served or it co
   count and a distinct rate; the counts checked against the response's own `leads[]`; the one committed
   basis; the three other chains; a measured 0 with a null cost beside a null count from a degraded
   producer; booked/paid null only when BOTH producers fail; an unpriced funnel still walking its chain;
-  the lensed and several-funnel reads stating none; and every existing field untouched.
-  (Set 2026-08-28.)
+  the lensed and several-funnel reads stating none; and every existing field untouched. Plus the
+  per-rung customer-cost suite in the same file (a distinct stated total and average per rung; a
+  partial rung and an unanswered one; a platform-worked leg stating none; the charged figures and the
+  funnel-wide answer byte-unchanged beside it; a stated zero told from nobody-asked; the fail-soft
+  degrade to null; and the identity / brand scoping) and the step-partition cases in
+  `lib/funnel-customer-costs.test.ts`, where the per-rung rows sum to the funnel-wide row.
+  (Set 2026-08-28; per-rung customer cost same day.)
 
 ## A LEAD IS WORTH WHAT A HUMAN OBSERVED, NOT WHAT WE FORECAST — the observed rung replaces the rate ladder, a ruled-out step is worth nothing, and a priced deal is worth what somebody said
 

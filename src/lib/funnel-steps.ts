@@ -37,6 +37,16 @@
  * committed total: the spend bought the whole funnel, not one rung of it, so "what did reaching this
  * step cost" is the scope's money over the people who got there.
  *
+ * ── AND WHAT THE CUSTOMER SPENT ON THE RUNG THEMSELVES, BESIDE IT ───────────────────────────────
+ *
+ * The platform automates the first link and CHARGES for it; the customer runs the meeting and closes
+ * the deal, and states what those legs cost them. That was answerable for a whole FUNNEL and nowhere
+ * finer — but the question is per ARROW ("what does a booked meeting cost me?"), and one funnel-wide
+ * total covers every arrow at once, so it cannot answer it. A statement already NAMES its step, so
+ * `customerCost` is a partition of the same rows: the funnel-wide figure is byte-unchanged beside it,
+ * nothing of theirs is folded into what we charged, and the average per person who crossed the rung
+ * is SERVED rather than divided in a browser.
+ *
  * ── ABSENT AND ZERO ARE DIFFERENT STATEMENTS ────────────────────────────────────────────────────
  *
  * `recipientsReached: 0` is MEASURED — we read the evidence and nobody got there, which is the answer
@@ -54,6 +64,7 @@
  * the volume half is measurable either way.
  */
 import { observedCostPerOutcome } from "./cost-engine.js";
+import { coverageOf, type CustomerDeclaredCost, type FunnelCostCoverage } from "./funnel-customer-costs.js";
 import { FUNNEL_LEG_SIGNALS } from "./funnel-registry.js";
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import { SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
@@ -94,6 +105,26 @@ const LEAD_FIELD_TO_SIGNAL: Record<LeadStepField, string> = {
   formSubmission: "formSubmission",
   purchased: "closeWin",
 };
+
+/**
+ * The `leads[]` field a customer STATEMENT lands on — lead-service's step vocabulary, reversed.
+ *
+ * Only the legs a HUMAN works are in it. Nobody is ever asked what a website visit or a positive
+ * reply cost them: the platform automates those and BILLS for them, so their cost is the charged
+ * spend beside this, and a rung with no entry here reports an empty statement set rather than a hole.
+ */
+const STEP_COST_STEP_TO_LEAD_FIELD: Record<string, LeadStepField> = {
+  meeting_booked: "meetingBooked",
+  meeting_attended: "meetingAttended",
+  sale: "purchased",
+  signup: "signup",
+  form_submission: "formSubmission",
+};
+
+/** The producer step each lead field is stated at, or undefined for a leg nobody states a cost for. */
+const LEAD_FIELD_TO_STEP_COST_STEP: Partial<Record<LeadStepField, string>> = Object.fromEntries(
+  Object.entries(STEP_COST_STEP_TO_LEAD_FIELD).map(([step, field]) => [field, step]),
+) as Partial<Record<LeadStepField, string>>;
 
 /** A funnel leg this service cannot name a lead field for — a step would silently vanish from a chain. */
 export class UnknownFunnelLegSignalError extends Error {
@@ -162,6 +193,30 @@ function measured(field: LeadStepField, evidence: StepEvidence): boolean {
   }
 }
 
+/**
+ * WHAT THE CUSTOMER STATES ONE RUNG COST THEM, and what one crossing of it cost on average.
+ *
+ * NEVER folded into the charged money. Nothing here was billed, no platform cost was declared for it,
+ * and none of it reaches billing — it rides BESIDE `costPerReachCents`, exactly as the funnel-wide
+ * `customerCost` rides beside `costEconomics`, so a consumer renders either without inferring one
+ * from the other.
+ *
+ * A rung nobody has ever been asked about reads zeros with `coverage: "platform_spend_only"` and a
+ * NULL average — never a fabricated $0, which would say the customer's work was free. The whole block
+ * is null only when the statements could not be READ at all: "we have no figure" and "it cost
+ * nothing" are different answers, and a consumer acts on them differently.
+ */
+export interface FunnelStepCustomerCost extends CustomerDeclaredCost {
+  /** Which dollars this rung's figure is made of — the per-rung twin of the funnel-wide marker. */
+  coverage: FunnelCostCoverage;
+  /**
+   * The stated total ÷ `recipientsReached`, in cents — what ONE person crossing this rung cost the
+   * customer on average. OBSERVED, through the same engine `costPerReachCents` rides: null when
+   * nobody stated a cost, when nobody reached the rung, or when the count is unmeasured.
+   */
+  costPerReachCents: number | null;
+}
+
 /** One rung of a funnel: who reached it, what that cost, and what share of the rung before converted. */
 export interface FunnelStep {
   /** The funnel's own label for this step, in brand-service's words (`SALES_FUNNELS[key].steps`). */
@@ -187,6 +242,12 @@ export interface FunnelStep {
    * the base is 0 (no denominator — never a fabricated 0% or 100%).
    */
   conversionFromPreviousPct: number | null;
+  /**
+   * What the CUSTOMER states this rung cost them, and the average per person who crossed it. Null
+   * when the statements could not be read at all (or were never fetched on this path) — a rung
+   * nobody has stated a cost for reads zeros instead. See {@link FunnelStepCustomerCost}.
+   */
+  customerCost: FunnelStepCustomerCost | null;
 }
 
 /** One funnel, walked step by step. See the module header for every rule behind it. */
@@ -220,6 +281,13 @@ export function buildFunnelSteps(
   persons: EnginePerson[],
   committedSpentCents: number,
   evidence: StepEvidence,
+  /**
+   * The customer's own statements for THIS scope, already partitioned by the producer's step word
+   * (`lib/funnel-customer-costs.ts` `customerCostsByStep`). `null` — the default — is "we could not
+   * read them, or this path never fetched them", which is why every rung's `customerCost` is null
+   * rather than zero: absent is absent.
+   */
+  customerCostsByStep: Record<string, CustomerDeclaredCost> | null = null,
 ): FunnelStepBreakdown {
   const def = SALES_FUNNELS[funnelKey];
   const legs = FUNNEL_LEG_SIGNALS[funnelKey];
@@ -243,10 +311,32 @@ export function buildFunnelSteps(
       ? deduped.reduce((n, p) => n + (p.signals[personSignal] ? 1 : 0), 0)
       : null;
 
+    // The statements made on THIS rung. A leg the platform works has no producer step at all, so it
+    // reads the same empty set as one nobody has been asked about yet — both are "no figure stated",
+    // which is exactly what `platform_spend_only` says.
+    const stated = customerCostsByStep
+      ? customerCostsByStep[LEAD_FIELD_TO_STEP_COST_STEP[leadField] ?? ""] ?? {
+          costCents: 0,
+          statedCount: 0,
+          unstatedCount: 0,
+        }
+      : null;
+
     steps.push({
       step: def.steps[i],
       leadField,
       recipientsReached,
+      customerCost: stated
+        ? {
+            ...stated,
+            coverage: coverageOf(stated),
+            // The SAME observed engine the charged cost per reach rides, so the two halves of a
+            // rung's money are null under the same conditions and can never disagree about whether
+            // this rung was measurable at all.
+            costPerReachCents:
+              recipientsReached === null ? null : observedCostPerOutcome(stated.costCents, recipientsReached),
+          }
+        : null,
       costPerReachCents:
         recipientsReached === null ? null : observedCostPerOutcome(committedSpentCents, recipientsReached),
       fromStep,

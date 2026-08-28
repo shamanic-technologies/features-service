@@ -424,6 +424,27 @@ const revenueOutcomesSchema = z.object({
   cpprCents: z.number().nullable().describe("Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."),
 });
 
+// WHICH DOLLARS A FIGURE IS MADE OF. Declared once, here, because it is answered at two grains — per
+// RUNG of a funnel and per FUNNEL — and one vocabulary read two ways is how two surfaces come to
+// describe the same admission with different words.
+const funnelCostCoverageSchema = z.enum([
+  "platform_spend_only",
+  "platform_and_customer_spend",
+  "platform_and_partial_customer_spend",
+]);
+
+// WHAT THE CUSTOMER STATES ONE RUNG COST THEM. The platform automates the first link of a funnel and
+// CHARGES for it; the customer performs the rest, and every time somebody moves a lead across an arrow
+// they are asked what that step cost them. The funnel-wide total cannot answer "what does a booked
+// meeting cost me?" — it covers every arrow at once — so the same statements are partitioned per rung.
+const funnelStepCustomerCostSchema = z.object({
+  costCents: z.number().describe("The sum of every STATED cost on this rung, in cents, for the scope being read. A crossing nobody was ever asked about contributes nothing rather than a fabricated zero."),
+  statedCount: z.number().int().describe("How many statements on this rung carried a cost. A stated 0 is an answer and is counted here."),
+  unstatedCount: z.number().int().describe("How many did not, because nobody was ever asked. Greater than 0 means this rung cannot be fully costed — which is what turns the coverage below to partial."),
+  coverage: funnelCostCoverageSchema.describe("Which dollars this rung's figure is made of. platform_spend_only: no statement is attributable to it — the legs the platform works itself (a website visit, a positive reply) are always this, and so is a rung nobody has been asked about yet. platform_and_customer_spend: every attributable statement carries a cost. platform_and_partial_customer_spend: some crossings were never stated, so the figure is a floor rather than a total."),
+  costPerReachCents: z.number().nullable().describe("The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one arrow of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."),
+});
+
 // THE FUNNEL, WALKED STEP BY STEP — one rung at a time, in the funnel's own order: who reached it,
 // what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped
 // leads and the SAME committed cents as `outcomes` and the money, so a step's count agrees with
@@ -438,6 +459,7 @@ const funnelStepSchema = z.object({
   fromStep: z.string().describe("The rung this one converts FROM — the previous step of the funnel, or 'Contacted' for the first (outreach is a step of no funnel but the base of every one)."),
   fromRecipientsReached: z.number().int().nullable().describe("Distinct leads that reached fromStep — the base of the rate below, stated here so a consumer renders '3 of 40' without looking it up. Same null rule as recipientsReached."),
   conversionFromPreviousPct: z.number().nullable().describe("recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."),
+  customerCost: funnelStepCustomerCostSchema.nullable().describe("What the CUSTOMER states THIS RUNG cost them — the legs they work themselves (they run the meeting, they close the deal), which the funnel-wide `customerCost` could only answer for the whole chain at once. Never charged, in no ledger of ours, never folded into costPerReachCents — it rides BESIDE it exactly as the funnel-wide figure rides beside costEconomics. NULL only when the statements could not be READ (the read is fail-soft) or were never fetched on this path; a rung nobody has ever been asked about reads zeros with coverage 'platform_spend_only' and a null average, because 'we have no figure' and 'it cost nothing' are different answers."),
 });
 
 const funnelStepBreakdownSchema = z.object({
@@ -473,7 +495,7 @@ const featureRevenueResponseSchema = z.object({
   leads: z.array(revenueLeadSchema),
   events: z.array(revenueEventSchema).describe("One row per event. Empty until per-event timestamps exist (email-gateway)."),
   outcomes: revenueOutcomesSchema.nullable().describe("The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."),
-  funnelSteps: funnelStepBreakdownSchema.nullable().describe("THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements.")
+  funnelSteps: funnelStepBreakdownSchema.nullable().describe("THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are.")
 });
 
 const featureRevenueResponseRef = registry.register("FeatureRevenueResponse", featureRevenueResponseSchema);
@@ -1110,12 +1132,6 @@ const customerDeclaredCostSchema = z.object({
   statedCount: z.number().describe("How many statements carried a cost. A stated 0 is an answer and is counted here."),
   unstatedCount: z.number().describe("How many did not, because nobody was ever asked. Greater than 0 means this scope cannot be fully costed."),
 });
-
-const funnelCostCoverageSchema = z.enum([
-  "platform_spend_only",
-  "platform_and_customer_spend",
-  "platform_and_partial_customer_spend",
-]);
 
 const combinedCostEconomicsSchema = z.object({
   platformCommittedCostUsd: z.number().describe("What the platform CHARGED — byte-equal to costEconomics.committedCostUsd."),
