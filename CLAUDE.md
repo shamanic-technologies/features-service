@@ -1,5 +1,64 @@
 # Features Service — CLAUDE.md
 
+## `funnelSteps` — A FUNNEL READ STEP BY STEP: who reached each rung, what reaching it cost, and what share of the rung before converted
+
+A customer opening ONE of their sales funnels asks a narrower question than "is this working": walk me
+down MY funnel, in ITS order, and tell me where people fall out. Two of that question's three columns
+had no answer anywhere on the response, and the gaps sat exactly where the page is unreadable without
+them — **"Meeting attended" had a per-lead flag and no count and no cost anywhere**, so a
+reply-to-meeting funnel (reply → booked → attended → paid) rendered three rungs and a blank, and
+nothing stated the conversion between two consecutive rungs at all. The dashboard is forbidden from
+dividing two served counts in the browser, so the rate had to be served or it could not be shown.
+
+- **ONE BASIS FOR EVERY RUNG, WHICH IS THE WHOLE DESIGN.** Every count is DISTINCT LEADS off the SAME
+  deduped persons `outcomes` counts, in the SAME scope, with the SAME committed cents behind every
+  cost — so `funnelSteps.committedSpentCents === outcomes.committedSpentCents ===
+  costEconomics.committedCostUsd × 100`, and each rung's count equals `leads[].filter(leadField)` row
+  for row (`leadField` is on every step so a reader can reconcile by hand). A chain whose rungs came
+  from different bases — the brand-scoped `spend.salesMeetingsCount` above a funnel-scoped attended
+  count — can state a rate above 100% between two rungs of one funnel, which is not a rate at all.
+  That is why the count is NOT taken from the conversion-counts read the tiles use.
+- **THE RUNGS ARE THE FUNNEL'S OWN LEGS, ZIPPED TO ITS OWN LABELS.** `FUNNEL_LEG_SIGNALS[key]` (now
+  exported) beside `SALES_FUNNELS[key].steps`, position for position — 4 rungs for either meeting
+  funnel, 3 for `website_purchases` and `form_magnet`. A length mismatch is a `FunnelStepShapeError`
+  and a leg with no lead field is an `UnknownFunnelLegSignalError`: both FAIL LOUD, because the
+  alternative is a rung silently mislabelled or dropped out of the middle of somebody's funnel.
+- **COSTS ARE OBSERVED AND NEVER FLOORED.** `costPerReachCents` is committed spend ÷ the rung's count
+  through the same OBSERVED engine `outcomes.cpcCents` rides — accounting, so a rung nobody reached is
+  **null, never 0 and never a benchmark**. Every rung divides the SAME committed total on purpose: the
+  spend bought the whole funnel, not one rung of it. Projection has its own surfaces.
+- **THE FIRST RUNG CONVERTS FROM OUTREACH.** `fromStep: "Contacted"` over `contactedRecipients`, which
+  is a real measured number — the alternative (a null first rate) drops the one conversion a customer
+  most wants. Every later rung converts from the rung before it, and the base rides the row
+  (`fromRecipientsReached`) so a consumer renders "3 of 40" without a lookup.
+- **ABSENT AND ZERO ARE DIFFERENT STATEMENTS, and `StepEvidence` is what tells them apart.** `0` is
+  MEASURED. `null` is "the producer behind this rung's signal was unreadable on this request, or was
+  never fetched on this path" — and a null count nulls its cost AND both rates that touch it. The
+  evidence map mirrors the overlay's own precedence: booked and paid have TWO producers (the
+  statements and the LEGACY instantly qualifications) and either alone is a real answer, while
+  **`meetingAttended` has only the statements** — nothing else in the fleet can observe somebody
+  showing up — so a degraded statements read nulls attended while booked still answers. The two
+  engagement rungs ride the fail-loud core lead read and are always measured.
+- **NULL ONLY WHEN THERE IS NO ONE FUNNEL TO WALK** — no funnel wired for the channel (the leads were
+  never read), the lensed `?lens=` read (a lead SUBSET beside the brand's whole spend, the same gate as
+  `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no
+  single one to state. A read that NAMES its funnel (`?funnel=`, or
+  `GET /offers/:offerId/funnels/:funnelKey/revenue`) always carries it **whether or not it can be
+  PRICED**: "we could not price this" and "this reached nobody" are different statements, and the
+  volume half does not wait on the terms. The cold-start path walks it too, with every
+  statement-backed rung honestly null (that path short-circuits before the overlays are read).
+- **IT RIDES `RevenueBody`**, so the brand / offer / channel / per-funnel reads all carry it at ZERO
+  extra IO — the persons and the cents were already in hand. NOT added to any lean group shape (the
+  `?groupBy=` groups and the per-channel rows are byte-unchanged), and no query parameter: a consumer
+  that has to opt in is a consumer that renders the money without the chain by default.
+- Guards: `src/routes/funnel-step-breakdown.test.ts` — ONE fixture (4 contacted, 3 replied, 2 booked,
+  2 attended, 1 closed, 12000¢) drives every rung of the conversation funnel answering with a distinct
+  count and a distinct rate; the counts checked against the response's own `leads[]`; the one committed
+  basis; the three other chains; a measured 0 with a null cost beside a null count from a degraded
+  producer; booked/paid null only when BOTH producers fail; an unpriced funnel still walking its chain;
+  the lensed and several-funnel reads stating none; and every existing field untouched.
+  (Set 2026-08-28.)
+
 ## A LEAD IS WORTH WHAT A HUMAN OBSERVED, NOT WHAT WE FORECAST — the observed rung replaces the rate ladder, a ruled-out step is worth nothing, and a priced deal is worth what somebody said
 
 Every money figure this service reports about a lead was a FORECAST: its chance of one day becoming a
@@ -233,6 +292,53 @@ has to work out whether the two things are the same, and then it costs every rea
   read, and a rollout window, for a word. Kevin: *"Pourquoi le mot chains, pourquoi avoir introduit un
   new concept?"* Name a new grain with the vocabulary the fleet already speaks, on the first ship.
   (Set 2026-08-27.)
+
+## `GET /offers/:offerId/funnels/:funnelKey/{revenue,audience-stats,pipeline-activity}` — ONE SALES FUNNEL, ANSWERED IN MONEY AT ITS OWN GRAIN; the offer's three reads narrowed, never the offer's numbers under a funnel's name
+
+`/offers/:offerId/funnels` answers at the grain of a TABLE — a lean row per funnel, four figures each.
+That is the right shape for a list and the wrong shape for a funnel's own PAGE, which asks what an
+offer's page asks. Three of those things are simply not on a lean row, and their absence was visible:
+the funnel cost card read its total off the economics block because there was no spend breakdown to
+read, and the funnel page drew NO CHART AT ALL — the consumer refusing, correctly, to render the
+offer's series under the funnel's name.
+
+- **THE SCOPE IS THE FUNNEL'S OWN CAMPAIGN SET, resolved before anything is computed.** `buildOfferFunnels`
+  — the SAME partition the offer's table is built from, never re-derived and never inferred from a goal.
+  So a funnel served by ONE campaign (every funnel in production today) issues the byte-same downstream
+  reads that campaign's own `?campaignId=` read issues, and a funnel served by one campaign per STEP is
+  the same read over a larger set. **PARTIAL COVERAGE IS NORMAL HERE BY CONSTRUCTION** — a funnel funded
+  on two of its four legs answers with the two it has and says nothing about the rest; the per-channel
+  breakdown inside the body is what states which legs are funded.
+- **`revenue` IS `includeSpend: true` ON THE SAME COMPUTE THE ROW MAKES**, which is the whole difference:
+  the `spend` breakdown per cost source, `roiHistory` (both legs cumulative, both measured, terminating
+  on the headline ROI above it), and the dated ACTUAL series plus `leads[]` and the events ledger. Page
+  and row are one statement at two levels of detail — guarded byte-for-byte against each other.
+- **ONE PRICING RULE, SHARED — `priceFunnelRow` (`routes/offer-economics.ts`).** The funnel's own
+  declared terms merged over the brand-wide record, the three `unpricedReason`s in the same order, and
+  the brand-wide record NEVER borrowed as a fallback. Extracted from the `/funnels` row rather than
+  restated, so this page and that table can never print two prices for one funnel. An unpriced funnel
+  reports its REAL spend beside a null return; its volume half lives on `outcomes` (the cold-start path
+  prices no lead, so it lists none either).
+- **`pipeline-activity` IS WHY THE FUNNEL PAGE CAN DRAW A CHART AT ALL** — the same series under the
+  funnel's OWN campaigns, so nothing is borrowed. The EXPECTED series, `summary.dailyBudgetUsd` and the
+  conversion actuals stay NULL for the reasons the offer grain states one level up (a budget is funded
+  per brand with no per-funnel ceiling; the tracker is brand-keyed). `computeOfferPipelineActivity` took
+  an optional `funnelKey` — it names the SCOPE on the cache cell (view `offer-funnel-pipeline-activity`)
+  so a funnel's chart and its offer's can never share one; the compute is byte-unchanged.
+- **A FUNNEL THE OFFER DOES NOT SELL IS A NAMED 404** — `funnel_not_sold`, carrying `soldFunnelKeys` so
+  a consumer can send the reader where the money actually is. Never an empty body (which would read as
+  "this funnel produced nothing") and never the offer's figures. An unrecognised funnel WORD is a 400,
+  with every pre-retirement spelling accepted forever.
+- **The customer's declared money rides it exactly as it rides the row** (`customerCost`, `costCoverage`,
+  `combinedCostEconomics`), scoped by the SAME campaign set. Only this funnel's bucket is asked for; the
+  partition's leftovers are other funnels' statements, which the offer read is where to account for.
+- **The api-service gateway forwards `/offers/*` per SUFFIX, explicitly, with no wildcard**, so these
+  three need their own lines there or they 404 at the gateway.
+- Guards: `src/routes/offer-funnel-grain.test.ts` — ONE fixture drives the page carrying what the row
+  cannot, the funnel's own money against the offer's, the page byte-equal to its table row, the
+  single-campaign identity, one-campaign-per-step with partial legs, the unpriced funnel, the customer's
+  money, both named 404s, the 400s, a legacy spelling, and every existing grain unchanged.
+  (Set 2026-08-28.)
 
 ## `GET /offers/:offerId/funnels` — WHAT EACH OF AN OFFER'S SALES FUNNELS COST AND RETURNED; the funnel is the smallest scope whose money divides into a RETURN, and one-campaign-per-step is why
 
