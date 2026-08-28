@@ -52,6 +52,12 @@ import { buildCostEconomics, type CostEconomics } from "../lib/cost-economics.js
 import { applySignalOverlays } from "../lib/signal-overlays.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
 import { buildRevenueOutcomes, type RevenueOutcomes } from "../lib/revenue-outcomes.js";
+import {
+  buildFunnelSteps,
+  funnelForSteps,
+  type FunnelStepBreakdown,
+  type StepEvidence,
+} from "../lib/funnel-steps.js";
 import { fetchOfferCampaigns, resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 import { featureSlugList, type FeatureScope } from "../lib/feature-scope.js";
 import { pickBestChannelParents } from "../lib/offer-parents.js";
@@ -542,6 +548,24 @@ interface RevenueResponse {
    * spend. The per-campaign groups carry it; that is what it was added for.
    */
   outcomes: RevenueOutcomes | null;
+  /**
+   * THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read, how many distinct
+   * leads reached it, what reaching it cost, and what share of the rung before it converted
+   * ({@link FunnelStepBreakdown}). Built from the SAME deduped leads and the SAME committed cents as
+   * `outcomes` and the money above, so a step's count agrees with `leads[]` row for row and the rates
+   * between two rungs of one funnel are rates rather than two scopes divided into each other.
+   *
+   * It is what makes a four-step reply-to-meeting funnel renderable at all: "Meeting attended" has a
+   * per-lead flag and had no count and no cost anywhere else on this response, so the middle of that
+   * chain was blank.
+   *
+   * NULL when there is no ONE funnel to walk — no funnel wired for the channel (the leads were never
+   * read), the lensed response (a SUBSET of the brand's leads beside the brand's whole spend, the same
+   * gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains.
+   * A read that NAMES its funnel (`?funnel=`, or the per-funnel grain) always carries it, priced or
+   * not. Within it, a step's `null` count is "we could not measure this" and `0` is "nobody got here".
+   */
+  funnelSteps: FunnelStepBreakdown | null;
 }
 
 /**
@@ -579,6 +603,10 @@ function emptyBody(
   // path (economics null) the leads WERE read, so the caller passes the real block — a brand with no
   // economics still knows how many people it contacted.
   outcomes: RevenueOutcomes | null = null,
+  // The funnel walked step by step. Null on the no-funnel short-circuit for the same reason `outcomes`
+  // is: the leads were never read, so every rung would report a 0 nobody counted. On the cold-start
+  // path the caller passes the real chain — a brand with no economics still knows who reached what.
+  funnelSteps: FunnelStepBreakdown | null = null,
 ): RevenueBody {
   return {
     headline: { totalPipelineUsd, economicsSource: null },
@@ -598,6 +626,7 @@ function emptyBody(
     sequences,
     spend,
     outcomes,
+    funnelSteps,
   };
 }
 
@@ -877,6 +906,9 @@ function buildLensBody(
     // leads while its spend leg is the brand's whole spend, so a volume block here would divide one
     // scope's dollars by another scope's people. The un-lensed read carries it.
     outcomes: null,
+    // Same gate, same reason — a chain of rungs counted over a lensed subset, divided by the brand's
+    // whole spend, would state a cost per rung that belongs to neither scope.
+    funnelSteps: null,
   };
 }
 
@@ -1028,6 +1060,7 @@ export async function computeFeatureRevenue(
     // Cold start: no economics, so no pipeline to price — but the leads WERE read, so the volume half
     // is a real, measured answer and is given. "We could not price this" and "this reached nobody"
     // are different statements.
+    const coldFunnel = funnelForSteps(requestedFunnel, priced.pricedFunnelKeys);
     return emptyBody(
       null,
       cost,
@@ -1035,6 +1068,17 @@ export async function computeFeatureRevenue(
       sequences,
       null,
       buildRevenueOutcomes(persons, cost),
+      // The chain is walked here too, and it is walked HONESTLY: this path short-circuits before the
+      // per-lead statement / attribution overlays are read, so every rung that depends on one is
+      // UNMEASURED rather than 0. The two engagement rungs ride the core lead read and are real.
+      coldFunnel
+        ? buildFunnelSteps(coldFunnel, persons, cost.committedCents, {
+            observedSteps: false,
+            legacyQualifications: false,
+            signupAttribution: false,
+            formSubmissionAttribution: false,
+          })
+        : null,
     );
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
@@ -1097,6 +1141,20 @@ export async function computeFeatureRevenue(
     if (conversionEmails.formSubmission?.has(email)) person.signals.formSubmission = true;
   }
 
+  // WHICH STEP SIGNALS THIS REQUEST COULD READ — a fact about the READ, never about the leads. Each of
+  // these producers is fail-soft on its own, so a rung it alone evidences must report "we could not
+  // measure this" rather than the 0 an unread source produces. The booked and closed rungs have TWO
+  // producers and either alone is a real answer, matching the overlay's own COALESCE(statement, legacy).
+  const stepEvidence: StepEvidence = {
+    observedSteps: observed !== null,
+    legacyQualifications: quals !== null,
+    signupAttribution: conversionEmails.signup !== null,
+    formSubmissionAttribution: conversionEmails.formSubmission !== null,
+  };
+  // The funnel this read walks: the one it NAMED, else the single funnel it is priced on. Several
+  // declared funnels are several chains, so no chain is stated rather than one being picked.
+  const stepsFunnel = funnelForSteps(requestedFunnel, priced.pricedFunnelKeys);
+
   // closeValueUsd = LTR — the per-lead cap for combining independent engagement routes (click +
   // reply) as independent probabilities of one close (`undefined` keeps the wall-clock `now`).
   const result = computeRevenue(paths, persons, economics.lifetimeRevenueUsd, funnel.milestones);
@@ -1127,6 +1185,12 @@ export async function computeFeatureRevenue(
     // the SAME deduped persons and the SAME committed cents, so it is coherent with them by
     // construction rather than by correction. See lib/revenue-outcomes.ts.
     outcomes: buildRevenueOutcomes(persons, cost),
+    // The SAME deduped persons and the SAME committed cents, one rung at a time. `stepEvidence` states
+    // which producers this request could actually read, so a rung whose source degraded reports null
+    // instead of a 0 that would read as a wall nobody climbed.
+    funnelSteps: stepsFunnel
+      ? buildFunnelSteps(stepsFunnel, persons, cost.committedCents, stepEvidence)
+      : null,
   };
 }
 

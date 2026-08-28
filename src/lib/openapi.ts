@@ -1,6 +1,7 @@
 import { OpenAPIRegistry, OpenApiGeneratorV3 } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
 import { featureResponseSchema } from "./schemas.js";
+import { SALES_FUNNEL_KEYS } from "./sales-funnels.js";
 
 const registry = new OpenAPIRegistry();
 
@@ -423,6 +424,30 @@ const revenueOutcomesSchema = z.object({
   cpprCents: z.number().nullable().describe("Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."),
 });
 
+// THE FUNNEL, WALKED STEP BY STEP — one rung at a time, in the funnel's own order: who reached it,
+// what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped
+// leads and the SAME committed cents as `outcomes` and the money, so a step's count agrees with
+// `leads[]` row for row and a rate between two rungs of one funnel is a rate rather than two scopes
+// divided into each other. It is what makes a four-step reply-to-meeting funnel renderable at all:
+// "Meeting attended" has a per-lead flag and had no count and no cost anywhere else on this response.
+const funnelStepSchema = z.object({
+  step: z.string().describe("The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."),
+  leadField: z.enum(["clicked", "repliedPositive", "meetingBooked", "meetingAttended", "signup", "formSubmission", "purchased"]).describe("The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response."),
+  recipientsReached: z.number().int().nullable().describe("DISTINCT leads that reached this rung. 0 is MEASURED — 'nobody got here', which is the answer a customer asking 'is this working?' is owed. NULL is 'we could not measure this': the producer behind this rung's signal degraded on this request (the observed-step statements and the website-conversion attribution sets are each fail-soft) or was never read on this path. A null count nulls its cost and both rates that touch it."),
+  costPerReachCents: z.number().nullable().describe("COMMITTED spend ÷ recipientsReached, in cents. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."),
+  fromStep: z.string().describe("The rung this one converts FROM — the previous step of the funnel, or 'Contacted' for the first (outreach is a step of no funnel but the base of every one)."),
+  fromRecipientsReached: z.number().int().nullable().describe("Distinct leads that reached fromStep — the base of the rate below, stated here so a consumer renders '3 of 40' without looking it up. Same null rule as recipientsReached."),
+  conversionFromPreviousPct: z.number().nullable().describe("recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."),
+});
+
+const funnelStepBreakdownSchema = z.object({
+  funnelKey: z.enum(SALES_FUNNEL_KEYS as unknown as [string, ...string[]]).describe("The sales funnel these rungs belong to."),
+  name: z.string().describe("The funnel's own name, so a consumer renders the chain without holding the catalogue."),
+  committedSpentCents: z.number().describe("COMMITTED cents behind every costPerReachCents — the one basis costEconomics rides."),
+  contactedRecipients: z.number().int().describe("DISTINCT leads this scope contacted — the base the FIRST rung converts from, and the reason that rung's rate is answerable at all. Always measured wherever the leads were read."),
+  steps: z.array(funnelStepSchema).describe("The funnel's rungs in the funnel's own order, first to last — four for either meeting funnel (reply-or-visit → booked → attended → paid), three for website purchases (visit → signup → paid) and for the form magnet (visit → form filled → paid)."),
+});
+
 const featureRevenueResponseSchema = z.object({
   costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
@@ -448,6 +473,7 @@ const featureRevenueResponseSchema = z.object({
   leads: z.array(revenueLeadSchema),
   events: z.array(revenueEventSchema).describe("One row per event. Empty until per-event timestamps exist (email-gateway)."),
   outcomes: revenueOutcomesSchema.nullable().describe("The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."),
+  funnelSteps: funnelStepBreakdownSchema.nullable().describe("THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements.")
 });
 
 const featureRevenueResponseRef = registry.register("FeatureRevenueResponse", featureRevenueResponseSchema);

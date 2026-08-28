@@ -1853,6 +1853,101 @@
               "cpprCents"
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
+          },
+          "funnelSteps": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "funnelKey": {
+                "type": "string",
+                "enum": [
+                  "sales_meetings_from_conversation",
+                  "sales_meetings_from_website",
+                  "website_purchases",
+                  "form_magnet"
+                ],
+                "description": "The sales funnel these rungs belong to."
+              },
+              "name": {
+                "type": "string",
+                "description": "The funnel's own name, so a consumer renders the chain without holding the catalogue."
+              },
+              "committedSpentCents": {
+                "type": "number",
+                "description": "COMMITTED cents behind every costPerReachCents — the one basis costEconomics rides."
+              },
+              "contactedRecipients": {
+                "type": "integer",
+                "description": "DISTINCT leads this scope contacted — the base the FIRST rung converts from, and the reason that rung's rate is answerable at all. Always measured wherever the leads were read."
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "step": {
+                      "type": "string",
+                      "description": "The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."
+                    },
+                    "leadField": {
+                      "type": "string",
+                      "enum": [
+                        "clicked",
+                        "repliedPositive",
+                        "meetingBooked",
+                        "meetingAttended",
+                        "signup",
+                        "formSubmission",
+                        "purchased"
+                      ],
+                      "description": "The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response."
+                    },
+                    "recipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "DISTINCT leads that reached this rung. 0 is MEASURED — 'nobody got here', which is the answer a customer asking 'is this working?' is owed. NULL is 'we could not measure this': the producer behind this rung's signal degraded on this request (the observed-step statements and the website-conversion attribution sets are each fail-soft) or was never read on this path. A null count nulls its cost and both rates that touch it."
+                    },
+                    "costPerReachCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "COMMITTED spend ÷ recipientsReached, in cents. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "description": "The rung this one converts FROM — the previous step of the funnel, or 'Contacted' for the first (outreach is a step of no funnel but the base of every one)."
+                    },
+                    "fromRecipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Distinct leads that reached fromStep — the base of the rate below, stated here so a consumer renders '3 of 40' without looking it up. Same null rule as recipientsReached."
+                    },
+                    "conversionFromPreviousPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
+                    }
+                  },
+                  "required": [
+                    "step",
+                    "leadField",
+                    "recipientsReached",
+                    "costPerReachCents",
+                    "fromStep",
+                    "fromRecipientsReached",
+                    "conversionFromPreviousPct"
+                  ]
+                },
+                "description": "The funnel's rungs in the funnel's own order, first to last — four for either meeting funnel (reply-or-visit → booked → attended → paid), three for website purchases (visit → signup → paid) and for the form magnet (visit → form filled → paid)."
+              }
+            },
+            "required": [
+              "funnelKey",
+              "name",
+              "committedSpentCents",
+              "contactedRecipients",
+              "steps"
+            ],
+            "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements."
           }
         },
         "required": [
@@ -1875,7 +1970,8 @@
           "organizations",
           "leads",
           "events",
-          "outcomes"
+          "outcomes",
+          "funnelSteps"
         ]
       },
       "FeatureRevenueGroupedResponse": {
@@ -5478,6 +5574,101 @@
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
+          "funnelSteps": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "funnelKey": {
+                "type": "string",
+                "enum": [
+                  "sales_meetings_from_conversation",
+                  "sales_meetings_from_website",
+                  "website_purchases",
+                  "form_magnet"
+                ],
+                "description": "The sales funnel these rungs belong to."
+              },
+              "name": {
+                "type": "string",
+                "description": "The funnel's own name, so a consumer renders the chain without holding the catalogue."
+              },
+              "committedSpentCents": {
+                "type": "number",
+                "description": "COMMITTED cents behind every costPerReachCents — the one basis costEconomics rides."
+              },
+              "contactedRecipients": {
+                "type": "integer",
+                "description": "DISTINCT leads this scope contacted — the base the FIRST rung converts from, and the reason that rung's rate is answerable at all. Always measured wherever the leads were read."
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "step": {
+                      "type": "string",
+                      "description": "The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."
+                    },
+                    "leadField": {
+                      "type": "string",
+                      "enum": [
+                        "clicked",
+                        "repliedPositive",
+                        "meetingBooked",
+                        "meetingAttended",
+                        "signup",
+                        "formSubmission",
+                        "purchased"
+                      ],
+                      "description": "The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response."
+                    },
+                    "recipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "DISTINCT leads that reached this rung. 0 is MEASURED — 'nobody got here', which is the answer a customer asking 'is this working?' is owed. NULL is 'we could not measure this': the producer behind this rung's signal degraded on this request (the observed-step statements and the website-conversion attribution sets are each fail-soft) or was never read on this path. A null count nulls its cost and both rates that touch it."
+                    },
+                    "costPerReachCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "COMMITTED spend ÷ recipientsReached, in cents. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "description": "The rung this one converts FROM — the previous step of the funnel, or 'Contacted' for the first (outreach is a step of no funnel but the base of every one)."
+                    },
+                    "fromRecipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Distinct leads that reached fromStep — the base of the rate below, stated here so a consumer renders '3 of 40' without looking it up. Same null rule as recipientsReached."
+                    },
+                    "conversionFromPreviousPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
+                    }
+                  },
+                  "required": [
+                    "step",
+                    "leadField",
+                    "recipientsReached",
+                    "costPerReachCents",
+                    "fromStep",
+                    "fromRecipientsReached",
+                    "conversionFromPreviousPct"
+                  ]
+                },
+                "description": "The funnel's rungs in the funnel's own order, first to last — four for either meeting funnel (reply-or-visit → booked → attended → paid), three for website purchases (visit → signup → paid) and for the form magnet (visit → form filled → paid)."
+              }
+            },
+            "required": [
+              "funnelKey",
+              "name",
+              "committedSpentCents",
+              "contactedRecipients",
+              "steps"
+            ],
+            "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements."
+          },
           "offerId": {
             "type": "string"
           },
@@ -5599,6 +5790,7 @@
           "leads",
           "events",
           "outcomes",
+          "funnelSteps",
           "offerId",
           "brandId",
           "channels"
@@ -7731,6 +7923,101 @@
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
+          "funnelSteps": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "funnelKey": {
+                "type": "string",
+                "enum": [
+                  "sales_meetings_from_conversation",
+                  "sales_meetings_from_website",
+                  "website_purchases",
+                  "form_magnet"
+                ],
+                "description": "The sales funnel these rungs belong to."
+              },
+              "name": {
+                "type": "string",
+                "description": "The funnel's own name, so a consumer renders the chain without holding the catalogue."
+              },
+              "committedSpentCents": {
+                "type": "number",
+                "description": "COMMITTED cents behind every costPerReachCents — the one basis costEconomics rides."
+              },
+              "contactedRecipients": {
+                "type": "integer",
+                "description": "DISTINCT leads this scope contacted — the base the FIRST rung converts from, and the reason that rung's rate is answerable at all. Always measured wherever the leads were read."
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "step": {
+                      "type": "string",
+                      "description": "The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."
+                    },
+                    "leadField": {
+                      "type": "string",
+                      "enum": [
+                        "clicked",
+                        "repliedPositive",
+                        "meetingBooked",
+                        "meetingAttended",
+                        "signup",
+                        "formSubmission",
+                        "purchased"
+                      ],
+                      "description": "The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response."
+                    },
+                    "recipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "DISTINCT leads that reached this rung. 0 is MEASURED — 'nobody got here', which is the answer a customer asking 'is this working?' is owed. NULL is 'we could not measure this': the producer behind this rung's signal degraded on this request (the observed-step statements and the website-conversion attribution sets are each fail-soft) or was never read on this path. A null count nulls its cost and both rates that touch it."
+                    },
+                    "costPerReachCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "COMMITTED spend ÷ recipientsReached, in cents. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "description": "The rung this one converts FROM — the previous step of the funnel, or 'Contacted' for the first (outreach is a step of no funnel but the base of every one)."
+                    },
+                    "fromRecipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Distinct leads that reached fromStep — the base of the rate below, stated here so a consumer renders '3 of 40' without looking it up. Same null rule as recipientsReached."
+                    },
+                    "conversionFromPreviousPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
+                    }
+                  },
+                  "required": [
+                    "step",
+                    "leadField",
+                    "recipientsReached",
+                    "costPerReachCents",
+                    "fromStep",
+                    "fromRecipientsReached",
+                    "conversionFromPreviousPct"
+                  ]
+                },
+                "description": "The funnel's rungs in the funnel's own order, first to last — four for either meeting funnel (reply-or-visit → booked → attended → paid), three for website purchases (visit → signup → paid) and for the form magnet (visit → form filled → paid)."
+              }
+            },
+            "required": [
+              "funnelKey",
+              "name",
+              "committedSpentCents",
+              "contactedRecipients",
+              "steps"
+            ],
+            "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements."
+          },
           "offerId": {
             "type": "string"
           },
@@ -8006,6 +8293,7 @@
           "leads",
           "events",
           "outcomes",
+          "funnelSteps",
           "offerId",
           "brandId",
           "funnelKey",
@@ -9795,6 +10083,101 @@
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
+          "funnelSteps": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "funnelKey": {
+                "type": "string",
+                "enum": [
+                  "sales_meetings_from_conversation",
+                  "sales_meetings_from_website",
+                  "website_purchases",
+                  "form_magnet"
+                ],
+                "description": "The sales funnel these rungs belong to."
+              },
+              "name": {
+                "type": "string",
+                "description": "The funnel's own name, so a consumer renders the chain without holding the catalogue."
+              },
+              "committedSpentCents": {
+                "type": "number",
+                "description": "COMMITTED cents behind every costPerReachCents — the one basis costEconomics rides."
+              },
+              "contactedRecipients": {
+                "type": "integer",
+                "description": "DISTINCT leads this scope contacted — the base the FIRST rung converts from, and the reason that rung's rate is answerable at all. Always measured wherever the leads were read."
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "step": {
+                      "type": "string",
+                      "description": "The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."
+                    },
+                    "leadField": {
+                      "type": "string",
+                      "enum": [
+                        "clicked",
+                        "repliedPositive",
+                        "meetingBooked",
+                        "meetingAttended",
+                        "signup",
+                        "formSubmission",
+                        "purchased"
+                      ],
+                      "description": "The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response."
+                    },
+                    "recipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "DISTINCT leads that reached this rung. 0 is MEASURED — 'nobody got here', which is the answer a customer asking 'is this working?' is owed. NULL is 'we could not measure this': the producer behind this rung's signal degraded on this request (the observed-step statements and the website-conversion attribution sets are each fail-soft) or was never read on this path. A null count nulls its cost and both rates that touch it."
+                    },
+                    "costPerReachCents": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "COMMITTED spend ÷ recipientsReached, in cents. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "description": "The rung this one converts FROM — the previous step of the funnel, or 'Contacted' for the first (outreach is a step of no funnel but the base of every one)."
+                    },
+                    "fromRecipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Distinct leads that reached fromStep — the base of the rate below, stated here so a consumer renders '3 of 40' without looking it up. Same null rule as recipientsReached."
+                    },
+                    "conversionFromPreviousPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
+                    }
+                  },
+                  "required": [
+                    "step",
+                    "leadField",
+                    "recipientsReached",
+                    "costPerReachCents",
+                    "fromStep",
+                    "fromRecipientsReached",
+                    "conversionFromPreviousPct"
+                  ]
+                },
+                "description": "The funnel's rungs in the funnel's own order, first to last — four for either meeting funnel (reply-or-visit → booked → attended → paid), three for website purchases (visit → signup → paid) and for the form magnet (visit → form filled → paid)."
+              }
+            },
+            "required": [
+              "funnelKey",
+              "name",
+              "committedSpentCents",
+              "contactedRecipients",
+              "steps"
+            ],
+            "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements."
+          },
           "brandId": {
             "type": "string"
           },
@@ -9913,6 +10296,7 @@
           "leads",
           "events",
           "outcomes",
+          "funnelSteps",
           "brandId",
           "channels"
         ]
