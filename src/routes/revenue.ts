@@ -43,7 +43,7 @@ import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError, type DeclaredS
 import { declaredEconomicsForFunnel, mergeFunnelEconomics } from "../lib/declared-funnels.js";
 import { primaryDeclaredFunnel } from "../lib/brand-funnels.js";
 import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "../lib/sales-funnels.js";
-import { singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js";
+import { campaignScopeIds, singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
 import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
@@ -58,6 +58,8 @@ import {
   type FunnelStepBreakdown,
   type StepEvidence,
 } from "../lib/funnel-steps.js";
+import { customerCostsByStep } from "../lib/funnel-customer-costs.js";
+import { fetchBrandStepCostsSoft, type BrandStepCosts } from "../lib/step-costs-client.js";
 import { fetchOfferCampaigns, resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 import { featureSlugList, type FeatureScope } from "../lib/feature-scope.js";
 import { pickBestChannelParents } from "../lib/offer-parents.js";
@@ -967,6 +969,13 @@ export async function computeFeatureRevenue(
   // is — a benchmark read on the brand's funnels beside a return read on the offer's would be one body
   // answering about two different propositions.
   offerId?: string,
+  // THE CUSTOMER'S OWN STATEMENTS, when the caller has already read them. Brand-scoped, so a caller
+  // that reads them once (the offer × funnel page, which needs the funnel-wide figure anyway) shares
+  // that one read with every compute it drives instead of paying for one per channel row.
+  //   undefined — not supplied: read here, fail-soft, but ONLY on a full-page read that walks a
+  //               funnel (a lean group discards `funnelSteps`, so fetching for it would buy nothing).
+  //   null      — the caller read them and the read degraded. Every rung's customer half is null.
+  customerStepCosts?: BrandStepCosts | null,
 ): Promise<RevenueBody> {
   // The single campaign id the campaign-SCOPED downstream reads still take: the requested campaign
   // for a single scope, `undefined` for a family (no producer accepts a campaign list). The reads
@@ -975,6 +984,13 @@ export async function computeFeatureRevenue(
   // parents) answer about the BRAND and a campaign only narrows them, so a family reads the brand's
   // answer — its own superset, and the same one the brand Overview reads.
   const campaignId = singleCampaignId(campaignScope);
+
+  // The customer's statements are scoped exactly as the committed cents beside them are: a
+  // campaign-narrowed read counts only the statements made on ITS campaigns, and a brand-wide read —
+  // whose spend leg is the brand's whole spend — counts every statement the brand has made.
+  const stepCostScope = campaignScopeIds(campaignScope);
+  const customerStepMap = (costs: BrandStepCosts | null | undefined) =>
+    costs ? customerCostsByStep(costs.costs, stepCostScope.length > 0 ? stepCostScope : null) : null;
 
   // No funnel wired for this feature yet → null pipeline (not an error). `funnel` is known up
   // front (caller param), so short-circuit BEFORE Wave A and fetch ONLY the cost the empty body
@@ -1072,12 +1088,21 @@ export async function computeFeatureRevenue(
       // per-lead statement / attribution overlays are read, so every rung that depends on one is
       // UNMEASURED rather than 0. The two engagement rungs ride the core lead read and are real.
       coldFunnel
-        ? buildFunnelSteps(coldFunnel, persons, cost.committedCents, {
-            observedSteps: false,
-            legacyQualifications: false,
-            signupAttribution: false,
-            formSubmissionAttribution: false,
-          })
+        ? buildFunnelSteps(
+            coldFunnel,
+            persons,
+            cost.committedCents,
+            {
+              observedSteps: false,
+              legacyQualifications: false,
+              signupAttribution: false,
+              formSubmissionAttribution: false,
+            },
+            // Same honesty about the customer half: this path short-circuits before the statement
+            // read, so unless the caller already held them every rung reports "no figure" rather
+            // than a zero nobody stated.
+            customerStepMap(customerStepCosts),
+          )
         : null,
     );
   }
@@ -1105,7 +1130,11 @@ export async function computeFeatureRevenue(
   //   - fetchObservedStepFacts (lead-service)  — what a HUMAN observed: the rung the lead stands on
   //     and when, what the deal was worth, and which steps have been ruled out for it.
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
-  const [timestamps, observed, quals] = await Promise.all([
+  // The funnel this read walks: the one it NAMED, else the single funnel it is priced on. Several
+  // declared funnels are several chains, so no chain is stated rather than one being picked. Resolved
+  // HERE because it decides whether the customer's statements are worth reading at all.
+  const stepsFunnel = funnelForSteps(requestedFunnel, priced.pricedFunnelKeys);
+  const [timestamps, observed, quals, stepCosts] = await Promise.all([
     fetchEventTimestamps(brandId, campaignId, emails, headers).catch((err) => {
       console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
       return null;
@@ -1119,6 +1148,16 @@ export async function computeFeatureRevenue(
       console.warn(`[features-service] qualification enrichment failed (degrading to no legacy meeting/close dates): ${(err as Error).message}`);
       return null;
     }),
+    // WHAT THE CUSTOMER STATES THEIR OWN LEGS COST — read only when this read both WALKS a funnel and
+    // is a full page (a lean group discards `funnelSteps` entirely, so the read would buy nothing),
+    // and skipped outright when the caller already holds them. Fail-soft, like every other display
+    // enrichment here: an unreadable statement set nulls the customer half of each rung rather than
+    // 502-ing a page whose every other number is right.
+    customerStepCosts !== undefined
+      ? Promise.resolve(customerStepCosts)
+      : includeSpend && stepsFunnel
+        ? fetchBrandStepCostsSoft(brandId)
+        : Promise.resolve<BrandStepCosts | null>(null),
   ]);
 
   // The identical merge the per-workflow grain applies (`lib/signal-overlays.ts`) — one copy, so the
@@ -1151,10 +1190,6 @@ export async function computeFeatureRevenue(
     signupAttribution: conversionEmails.signup !== null,
     formSubmissionAttribution: conversionEmails.formSubmission !== null,
   };
-  // The funnel this read walks: the one it NAMED, else the single funnel it is priced on. Several
-  // declared funnels are several chains, so no chain is stated rather than one being picked.
-  const stepsFunnel = funnelForSteps(requestedFunnel, priced.pricedFunnelKeys);
-
   // closeValueUsd = LTR — the per-lead cap for combining independent engagement routes (click +
   // reply) as independent probabilities of one close (`undefined` keeps the wall-clock `now`).
   const result = computeRevenue(paths, persons, economics.lifetimeRevenueUsd, funnel.milestones);
@@ -1189,7 +1224,7 @@ export async function computeFeatureRevenue(
     // which producers this request could actually read, so a rung whose source degraded reports null
     // instead of a 0 that would read as a wall nobody climbed.
     funnelSteps: stepsFunnel
-      ? buildFunnelSteps(stepsFunnel, persons, cost.committedCents, stepEvidence)
+      ? buildFunnelSteps(stepsFunnel, persons, cost.committedCents, stepEvidence, customerStepMap(stepCosts))
       : null,
   };
 }

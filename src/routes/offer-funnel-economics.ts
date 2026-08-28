@@ -283,6 +283,10 @@ router.get("/offers/:offerId/funnels/:funnelKey/revenue", apiKeyAuth, async (req
           pricing,
           row.funnelKey,
           offerId,
+          // The SAME statements the funnel-wide figure above is built from, read ONCE for this
+          // request: the per-rung answer is a partition of those rows, so the page cannot state one
+          // basis for the funnel and another for its steps, and nothing is fetched twice.
+          stepCosts,
         );
         // The per-channel breakdown WITHIN the funnel — which of its legs is funded, and what each one
         // cost and returned. LEAN, like every other breakdown here: the bodies would otherwise repeat
