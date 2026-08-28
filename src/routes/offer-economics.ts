@@ -80,7 +80,8 @@ import {
 } from "./revenue.js";
 import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { computeOfferPipelineActivity } from "./pipeline-activity.js";
-import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
+import { fetchEffectiveEconomics, economicsFingerprint, type EffectiveEconomics } from "../lib/sales-economics-client.js";
+import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
 import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "../lib/sales-funnels.js";
@@ -159,6 +160,44 @@ export function resolveOfferFunnel(offerId: string, channels: OfferChannel[]): R
  * the order they are checked in and what each one leaves populated.
  */
 export type FunnelUnpricedReason = "no_channel_funnel" | "no_economics_declared" | "funnel_not_declared";
+
+/**
+ * HOW ONE SALES FUNNEL'S MONEY IS PRICED — the single rule, so the funnel's own page and the funnel's
+ * row in the offer's table can never state two prices for one funnel.
+ *
+ * PRICED: the funnel's OWN declared terms merged over the brand-wide record — its own rates and its own
+ * lifetime revenue, and its own legs the only ones carrying expected value.
+ *
+ * UNPRICED but measurable: the same read with the economics deliberately nulled, which is the engine's
+ * cold-start path — real spend, real volume, null pipeline. The leads are still read, because "we could
+ * not price this" and "this reached nobody" are different statements.
+ *
+ * The reasons are checked in the order the `/offers/:offerId/funnels` header states, so the plain thing
+ * is said first, and the brand-wide record is NEVER borrowed as a fallback: every rate on it is
+ * server-defaulted, so pricing funnel A on it is the retired-goal fiction one grain finer.
+ */
+export function priceFunnelRow(input: {
+  funnelKey: SalesFunnelKey;
+  /** Whether any channel carrying this funnel measures anything at all (a funnel wired in the registry). */
+  hasChannelFunnel: boolean;
+  declaredFunnels: DeclaredSalesFunnel[];
+  brandEconomics: EffectiveEconomics | null;
+}): { unpricedReason: FunnelUnpricedReason | null; economicsOverride: FunnelPricedEconomics | undefined } {
+  const { funnelKey, hasChannelFunnel, declaredFunnels, brandEconomics } = input;
+  const unpricedReason: FunnelUnpricedReason | null = !hasChannelFunnel
+    ? "no_channel_funnel"
+    : declaredFunnels.length === 0 || !brandEconomics?.economics
+      ? "no_economics_declared"
+      : !declaredFunnels.some((f) => f.funnelKey === funnelKey)
+        ? "funnel_not_declared"
+        : null;
+  const economicsOverride: FunnelPricedEconomics | undefined = !brandEconomics
+    ? undefined
+    : unpricedReason === null
+      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, funnelKey)
+      : { economics: { ...brandEconomics, economics: null }, pricedFunnelKeys: [funnelKey] };
+  return { unpricedReason, economicsOverride };
+}
 
 /** Shared parsing + channel resolution for all three offer reads. */
 async function resolveRequest(req: AuthenticatedRequest & { params: { offerId: string }; query: Record<string, unknown> }) {
@@ -556,25 +595,12 @@ router.get("/offers/:offerId/funnels", apiKeyAuth, async (req, res) => {
           // Each row resolves the MEASUREMENT funnel of ITS OWN channels — a sales funnel whose channels
           // price two ways says so (409) rather than having one silently picked for it.
           const funnel = resolveOfferFunnel(offerId, row.channels);
-          const unpricedReason: FunnelUnpricedReason | null = !funnel
-            ? "no_channel_funnel"
-            : declaredFunnels.length === 0 || !brandEconomics?.economics
-              ? "no_economics_declared"
-              : !declaredKeys.has(row.funnelKey)
-                ? "funnel_not_declared"
-                : null;
-
-          // PRICED: the funnel's OWN declared terms merged over the brand-wide record — its own rates
-          // and its own lifetime revenue, and its own legs are the only ones carrying expected value.
-          //
-          // UNPRICED but measurable: the same read with the economics deliberately nulled, which is the
-          // engine's cold-start path — real spend, real volume, null pipeline. The leads are still
-          // read, because "we could not price this" and "this reached nobody" are different statements.
-          const economicsOverride: FunnelPricedEconomics | undefined = !brandEconomics
-            ? undefined
-            : unpricedReason === null
-              ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, row.funnelKey)
-              : { economics: { ...brandEconomics, economics: null }, pricedFunnelKeys: [row.funnelKey] };
+          const { unpricedReason, economicsOverride } = priceFunnelRow({
+            funnelKey: row.funnelKey,
+            hasChannelFunnel: funnel !== null,
+            declaredFunnels,
+            brandEconomics,
+          });
 
           const body = await computeFeatureRevenue(
             row.channels.map((c) => c.featureSlug),

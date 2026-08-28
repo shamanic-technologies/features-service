@@ -886,6 +886,13 @@ export async function computeOfferPipelineActivity(
     brandId: string;
     pricing: Pricing;
     channels: Array<{ featureSlug: string; campaignIds: string[] }>;
+    /**
+     * The ONE sales funnel this read is narrowed to, when the caller asked at that grain. Present →
+     * `channels` already carries only the legs of that funnel, so nothing about the compute changes;
+     * it names the scope on the cache cell so a funnel's chart and its offer's chart can never share
+     * one, which would draw a wider scope's shape under a narrower one's name.
+     */
+    funnelKey?: string;
     headers: { orgId: string; userId: string; runId: string };
   },
 ): Promise<{ ok: true; body: PipelineActivityResponse } | { ok: false; status: number; body: Record<string, unknown> }> {
@@ -905,12 +912,13 @@ export async function computeOfferPipelineActivity(
   });
 
   const body = await servedCached({
-    view: "offer-pipeline-activity",
-    // Keyed on the offer, and on the CHANNEL SET — a newly funded channel changes every bar while no
-    // other key part moves.
+    view: input.funnelKey ? "offer-funnel-pipeline-activity" : "offer-pipeline-activity",
+    // Keyed on the offer, on the funnel when one was named, and on the CHANNEL SET — a newly funded
+    // channel changes every bar while no other key part moves.
     scopeKey: buildScopeKey(input.offerId, {
       orgId: input.headers.orgId,
       brandId: input.brandId,
+      funnel: input.funnelKey,
       channels: featureSlugs.join("+"),
       timezone,
       days,
