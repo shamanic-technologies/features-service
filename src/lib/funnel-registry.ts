@@ -451,7 +451,7 @@ const salesFunnel: FunnelDefinition = {
  * today (they are per-lead display outcomes), and if one is ever added it prices exactly the brands
  * whose funnel contains it, with no further change here.
  */
-const FUNNEL_LEG_SIGNALS: Record<SalesFunnelKey, readonly string[]> = {
+export const FUNNEL_LEG_SIGNALS: Record<SalesFunnelKey, readonly string[]> = {
   sales_meetings_from_conversation: ["positiveReply", "meeting", "meetingAttended", "closeWin"],
   sales_meetings_from_website: ["clicked", "meeting", "meetingAttended", "closeWin"],
   website_purchases: ["clicked", "signup", "closeWin"],

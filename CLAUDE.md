@@ -1,5 +1,64 @@
 # Features Service — CLAUDE.md
 
+## `funnelSteps` — A FUNNEL READ STEP BY STEP: who reached each rung, what reaching it cost, and what share of the rung before converted
+
+A customer opening ONE of their sales funnels asks a narrower question than "is this working": walk me
+down MY funnel, in ITS order, and tell me where people fall out. Two of that question's three columns
+had no answer anywhere on the response, and the gaps sat exactly where the page is unreadable without
+them — **"Meeting attended" had a per-lead flag and no count and no cost anywhere**, so a
+reply-to-meeting funnel (reply → booked → attended → paid) rendered three rungs and a blank, and
+nothing stated the conversion between two consecutive rungs at all. The dashboard is forbidden from
+dividing two served counts in the browser, so the rate had to be served or it could not be shown.
+
+- **ONE BASIS FOR EVERY RUNG, WHICH IS THE WHOLE DESIGN.** Every count is DISTINCT LEADS off the SAME
+  deduped persons `outcomes` counts, in the SAME scope, with the SAME committed cents behind every
+  cost — so `funnelSteps.committedSpentCents === outcomes.committedSpentCents ===
+  costEconomics.committedCostUsd × 100`, and each rung's count equals `leads[].filter(leadField)` row
+  for row (`leadField` is on every step so a reader can reconcile by hand). A chain whose rungs came
+  from different bases — the brand-scoped `spend.salesMeetingsCount` above a funnel-scoped attended
+  count — can state a rate above 100% between two rungs of one funnel, which is not a rate at all.
+  That is why the count is NOT taken from the conversion-counts read the tiles use.
+- **THE RUNGS ARE THE FUNNEL'S OWN LEGS, ZIPPED TO ITS OWN LABELS.** `FUNNEL_LEG_SIGNALS[key]` (now
+  exported) beside `SALES_FUNNELS[key].steps`, position for position — 4 rungs for either meeting
+  funnel, 3 for `website_purchases` and `form_magnet`. A length mismatch is a `FunnelStepShapeError`
+  and a leg with no lead field is an `UnknownFunnelLegSignalError`: both FAIL LOUD, because the
+  alternative is a rung silently mislabelled or dropped out of the middle of somebody's funnel.
+- **COSTS ARE OBSERVED AND NEVER FLOORED.** `costPerReachCents` is committed spend ÷ the rung's count
+  through the same OBSERVED engine `outcomes.cpcCents` rides — accounting, so a rung nobody reached is
+  **null, never 0 and never a benchmark**. Every rung divides the SAME committed total on purpose: the
+  spend bought the whole funnel, not one rung of it. Projection has its own surfaces.
+- **THE FIRST RUNG CONVERTS FROM OUTREACH.** `fromStep: "Contacted"` over `contactedRecipients`, which
+  is a real measured number — the alternative (a null first rate) drops the one conversion a customer
+  most wants. Every later rung converts from the rung before it, and the base rides the row
+  (`fromRecipientsReached`) so a consumer renders "3 of 40" without a lookup.
+- **ABSENT AND ZERO ARE DIFFERENT STATEMENTS, and `StepEvidence` is what tells them apart.** `0` is
+  MEASURED. `null` is "the producer behind this rung's signal was unreadable on this request, or was
+  never fetched on this path" — and a null count nulls its cost AND both rates that touch it. The
+  evidence map mirrors the overlay's own precedence: booked and paid have TWO producers (the
+  statements and the LEGACY instantly qualifications) and either alone is a real answer, while
+  **`meetingAttended` has only the statements** — nothing else in the fleet can observe somebody
+  showing up — so a degraded statements read nulls attended while booked still answers. The two
+  engagement rungs ride the fail-loud core lead read and are always measured.
+- **NULL ONLY WHEN THERE IS NO ONE FUNNEL TO WALK** — no funnel wired for the channel (the leads were
+  never read), the lensed `?lens=` read (a lead SUBSET beside the brand's whole spend, the same gate as
+  `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no
+  single one to state. A read that NAMES its funnel (`?funnel=`, or
+  `GET /offers/:offerId/funnels/:funnelKey/revenue`) always carries it **whether or not it can be
+  PRICED**: "we could not price this" and "this reached nobody" are different statements, and the
+  volume half does not wait on the terms. The cold-start path walks it too, with every
+  statement-backed rung honestly null (that path short-circuits before the overlays are read).
+- **IT RIDES `RevenueBody`**, so the brand / offer / channel / per-funnel reads all carry it at ZERO
+  extra IO — the persons and the cents were already in hand. NOT added to any lean group shape (the
+  `?groupBy=` groups and the per-channel rows are byte-unchanged), and no query parameter: a consumer
+  that has to opt in is a consumer that renders the money without the chain by default.
+- Guards: `src/routes/funnel-step-breakdown.test.ts` — ONE fixture (4 contacted, 3 replied, 2 booked,
+  2 attended, 1 closed, 12000¢) drives every rung of the conversation funnel answering with a distinct
+  count and a distinct rate; the counts checked against the response's own `leads[]`; the one committed
+  basis; the three other chains; a measured 0 with a null cost beside a null count from a degraded
+  producer; booked/paid null only when BOTH producers fail; an unpriced funnel still walking its chain;
+  the lensed and several-funnel reads stating none; and every existing field untouched.
+  (Set 2026-08-28.)
+
 ## A LEAD IS WORTH WHAT A HUMAN OBSERVED, NOT WHAT WE FORECAST — the observed rung replaces the rate ladder, a ruled-out step is worth nothing, and a priced deal is worth what somebody said
 
 Every money figure this service reports about a lead was a FORECAST: its chance of one day becoming a
