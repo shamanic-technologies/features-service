@@ -234,6 +234,53 @@ has to work out whether the two things are the same, and then it costs every rea
   new concept?"* Name a new grain with the vocabulary the fleet already speaks, on the first ship.
   (Set 2026-08-27.)
 
+## `GET /offers/:offerId/funnels/:funnelKey/{revenue,audience-stats,pipeline-activity}` — ONE SALES FUNNEL, ANSWERED IN MONEY AT ITS OWN GRAIN; the offer's three reads narrowed, never the offer's numbers under a funnel's name
+
+`/offers/:offerId/funnels` answers at the grain of a TABLE — a lean row per funnel, four figures each.
+That is the right shape for a list and the wrong shape for a funnel's own PAGE, which asks what an
+offer's page asks. Three of those things are simply not on a lean row, and their absence was visible:
+the funnel cost card read its total off the economics block because there was no spend breakdown to
+read, and the funnel page drew NO CHART AT ALL — the consumer refusing, correctly, to render the
+offer's series under the funnel's name.
+
+- **THE SCOPE IS THE FUNNEL'S OWN CAMPAIGN SET, resolved before anything is computed.** `buildOfferFunnels`
+  — the SAME partition the offer's table is built from, never re-derived and never inferred from a goal.
+  So a funnel served by ONE campaign (every funnel in production today) issues the byte-same downstream
+  reads that campaign's own `?campaignId=` read issues, and a funnel served by one campaign per STEP is
+  the same read over a larger set. **PARTIAL COVERAGE IS NORMAL HERE BY CONSTRUCTION** — a funnel funded
+  on two of its four legs answers with the two it has and says nothing about the rest; the per-channel
+  breakdown inside the body is what states which legs are funded.
+- **`revenue` IS `includeSpend: true` ON THE SAME COMPUTE THE ROW MAKES**, which is the whole difference:
+  the `spend` breakdown per cost source, `roiHistory` (both legs cumulative, both measured, terminating
+  on the headline ROI above it), and the dated ACTUAL series plus `leads[]` and the events ledger. Page
+  and row are one statement at two levels of detail — guarded byte-for-byte against each other.
+- **ONE PRICING RULE, SHARED — `priceFunnelRow` (`routes/offer-economics.ts`).** The funnel's own
+  declared terms merged over the brand-wide record, the three `unpricedReason`s in the same order, and
+  the brand-wide record NEVER borrowed as a fallback. Extracted from the `/funnels` row rather than
+  restated, so this page and that table can never print two prices for one funnel. An unpriced funnel
+  reports its REAL spend beside a null return; its volume half lives on `outcomes` (the cold-start path
+  prices no lead, so it lists none either).
+- **`pipeline-activity` IS WHY THE FUNNEL PAGE CAN DRAW A CHART AT ALL** — the same series under the
+  funnel's OWN campaigns, so nothing is borrowed. The EXPECTED series, `summary.dailyBudgetUsd` and the
+  conversion actuals stay NULL for the reasons the offer grain states one level up (a budget is funded
+  per brand with no per-funnel ceiling; the tracker is brand-keyed). `computeOfferPipelineActivity` took
+  an optional `funnelKey` — it names the SCOPE on the cache cell (view `offer-funnel-pipeline-activity`)
+  so a funnel's chart and its offer's can never share one; the compute is byte-unchanged.
+- **A FUNNEL THE OFFER DOES NOT SELL IS A NAMED 404** — `funnel_not_sold`, carrying `soldFunnelKeys` so
+  a consumer can send the reader where the money actually is. Never an empty body (which would read as
+  "this funnel produced nothing") and never the offer's figures. An unrecognised funnel WORD is a 400,
+  with every pre-retirement spelling accepted forever.
+- **The customer's declared money rides it exactly as it rides the row** (`customerCost`, `costCoverage`,
+  `combinedCostEconomics`), scoped by the SAME campaign set. Only this funnel's bucket is asked for; the
+  partition's leftovers are other funnels' statements, which the offer read is where to account for.
+- **The api-service gateway forwards `/offers/*` per SUFFIX, explicitly, with no wildcard**, so these
+  three need their own lines there or they 404 at the gateway.
+- Guards: `src/routes/offer-funnel-grain.test.ts` — ONE fixture drives the page carrying what the row
+  cannot, the funnel's own money against the offer's, the page byte-equal to its table row, the
+  single-campaign identity, one-campaign-per-step with partial legs, the unpriced funnel, the customer's
+  money, both named 404s, the 400s, a legacy spelling, and every existing grain unchanged.
+  (Set 2026-08-28.)
+
 ## `GET /offers/:offerId/funnels` — WHAT EACH OF AN OFFER'S SALES FUNNELS COST AND RETURNED; the funnel is the smallest scope whose money divides into a RETURN, and one-campaign-per-step is why
 
 Money answers at the brand grain, the offer grain, the campaign grain and the workflow grain. The grain
