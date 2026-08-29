@@ -258,10 +258,24 @@ export interface FunnelStepBreakdown {
   /** COMMITTED cents behind every `costPerReachCents` — the one basis `costEconomics` rides. */
   committedSpentCents: number;
   /**
-   * DISTINCT leads this scope contacted — the base the FIRST step converts from, and the reason that
-   * step's rate is answerable at all. Always measured wherever the leads were read.
+   * REACH — DISTINCT leads this scope emailed, bounced and unsubscribed included. It is the base the
+   * FIRST step converts from, and the reason that step's rate is answerable at all. Always measured
+   * wherever the leads were read.
+   *
+   * The first rung converts from REACH and not from the smaller convertible base ON PURPOSE: a bounce
+   * is a real loss at the very first rung, and it was paid for. A reply rate that quietly divided by
+   * the survivors would hide that 40 of the people this campaign bought were never reachable, and it
+   * would divide the committed spend for 876 sends by a count of 836.
    */
   contactedRecipients: number;
+  /**
+   * THE PIPELINE BASE — of those reached, the ones still able to convert (`contactedRecipients` minus
+   * everyone a bounce or an unsubscribe removed from the funnel). Stated BESIDE the reach it is drawn
+   * from so nobody has to work out which of the two a rate divided by, and served rather than
+   * subtracted because a lead can be both bounced and unsubscribed. `outcomes.recipientsConvertible`
+   * for the same scope, by construction — one count, read off one deduped person set.
+   */
+  convertibleRecipients: number;
   /** The funnel's rungs, in the funnel's own order, first to last. */
   steps: FunnelStep[];
 }
@@ -297,6 +311,10 @@ export function buildFunnelSteps(
 
   const deduped = dedupPersonsByLead(persons);
   const contactedRecipients = deduped.reduce((n, p) => n + (p.signals.contacted ? 1 : 0), 0);
+  const convertibleRecipients = deduped.reduce(
+    (n, p) => n + (p.signals.contacted && !p.signals.bounced && !p.signals.unsubscribed ? 1 : 0),
+    0,
+  );
 
   const steps: FunnelStep[] = [];
   let fromStep = CONTACTED_LABEL;
@@ -351,7 +369,7 @@ export function buildFunnelSteps(
     fromRecipientsReached = recipientsReached;
   }
 
-  return { funnelKey, name: def.name, committedSpentCents, contactedRecipients, steps };
+  return { funnelKey, name: def.name, committedSpentCents, contactedRecipients, convertibleRecipients, steps };
 }
 
 /**

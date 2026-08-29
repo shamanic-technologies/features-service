@@ -159,25 +159,32 @@ export async function fetchLeadsForRevenue(
   const rows = family ? data.leads.filter((row) => row.campaignId && family.has(row.campaignId)) : data.leads;
   return rows.map((row) => {
     const org = row.lead?.organization ?? null;
-    // Bounced / unsubscribed leads are dead — no forward expected revenue at any stage.
+    // A lead whose email BOUNCED, or who UNSUBSCRIBED, can never convert — no forward expected revenue
+    // at any stage. That is a statement about its FUTURE, and it is expressed by zeroing the CONVERSION
+    // legs alone.
     const dead = Boolean(row.bounced) || Boolean(row.unsubscribed);
-    const signals: Record<string, boolean> = dead
-      ? { contacted: false, sent: false, delivered: false, clicked: false, positiveReply: false, negativeReply: false, neutralReply: false }
-      : {
-          contacted: Boolean(row.contacted),
-          sent: Boolean(row.sent),
-          delivered: Boolean(row.delivered),
-          clicked: Boolean(row.clicked),
-          positiveReply: Boolean(row.replied) && row.replyClassification === "positive",
-          // The other two reply classes, on the SAME terms as the positive one — they are person-grain
-          // counts the stats surfaces report, and only a per-lead basis can bound a campaign identity's
-          // total by its brand's. No funnel path reads them, so the engine's EV is untouched.
-          negativeReply: Boolean(row.replied) && row.replyClassification === "negative",
-          neutralReply: Boolean(row.replied) && row.replyClassification === "neutral",
-        };
-    // A bounce is a fact about the recipient, not a funnel stage — it stands whether or not the lead is
-    // dead (it is one of the two things that MAKES it dead), so it sits outside the branch above.
-    signals.bounced = Boolean(row.bounced);
+    const signals: Record<string, boolean> = {
+      // THE DELIVERY LADDER IS A SET OF FACTS ABOUT OUR OWN SENDING, AND A FACT IS NEVER ZEROED.
+      // We queued the email, we sent it, we paid for it — a bounce is the PROOF a send happened, so
+      // reading it as "never contacted" made the response contradict itself (40 bounced beside a
+      // contacted figure that excluded those same 40) and moved the funnel's first-rung base. None of
+      // these is a step of any funnel (they are `SALES_MILESTONES`, which carry no revenue field), so
+      // stating them truthfully adds exactly zero expected value.
+      contacted: Boolean(row.contacted),
+      sent: Boolean(row.sent),
+      delivered: Boolean(row.delivered),
+      bounced: Boolean(row.bounced),
+      unsubscribed: Boolean(row.unsubscribed),
+      // THE CONVERSION LEGS ARE WHERE "CANNOT CONVERT" IS SAID, and they are the only thing the
+      // dead flag touches — so the expected-value math is byte-unchanged by the ladder above.
+      clicked: dead ? false : Boolean(row.clicked),
+      positiveReply: dead ? false : Boolean(row.replied) && row.replyClassification === "positive",
+      // The other two reply classes, on the SAME terms as the positive one — they are person-grain
+      // counts the stats surfaces report, and only a per-lead basis can bound a campaign identity's
+      // total by its brand's. No funnel path reads them, so the engine's EV is untouched.
+      negativeReply: dead ? false : Boolean(row.replied) && row.replyClassification === "negative",
+      neutralReply: dead ? false : Boolean(row.replied) && row.replyClassification === "neutral",
+    };
     return {
       leadId: row.leadId,
       campaignId: row.campaignId ?? null,

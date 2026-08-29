@@ -13,6 +13,14 @@
  *
  * ── THE RULES, WHICH ARE THE BRAND READ'S OWN ───────────────────────────────────────────────────
  *
+ * REACH AND THE PIPELINE BASE ARE TWO DIFFERENT QUESTIONS, AND BOTH ARE ANSWERED HERE.
+ * `recipientsContacted` is how many unique people this grain emailed — a fact about our own sending
+ * and our own spend, so it counts the ones whose mailbox bounced and the ones who later unsubscribed.
+ * `recipientsConvertible` is how many of them can still convert, which is the base every pipeline and
+ * expected-value figure rests on. Neither is inferable from the other by a consumer (a lead can be
+ * both bounced and unsubscribed, so the difference is a set union, not a subtraction), which is why
+ * both are served.
+ *
  * COUNTS ARE DISTINCT LEADS, deduped by the engine's own `dedupPersonsByLead` and read off the SAME
  * per-lead signals the brand read's `recipientsContacted` / `recipientsClicked` /
  * `recipientsRepliesPositive` series are built from. So a grain covering the brand's whole evidence
@@ -41,8 +49,26 @@ import type { RunsCostCents } from "./runs-cost-client.js";
 
 /** The volume half of one grain's answer. See the module header for every rule behind it. */
 export interface RevenueOutcomes {
-  /** Distinct leads this grain reached. The grain-level twin of `recipientsContacted.total`. */
+  /**
+   * REACH — distinct leads this grain emailed, INCLUDING every one that bounced or unsubscribed. It is
+   * a fact about our own sending and our own spend: we queued the email, we sent it, we paid for it.
+   * The grain-level twin of `recipientsContacted.total`.
+   */
   recipientsContacted: number;
+  /**
+   * THE PIPELINE BASE — distinct leads still able to convert: `recipientsContacted` minus everyone a
+   * bounce or an unsubscribe has taken out of the funnel. Every expected-value figure on this grain
+   * rests on these people and no others.
+   *
+   * It is SERVED rather than left to the consumer because it is NOT derivable from the three counts
+   * beside it: a lead can be both bounced and unsubscribed, so `contacted − bounced − unsubscribed`
+   * double-subtracts it. Only the per-lead set knows the union.
+   */
+  recipientsConvertible: number;
+  /** Distinct leads whose email BOUNCED. Counted as reached (a bounce is the proof a send happened). */
+  recipientsBounced: number;
+  /** Distinct leads who UNSUBSCRIBED. Counted as reached — we did email them, they asked us to stop. */
+  recipientsUnsubscribed: number;
   /** Distinct leads that visited the site. Twin of `recipientsClicked.total`. */
   recipientsClicked: number;
   /** Distinct leads that replied positively. Twin of `recipientsRepliesPositive.total`. */
@@ -69,15 +95,28 @@ export interface RevenueOutcomes {
 export function buildRevenueOutcomes(persons: EnginePerson[], cost: RunsCostCents): RevenueOutcomes {
   const deduped = dedupPersonsByLead(persons);
   let recipientsContacted = 0;
+  let recipientsConvertible = 0;
+  let recipientsBounced = 0;
+  let recipientsUnsubscribed = 0;
   let recipientsClicked = 0;
   let recipientsRepliesPositive = 0;
   for (const person of deduped) {
-    if (person.signals.contacted) recipientsContacted += 1;
+    const outOfFunnel = Boolean(person.signals.bounced) || Boolean(person.signals.unsubscribed);
+    if (person.signals.contacted) {
+      recipientsContacted += 1;
+      // The UNION, counted per person — which is exactly why this cannot be subtracted downstream.
+      if (!outOfFunnel) recipientsConvertible += 1;
+    }
+    if (person.signals.bounced) recipientsBounced += 1;
+    if (person.signals.unsubscribed) recipientsUnsubscribed += 1;
     if (person.signals.clicked) recipientsClicked += 1;
     if (person.signals.positiveReply) recipientsRepliesPositive += 1;
   }
   return {
     recipientsContacted,
+    recipientsConvertible,
+    recipientsBounced,
+    recipientsUnsubscribed,
     recipientsClicked,
     recipientsRepliesPositive,
     committedSpentCents: cost.committedCents,
