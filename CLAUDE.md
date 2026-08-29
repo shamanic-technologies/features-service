@@ -1,5 +1,58 @@
 # Features Service — CLAUDE.md
 
+## A BOUNCE IS THE PROOF A SEND HAPPENED — REACH and the PIPELINE BASE are two questions, and both are served
+
+A customer 5 days into a campaign reported that some leads looked contacted twice: their screen said
+876 outreaches against 836 people. Nobody was contacted twice — 883 rows in lead-service, 883 distinct
+lead ids, 883 distinct emails, 876 matched 1:1 against instantly, zero repeats. **876 − 40 bounced =
+836, exactly.** The 40 people whose mailbox refused the email were being dropped from the count of
+people we emailed, and the customer read the gap as duplicates.
+
+The cause was one line: `leads-client.ts` treated a bounced or unsubscribed lead as DEAD and zeroed its
+WHOLE signal set — `contacted` and `sent` with it — after which the lead also fell out of `leads[]`,
+since the engine keeps a person only when it has expected value or reached a delivery milestone. That
+answer is right about the future and wrong about the past, and it made the response contradict itself:
+`recipientsBounced: 40` beside a `recipientsContacted` that excluded those same 40. A lead counted as
+bounced but never as contacted is not a state that can exist.
+
+- **THE DELIVERY LADDER IS A SET OF FACTS ABOUT OUR OWN SENDING, AND A FACT IS NEVER ZEROED.**
+  `contacted` / `sent` / `delivered` / `bounced` / `unsubscribed` come straight from the producer now.
+  We queued the email, we sent it, we PAID for it — a bounce is the proof a send happened, not a reason
+  to forget it. None of the ladder is a step of any funnel (they are `SALES_MILESTONES`, which carry no
+  revenue field at all), so stating them truthfully adds **exactly zero** expected value.
+- **"CANNOT CONVERT" IS SAID ON THE CONVERSION LEGS, AND NOWHERE ELSE.** A dead lead still carries
+  `clicked` / `positiveReply` / `negativeReply` / `neutralReply` false, so the EV math is BYTE-UNCHANGED:
+  a lead that clicked and then bounced is worth 0, exactly as before. Do NOT "simplify" this back to
+  one flag over the whole signal map — that IS the bug, and the two halves answer different questions.
+- **`outcomes` ANSWERS BOTH, and neither is inferred from the other.** `recipientsContacted` is REACH
+  (bounces and unsubscribes included) — "how many unique people did we reach out to", the number a
+  customer's spend bought. `recipientsConvertible` is THE PIPELINE BASE — reach minus everyone a bounce
+  or an unsubscribe removed — and every expected-value figure on the grain rests on those people and no
+  others. `recipientsBounced` / `recipientsUnsubscribed` ride beside them.
+- **THE BASE IS SERVED BECAUSE IT IS A UNION, NOT A SUBTRACTION.** A lead can be BOTH bounced and
+  unsubscribed, so `contacted − bounced − unsubscribed` subtracts that person twice and reports a base
+  smaller than the truth. Only the per-lead set knows the union, so a consumer cannot compute it — which
+  is the client-computed-metric bug this service exists to prevent, in its purest form.
+- **A DEAD LEAD STAYS IN `leads[]` AT 0, SAYING WHY.** `bounced` and `unsubscribed` are booleans on the
+  row, beside `contacted`. The row a customer opens has to say the same thing as the counts above it,
+  and a contacted lead that mysteriously never progressed says nothing at all. It contributes to no
+  organisation, no event, no time-series step and no total — the same treatment the merely-delivered
+  lead already had.
+- **THE FUNNEL'S FIRST RUNG CONVERTS FROM REACH** (`funnelSteps.contactedRecipients`, now 876 not 836),
+  with `convertibleRecipients` stated beside it. See that section for why reach is the right base.
+- **EVERY GRAIN MOVED AT ONCE, because a grain left behind reproduces the bug one click away** — the
+  brand read, `?campaignId=`, `?groupBy=campaignId`, `?groupBy=workflow`, the offer / channel / funnel
+  reads, and `/stats` (whose `recipientsContacted` came off the same overlay).
+- **NOTHING WAS RENAMED OR REMOVED**, so no consumer had to be repointed to fix the reported bug:
+  `recipientsContacted` keeps its name and simply stops under-counting. The new fields are additive.
+- Guards: `src/routes/reach-vs-pipeline-base.test.ts` — ONE fixture shaped like the campaign that
+  reported it (10 emailed, 2 bounced, 1 unsubscribed, 1 BOTH, 1 positive reply, and a bounced lead that
+  clicked first): reach equals the people emailed; the base is stated separately; the both-lead leaves
+  the base once while the naive subtraction gets it wrong; no row is bounced-without-contacted; the
+  first rung's rate divides by 10 and not by 6; the EV math unchanged; and a clean campaign reads the
+  same number for both. Plus the three cases in `routes/revenue.test.ts`. (Set 2026-08-29,
+  features-service#862.)
+
 ## `funnelSteps` — A FUNNEL READ STEP BY STEP: who reached each rung, what reaching it cost, and what share of the rung before converted
 
 A customer opening ONE of their sales funnels asks a narrower question than "is this working": walk me
@@ -51,10 +104,15 @@ dividing two served counts in the browser, so the rate had to be served or it co
   through the same OBSERVED engine `outcomes.cpcCents` rides — accounting, so a rung nobody reached is
   **null, never 0 and never a benchmark**. Every rung divides the SAME committed total on purpose: the
   spend bought the whole funnel, not one rung of it. Projection has its own surfaces.
-- **THE FIRST RUNG CONVERTS FROM OUTREACH.** `fromStep: "Contacted"` over `contactedRecipients`, which
-  is a real measured number — the alternative (a null first rate) drops the one conversion a customer
-  most wants. Every later rung converts from the rung before it, and the base rides the row
-  (`fromRecipientsReached`) so a consumer renders "3 of 40" without a lookup.
+- **THE FIRST RUNG CONVERTS FROM OUTREACH, AND OUTREACH MEANS REACH.** `fromStep: "Contacted"` over
+  `contactedRecipients`, which is a real measured number — the alternative (a null first rate) drops
+  the one conversion a customer most wants. It counts the people who BOUNCED and the ones who
+  UNSUBSCRIBED: a bounce is a real loss at the very first rung and it was paid for, so a rate that
+  quietly divided by the survivors would hide the people the campaign bought and never reached. The
+  smaller base rides the block beside it as `convertibleRecipients` (= `outcomes.recipientsConvertible`)
+  so nobody has to work out which of the two a rate divided by. Every later rung converts from the rung
+  before it, and the base rides the row (`fromRecipientsReached`) so a consumer renders "3 of 40"
+  without a lookup.
 - **ABSENT AND ZERO ARE DIFFERENT STATEMENTS, and `StepEvidence` is what tells them apart.** `0` is
   MEASURED. `null` is "the producer behind this rung's signal was unreadable on this request, or was
   never fetched on this path" — and a null count nulls its cost AND both rates that touch it. The
@@ -3653,7 +3711,7 @@ Opens/Clicks/Signups actuals off pipeline-activity. (Set 2026-06-24.)
 The brand stat card (`GET /features/:slug/stats?brandId=` → `recipientsClicked`) and the Overview
 (`GET /features/:slug/revenue?brandId=` → `clicked.total`) MUST show the same number. They used to
 drift (72 vs 71) because they counted DIFFERENT things: `/revenue` counts DISTINCT leads (deduped by
-`leadId`, bounced/unsubscribed zeroed) from the `leads[]` snapshot; `/stats` `recipientsClicked` was
+`leadId`) from the `leads[]` snapshot; `/stats` `recipientsClicked` was
 the email-gateway `broadcast.recipientStats.clicked` AGGREGATE — one recipient row PER send, so a lead
 served in two campaigns (or who clicked two emails of a sequence) double-counts. The +1 was exactly
 one such duplicate (the Sibylle Linnebo case: same lead, two click events 13 days apart).
@@ -3674,9 +3732,10 @@ is brand-scoped (one `fetchLeadsForRevenue` call), not per-group. Brand-scope ma
 which also calls `fetchLeadsForRevenue(brandId, campaignId)` with NO feature filter on the leads — so
 matching it is correct by construction even though it counts all the brand's leads.
 
-**email-gateway is STILL fetched** for the keys the snapshot can't produce — `recipientsBounced`
-(snapshot zeroes bounced leads' signals) and replies Negative/Neutral/AutoReply (snapshot only knows
-`positiveReply` via `replyClassification`). Only the six above are overridden. Open has NO lead-row
+**email-gateway is STILL fetched** for the replies Negative/Neutral/AutoReply (the snapshot only knows
+`positiveReply` via `replyClassification`). `recipientsBounced` has been snapshot-owned since this
+list was written (it is in `SNAPSHOT_ENGAGEMENT_KEYS`); the older wording here claimed email-gateway
+still answered it, which was already untrue. Only the keys in that list are overridden. Open has NO lead-row
 boolean — a known email-gateway open timestamp IS the signal (mirrors revenue.ts Wave B); the
 open-overlay is BEST-EFFORT (an email-gateway failure degrades `opened` to 0 on BOTH endpoints
 identically, while the lead fetch itself stays fail-loud). No OpenAPI change (same keys, same types).

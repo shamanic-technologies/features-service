@@ -837,6 +837,8 @@ function buildLensBody(
       date: null,
       contacted: Boolean(person.signals.contacted),
       contactedAt: person.signalDates?.contacted ?? null,
+      bounced: Boolean(person.signals.bounced),
+      unsubscribed: Boolean(person.signals.unsubscribed),
       opened: Boolean(person.signals.open),
       openedAt: person.signalDates?.open ?? null,
       clicked: Boolean(person.signals.clicked),

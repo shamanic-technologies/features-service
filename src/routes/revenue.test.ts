@@ -545,15 +545,75 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.recipientsContacted.total).toBe(1);
   });
 
-  it("bounced lead earns no expected revenue (excluded even if clicked)", async () => {
+  // A BOUNCE IS THE PROOF A SEND HAPPENED. It removes the lead from the FUNNEL (no expected revenue at
+  // any rung, even one it fired before bouncing) and from NOTHING else: we queued the email, we sent
+  // it, we paid for it, so the reach the customer is charged for still counts it. Reporting
+  // `recipientsBounced: 40` beside a contacted figure that excluded those same 40 was the response
+  // contradicting itself, and it moved the funnel's first-rung base (#862).
+  it("a bounced lead is REACHED and worth NOTHING — counted in reach, out of the pipeline base", async () => {
     mockFetch({
       economics: ECONOMICS,
       leads: [leadRow({ leadId: "l4", email: "bounce@z.com", clicked: true, bounced: true })],
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
+    // The EV math is untouched: a bounced lead's conversion legs never fire, so it is worth 0 even
+    // though it clicked before bouncing.
     expect(res.body.headline.totalPipelineUsd).toBe(0);
-    expect(res.body.leads).toEqual([]);
+    // It stays in leads[] at 0, saying WHY — a row a customer opens has to say the same thing as the
+    // counts above it, and a contacted lead that mysteriously never progressed says nothing.
+    expect(res.body.leads).toHaveLength(1);
+    expect(res.body.leads[0]).toMatchObject({
+      leadId: "l4",
+      contacted: true,
+      bounced: true,
+      unsubscribed: false,
+      clicked: false,
+      expectedRevenueUsd: 0,
+    });
+    // The two questions, answered apart and neither inferred from the other.
+    expect(res.body.outcomes.recipientsContacted).toBe(1); // reach — we emailed this person
+    expect(res.body.outcomes.recipientsConvertible).toBe(0); // pipeline base — they can never convert
+    expect(res.body.outcomes.recipientsBounced).toBe(1);
+    expect(res.body.recipientsContacted.total).toBe(1); // the series agrees with the block
+  });
+
+  it("an unsubscribed lead is reached too, and is out of the pipeline base for its own reason", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [
+        leadRow({ leadId: "lu", email: "unsub@z.com", clicked: true, unsubscribed: true }),
+        leadRow({ leadId: "lok", email: "ok@z.com" }),
+      ],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(0);
+    expect(res.body.outcomes.recipientsContacted).toBe(2);
+    expect(res.body.outcomes.recipientsConvertible).toBe(1);
+    expect(res.body.outcomes.recipientsUnsubscribed).toBe(1);
+    expect(res.body.outcomes.recipientsBounced).toBe(0);
+  });
+
+  // A lead can be BOTH, which is precisely why the base is served rather than subtracted downstream:
+  // `contacted − bounced − unsubscribed` would subtract this person twice and report a base of 0.
+  it("a lead that BOTH bounced and unsubscribed is removed ONCE from the base", async () => {
+    mockFetch({
+      economics: ECONOMICS,
+      leads: [
+        leadRow({ leadId: "lboth", email: "both@z.com", bounced: true, unsubscribed: true }),
+        leadRow({ leadId: "lok", email: "ok@z.com" }),
+      ],
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(200);
+    const o = res.body.outcomes;
+    expect(o.recipientsContacted).toBe(2);
+    expect(o.recipientsBounced).toBe(1);
+    expect(o.recipientsUnsubscribed).toBe(1);
+    // The naive subtraction says 0. The union says 1, and the union is the truth.
+    expect(o.recipientsContacted - o.recipientsBounced - o.recipientsUnsubscribed).toBe(0);
+    expect(o.recipientsConvertible).toBe(1);
   });
 
   // ── Outcome lenses (?lens=) ───────────────────────────────────────────────────

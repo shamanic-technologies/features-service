@@ -228,6 +228,19 @@ export interface LeadRow {
    */
   contactedAt: string | null;
   /**
+   * WHY THIS LEAD CAN NEVER CONVERT, when it cannot — the two ends of the delivery ladder that take a
+   * person OUT of the funnel while leaving the outreach we paid for standing. `bounced` says the
+   * mailbox refused the email; `unsubscribed` says the person asked us to stop. Both are FACTS about a
+   * lead we did contact, so they ride the row beside `contacted` rather than erasing it: a row a
+   * customer opens has to say the same thing as the counts above it, and a lead showing "contacted"
+   * with nothing else and no reason would read as a lead we simply never worked.
+   *
+   * Neither is a funnel step and neither carries expected value; what they DO is remove this lead from
+   * `outcomes.recipientsConvertible`, the base every pipeline figure on the grain rests on.
+   */
+  bounced: boolean;
+  unsubscribed: boolean;
+  /**
    * Per-lead OUTCOME signals + their first-occurrence ISO dates, OR'd / MIN'd across the lead's
    * campaign rows (same provenance as `contacted`/`contactedAt`). These drive the Overview graph's
    * Opens / Clicks / goal-outcome ACTUAL series, server-computed from THIS `leads[]` snapshot so
@@ -621,6 +634,8 @@ export function computeRevenue(
     date,
     contacted: Boolean(person.signals.contacted),
     contactedAt: person.signalDates?.contacted ?? null,
+    bounced: Boolean(person.signals.bounced),
+    unsubscribed: Boolean(person.signals.unsubscribed),
     opened: Boolean(person.signals.open),
     openedAt: person.signalDates?.open ?? null,
     clicked: Boolean(person.signals.clicked),
