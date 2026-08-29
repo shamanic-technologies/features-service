@@ -6,8 +6,11 @@ import { singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 /**
  * The recipient-engagement counts that BOTH `/features/:slug/revenue` and
  * `/features/:slug/stats` must agree on. Each is a count of DISTINCT leads (deduped by
- * `leadId`, bounced/unsubscribed leads zeroed at the leads-client overlay) that fired the
- * signal — NOT a count of email-gateway recipient rows / click events.
+ * `leadId`) that fired the signal — NOT a count of email-gateway recipient rows / click events.
+ *
+ * `recipientsContacted` is REACH: it includes the leads that bounced or unsubscribed, because we did
+ * email them. A bounce is the proof a send happened, so reporting `recipientsBounced` beside a
+ * contacted figure that excluded those same leads was the response contradicting itself.
  *
  * `recipientsClicked` here is byte-equal to `/revenue` `clicked.total` because both count the
  * SAME deduped lead snapshot: same `fetchLeadsForRevenue` overlay, same open-timestamp overlay,

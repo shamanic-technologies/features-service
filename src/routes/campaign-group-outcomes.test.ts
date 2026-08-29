@@ -290,6 +290,9 @@ describe("a campaign group states how much outcome evidence its money rests on",
     // Spent and reached nobody — the row a customer is hunting. Every count is a real 0.
     expect(byId.cold.outcomes).toEqual({
       recipientsContacted: 0,
+      recipientsConvertible: 0,
+      recipientsBounced: 0,
+      recipientsUnsubscribed: 0,
       recipientsClicked: 0,
       recipientsRepliesPositive: 0,
       committedSpentCents: 4000,

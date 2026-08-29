@@ -1656,6 +1656,14 @@
                   "nullable": true,
                   "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
                 },
+                "bounced": {
+                  "type": "boolean",
+                  "description": "True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."
+                },
+                "unsubscribed": {
+                  "type": "boolean",
+                  "description": "True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."
+                },
                 "opened": {
                   "type": "boolean",
                   "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
@@ -1752,6 +1760,8 @@
                 "date",
                 "contacted",
                 "contactedAt",
+                "bounced",
+                "unsubscribed",
                 "opened",
                 "openedAt",
                 "clicked",
@@ -1814,7 +1824,19 @@
             "properties": {
               "recipientsContacted": {
                 "type": "number",
-                "description": "Distinct leads this grain reached for this brand — the grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer."
+                "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+              },
+              "recipientsConvertible": {
+                "type": "number",
+                "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
+              },
+              "recipientsBounced": {
+                "type": "number",
+                "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
+              },
+              "recipientsUnsubscribed": {
+                "type": "number",
+                "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
               },
               "recipientsClicked": {
                 "type": "number",
@@ -1845,6 +1867,9 @@
             },
             "required": [
               "recipientsContacted",
+              "recipientsConvertible",
+              "recipientsBounced",
+              "recipientsUnsubscribed",
               "recipientsClicked",
               "recipientsRepliesPositive",
               "committedSpentCents",
@@ -1878,7 +1903,11 @@
               },
               "contactedRecipients": {
                 "type": "integer",
-                "description": "DISTINCT leads this scope contacted — the base the FIRST rung converts from, and the reason that rung's rate is answerable at all. Always measured wherever the leads were read."
+                "description": "REACH — DISTINCT leads this scope emailed, bounced and unsubscribed INCLUDED. It is the base the FIRST rung converts from (its fromRecipientsReached, under the label 'Contacted'), and the reason that rung's rate is answerable at all. Always measured wherever the leads were read. The first rung converts from REACH and not from the smaller convertible base on purpose: a bounce is a real loss at the very first rung and it was paid for, so a rate that quietly divided by the survivors would hide the people this campaign bought and never reached. Byte-equal to outcomes.recipientsContacted for the same scope."
+              },
+              "convertibleRecipients": {
+                "type": "integer",
+                "description": "THE PIPELINE BASE — of those reached, the ones still able to convert (contactedRecipients minus everyone a bounce or an unsubscribe removed). Stated BESIDE the reach it is drawn from so nobody has to work out which of the two a rate divided by. Byte-equal to outcomes.recipientsConvertible for the same scope — one count, read off one deduped person set."
               },
               "steps": {
                 "type": "array",
@@ -1986,6 +2015,7 @@
               "name",
               "committedSpentCents",
               "contactedRecipients",
+              "convertibleRecipients",
               "steps"
             ],
             "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."
@@ -2161,7 +2191,19 @@
                   "properties": {
                     "recipientsContacted": {
                       "type": "number",
-                      "description": "Distinct leads this grain reached for this brand — the grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer."
+                      "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+                    },
+                    "recipientsConvertible": {
+                      "type": "number",
+                      "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
+                    },
+                    "recipientsBounced": {
+                      "type": "number",
+                      "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
+                    },
+                    "recipientsUnsubscribed": {
+                      "type": "number",
+                      "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
                     },
                     "recipientsClicked": {
                       "type": "number",
@@ -2192,6 +2234,9 @@
                   },
                   "required": [
                     "recipientsContacted",
+                    "recipientsConvertible",
+                    "recipientsBounced",
+                    "recipientsUnsubscribed",
                     "recipientsClicked",
                     "recipientsRepliesPositive",
                     "committedSpentCents",
@@ -2331,7 +2376,19 @@
                   "properties": {
                     "recipientsContacted": {
                       "type": "number",
-                      "description": "Distinct leads this grain reached for this brand — the grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer."
+                      "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+                    },
+                    "recipientsConvertible": {
+                      "type": "number",
+                      "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
+                    },
+                    "recipientsBounced": {
+                      "type": "number",
+                      "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
+                    },
+                    "recipientsUnsubscribed": {
+                      "type": "number",
+                      "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
                     },
                     "recipientsClicked": {
                       "type": "number",
@@ -2362,6 +2419,9 @@
                   },
                   "required": [
                     "recipientsContacted",
+                    "recipientsConvertible",
+                    "recipientsBounced",
+                    "recipientsUnsubscribed",
                     "recipientsClicked",
                     "recipientsRepliesPositive",
                     "committedSpentCents",
@@ -5417,6 +5477,14 @@
                   "nullable": true,
                   "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
                 },
+                "bounced": {
+                  "type": "boolean",
+                  "description": "True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."
+                },
+                "unsubscribed": {
+                  "type": "boolean",
+                  "description": "True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."
+                },
                 "opened": {
                   "type": "boolean",
                   "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
@@ -5513,6 +5581,8 @@
                 "date",
                 "contacted",
                 "contactedAt",
+                "bounced",
+                "unsubscribed",
                 "opened",
                 "openedAt",
                 "clicked",
@@ -5575,7 +5645,19 @@
             "properties": {
               "recipientsContacted": {
                 "type": "number",
-                "description": "Distinct leads this grain reached for this brand — the grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer."
+                "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+              },
+              "recipientsConvertible": {
+                "type": "number",
+                "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
+              },
+              "recipientsBounced": {
+                "type": "number",
+                "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
+              },
+              "recipientsUnsubscribed": {
+                "type": "number",
+                "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
               },
               "recipientsClicked": {
                 "type": "number",
@@ -5606,6 +5688,9 @@
             },
             "required": [
               "recipientsContacted",
+              "recipientsConvertible",
+              "recipientsBounced",
+              "recipientsUnsubscribed",
               "recipientsClicked",
               "recipientsRepliesPositive",
               "committedSpentCents",
@@ -5639,7 +5724,11 @@
               },
               "contactedRecipients": {
                 "type": "integer",
-                "description": "DISTINCT leads this scope contacted — the base the FIRST rung converts from, and the reason that rung's rate is answerable at all. Always measured wherever the leads were read."
+                "description": "REACH — DISTINCT leads this scope emailed, bounced and unsubscribed INCLUDED. It is the base the FIRST rung converts from (its fromRecipientsReached, under the label 'Contacted'), and the reason that rung's rate is answerable at all. Always measured wherever the leads were read. The first rung converts from REACH and not from the smaller convertible base on purpose: a bounce is a real loss at the very first rung and it was paid for, so a rate that quietly divided by the survivors would hide the people this campaign bought and never reached. Byte-equal to outcomes.recipientsContacted for the same scope."
+              },
+              "convertibleRecipients": {
+                "type": "integer",
+                "description": "THE PIPELINE BASE — of those reached, the ones still able to convert (contactedRecipients minus everyone a bounce or an unsubscribe removed). Stated BESIDE the reach it is drawn from so nobody has to work out which of the two a rate divided by. Byte-equal to outcomes.recipientsConvertible for the same scope — one count, read off one deduped person set."
               },
               "steps": {
                 "type": "array",
@@ -5747,6 +5836,7 @@
               "name",
               "committedSpentCents",
               "contactedRecipients",
+              "convertibleRecipients",
               "steps"
             ],
             "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."
@@ -6161,7 +6251,19 @@
                   "properties": {
                     "recipientsContacted": {
                       "type": "number",
-                      "description": "Distinct leads this grain reached for this brand — the grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer."
+                      "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+                    },
+                    "recipientsConvertible": {
+                      "type": "number",
+                      "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
+                    },
+                    "recipientsBounced": {
+                      "type": "number",
+                      "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
+                    },
+                    "recipientsUnsubscribed": {
+                      "type": "number",
+                      "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
                     },
                     "recipientsClicked": {
                       "type": "number",
@@ -6192,6 +6294,9 @@
                   },
                   "required": [
                     "recipientsContacted",
+                    "recipientsConvertible",
+                    "recipientsBounced",
+                    "recipientsUnsubscribed",
                     "recipientsClicked",
                     "recipientsRepliesPositive",
                     "committedSpentCents",
@@ -7807,6 +7912,14 @@
                   "nullable": true,
                   "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
                 },
+                "bounced": {
+                  "type": "boolean",
+                  "description": "True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."
+                },
+                "unsubscribed": {
+                  "type": "boolean",
+                  "description": "True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."
+                },
                 "opened": {
                   "type": "boolean",
                   "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
@@ -7903,6 +8016,8 @@
                 "date",
                 "contacted",
                 "contactedAt",
+                "bounced",
+                "unsubscribed",
                 "opened",
                 "openedAt",
                 "clicked",
@@ -7965,7 +8080,19 @@
             "properties": {
               "recipientsContacted": {
                 "type": "number",
-                "description": "Distinct leads this grain reached for this brand — the grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer."
+                "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+              },
+              "recipientsConvertible": {
+                "type": "number",
+                "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
+              },
+              "recipientsBounced": {
+                "type": "number",
+                "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
+              },
+              "recipientsUnsubscribed": {
+                "type": "number",
+                "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
               },
               "recipientsClicked": {
                 "type": "number",
@@ -7996,6 +8123,9 @@
             },
             "required": [
               "recipientsContacted",
+              "recipientsConvertible",
+              "recipientsBounced",
+              "recipientsUnsubscribed",
               "recipientsClicked",
               "recipientsRepliesPositive",
               "committedSpentCents",
@@ -8029,7 +8159,11 @@
               },
               "contactedRecipients": {
                 "type": "integer",
-                "description": "DISTINCT leads this scope contacted — the base the FIRST rung converts from, and the reason that rung's rate is answerable at all. Always measured wherever the leads were read."
+                "description": "REACH — DISTINCT leads this scope emailed, bounced and unsubscribed INCLUDED. It is the base the FIRST rung converts from (its fromRecipientsReached, under the label 'Contacted'), and the reason that rung's rate is answerable at all. Always measured wherever the leads were read. The first rung converts from REACH and not from the smaller convertible base on purpose: a bounce is a real loss at the very first rung and it was paid for, so a rate that quietly divided by the survivors would hide the people this campaign bought and never reached. Byte-equal to outcomes.recipientsContacted for the same scope."
+              },
+              "convertibleRecipients": {
+                "type": "integer",
+                "description": "THE PIPELINE BASE — of those reached, the ones still able to convert (contactedRecipients minus everyone a bounce or an unsubscribe removed). Stated BESIDE the reach it is drawn from so nobody has to work out which of the two a rate divided by. Byte-equal to outcomes.recipientsConvertible for the same scope — one count, read off one deduped person set."
               },
               "steps": {
                 "type": "array",
@@ -8137,6 +8271,7 @@
               "name",
               "committedSpentCents",
               "contactedRecipients",
+              "convertibleRecipients",
               "steps"
             ],
             "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."
@@ -8273,7 +8408,19 @@
                   "properties": {
                     "recipientsContacted": {
                       "type": "number",
-                      "description": "Distinct leads this grain reached for this brand — the grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer."
+                      "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+                    },
+                    "recipientsConvertible": {
+                      "type": "number",
+                      "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
+                    },
+                    "recipientsBounced": {
+                      "type": "number",
+                      "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
+                    },
+                    "recipientsUnsubscribed": {
+                      "type": "number",
+                      "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
                     },
                     "recipientsClicked": {
                       "type": "number",
@@ -8304,6 +8451,9 @@
                   },
                   "required": [
                     "recipientsContacted",
+                    "recipientsConvertible",
+                    "recipientsBounced",
+                    "recipientsUnsubscribed",
                     "recipientsClicked",
                     "recipientsRepliesPositive",
                     "committedSpentCents",
@@ -10008,6 +10158,14 @@
                   "nullable": true,
                   "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
                 },
+                "bounced": {
+                  "type": "boolean",
+                  "description": "True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."
+                },
+                "unsubscribed": {
+                  "type": "boolean",
+                  "description": "True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."
+                },
                 "opened": {
                   "type": "boolean",
                   "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
@@ -10104,6 +10262,8 @@
                 "date",
                 "contacted",
                 "contactedAt",
+                "bounced",
+                "unsubscribed",
                 "opened",
                 "openedAt",
                 "clicked",
@@ -10166,7 +10326,19 @@
             "properties": {
               "recipientsContacted": {
                 "type": "number",
-                "description": "Distinct leads this grain reached for this brand — the grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer."
+                "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+              },
+              "recipientsConvertible": {
+                "type": "number",
+                "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
+              },
+              "recipientsBounced": {
+                "type": "number",
+                "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
+              },
+              "recipientsUnsubscribed": {
+                "type": "number",
+                "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
               },
               "recipientsClicked": {
                 "type": "number",
@@ -10197,6 +10369,9 @@
             },
             "required": [
               "recipientsContacted",
+              "recipientsConvertible",
+              "recipientsBounced",
+              "recipientsUnsubscribed",
               "recipientsClicked",
               "recipientsRepliesPositive",
               "committedSpentCents",
@@ -10230,7 +10405,11 @@
               },
               "contactedRecipients": {
                 "type": "integer",
-                "description": "DISTINCT leads this scope contacted — the base the FIRST rung converts from, and the reason that rung's rate is answerable at all. Always measured wherever the leads were read."
+                "description": "REACH — DISTINCT leads this scope emailed, bounced and unsubscribed INCLUDED. It is the base the FIRST rung converts from (its fromRecipientsReached, under the label 'Contacted'), and the reason that rung's rate is answerable at all. Always measured wherever the leads were read. The first rung converts from REACH and not from the smaller convertible base on purpose: a bounce is a real loss at the very first rung and it was paid for, so a rate that quietly divided by the survivors would hide the people this campaign bought and never reached. Byte-equal to outcomes.recipientsContacted for the same scope."
+              },
+              "convertibleRecipients": {
+                "type": "integer",
+                "description": "THE PIPELINE BASE — of those reached, the ones still able to convert (contactedRecipients minus everyone a bounce or an unsubscribe removed). Stated BESIDE the reach it is drawn from so nobody has to work out which of the two a rate divided by. Byte-equal to outcomes.recipientsConvertible for the same scope — one count, read off one deduped person set."
               },
               "steps": {
                 "type": "array",
@@ -10338,6 +10517,7 @@
               "name",
               "committedSpentCents",
               "contactedRecipients",
+              "convertibleRecipients",
               "steps"
             ],
             "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."

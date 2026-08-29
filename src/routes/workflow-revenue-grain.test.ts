@@ -285,6 +285,9 @@ describe("GET /revenue?groupBy=workflow — which workflows made money", () => {
     // Dawn's versions fold into ONE dynasty on the volume half exactly as they do on the money half.
     expect(groups.dawn.outcomes).toEqual({
       recipientsContacted: 4,
+      recipientsConvertible: 4,
+      recipientsBounced: 0,
+      recipientsUnsubscribed: 0,
       recipientsClicked: 2,
       recipientsRepliesPositive: 1,
       committedSpentCents: 5000,
