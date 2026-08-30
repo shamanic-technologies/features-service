@@ -53,6 +53,71 @@ bounced but never as contacted is not a state that can exist.
   same number for both. Plus the three cases in `routes/revenue.test.ts`. (Set 2026-08-29,
   features-service#862.)
 
+## A CALLER SAYS WHAT IT IS MAXIMISING — `?maximize=return|conversionRate`, and `return` is what every silent caller keeps getting
+
+Every recommendation here ranks one catalogue of workflows, and it ranked it exactly one way: cheapest
+cost per outcome, i.e. the most outcome per DOLLAR. That is right while the pool of people to reach is
+effectively unbounded, because then the binding constraint is the customer's BUDGET. It is wrong when
+the pool is small and finite: a niche list will be EXHAUSTED, so the binding constraint is the INVENTORY,
+burning fewer people per outcome matters more than what each outcome costs, and the thing to maximise is
+the CONVERSION RATE. The same catalogue ranks differently under the two, and only the first was sayable.
+
+- **THE WORD IS NOT `objective`, AND THAT IS NOT A STYLE CHOICE.** `objective` is already the deprecated
+  alias of the GOAL — the kind of OUTCOME being bought (a signup, a booked meeting) — and it must keep
+  meaning that until every caller has moved off it. What is MAXIMISED and what OUTCOME is bought are two
+  questions; one word answering whichever the reader assumed is the second-vocabulary bug. `maximize` is
+  the ad-tech canon for the same distinction (Google Ads ranks a bid strategy `MAXIMIZE_CONVERSIONS` vs
+  `MAXIMIZE_CONVERSION_VALUE`). The KEY is accepted in both spellings (`maximize` / `maximise`) because
+  the VALUE is what carries the meaning; the echo is always `maximize`. `src/lib/maximize.ts` owns it.
+- **IT IS A PARAMETER OF THE QUESTION, NEVER A PROPERTY OF A BRAND.** One brand asks both — of two
+  channels, of two legs, of the same leg on two days. It is never read from a brand's configuration,
+  never stored, and there is no third value: a rate and a return are the two constraints that bind.
+- **SILENCE IS `return`, BYTE-IDENTICALLY.** An absent parameter is not a missing answer, it is the
+  answer this service has always given. A present-but-unrecognised word is a **400**
+  (`maximize_unrecognised`), never a quiet fall back to `return` — silently ranking on return a caller
+  that asked for something else is the whole failure this exists to prevent.
+- **THE RATE IS `resolved.conversionRatePct`, AND IT IS COHERENT WITH THE COST BY CONSTRUCTION.**
+  `100 × resolvedOutcomeCount / observedContacted`, read off the SAME grain the costs came from
+  (`numberGrain`), so one grain's evidence states three things at once: its spend over its outcomes is
+  `costPerOutcomeUsd`, and its outcomes over its people are this. `resolvedOutcomeCount` uses ONLY
+  observed evidence, so the rate is a MEASUREMENT, never a projection dressed as one.
+  **There is deliberately NO cascade floor on it**: the floor exists so a barely-tried workflow cannot
+  look free, and the mirror of that for a rate is to report the honest measured rate. A measured 0 is a
+  real answer (this workflow reached people and converted nobody); NULL is "we could not count this" —
+  the grain reached nobody, economics are absent, or the row is an EXPLORE ALLOWANCE. An allowance
+  states a cost floor and **never** a rate: it has reached nobody, so a 0 there would rank an unproven
+  workflow last on a claim nobody measured, and the allowance's whole job is reachability.
+- **EVERY ROW CARRIES BOTH FIGURES UNDER BOTH OBJECTIVES.** The parameter shapes the PICK and the ECHO,
+  never the evidence — so the two answers are readable side by side and a consumer can show a customer
+  what the other question would have said. Same on `/funnel-ranking`, where each row states
+  `returnPerDollar` AND `conversionRatePct` whichever one produced the order.
+- **THE LEG'S BASIS FUNNEL MOVES WITH IT, and that is the half that would otherwise contradict itself.**
+  A `?leg=` request picks the declared funnel to price through by ranking them (`rankDeclaredFunnels`,
+  ONE implementation shared with `/funnel-ranking`) — so ranking the basis funnel on RETURN while
+  ranking the workflows inside it on RATE would make one body answer two questions at once. `leg.basis`
+  therefore NAMES which figure won: `best_returning_declared_funnel` / `best_converting_declared_funnel`,
+  and `no_return_evidence` / `no_conversion_evidence` for the tie the catalogue's canonical order breaks.
+  A body ranked on a rate can never claim it ranked on a return.
+- **RANKABILITY NEEDS DIFFERENT INGREDIENTS, so the gates differ.** `conversionRate` needs no price for a
+  paying client, so a brand that has declared no lifetime revenue still gets a ranking — which is the
+  point, a rate question is not a money question — and `no_paid_client_path` / `no_return_defined` cannot
+  fire under it. What can is `no_conversion_rate`: the funnel's best workflow has reached people and
+  converted none of them, which is a different statement from having no history at all.
+- **VOLUME STILL GOVERNS, on the basis that was used.** `leg.evidence` is read off the row that was
+  actually RECOMMENDED, so a rate-ranked answer states the rate-ranked workflow's outcome count, not the
+  return-ranked one's. A recommendation resting on 15 outcomes says 15 under either objective.
+- **NOTHING EXISTING MOVED.** `funnel` / `goal` / `objective` keep their meanings and their bodies; the
+  deprecated `/goal-arbitration` alias stays byte-equal to `/funnel-ranking`; `recommendedBudgetUsd` is
+  still priced off the recommended row's own cost per outcome, so it describes the workflow that was
+  chosen rather than the one the other objective would have chosen. Retiring the goal parameters is a
+  LATER ship; removing them here would break production.
+- Guards: `src/routes/maximize-objective.test.ts` — ONE fixture whose ordering INVERTS at BOTH grains
+  (two workflows: `dyn-volume` reaches 10,000 people cheaply and converts 0.5% of them, `dyn-precise`
+  reaches 200 dearly and converts 5%; two declared funnels: the website funnel returns twice as much per
+  dollar while the conversation funnel converts half as many again). Every case asserts the DIVERGENCE —
+  a suite that only checked "a number came back" would pass on an implementation that ignored the
+  parameter entirely. Plus `src/lib/maximize.test.ts` for the vocabulary. (Set 2026-08-31.)
+
 ## A LEG IS THE UNIT PERFORMANCE IS MEASURED IN — one canonical id per leg, and `?leg=` answers with no sales funnel named
 
 The fleet is removing the sales funnel from a campaign's identity: a campaign is (brand, offer,
@@ -77,7 +142,8 @@ campaign is measured in.
   that bought it and to the projection that priced it.
 - **`GET /features/:slug/workflow-projection?leg=<legKey>` — a recommendation and projected
   economics for (brand, channel, leg) with NO funnel named.** The funnel is chosen HERE, from the
-  brand's declared set: **the BEST-RETURNING declared funnel containing the leg**, on the IDENTICAL
+  brand's declared set: **the declared funnel containing the leg that is best at WHAT THE CALLER ASKED
+  TO MAXIMISE** — by default the best-RETURNING one, on the IDENTICAL
   `returnPerDollar` basis `/funnel-ranking` ranks funnels on (`rankDeclaredFunnels` restricted to the
   candidates — one implementation, so the two surfaces can never name two different funnels for one
   brand). **NOT the cheapest leg**: a dollar buys a paying client through whichever route converts
@@ -86,9 +152,12 @@ campaign is measured in.
   however many funnels contain it, and an ENTRY leg feeds every funnel containing it at once because
   nobody can buy traffic that travels down only one of them.
 - **THE RESPONSE STATES ITS BASIS** — `leg.basis` is `sole_declared_funnel` /
-  `best_returning_declared_funnel` / `no_return_evidence` (nothing containing the leg has a
-  measurable return yet, so the catalogue's canonical order breaks the tie deterministically and says
-  so), beside `returnPerDollar` and `evidence` = `{grain, measured, resolvedOutcomeCount}`. A
+  `best_returning_declared_funnel` / `best_converting_declared_funnel` / `no_return_evidence` /
+  `no_conversion_evidence` (nothing containing the leg has that figure yet, so the catalogue's
+  canonical order breaks the tie deterministically and says so), beside `returnPerDollar`,
+  `conversionRatePct` and `evidence` = `{grain, measured, resolvedOutcomeCount}`. Which of the two
+  figures the pick was made on is `?maximize=` — see that section; `return` is the default and this
+  paragraph's original wording. A
   recommendation standing on a handful of terminal outcomes is noise, so the VOLUME is stated in the
   vocabulary the rows already use rather than hidden: `crossOrg` says the numbers are the fleet
   benchmark, not this brand's own results. Null is "we could not count this", never 0.
@@ -1094,8 +1163,8 @@ What a brand sells through is its **DECLARED SALES FUNNEL SET** (`GET /internal/
 either stated, or absent — and absent is a producer gap we surface, never fill.
 
 - **`GET /features/:slug/funnel-ranking`** (was `/goal-arbitration`) — the name now says what it does. It
-  arbitrates nothing and the objective is not a variable; it ranks the declared funnels by return per
-  dollar. **`/goal-arbitration` stays mounted as a DEPRECATED ALIAS on the SAME handler**, byte-identical
+  arbitrates nothing; it ranks the declared funnels on what the CALLER says it is maximising
+  (`?maximize=`, default return per dollar). **`/goal-arbitration` stays mounted as a DEPRECATED ALIAS on the SAME handler**, byte-identical
   body, because campaign-service reads `arbitration` / `workflow` / `rows` off it in prod to pace the 4
   brands with a live campaign and no per-funnel budget row. Removing the alias is a SEPARATE change.
   Guard: the byte-identical-body case in `routes/funnel-ranking.test.ts`.

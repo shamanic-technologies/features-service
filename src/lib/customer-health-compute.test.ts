@@ -115,6 +115,7 @@ function workflowResponse(rows: WorkflowProjectionResponse["rows"]): WorkflowPro
   return {
     featureSlug: COLD_CSV,
     objective: "signup",
+    maximize: "return",
     goal: "signup",
     economics: null,
     rows,
@@ -137,6 +138,7 @@ function wfRow(slug: string, name: string | null, cost: number | null, grain: "c
       costPerOutcomeUsd: cost,
       costPerPaidClientUsd: cost,
       costPerMeetingBookedUsd: null,
+      conversionRatePct: null,
       roiMultiple: null,
       cacPct: null,
     },
