@@ -614,7 +614,7 @@ describe("what the customer states each rung of a funnel cost them", () => {
     const band = res.body.funnelSteps as Breakdown;
 
     // Two people booked; the customer stated $15 and $25 on that leg. So booking a meeting costs them
-    // $20 on average — the number a customer opening this arrow is asking for, SERVED not divided.
+    // $20 on average — the number a customer opening this leg is asking for, SERVED not divided.
     expect(band.steps[1].step).toBe("Meeting booked");
     expect(band.steps[1].recipientsReached).toBe(2);
     expect(band.steps[1].customerCost).toEqual({

@@ -175,8 +175,8 @@ describe("building the public catalogue", () => {
     expect(channel.producibleSteps).toEqual([]);
     expect(channel.stepTransitions).toEqual([
       {
-        // Every published leg carries the ONE canonical identifier of the arrow it is.
-        arrowKey: "meeting_attended_to_paid_client",
+        // Every published leg carries the ONE canonical identifier of the leg it is.
+        legKey: "meeting_attended_to_paid_client",
         from: expect.objectContaining({ key: "meeting_attended" }),
         to: expect.objectContaining({ key: "paid_client" }),
       },
