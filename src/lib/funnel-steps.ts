@@ -41,8 +41,8 @@
  *
  * The platform automates the first link and CHARGES for it; the customer runs the meeting and closes
  * the deal, and states what those legs cost them. That was answerable for a whole FUNNEL and nowhere
- * finer — but the question is per ARROW ("what does a booked meeting cost me?"), and one funnel-wide
- * total covers every arrow at once, so it cannot answer it. A statement already NAMES its step, so
+ * finer — but the question is per LEG ("what does a booked meeting cost me?"), and one funnel-wide
+ * total covers every leg at once, so it cannot answer it. A statement already NAMES its step, so
  * `customerCost` is a partition of the same rows: the funnel-wide figure is byte-unchanged beside it,
  * nothing of theirs is folded into what we charged, and the average per person who crossed the rung
  * is SERVED rather than divided in a browser.
@@ -65,7 +65,7 @@
  */
 import { observedCostPerOutcome } from "./cost-engine.js";
 import { coverageOf, type CustomerDeclaredCost, type FunnelCostCoverage } from "./funnel-customer-costs.js";
-import { arrowKeysOfFunnel } from "./funnel-arrows.js";
+import { legKeysOfFunnel } from "./funnel-legs.js";
 import { FUNNEL_LEG_SIGNALS } from "./funnel-registry.js";
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import { SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
@@ -221,13 +221,13 @@ export interface FunnelStepCustomerCost extends CustomerDeclaredCost {
 /** One rung of a funnel: who reached it, what that cost, and what share of the rung before converted. */
 export interface FunnelStep {
   /**
-   * The ARROW this rung IS — the single canonical identifier of the leg that moves a lead onto this
-   * step (`lib/funnel-arrows.ts`). Performance is measured per arrow and a campaign is bought per
-   * arrow, so this is what makes a rung joinable to the campaign that bought it and to the projection
-   * that priced it. The SAME arrow appears on every funnel that contains it — which is exactly why a
-   * funnel's figures are COMPOSED from its arrows and why two funnels' figures must never be summed.
+   * The LEG this rung IS — the single canonical identifier of the leg that moves a lead onto this
+   * step (`lib/funnel-legs.ts`). Performance is measured per leg and a campaign is bought per
+   * leg, so this is what makes a rung joinable to the campaign that bought it and to the projection
+   * that priced it. The SAME leg appears on every funnel that contains it — which is exactly why a
+   * funnel's figures are COMPOSED from its legs and why two funnels' figures must never be summed.
    */
-  arrowKey: string;
+  legKey: string;
   /** The funnel's own label for this step, in brand-service's words (`SALES_FUNNELS[key].steps`). */
   step: string;
   /** The `leads[]` boolean this step counts, so a consumer can reconcile it against the rows. */
@@ -318,9 +318,9 @@ export function buildFunnelSteps(
   // after the divergence carries the wrong name — a silent mislabel, so it fails loud instead.
   if (def.steps.length !== legs.length) throw new FunnelStepShapeError(funnelKey, def.steps.length, legs.length);
 
-  // The funnel's own arrows, in its own order — derived from the same catalogue the labels and the
-  // legs are, so a rung, its label and its arrow can never come from three different walks.
-  const arrowKeys = arrowKeysOfFunnel(funnelKey);
+  // The funnel's own legs, in its own order — derived from the same catalogue the labels and the
+  // legs are, so a rung, its label and its leg can never come from three different walks.
+  const legKeys = legKeysOfFunnel(funnelKey);
 
   const deduped = dedupPersonsByLead(persons);
   const contactedRecipients = deduped.reduce((n, p) => n + (p.signals.contacted ? 1 : 0), 0);
@@ -354,7 +354,7 @@ export function buildFunnelSteps(
       : null;
 
     steps.push({
-      arrowKey: arrowKeys[i],
+      legKey: legKeys[i],
       step: def.steps[i],
       leadField,
       recipientsReached,

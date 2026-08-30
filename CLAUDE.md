@@ -53,60 +53,60 @@ bounced but never as contacted is not a state that can exist.
   same number for both. Plus the three cases in `routes/revenue.test.ts`. (Set 2026-08-29,
   features-service#862.)
 
-## AN ARROW IS THE UNIT PERFORMANCE IS MEASURED IN — one canonical id per arrow, and `?arrow=` answers with no sales funnel named
+## A LEG IS THE UNIT PERFORMANCE IS MEASURED IN — one canonical id per leg, and `?leg=` answers with no sales funnel named
 
 The fleet is removing the sales funnel from a campaign's identity: a campaign is (brand, offer,
-acquisition channel, the single ARROW it is bought for). One arrow belongs to SEVERAL funnels at once
+acquisition channel, the single LEG it is bought for). One leg belongs to SEVERAL funnels at once
 — the same attended meeting is on both meeting funnels — so forcing a campaign to name one funnel
 produced either duplicate campaigns contacting the same people, or a ranking that silently ignored the
-funnel it was told to work. A sales funnel therefore becomes a way of READING arrows, not the unit a
+funnel it was told to work. A sales funnel therefore becomes a way of READING legs, not the unit a
 campaign is measured in.
 
-- **ONE ARROW, ONE IDENTIFIER, MINTED HERE — `lib/funnel-arrows.ts`, and it is a PUBLISHED CONTRACT.**
-  `arrowKey` is `<from>_to_<to>` with `start` for "from nothing" (`start_to_conversation`,
-  `meeting_booked_to_meeting_attended`). A caller names one arrow with ONE value; **nobody ever parses
+- **ONE LEG, ONE IDENTIFIER, MINTED HERE — `lib/funnel-legs.ts`, and it is a PUBLISHED CONTRACT.**
+  `legKey` is `<from>_to_<to>` with `start` for "from nothing" (`start_to_conversation`,
+  `meeting_booked_to_meeting_attended`). A caller names one leg with ONE value; **nobody ever parses
   it back into its parts** — the two steps ride BESIDE it (`fromStep` / `toStep`, each with its
-  buyer-facing wording), so a consumer that wants them READS them. `matchFunnelArrowKey` is a LOOKUP,
+  buyer-facing wording), so a consumer that wants them READS them. `matchFunnelLegKey` is a LOOKUP,
   so a well-formed `signup_to_meeting_attended` that no funnel has is still unknown, and fails loud.
-- **AN ENTRY ARROW IS AN ORDINARY ARROW.** `fromStep: null` is the special case in the DATA, never in
-  the vocabulary: a caller that had to spell an entry arrow differently is a caller with a branch.
+- **AN ENTRY LEG IS AN ORDINARY LEG.** `fromStep: null` is the special case in the DATA, never in
+  the vocabulary: a caller that had to spell an entry leg differently is a caller with a branch.
 - **THE CATALOGUE IS DERIVED FROM THE FUNNELS** (`funnelLegs` over `SALES_FUNNELS`), never a second
-  list: an arrow cannot exist that no funnel has, and the funnels an arrow belongs to fall out of the
-  same walk. Published on `/public/channels` — `arrows[]` (the vocabulary, each naming its funnels) and
-  `arrowKey` on every channel leg — and on every `funnelSteps` rung, so a rung joins to the campaign
+  list: a leg cannot exist that no funnel has, and the funnels a leg belongs to fall out of the
+  same walk. Published on `/public/channels` — `legs[]` (the vocabulary, each naming its funnels) and
+  `legKey` on every channel leg — and on every `funnelSteps` rung, so a rung joins to the campaign
   that bought it and to the projection that priced it.
-- **`GET /features/:slug/workflow-projection?arrow=<arrowKey>` — a recommendation and projected
-  economics for (brand, channel, arrow) with NO funnel named.** The funnel is chosen HERE, from the
-  brand's declared set: **the BEST-RETURNING declared funnel containing the arrow**, on the IDENTICAL
+- **`GET /features/:slug/workflow-projection?leg=<legKey>` — a recommendation and projected
+  economics for (brand, channel, leg) with NO funnel named.** The funnel is chosen HERE, from the
+  brand's declared set: **the BEST-RETURNING declared funnel containing the leg**, on the IDENTICAL
   `returnPerDollar` basis `/funnel-ranking` ranks funnels on (`rankDeclaredFunnels` restricted to the
   candidates — one implementation, so the two surfaces can never name two different funnels for one
-  brand). **NOT the cheapest arrow**: a dollar buys a paying client through whichever route converts
+  brand). **NOT the cheapest leg**: a dollar buys a paying client through whichever route converts
   best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot — the same
-  doctrine as the brand-level `max` over declared funnels' returns. So one arrow yields ONE answer
-  however many funnels contain it, and an ENTRY arrow feeds every funnel containing it at once because
+  doctrine as the brand-level `max` over declared funnels' returns. So one leg yields ONE answer
+  however many funnels contain it, and an ENTRY leg feeds every funnel containing it at once because
   nobody can buy traffic that travels down only one of them.
-- **THE RESPONSE STATES ITS BASIS** — `arrow.basis` is `sole_declared_funnel` /
-  `best_returning_declared_funnel` / `no_return_evidence` (nothing containing the arrow has a
+- **THE RESPONSE STATES ITS BASIS** — `leg.basis` is `sole_declared_funnel` /
+  `best_returning_declared_funnel` / `no_return_evidence` (nothing containing the leg has a
   measurable return yet, so the catalogue's canonical order breaks the tie deterministically and says
   so), beside `returnPerDollar` and `evidence` = `{grain, measured, resolvedOutcomeCount}`. A
   recommendation standing on a handful of terminal outcomes is noise, so the VOLUME is stated in the
   vocabulary the rows already use rather than hidden: `crossOrg` says the numbers are the fleet
   benchmark, not this brand's own results. Null is "we could not count this", never 0.
-- **`arrow.basisFunnelKey === funnelKey`**, so an arrow-keyed answer and the same brand's `?funnel=`
-  answer for that funnel are the SAME body apart from the `arrow` block (guarded). Naming BOTH is a
-  400 (`arrow_and_funnel`) — two questions at once, either answer contradicting the other parameter.
-  An arrow no declared funnel contains is a named 404 (`arrow_not_declared`), the same statement shape
-  as `funnel_not_declared`; an unknown word is a 400 (`arrow_unrecognised`).
-- **NOTHING EXISTING MOVED.** `?funnel=` and `?goal=` are untouched in meaning and in body: `arrow` is
+- **`leg.basisFunnelKey === funnelKey`**, so a leg-keyed answer and the same brand's `?funnel=`
+  answer for that funnel are the SAME body apart from the `leg` block (guarded). Naming BOTH is a
+  400 (`leg_and_funnel`) — two questions at once, either answer contradicting the other parameter.
+  A leg no declared funnel contains is a named 404 (`leg_not_declared`), the same statement shape
+  as `funnel_not_declared`; an unknown word is a 400 (`leg_unrecognised`).
+- **NOTHING EXISTING MOVED.** `?funnel=` and `?goal=` are untouched in meaning and in body: `leg` is
   absent unless asked for, and the declared-funnel read still fires only on a narrowed request.
-- **FUNNEL FIGURES ARE COMPOSED FROM ARROWS AND ARE NOT ADDITIVE.** Two funnels share arrows, so their
+- **FUNNEL FIGURES ARE COMPOSED FROM LEGS AND ARE NOT ADDITIVE.** Two funnels share legs, so their
   figures legitimately OVERLAP; there is no surface here that sums them and adding one would
-  double-count every shared arrow.
-- Guards: `src/lib/funnel-arrows.test.ts` (the catalogue is the funnels' legs deduped, one id per
-  arrow, the entry arrow ordinary, a shared arrow naming several funnels, a funnel composed of its
-  arrows, rungs carrying them in order, lookup-not-parse) + `src/routes/arrow-grain.test.ts` (ONE
+  double-count every shared leg.
+- Guards: `src/lib/funnel-legs.test.ts` (the catalogue is the funnels' legs deduped, one id per
+  leg, the entry leg ordinary, a shared leg naming several funnels, a funnel composed of its
+  legs, rungs carrying them in order, lookup-not-parse) + `src/routes/leg-grain.test.ts` (ONE
   fixture: a brand declaring both meeting funnels whose reply channel is 10x cheaper per meeting and
-  whose website funnel is worth 20x more per client — the pick takes the DEARER funnel, the arrow body
+  whose website funnel is worth 20x more per client — the pick takes the DEARER funnel, the leg body
   equals the `?funnel=` body of its basis, the sole-funnel and no-return bases, the evidence block, the
   named 404, both 400s, and the goal / funnel requests unchanged). (Set 2026-08-30.)
 
@@ -135,10 +135,10 @@ dividing two served counts in the browser, so the rate had to be served or it co
   alternative is a rung silently mislabelled or dropped out of the middle of somebody's funnel.
 - **EACH RUNG ALSO STATES WHAT THE CUSTOMER'S OWN WORK ON IT COST — `customerCost`, per rung.** The
   platform automates the first link and CHARGES for it; the customer runs the meeting and closes the
-  deal, and every time somebody moves a lead across an arrow on the dashboard they are asked what that
+  deal, and every time somebody moves a lead across a leg on the dashboard they are asked what that
   step cost them. That was answerable for a WHOLE FUNNEL (`customerCost` on the offer × funnel page)
-  and nowhere finer — but the question is per ARROW ("what does a booked meeting cost me?"), and one
-  funnel-wide total covers every arrow at once, so it cannot answer it. A statement already NAMES its
+  and nowhere finer — but the question is per LEG ("what does a booked meeting cost me?"), and one
+  funnel-wide total covers every leg at once, so it cannot answer it. A statement already NAMES its
   step (lead-service `/internal/brands/:brandId/step-costs` carries `step`), so the per-rung answer is
   a PARTITION of the same rows (`customerCostsByStep`): no second producer, no inference, and the
   funnel-wide figure is **byte-unchanged** beside it. It carries `costCents` / `statedCount` /
@@ -528,7 +528,7 @@ scope at which a return is computable at all.
   CHARGED (supersedes the `platform_spend_only`-forever note).** The platform automates the first link
   and CHARGES for it; the customer runs the meeting and closes the deal, and lead-service records what
   those legs cost THEM (`GET /internal/brands/:brandId/step-costs`, service-auth, deployed). A funnel
-  ending in a human leg used to read cheaper than it truly is and return better than it truly does,
+  ending in a huma leg used to read cheaper than it truly is and return better than it truly does,
   which is the single most misleading figure a customer can be shown about their own money. Three
   fields, never two: `costEconomics` (CHARGED — a billing fact, byte-unchanged, and none of their money
   is folded into it), `customerCost` (what THEY state, in no ledger of ours, reaching billing never),
