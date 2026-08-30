@@ -10,9 +10,17 @@ import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { type CostBasis } from "../lib/cost-basis.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type SingleStepGoal, type Goal } from "../lib/goals.js";
-import { SALES_FUNNELS, matchSalesFunnelKey, type MeetingChannel, type SalesFunnelKey } from "../lib/sales-funnels.js";
+import { SALES_FUNNELS, matchSalesFunnelKey, salesFunnelIndex, type MeetingChannel, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
-import { declaredEconomicsForFunnel, mergeFunnelEconomics } from "../lib/declared-funnels.js";
+import { declaredEconomicsForFunnel, declaredFunnelsToRank, mergeFunnelEconomics } from "../lib/declared-funnels.js";
+import {
+  FUNNEL_LEG_KEYS,
+  funnelLeg,
+  funnelsContainingLeg,
+  matchFunnelLegKey,
+  type FunnelLegDef,
+} from "../lib/funnel-legs.js";
+import { rankDeclaredFunnels } from "../lib/funnel-ranking.js";
 import {
   fetchPublicWorkflows,
   fetchPublicCosts,
@@ -188,6 +196,55 @@ interface EconomicsEcho {
   formSubmissionToPaidClientPct?: number;
 }
 
+/**
+ * WHICH FUNNEL A LEG WAS PRICED THROUGH, AND WHAT THAT ANSWER RESTS ON.
+ *
+ * A caller that names a LEG names no funnel — a leg belongs to several at once, and an ENTRY
+ * leg feeds every declared funnel that contains it AT ONCE (nobody can buy traffic that travels
+ * down only one of them). So one leg must yield ONE recommendation, and the funnel it is priced
+ * through is chosen HERE rather than by whichever funnel the caller happened to have in mind.
+ *
+ * The choice is the brand's BEST-RETURNING declared funnel containing the leg — the identical
+ * `returnPerDollar` basis `/funnel-ranking` ranks a brand's funnels on, so the two surfaces can never
+ * name two different funnels for one brand. It is deliberately NOT the cheapest leg: a dollar buys
+ * a paying client through whichever route converts best, and the cheap leg of a funnel worth little
+ * is a worse buy than the dear leg of one worth a lot. Same doctrine as the brand-level `max` over
+ * declared funnels' returns and the combined-`sales` `min` over routes.
+ */
+export interface ProjectionLeg {
+  /** The leg's single canonical identifier, echoed back. Never parsed into its parts by anybody. */
+  legKey: string;
+  /** The step a lead is taken out of. `null` — "from nothing" — is an entry leg, not a special case. */
+  fromStep: FunnelLegDef["fromStep"];
+  /** The step a lead is moved to. */
+  toStep: FunnelLegDef["toStep"];
+  /** Every DECLARED funnel this leg is a leg of — what the pick below chose between. Their figures
+   *  overlap (a shared leg is on all of them) and must never be summed. */
+  candidateFunnelKeys: SalesFunnelKey[];
+  /** The funnel the numbers on this body were priced through. Equals `funnelKey`. */
+  basisFunnelKey: SalesFunnelKey;
+  /** WHY that funnel: it was the only declared one containing the leg, it returned best, or nothing
+   *  containing the leg has a return yet and the catalogue's canonical order broke the tie. A caller
+   *  reads this rather than assuming the answer rests on measured returns. */
+  basis: "sole_declared_funnel" | "best_returning_declared_funnel" | "no_return_evidence";
+  /** The basis funnel's return per dollar — the figure the pick was made on. Null under
+   *  `no_return_evidence`: nothing was measurable, and 0 would say the funnel returns nothing. */
+  returnPerDollar: number | null;
+  /**
+   * HOW MUCH THE RECOMMENDATION RESTS ON. A recommendation standing on a handful of terminal outcomes
+   * is noise, and this states it in the vocabulary the rows already use rather than hiding it:
+   * `grain` says WHOSE results the numbers are (`crossOrg` is the fleet benchmark, not this brand's
+   * own), `measured` says whether any evidence exists at all, and `resolvedOutcomeCount` is how many
+   * of the basis funnel's outcomes were actually observed behind the recommended workflow. Null is
+   * "we could not count this", never 0.
+   */
+  evidence: {
+    grain: GrainName | null;
+    measured: boolean;
+    resolvedOutcomeCount: number | null;
+  };
+}
+
 export interface WorkflowProjectionResponse {
   featureSlug: string;
   objective: Objective;
@@ -199,6 +256,12 @@ export interface WorkflowProjectionResponse {
    * the two meeting funnels carry the same echo while carrying different numbers.
    */
   funnelKey?: SalesFunnelKey;
+  /**
+   * Present ⟺ the caller named a LEG (`?leg=`). It states which of the brand's declared funnels
+   * the leg was priced through and what that rests on. Absent on every funnel- or goal-keyed
+   * request, so those bodies are byte-identical to what they have always been.
+   */
+  leg?: ProjectionLeg;
   economics: EconomicsEcho | null;
   rows: ProjectionRow[];
   recommendedWorkflowDynastySlug: string | null;
@@ -736,20 +799,50 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     }
   }
 
-  const resolved = funnelKey ? null : resolveGoalInputs(goalParam);
+  // A caller may instead name ONE LEG (`?leg=`) — the leg it is putting a budget behind — with no
+  // sales funnel at all, which is the whole point: a leg belongs to several funnels, so a campaign
+  // can no longer be identified by one of them. The funnel this is priced through is resolved BELOW,
+  // from the brand's own declared set, and stated back on `leg`.
+  const legParam = req.query.leg as string | undefined;
+  let legKey: string | null = null;
+  if (legParam != null && legParam !== "") {
+    legKey = matchFunnelLegKey(legParam);
+    if (!legKey) {
+      return res.status(400).json({
+        error: `leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}`,
+        reason: "leg_unrecognised",
+      });
+    }
+    // Naming both would ask two questions at once — "price this funnel" and "price this leg through
+    // whichever funnel returns best" — and either answer would contradict the other parameter. Loud.
+    if (funnelKey) {
+      return res.status(400).json({
+        error:
+          "name either a sales funnel or a leg, never both: a leg is priced through the brand's best-returning declared funnel that contains it",
+        reason: "leg_and_funnel",
+      });
+    }
+  }
+
+  const resolved = funnelKey || legKey ? null : resolveGoalInputs(goalParam);
   if (resolved && !resolved.ok) {
     return res.status(400).json({
       error:
         "goal must be one of: signup, meetingBooked, websitePurchase, sales, websiteVisit, positiveReply, formSubmission, whatsappConversation (snake/kebab spellings also accepted)",
     });
   }
+  const inputsForFunnel = (key: SalesFunnelKey) => {
+    const f = funnelToProjectionInputs(key);
+    return { objective: f.objective, goal: f.goalEcho, singleStepGoal: f.singleStepGoal, formSubmissionGoal: f.formSubmissionGoal, meetingChannel: f.meetingChannel };
+  };
+  // On a LEG request these are placeholders until the basis funnel is resolved inside the try below
+  // (it needs the brand's declared set and the shared evidence). Nothing is projected from them.
   const inputs = funnelKey
-    ? (() => {
-        const f = funnelToProjectionInputs(funnelKey);
-        return { objective: f.objective, goal: f.goalEcho, singleStepGoal: f.singleStepGoal, formSubmissionGoal: f.formSubmissionGoal, meetingChannel: f.meetingChannel };
-      })()
-    : { ...(resolved as { ok: true } & GoalInputs), meetingChannel: null as MeetingChannel | null };
-  const { objective, goal, singleStepGoal, formSubmissionGoal, meetingChannel } = inputs;
+    ? inputsForFunnel(funnelKey)
+    : legKey
+      ? inputsForFunnel(funnelsContainingLeg(legKey)[0])
+      : { ...(resolved as { ok: true } & GoalInputs), meetingChannel: null as MeetingChannel | null };
+  let { objective, goal, singleStepGoal, formSubmissionGoal, meetingChannel } = inputs;
   const budgetUsd = budgetRaw != null && budgetRaw !== "" ? Number(budgetRaw) : null;
 
   // GROSS (default) vs NET pricing. Omitted → gross → byte-identical to today.
@@ -784,8 +877,10 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // rather than pricing a funnel the org never said it sells through. Fires ONLY on `?funnel=`, so the
     // goal path takes no extra read.
     let funnelEconomics: Partial<SalesEconomics> | null = null;
-    if (funnelKey) {
-      let declaredFunnels: Awaited<ReturnType<typeof fetchDeclaredSalesFunnels>>;
+    // The brand's DECLARED set is needed by both narrowed reads — a named funnel must be one of them,
+    // and a named leg is priced through one of them. The goal path takes no extra read.
+    let declaredFunnels: Awaited<ReturnType<typeof fetchDeclaredSalesFunnels>> | null = null;
+    if (funnelKey || legKey) {
       try {
         declaredFunnels = await fetchDeclaredSalesFunnels(brandId, orgId);
       } catch (error) {
@@ -794,6 +889,8 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         }
         throw error;
       }
+    }
+    if (funnelKey && declaredFunnels) {
       const declared = declaredFunnels.map((f) => f.funnelKey);
       if (!declared.includes(funnelKey)) {
         return res.status(404).json({
@@ -810,6 +907,23 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       funnelEconomics = declaredEconomicsForFunnel(declaredFunnels, funnelKey);
     }
 
+    // A leg the brand's declared funnels do not contain has no cost to serve — the same statement,
+    // and the same shape, as a funnel it never declared. Never an empty body, never a substituted funnel.
+    let legCandidates: SalesFunnelKey[] = [];
+    if (legKey && declaredFunnels) {
+      const containing = funnelsContainingLeg(legKey);
+      const declared = declaredFunnels.map((f) => f.funnelKey);
+      legCandidates = declared.filter((k) => containing.includes(k));
+      if (legCandidates.length === 0) {
+        return res.status(404).json({
+          error: `none of the sales funnels this brand declared contains the ${legKey} leg, so there is no cost to estimate for it`,
+          reason: "leg_not_declared",
+          legKey,
+          declaredFunnelKeys: declared,
+        });
+      }
+    }
+
     const [evidence, effective] = await Promise.all([
       servedCached({
         view: "workflow-projection-evidence",
@@ -819,6 +933,39 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       }),
       fetchEffectiveEconomics(brandId, identity),
     ]);
+    // THE LEG'S BASIS FUNNEL. Ranked on the IDENTICAL `returnPerDollar` `/funnel-ranking` ranks a
+    // brand's declared funnels on — one implementation, so the two surfaces can never name different
+    // funnels for one brand — and restricted to the funnels that actually contain the leg. Pure: it
+    // projects the SAME already-fetched evidence once per candidate and issues no further IO.
+    let legBlock: ProjectionLeg | undefined;
+    let legBasisFunnelKey: SalesFunnelKey | null = null;
+    let legBasis: ProjectionLeg["basis"] = "sole_declared_funnel";
+    let legReturnPerDollar: number | null = null;
+    if (legKey && declaredFunnels) {
+      const ranked = rankDeclaredFunnels({
+        featureSlug,
+        funnels: declaredFunnelsToRank(declaredFunnels).filter((f) => legCandidates.includes(f.funnelKey)),
+        evidence,
+        economics: effective.economics,
+      });
+      // Nothing containing the leg has a measurable return yet — the leg is still answerable, so the
+      // catalogue's canonical order breaks the tie deterministically and `basis` says so out loud.
+      legBasisFunnelKey =
+        ranked.recommendation?.funnelKey ??
+        [...legCandidates].sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b))[0];
+      legReturnPerDollar =
+        ranked.ranking.find((r) => r.funnelKey === legBasisFunnelKey)?.returnPerDollar ?? null;
+      legBasis =
+        legCandidates.length === 1
+          ? "sole_declared_funnel"
+          : ranked.recommendation
+            ? "best_returning_declared_funnel"
+            : "no_return_evidence";
+      funnelEconomics = declaredEconomicsForFunnel(declaredFunnels, legBasisFunnelKey);
+      ({ objective, goal, singleStepGoal, formSubmissionGoal, meetingChannel } = inputsForFunnel(legBasisFunnelKey));
+    }
+
+    const pricedFunnelKey = funnelKey ?? legBasisFunnelKey;
     const response = projectFromEvidence({
       featureSlug,
       objective,
@@ -826,11 +973,40 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       singleStepGoal,
       formSubmissionGoal,
       meetingChannel,
-      ...(funnelKey ? { funnelKey } : {}),
+      ...(pricedFunnelKey ? { funnelKey: pricedFunnelKey } : {}),
       evidence,
       economics: mergeFunnelEconomics(effective.economics, funnelEconomics),
     });
-    res.json(response);
+
+    if (legKey && legBasisFunnelKey) {
+      const leg = funnelLeg(legKey)!;
+      // What the recommendation rests on, read off the row it rests on: the brand-level row of the
+      // recommended workflow. A count of a handful is noise and the caller is owed the number, not a
+      // verdict — so it is stated beside the grain that says whose results these are.
+      const recommendedRow =
+        response.rows.find(
+          (r) => r.audienceId === null && r.workflow.workflowDynastySlug === response.recommendedWorkflowDynastySlug,
+        ) ?? null;
+      legBlock = {
+        legKey,
+        fromStep: leg.fromStep,
+        toStep: leg.toStep,
+        candidateFunnelKeys: legCandidates,
+        basisFunnelKey: legBasisFunnelKey,
+        basis: legBasis,
+        returnPerDollar: legReturnPerDollar,
+        evidence: {
+          grain: recommendedRow?.resolved.grain ?? null,
+          measured: recommendedRow?.measured ?? false,
+          resolvedOutcomeCount:
+            recommendedRow?.estimatesByGrain.brand?.resolvedOutcomeCount ??
+            recommendedRow?.estimatesByGrain.crossOrg?.resolvedOutcomeCount ??
+            null,
+        },
+      };
+    }
+
+    res.json(legBlock ? { ...response, leg: legBlock } : response);
   } catch (error) {
     console.error("[features-service] Workflow projection error:", error);
     res.status(502).json({ error: "Failed to compute workflow projection" });

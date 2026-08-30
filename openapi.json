@@ -1914,6 +1914,10 @@
                 "items": {
                   "type": "object",
                   "properties": {
+                    "legKey": {
+                      "type": "string",
+                      "description": "The LEG this rung IS — the single canonical identifier of the leg that moves a lead onto this step (the same value /public/channels publishes and /features/{featureSlug}/workflow-projection?leg= is asked with). Performance is measured per leg and a campaign is bought per leg, so this is what joins a rung to the campaign that bought it and to the projection that priced it. The SAME leg appears on every funnel containing it, which is why a funnel's figures are COMPOSED from its legs and why two funnels' figures must never be summed."
+                    },
                     "step": {
                       "type": "string",
                       "description": "The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."
@@ -1983,7 +1987,7 @@
                         "costPerReachCents": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one arrow of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."
+                          "description": "The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one leg of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."
                         }
                       },
                       "required": [
@@ -1997,6 +2001,7 @@
                     }
                   },
                   "required": [
+                    "legKey",
                     "step",
                     "leadField",
                     "recipientsReached",
@@ -2613,6 +2618,134 @@
               "whatsappConversation"
             ],
             "description": "Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup. websitePurchase = renamed former purchase goal; sales = combined-sales goal."
+          },
+          "leg": {
+            "type": "object",
+            "properties": {
+              "legKey": {
+                "type": "string",
+                "description": "The leg that was asked for, echoed."
+              },
+              "fromStep": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description"
+                ],
+                "description": "The step a lead is taken out of; null on an entry leg. Read these rather than splitting `legKey`."
+              },
+              "toStep": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description"
+                ],
+                "description": "The step a lead is moved to."
+              },
+              "candidateFunnelKeys": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "sales_meetings_from_conversation",
+                    "sales_meetings_from_website",
+                    "website_purchases",
+                    "form_magnet"
+                  ]
+                },
+                "description": "Every DECLARED funnel of this brand containing the leg — what the pick chose between. Their figures overlap on the shared leg and must never be summed."
+              },
+              "basisFunnelKey": {
+                "type": "string",
+                "enum": [
+                  "sales_meetings_from_conversation",
+                  "sales_meetings_from_website",
+                  "website_purchases",
+                  "form_magnet"
+                ],
+                "description": "The funnel the numbers on this body were priced through. Equals `funnelKey`, so a leg-keyed answer and the same brand's `?funnel=` answer for that funnel are the same body."
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "sole_declared_funnel",
+                  "best_returning_declared_funnel",
+                  "no_return_evidence"
+                ],
+                "description": "WHY that funnel: it was the only declared one containing the leg; it returned best per dollar; or nothing containing the leg has a measurable return yet and the catalogue's canonical order broke the tie deterministically. Stated so a caller never assumes the answer rests on measured returns when it does not."
+              },
+              "returnPerDollar": {
+                "type": "number",
+                "nullable": true,
+                "description": "The basis funnel's return per dollar — the figure the pick was made on, the IDENTICAL definition /funnel-ranking ranks on. Null under basis='no_return_evidence': nothing was measurable, and 0 would say the funnel returns nothing."
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "grain": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "audience",
+                      "brand",
+                      "crossOrg"
+                    ],
+                    "description": "Whose results the recommendation's numbers are — crossOrg is the FLEET BENCHMARK, not this brand's own. Null when nothing measured it."
+                  },
+                  "measured": {
+                    "type": "boolean",
+                    "description": "Whether the recommended row rests on real evidence at all."
+                  },
+                  "resolvedOutcomeCount": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "How many of the basis funnel's outcomes were actually observed behind the recommended workflow — HOW MUCH the recommendation rests on. A handful is noise, and the caller is owed the number rather than a verdict. Null is 'we could not count this', never 0."
+                  }
+                },
+                "required": [
+                  "grain",
+                  "measured",
+                  "resolvedOutcomeCount"
+                ],
+                "description": "What the recommendation rests on, in the vocabulary the rows already use."
+              }
+            },
+            "required": [
+              "legKey",
+              "fromStep",
+              "toStep",
+              "candidateFunnelKeys",
+              "basisFunnelKey",
+              "basis",
+              "returnPerDollar",
+              "evidence"
+            ],
+            "description": "Present ⟺ the request named a LEG (`?leg=`), and it states which of the brand's declared funnels the leg was priced through and what that answer rests on. Absent on every funnel- or goal-keyed request, so those bodies are byte-identical to what they have always been."
           },
           "economics": {
             "type": "object",
@@ -4536,7 +4669,7 @@
                     "lifetimeRevenueUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
+                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences ca legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
                     },
                     "costPerPaidClientUsd": {
                       "type": "number",
@@ -5735,6 +5868,10 @@
                 "items": {
                   "type": "object",
                   "properties": {
+                    "legKey": {
+                      "type": "string",
+                      "description": "The LEG this rung IS — the single canonical identifier of the leg that moves a lead onto this step (the same value /public/channels publishes and /features/{featureSlug}/workflow-projection?leg= is asked with). Performance is measured per leg and a campaign is bought per leg, so this is what joins a rung to the campaign that bought it and to the projection that priced it. The SAME leg appears on every funnel containing it, which is why a funnel's figures are COMPOSED from its legs and why two funnels' figures must never be summed."
+                    },
                     "step": {
                       "type": "string",
                       "description": "The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."
@@ -5804,7 +5941,7 @@
                         "costPerReachCents": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one arrow of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."
+                          "description": "The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one leg of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."
                         }
                       },
                       "required": [
@@ -5818,6 +5955,7 @@
                     }
                   },
                   "required": [
+                    "legKey",
                     "step",
                     "leadField",
                     "recipientsReached",
@@ -5991,7 +6129,7 @@
               "platform_and_customer_spend",
               "platform_and_partial_customer_spend"
             ],
-            "description": "Which dollars the payload AS A WHOLE is made of — the WEAKEST coverage among its rows, because the marker is an admission: a payload holding one fully-costed funnel and one that could not be costed at all is not a fully-costed payload. The platform automates the first link of a funnel and charges for it; the customer performs the rest and states what those legs cost them, so a funnel ending in a human leg is only fully costed once every one of its statements carries a figure."
+            "description": "Which dollars the payload AS A WHOLE is made of — the WEAKEST coverage among its rows, because the marker is an admission: a payload holding one fully-costed funnel and one that could not be costed at all is not a fully-costed payload. The platform automates the first link of a funnel and charges for it; the customer performs the rest and states what those legs cost them, so a funnel ending in a huma leg is only fully costed once every one of its statements carries a figure."
           },
           "customerCost": {
             "type": "object",
@@ -6696,7 +6834,7 @@
                     "lifetimeRevenueUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
+                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences ca legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
                     },
                     "costPerPaidClientUsd": {
                       "type": "number",
@@ -8170,6 +8308,10 @@
                 "items": {
                   "type": "object",
                   "properties": {
+                    "legKey": {
+                      "type": "string",
+                      "description": "The LEG this rung IS — the single canonical identifier of the leg that moves a lead onto this step (the same value /public/channels publishes and /features/{featureSlug}/workflow-projection?leg= is asked with). Performance is measured per leg and a campaign is bought per leg, so this is what joins a rung to the campaign that bought it and to the projection that priced it. The SAME leg appears on every funnel containing it, which is why a funnel's figures are COMPOSED from its legs and why two funnels' figures must never be summed."
+                    },
                     "step": {
                       "type": "string",
                       "description": "The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."
@@ -8239,7 +8381,7 @@
                         "costPerReachCents": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one arrow of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."
+                          "description": "The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one leg of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."
                         }
                       },
                       "required": [
@@ -8253,6 +8395,7 @@
                     }
                   },
                   "required": [
+                    "legKey",
                     "step",
                     "leadField",
                     "recipientsReached",
@@ -8934,7 +9077,7 @@
                     "lifetimeRevenueUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
+                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences ca legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
                     },
                     "costPerPaidClientUsd": {
                       "type": "number",
@@ -10416,6 +10559,10 @@
                 "items": {
                   "type": "object",
                   "properties": {
+                    "legKey": {
+                      "type": "string",
+                      "description": "The LEG this rung IS — the single canonical identifier of the leg that moves a lead onto this step (the same value /public/channels publishes and /features/{featureSlug}/workflow-projection?leg= is asked with). Performance is measured per leg and a campaign is bought per leg, so this is what joins a rung to the campaign that bought it and to the projection that priced it. The SAME leg appears on every funnel containing it, which is why a funnel's figures are COMPOSED from its legs and why two funnels' figures must never be summed."
+                    },
                     "step": {
                       "type": "string",
                       "description": "The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."
@@ -10485,7 +10632,7 @@
                         "costPerReachCents": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one arrow of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."
+                          "description": "The stated total ÷ recipientsReached, in cents — what ONE person crossing this rung cost the customer on average, which is the number a customer opening one leg of their funnel is asking for. SERVED rather than divided in the browser, like every other ratio here. OBSERVED accounting, through the SAME engine costPerReachCents rides: null when nobody stated a cost, when nobody reached the rung, or when the count is unmeasured — never 0, which would say their work was free."
                         }
                       },
                       "required": [
@@ -10499,6 +10646,7 @@
                     }
                   },
                   "required": [
+                    "legKey",
                     "step",
                     "leadField",
                     "recipientsReached",
@@ -11129,7 +11277,7 @@
                     "lifetimeRevenueUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
+                      "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences ca legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
                     },
                     "costPerPaidClientUsd": {
                       "type": "number",
@@ -13070,6 +13218,97 @@
           "asOf"
         ]
       },
+      "FunnelLeg": {
+        "type": "object",
+        "properties": {
+          "legKey": {
+            "type": "string",
+            "description": "The leg's single canonical identifier — minted and owned here, and a PUBLISHED CONTRACT: the fleet keys campaigns and budgets on it. Join it against this catalogue; never parse it back into its parts."
+          },
+          "fromStep": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "key": {
+                "type": "string",
+                "enum": [
+                  "conversation",
+                  "website_visit",
+                  "meeting_booked",
+                  "meeting_attended",
+                  "signup",
+                  "form_filled",
+                  "paid_client",
+                  "in_ad_form_submission",
+                  "in_ad_booked_meeting"
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "label",
+              "description"
+            ],
+            "description": "The step a lead is taken OUT of. NULL is 'from nothing' — this leg STARTS a funnel. That is the special case in the DATA only: the identifier is as ordinary as any other, so a caller never spells an entry leg differently."
+          },
+          "toStep": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "enum": [
+                  "conversation",
+                  "website_visit",
+                  "meeting_booked",
+                  "meeting_attended",
+                  "signup",
+                  "form_filled",
+                  "paid_client",
+                  "in_ad_form_submission",
+                  "in_ad_booked_meeting"
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "label",
+              "description"
+            ],
+            "description": "The step a lead is moved TO."
+          },
+          "funnelKeys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sales_meetings_from_conversation",
+                "sales_meetings_from_website",
+                "website_purchases",
+                "form_magnet"
+              ]
+            },
+            "description": "EVERY declared sales funnel this leg is a leg of, in catalogue order. Usually several — an ENTRY leg feeds every funnel that contains it AT ONCE, since nobody can buy traffic that travels down only one of them. Their figures therefore overlap and must never be summed."
+          }
+        },
+        "required": [
+          "legKey",
+          "fromStep",
+          "toStep",
+          "funnelKeys"
+        ]
+      },
       "PublicAcquisitionChannel": {
         "type": "object",
         "properties": {
@@ -13133,6 +13372,10 @@
             "items": {
               "type": "object",
               "properties": {
+                "legKey": {
+                  "type": "string",
+                  "description": "The ONE canonical identifier of the LEG this leg is (e.g. `start_to_conversation`, `meeting_booked_to_meeting_attended`) — minted and owned by features-service, and the value the fleet keys a campaign and a budget on. Performance is measured per LEG; a sales funnel is a way of READING legs, because one leg belongs to several funnels at once. Name a leg with this alone: the two steps ride BESIDE it as `from`/`to`, so a consumer READS them and NEVER splits the string. A leg that STARTS a funnel carries an ordinary identifier like every other — `from: null` is the special case in the data, never in the vocabulary."
+                },
                 "from": {
                   "type": "object",
                   "nullable": true,
@@ -13198,6 +13441,7 @@
                 }
               },
               "required": [
+                "legKey",
                 "from",
                 "to"
               ]
@@ -13288,6 +13532,13 @@
               "$ref": "#/components/schemas/PublicAcquisitionChannel"
             }
           },
+          "legs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FunnelLeg"
+            },
+            "description": "The LEG vocabulary — every leg of every declared sales funnel, each with its single canonical identifier, the two steps it connects, and the funnels it is a leg of. Published so a consumer never derives a leg from a pair of steps and never hardcodes the list. A leg usually belongs to SEVERAL funnels (a booked meeting becomes an attended meeting in both meeting funnels), which is exactly why a campaign is bought per LEG rather than per funnel — and why two funnels' figures OVERLAP on their shared legs and must never be summed."
+          },
           "steps": {
             "type": "array",
             "items": {
@@ -13325,6 +13576,7 @@
         },
         "required": [
           "channels",
+          "legs",
           "steps"
         ]
       },
@@ -15021,6 +15273,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "ONE LEG of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_filled`, `form_filled_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one leg belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the leg, on the IDENTICAL returnPerDollar basis /funnel-ranking ranks funnels on, so a leg yields ONE answer whichever funnel the caller had in mind and the two surfaces can never name different funnels. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `leg`. Sending BOTH `leg` and `funnel` is a 400 (reason='leg_and_funnel'); an unrecognised leg is a 400 (reason='leg_unrecognised'); a leg no declared funnel of this brand contains is a 404 (reason='leg_not_declared')."
+            },
+            "required": false,
+            "description": "ONE LEG of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_filled`, `form_filled_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one leg belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the leg, on the IDENTICAL returnPerDollar basis /funnel-ranking ranks funnels on, so a leg yields ONE answer whichever funnel the caller had in mind and the two surfaces can never name different funnels. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `leg`. Sending BOTH `leg` and `funnel` is a 400 (reason='leg_and_funnel'); an unrecognised leg is a 400 (reason='leg_unrecognised'); a leg no declared funnel of this brand contains is a 404 (reason='leg_not_declared').",
+            "name": "leg",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface)."
             },
             "required": false,
@@ -15135,6 +15397,134 @@
                         "whatsappConversation"
                       ],
                       "description": "Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup. websitePurchase = renamed former purchase goal; sales = combined-sales goal."
+                    },
+                    "leg": {
+                      "type": "object",
+                      "properties": {
+                        "legKey": {
+                          "type": "string",
+                          "description": "The leg that was asked for, echoed."
+                        },
+                        "fromStep": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "description": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "label",
+                            "description"
+                          ],
+                          "description": "The step a lead is taken out of; null on an entry leg. Read these rather than splitting `legKey`."
+                        },
+                        "toStep": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "description": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "label",
+                            "description"
+                          ],
+                          "description": "The step a lead is moved to."
+                        },
+                        "candidateFunnelKeys": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "sales_meetings_from_conversation",
+                              "sales_meetings_from_website",
+                              "website_purchases",
+                              "form_magnet"
+                            ]
+                          },
+                          "description": "Every DECLARED funnel of this brand containing the leg — what the pick chose between. Their figures overlap on the shared leg and must never be summed."
+                        },
+                        "basisFunnelKey": {
+                          "type": "string",
+                          "enum": [
+                            "sales_meetings_from_conversation",
+                            "sales_meetings_from_website",
+                            "website_purchases",
+                            "form_magnet"
+                          ],
+                          "description": "The funnel the numbers on this body were priced through. Equals `funnelKey`, so a leg-keyed answer and the same brand's `?funnel=` answer for that funnel are the same body."
+                        },
+                        "basis": {
+                          "type": "string",
+                          "enum": [
+                            "sole_declared_funnel",
+                            "best_returning_declared_funnel",
+                            "no_return_evidence"
+                          ],
+                          "description": "WHY that funnel: it was the only declared one containing the leg; it returned best per dollar; or nothing containing the leg has a measurable return yet and the catalogue's canonical order broke the tie deterministically. Stated so a caller never assumes the answer rests on measured returns when it does not."
+                        },
+                        "returnPerDollar": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The basis funnel's return per dollar — the figure the pick was made on, the IDENTICAL definition /funnel-ranking ranks on. Null under basis='no_return_evidence': nothing was measurable, and 0 would say the funnel returns nothing."
+                        },
+                        "evidence": {
+                          "type": "object",
+                          "properties": {
+                            "grain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "audience",
+                                "brand",
+                                "crossOrg"
+                              ],
+                              "description": "Whose results the recommendation's numbers are — crossOrg is the FLEET BENCHMARK, not this brand's own. Null when nothing measured it."
+                            },
+                            "measured": {
+                              "type": "boolean",
+                              "description": "Whether the recommended row rests on real evidence at all."
+                            },
+                            "resolvedOutcomeCount": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "How many of the basis funnel's outcomes were actually observed behind the recommended workflow — HOW MUCH the recommendation rests on. A handful is noise, and the caller is owed the number rather than a verdict. Null is 'we could not count this', never 0."
+                            }
+                          },
+                          "required": [
+                            "grain",
+                            "measured",
+                            "resolvedOutcomeCount"
+                          ],
+                          "description": "What the recommendation rests on, in the vocabulary the rows already use."
+                        }
+                      },
+                      "required": [
+                        "legKey",
+                        "fromStep",
+                        "toStep",
+                        "candidateFunnelKeys",
+                        "basisFunnelKey",
+                        "basis",
+                        "returnPerDollar",
+                        "evidence"
+                      ],
+                      "description": "Present ⟺ the request named a LEG (`?leg=`), and it states which of the brand's declared funnels the leg was priced through and what that answer rests on. Absent on every funnel- or goal-keyed request, so those bodies are byte-identical to what they have always been."
                     },
                     "economics": {
                       "type": "object",
@@ -15651,7 +16041,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId, or an unrecognised goal / funnel / pricing value",
+            "description": "Missing brandId, an unrecognised goal / funnel / pricing value, an unrecognised leg (reason='leg_unrecognised'), or a leg sent beside a funnel (reason='leg_and_funnel')",
             "content": {
               "application/json": {
                 "schema": {
@@ -15669,7 +16059,7 @@
             }
           },
           "404": {
-            "description": "Feature not found, or (reason='funnel_not_declared') the requested `?funnel=` is not one this brand declared — the body carries `declaredFunnelKeys`",
+            "description": "Feature not found; (reason='funnel_not_declared') the requested `?funnel=` is not one this brand declared; or (reason='leg_not_declared') no funnel this brand declared contains the requested `?leg=` — both bodies carry `declaredFunnelKeys`",
             "content": {
               "application/json": {
                 "schema": {
@@ -17615,7 +18005,7 @@
                               "lifetimeRevenueUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences can legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
+                                "description": "The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences ca legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."
                               },
                               "costPerPaidClientUsd": {
                                 "type": "number",
