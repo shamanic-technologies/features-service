@@ -1,5 +1,49 @@
 # Features Service — CLAUDE.md
 
+## A BRAND'S CONVERSION RATES ARE READ PER LEG — a stated leg wins, a named rate covers what it covers, and an arrow nobody priced is UNMEASURABLE
+
+Every rate this service prices on arrived as a NAMED field — `replyToMeetingPct`, `visitToSignupPct`,
+one per arrow the four deployed funnels happen to contain. That set is a SCHEMA, so a funnel that gains
+a step (the first is a phone call between a positive reply and a booked meeting; there will be more) has
+an arrow nobody has a name for and cannot be priced until every service in the chain grows a field for
+it. brand-service now states a rate for an ARBITRARY leg, identified by the two steps it connects, and
+serves it beside the named rates it still serves (`arrows[]` on each declared funnel, v0.76.0, prod).
+
+- **PRECEDENCE, STATED ONCE (`lib/funnel-leg-rates.ts`, consumed only by `declaredEconomics`): a rate
+  stated FOR THAT LEG wins → else the named rate that covers it → else WE HAVE NO RATE FOR THIS ARROW.**
+  The third is a real answer: the field is DROPPED, the brand's effective economics apply unchanged, and
+  nothing is defaulted, averaged or invented. The producer already resolves the first two into ONE
+  figure per leg (`ratePct` + `provenance` `stated_arrow` / `named_rate` / `unstated`), so this reads
+  that figure rather than re-deriving the precedence — one implementation, which cannot come to disagree
+  with what brand-service says it decided.
+- **NO BRAND'S NUMBERS MOVE, by construction.** A leg-derived rate replaces a named one ONLY when some
+  leg on its path is `stated_*`. A brand that stated only named rates gets legs tagged `named_rate`
+  carrying those same values, takes the named path, and reads BYTE-IDENTICALLY — which is every brand in
+  production today. A payload with no `arrows` at all (an older deploy, a fixture) is the same path.
+- **A PATH, NOT A LEG, and that is what makes an inserted step work.** A named rate names two STEPS; the
+  arrow between them is one leg today and several the day a step is inserted, so it is priced as the
+  PRODUCT along the path (`reply→call × call→booked`). Two rules on the walk, both reproducing today's
+  behaviour exactly: **the leg that REACHES the destination must be stated** or the path has no rate
+  (half a funnel is not a conversion rate), and **an unstated leg EARLIER on the path is silent**
+  (multiplies in as 100%). Those two ARE `meetingFunnelCloseRate`'s hand-written rules, so the
+  booked→paid composition (`meetingToClosePct` = show-up × attended→paid) now falls out of the walk
+  instead of being a special case — the next inserted step needs no code here.
+- **ONLY THE ARROWS A FUNNEL HAS ARE ASKED FOR.** `RATE_FOR_STEP_PAIR` maps a STEP PAIR to the
+  `SalesEconomics` rate that prices it, and a pair is asked only when both steps are steps of THAT
+  funnel in that order. So a meeting funnel never derives `visitToClosePct` from its
+  visit→meeting→paid path: the DIRECT self-serve close and a close reached through a meeting are
+  different quantities that share a name. The one deliberately multi-hop entry is
+  `Meeting booked → Paid client`, because our `meetingToClosePct` is BOOKED→paid while brand-service's
+  identically-named rate is ATTENDED→paid — the whole difference between the two services' meaning of
+  that field.
+- **The named `rates` map is NOT going away and nothing here asks brand-service to drop it.** It is the
+  answer for every arrow it covers, and it is what a brand that has stated nothing per-leg is priced on.
+- Guards: `src/lib/funnel-leg-rates.test.ts` — a funnel whose every leg is `named_rate` priced
+  byte-identically to a payload with no legs; the stated leg winning over the named rate; the inserted
+  phone-call step composing to 50% × 80% while the rest of the funnel is untouched; an all-unstated
+  funnel carrying NO economics (never 0); the destination-leg rule; the unreachable destination; and the
+  per-funnel pair restriction on all four funnels. (Set 2026-08-31.)
+
 ## A BOUNCE IS THE PROOF A SEND HAPPENED — REACH and the PIPELINE BASE are two questions, and both are served
 
 A customer 5 days into a campaign reported that some leads looked contacted twice: their screen said

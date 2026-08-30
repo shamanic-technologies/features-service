@@ -29,6 +29,7 @@
  */
 
 import { fetchWithRetry } from "./fetch-retry.js";
+import type { DeclaredFunnelLeg } from "./funnel-leg-rates.js";
 import { matchSalesFunnelKey, SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
 
 /** Raised when the declared-funnel read cannot be answered — the caller surfaces it as its own 502
@@ -57,6 +58,16 @@ export interface DeclaredSalesFunnel {
   steps: string[];
   /** Exactly the rates THIS funnel's funnel prices, in funnel order. Values may be null (undeclared). */
   rates: Record<string, number | null>;
+  /**
+   * The funnel read LEG BY LEG — one entry per arrow, identified by the two steps it connects, each
+   * carrying the rate that arrow converts at and where that rate came from (`stated_arrow` /
+   * `named_rate` / `unstated`). This is what lets a funnel gain a step without every service in the
+   * chain growing a field for it: a leg no named rate can express still states its own rate.
+   *
+   * OPTIONAL, and its absence is the no-change path rather than a gap: a payload without it is priced
+   * on the named `rates` exactly as before. See `funnel-leg-rates.ts` for the precedence.
+   */
+  arrows?: DeclaredFunnelLeg[];
   lifetimeRevenueUsd: number | null;
   destinationUrl: string | null;
   bookingUrl: string | null;
