@@ -1570,216 +1570,314 @@
             }
           },
           "leads": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "leadId": {
-                  "type": "string"
-                },
-                "firstName": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "lastName": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "photoUrl": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "orgName": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "orgLogoUrl": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "orgDomain": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
-                },
-                "title": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the person's current-employer job title (lead-service currentTitle, #336). Null when unknown; never synthesized."
-                },
-                "seniority": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the person's Apollo seniority band (e.g. \"vp\", \"director\", \"manager\") (lead-service seniority, #327). Null when unknown; never synthesized."
-                },
-                "orgIndustry": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's industry (lead-service organization.industry, #327). Null when unknown; never synthesized."
-                },
-                "orgEmployeeCount": {
-                  "type": "integer",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's estimated headcount (raw number from lead-service organization.estimatedNumEmployees, #327). The consumer bands it for display (e.g. \"11-50\"); NOT pre-banded here. Null when unknown; never synthesized."
-                },
-                "orgCity": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's city (lead-service organization.city, #327). Null when unknown; never synthesized."
-                },
-                "orgCountry": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's country (lead-service organization.country, #327). Null when unknown; never synthesized."
-                },
-                "tags": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "expectedRevenueUsd": {
-                  "type": "number",
-                  "description": "Expected revenue for this lead. On a lensed (?lens=) response this is the lens's expected revenue = (conversionProbabilityPct/100) × LTR; otherwise the engine's furthest-stage EV."
-                },
-                "date": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."
-                },
-                "contacted": {
-                  "type": "boolean",
-                  "description": "True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."
-                },
-                "contactedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
-                },
-                "bounced": {
-                  "type": "boolean",
-                  "description": "True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."
-                },
-                "unsubscribed": {
-                  "type": "boolean",
-                  "description": "True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."
-                },
-                "opened": {
-                  "type": "boolean",
-                  "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
-                },
-                "openedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of first open (email-gateway firstOpenedAt). Null when not opened, or opened with no known date. No synthesis."
-                },
-                "clicked": {
-                  "type": "boolean",
-                  "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
-                },
-                "clickedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of first click (email-gateway firstClickedAt). Null when not clicked, or clicked with no known date. No synthesis."
-                },
-                "repliedPositive": {
-                  "type": "boolean",
-                  "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
-                },
-                "repliedPositiveAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of the first reply, surfaced ONLY when the reply is positive-classified (matches repliedPositive; date = email-gateway firstRepliedAt). Null when there is no positive reply — INCLUDING a negative/neutral-only replier (whose firstRepliedAt is deliberately NOT surfaced) — or positive with no known date. No synthesis."
-                },
-                "meetingBooked": {
-                  "type": "boolean",
-                  "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
-                },
-                "meetingAttended": {
-                  "type": "boolean",
-                  "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
-                },
-                "meetingAttendedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp the meeting was attended, as stated. Null when not attended, or attended with no known date. No synthesis."
-                },
-                "meetingBookedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
-                },
-                "purchased": {
-                  "type": "boolean",
-                  "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
-                },
-                "purchasedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
-                },
-                "signup": {
-                  "type": "boolean",
-                  "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
-                },
-                "signupAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
-                },
-                "formSubmission": {
-                  "type": "boolean",
-                  "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
-                },
-                "formSubmissionAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
-                },
-                "conversionProbabilityPct": {
-                  "type": "number",
-                  "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "leadId": {
+                      "type": "string"
+                    },
+                    "clicked": {
+                      "type": "boolean",
+                      "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
+                    },
+                    "repliedPositive": {
+                      "type": "boolean",
+                      "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
+                    },
+                    "meetingBooked": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
+                    },
+                    "meetingAttended": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
+                    },
+                    "signup": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
+                    },
+                    "formSubmission": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
+                    },
+                    "purchased": {
+                      "type": "boolean",
+                      "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
+                    },
+                    "signupAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
+                    },
+                    "meetingBookedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
+                    },
+                    "formSubmissionAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
+                    },
+                    "purchasedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
+                    },
+                    "conversionProbabilityPct": {
+                      "type": "number",
+                      "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+                    }
+                  },
+                  "required": [
+                    "leadId",
+                    "clicked",
+                    "repliedPositive",
+                    "meetingBooked",
+                    "meetingAttended",
+                    "signup",
+                    "formSubmission",
+                    "purchased",
+                    "signupAt",
+                    "meetingBookedAt",
+                    "formSubmissionAt",
+                    "purchasedAt"
+                  ]
                 }
               },
-              "required": [
-                "leadId",
-                "firstName",
-                "lastName",
-                "photoUrl",
-                "orgName",
-                "orgLogoUrl",
-                "orgDomain",
-                "title",
-                "seniority",
-                "orgIndustry",
-                "orgEmployeeCount",
-                "orgCity",
-                "orgCountry",
-                "tags",
-                "expectedRevenueUsd",
-                "date",
-                "contacted",
-                "contactedAt",
-                "bounced",
-                "unsubscribed",
-                "opened",
-                "openedAt",
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "leadId": {
+                      "type": "string"
+                    },
+                    "firstName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "photoUrl": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "orgName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "orgLogoUrl": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "orgDomain": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
+                    },
+                    "title": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the person's current-employer job title (lead-service currentTitle, #336). Null when unknown; never synthesized."
+                    },
+                    "seniority": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the person's Apollo seniority band (e.g. \"vp\", \"director\", \"manager\") (lead-service seniority, #327). Null when unknown; never synthesized."
+                    },
+                    "orgIndustry": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's industry (lead-service organization.industry, #327). Null when unknown; never synthesized."
+                    },
+                    "orgEmployeeCount": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's estimated headcount (raw number from lead-service organization.estimatedNumEmployees, #327). The consumer bands it for display (e.g. \"11-50\"); NOT pre-banded here. Null when unknown; never synthesized."
+                    },
+                    "orgCity": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's city (lead-service organization.city, #327). Null when unknown; never synthesized."
+                    },
+                    "orgCountry": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's country (lead-service organization.country, #327). Null when unknown; never synthesized."
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "expectedRevenueUsd": {
+                      "type": "number",
+                      "description": "Expected revenue for this lead. On a lensed (?lens=) response this is the lens's expected revenue = (conversionProbabilityPct/100) × LTR; otherwise the engine's furthest-stage EV."
+                    },
+                    "date": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."
+                    },
+                    "contacted": {
+                      "type": "boolean",
+                      "description": "True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."
+                    },
+                    "contactedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
+                    },
+                    "bounced": {
+                      "type": "boolean",
+                      "description": "True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."
+                    },
+                    "unsubscribed": {
+                      "type": "boolean",
+                      "description": "True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."
+                    },
+                    "opened": {
+                      "type": "boolean",
+                      "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
+                    },
+                    "openedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of first open (email-gateway firstOpenedAt). Null when not opened, or opened with no known date. No synthesis."
+                    },
+                    "clicked": {
+                      "type": "boolean",
+                      "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
+                    },
+                    "clickedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of first click (email-gateway firstClickedAt). Null when not clicked, or clicked with no known date. No synthesis."
+                    },
+                    "repliedPositive": {
+                      "type": "boolean",
+                      "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
+                    },
+                    "repliedPositiveAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the first reply, surfaced ONLY when the reply is positive-classified (matches repliedPositive; date = email-gateway firstRepliedAt). Null when there is no positive reply — INCLUDING a negative/neutral-only replier (whose firstRepliedAt is deliberately NOT surfaced) — or positive with no known date. No synthesis."
+                    },
+                    "meetingBooked": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
+                    },
+                    "meetingAttended": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
+                    },
+                    "meetingAttendedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the meeting was attended, as stated. Null when not attended, or attended with no known date. No synthesis."
+                    },
+                    "meetingBookedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
+                    },
+                    "purchased": {
+                      "type": "boolean",
+                      "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
+                    },
+                    "purchasedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
+                    },
+                    "signup": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
+                    },
+                    "signupAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
+                    },
+                    "formSubmission": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
+                    },
+                    "formSubmissionAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
+                    },
+                    "conversionProbabilityPct": {
+                      "type": "number",
+                      "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+                    }
+                  },
+                  "required": [
+                    "leadId",
+                    "firstName",
+                    "lastName",
+                    "photoUrl",
+                    "orgName",
+                    "orgLogoUrl",
+                    "orgDomain",
+                    "title",
+                    "seniority",
+                    "orgIndustry",
+                    "orgEmployeeCount",
+                    "orgCity",
+                    "orgCountry",
+                    "tags",
+                    "expectedRevenueUsd",
+                    "date",
+                    "contacted",
+                    "contactedAt",
+                    "bounced",
+                    "unsubscribed",
+                    "opened",
+                    "openedAt",
+                    "clicked",
+                    "clickedAt",
+                    "repliedPositive",
+                    "repliedPositiveAt",
+                    "meetingBooked",
+                    "meetingAttended",
+                    "meetingAttendedAt",
+                    "meetingBookedAt",
+                    "purchased",
+                    "purchasedAt",
+                    "signup",
+                    "signupAt",
+                    "formSubmission",
+                    "formSubmissionAt"
+                  ]
+                }
+              }
+            ],
+            "description": "The people. WHICH SHAPE depends on `?leads=`: omitted or `outcomes` (the DEFAULT) serves the NARROW row — a lead's id, its seven outcome flags and its four realized-outcome timestamps — on the rows that REACHED something; `full` serves every contacted lead fully hydrated (name, photo, org, logo, domain, tags, firmographics, every timestamp). The default moved because a body answering a question about MONEY was 99.6% people: measured in prod (brand 75d7e3e8-…, 2026-08-31) the hydrated array was 10,860,781 bytes of a 10,903,573-byte body, and the consumer's persisted cache refuses anything over 2MB, so every money card on every brand, offer, funnel and campaign page cold-skeletoned on every load. A row that reached nothing is dropped rather than narrowed: a `false` flag is this service saying 'measured, did not happen', which no consumer acts on. Whether an outcome is ATTRIBUTED AT ALL is a separate statement and is served separately — see `attributedOutcomes`, which is why a narrowed array costs nobody an answer."
+          },
+          "attributedOutcomes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
                 "clicked",
-                "clickedAt",
                 "repliedPositive",
-                "repliedPositiveAt",
                 "meetingBooked",
                 "meetingAttended",
-                "meetingAttendedAt",
-                "meetingBookedAt",
-                "purchased",
-                "purchasedAt",
                 "signup",
-                "signupAt",
                 "formSubmission",
-                "formSubmissionAt"
+                "purchased"
               ]
-            }
+            },
+            "description": "WHICH PER-LEAD OUTCOMES THIS READ COULD ATTRIBUTE — a fact about the READ, never about the leads. A consumer that shows an outcome only once this service attributes it cannot derive that from `leads[]` any more: a brand with a live tracker and zero signups serves zero outcome-carrying rows, so the derivation would read 'signup is not attributed' and silently drop a surface from a brand measuring signups perfectly well. 'Attributed, nobody has reached it yet' and 'not measured here' are different statements and only the producer can tell them apart. Derived from the SAME evidence the funnel walk reports its rungs on, so a rung that reads null and a surface that hides can never name different producers: `clicked`/`repliedPositive` ride the fail-loud core lead read and are attributed wherever the leads were read at all; `meetingBooked`/`purchased` need EITHER the human step statements or the legacy qualifications; `meetingAttended` needs the statements alone (nothing else in the fleet observes somebody showing up); `signup`/`formSubmission` need lead-service's matched-lead email set per event. EMPTY only where the leads were never read (no funnel wired)."
           },
           "events": {
             "type": "array",
@@ -2045,6 +2143,7 @@
           "roiHistory",
           "organizations",
           "leads",
+          "attributedOutcomes",
           "events",
           "outcomes",
           "funnelSteps"
@@ -5582,216 +5681,314 @@
             }
           },
           "leads": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "leadId": {
-                  "type": "string"
-                },
-                "firstName": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "lastName": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "photoUrl": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "orgName": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "orgLogoUrl": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "orgDomain": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
-                },
-                "title": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the person's current-employer job title (lead-service currentTitle, #336). Null when unknown; never synthesized."
-                },
-                "seniority": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the person's Apollo seniority band (e.g. \"vp\", \"director\", \"manager\") (lead-service seniority, #327). Null when unknown; never synthesized."
-                },
-                "orgIndustry": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's industry (lead-service organization.industry, #327). Null when unknown; never synthesized."
-                },
-                "orgEmployeeCount": {
-                  "type": "integer",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's estimated headcount (raw number from lead-service organization.estimatedNumEmployees, #327). The consumer bands it for display (e.g. \"11-50\"); NOT pre-banded here. Null when unknown; never synthesized."
-                },
-                "orgCity": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's city (lead-service organization.city, #327). Null when unknown; never synthesized."
-                },
-                "orgCountry": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's country (lead-service organization.country, #327). Null when unknown; never synthesized."
-                },
-                "tags": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "expectedRevenueUsd": {
-                  "type": "number",
-                  "description": "Expected revenue for this lead. On a lensed (?lens=) response this is the lens's expected revenue = (conversionProbabilityPct/100) × LTR; otherwise the engine's furthest-stage EV."
-                },
-                "date": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."
-                },
-                "contacted": {
-                  "type": "boolean",
-                  "description": "True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."
-                },
-                "contactedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
-                },
-                "bounced": {
-                  "type": "boolean",
-                  "description": "True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."
-                },
-                "unsubscribed": {
-                  "type": "boolean",
-                  "description": "True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."
-                },
-                "opened": {
-                  "type": "boolean",
-                  "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
-                },
-                "openedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of first open (email-gateway firstOpenedAt). Null when not opened, or opened with no known date. No synthesis."
-                },
-                "clicked": {
-                  "type": "boolean",
-                  "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
-                },
-                "clickedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of first click (email-gateway firstClickedAt). Null when not clicked, or clicked with no known date. No synthesis."
-                },
-                "repliedPositive": {
-                  "type": "boolean",
-                  "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
-                },
-                "repliedPositiveAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of the first reply, surfaced ONLY when the reply is positive-classified (matches repliedPositive; date = email-gateway firstRepliedAt). Null when there is no positive reply — INCLUDING a negative/neutral-only replier (whose firstRepliedAt is deliberately NOT surfaced) — or positive with no known date. No synthesis."
-                },
-                "meetingBooked": {
-                  "type": "boolean",
-                  "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
-                },
-                "meetingAttended": {
-                  "type": "boolean",
-                  "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
-                },
-                "meetingAttendedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp the meeting was attended, as stated. Null when not attended, or attended with no known date. No synthesis."
-                },
-                "meetingBookedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
-                },
-                "purchased": {
-                  "type": "boolean",
-                  "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
-                },
-                "purchasedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
-                },
-                "signup": {
-                  "type": "boolean",
-                  "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
-                },
-                "signupAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
-                },
-                "formSubmission": {
-                  "type": "boolean",
-                  "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
-                },
-                "formSubmissionAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
-                },
-                "conversionProbabilityPct": {
-                  "type": "number",
-                  "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "leadId": {
+                      "type": "string"
+                    },
+                    "clicked": {
+                      "type": "boolean",
+                      "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
+                    },
+                    "repliedPositive": {
+                      "type": "boolean",
+                      "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
+                    },
+                    "meetingBooked": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
+                    },
+                    "meetingAttended": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
+                    },
+                    "signup": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
+                    },
+                    "formSubmission": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
+                    },
+                    "purchased": {
+                      "type": "boolean",
+                      "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
+                    },
+                    "signupAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
+                    },
+                    "meetingBookedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
+                    },
+                    "formSubmissionAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
+                    },
+                    "purchasedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
+                    },
+                    "conversionProbabilityPct": {
+                      "type": "number",
+                      "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+                    }
+                  },
+                  "required": [
+                    "leadId",
+                    "clicked",
+                    "repliedPositive",
+                    "meetingBooked",
+                    "meetingAttended",
+                    "signup",
+                    "formSubmission",
+                    "purchased",
+                    "signupAt",
+                    "meetingBookedAt",
+                    "formSubmissionAt",
+                    "purchasedAt"
+                  ]
                 }
               },
-              "required": [
-                "leadId",
-                "firstName",
-                "lastName",
-                "photoUrl",
-                "orgName",
-                "orgLogoUrl",
-                "orgDomain",
-                "title",
-                "seniority",
-                "orgIndustry",
-                "orgEmployeeCount",
-                "orgCity",
-                "orgCountry",
-                "tags",
-                "expectedRevenueUsd",
-                "date",
-                "contacted",
-                "contactedAt",
-                "bounced",
-                "unsubscribed",
-                "opened",
-                "openedAt",
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "leadId": {
+                      "type": "string"
+                    },
+                    "firstName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "photoUrl": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "orgName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "orgLogoUrl": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "orgDomain": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
+                    },
+                    "title": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the person's current-employer job title (lead-service currentTitle, #336). Null when unknown; never synthesized."
+                    },
+                    "seniority": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the person's Apollo seniority band (e.g. \"vp\", \"director\", \"manager\") (lead-service seniority, #327). Null when unknown; never synthesized."
+                    },
+                    "orgIndustry": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's industry (lead-service organization.industry, #327). Null when unknown; never synthesized."
+                    },
+                    "orgEmployeeCount": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's estimated headcount (raw number from lead-service organization.estimatedNumEmployees, #327). The consumer bands it for display (e.g. \"11-50\"); NOT pre-banded here. Null when unknown; never synthesized."
+                    },
+                    "orgCity": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's city (lead-service organization.city, #327). Null when unknown; never synthesized."
+                    },
+                    "orgCountry": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's country (lead-service organization.country, #327). Null when unknown; never synthesized."
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "expectedRevenueUsd": {
+                      "type": "number",
+                      "description": "Expected revenue for this lead. On a lensed (?lens=) response this is the lens's expected revenue = (conversionProbabilityPct/100) × LTR; otherwise the engine's furthest-stage EV."
+                    },
+                    "date": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."
+                    },
+                    "contacted": {
+                      "type": "boolean",
+                      "description": "True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."
+                    },
+                    "contactedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
+                    },
+                    "bounced": {
+                      "type": "boolean",
+                      "description": "True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."
+                    },
+                    "unsubscribed": {
+                      "type": "boolean",
+                      "description": "True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."
+                    },
+                    "opened": {
+                      "type": "boolean",
+                      "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
+                    },
+                    "openedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of first open (email-gateway firstOpenedAt). Null when not opened, or opened with no known date. No synthesis."
+                    },
+                    "clicked": {
+                      "type": "boolean",
+                      "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
+                    },
+                    "clickedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of first click (email-gateway firstClickedAt). Null when not clicked, or clicked with no known date. No synthesis."
+                    },
+                    "repliedPositive": {
+                      "type": "boolean",
+                      "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
+                    },
+                    "repliedPositiveAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the first reply, surfaced ONLY when the reply is positive-classified (matches repliedPositive; date = email-gateway firstRepliedAt). Null when there is no positive reply — INCLUDING a negative/neutral-only replier (whose firstRepliedAt is deliberately NOT surfaced) — or positive with no known date. No synthesis."
+                    },
+                    "meetingBooked": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
+                    },
+                    "meetingAttended": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
+                    },
+                    "meetingAttendedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the meeting was attended, as stated. Null when not attended, or attended with no known date. No synthesis."
+                    },
+                    "meetingBookedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
+                    },
+                    "purchased": {
+                      "type": "boolean",
+                      "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
+                    },
+                    "purchasedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
+                    },
+                    "signup": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
+                    },
+                    "signupAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
+                    },
+                    "formSubmission": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
+                    },
+                    "formSubmissionAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
+                    },
+                    "conversionProbabilityPct": {
+                      "type": "number",
+                      "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+                    }
+                  },
+                  "required": [
+                    "leadId",
+                    "firstName",
+                    "lastName",
+                    "photoUrl",
+                    "orgName",
+                    "orgLogoUrl",
+                    "orgDomain",
+                    "title",
+                    "seniority",
+                    "orgIndustry",
+                    "orgEmployeeCount",
+                    "orgCity",
+                    "orgCountry",
+                    "tags",
+                    "expectedRevenueUsd",
+                    "date",
+                    "contacted",
+                    "contactedAt",
+                    "bounced",
+                    "unsubscribed",
+                    "opened",
+                    "openedAt",
+                    "clicked",
+                    "clickedAt",
+                    "repliedPositive",
+                    "repliedPositiveAt",
+                    "meetingBooked",
+                    "meetingAttended",
+                    "meetingAttendedAt",
+                    "meetingBookedAt",
+                    "purchased",
+                    "purchasedAt",
+                    "signup",
+                    "signupAt",
+                    "formSubmission",
+                    "formSubmissionAt"
+                  ]
+                }
+              }
+            ],
+            "description": "The people. WHICH SHAPE depends on `?leads=`: omitted or `outcomes` (the DEFAULT) serves the NARROW row — a lead's id, its seven outcome flags and its four realized-outcome timestamps — on the rows that REACHED something; `full` serves every contacted lead fully hydrated (name, photo, org, logo, domain, tags, firmographics, every timestamp). The default moved because a body answering a question about MONEY was 99.6% people: measured in prod (brand 75d7e3e8-…, 2026-08-31) the hydrated array was 10,860,781 bytes of a 10,903,573-byte body, and the consumer's persisted cache refuses anything over 2MB, so every money card on every brand, offer, funnel and campaign page cold-skeletoned on every load. A row that reached nothing is dropped rather than narrowed: a `false` flag is this service saying 'measured, did not happen', which no consumer acts on. Whether an outcome is ATTRIBUTED AT ALL is a separate statement and is served separately — see `attributedOutcomes`, which is why a narrowed array costs nobody an answer."
+          },
+          "attributedOutcomes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
                 "clicked",
-                "clickedAt",
                 "repliedPositive",
-                "repliedPositiveAt",
                 "meetingBooked",
                 "meetingAttended",
-                "meetingAttendedAt",
-                "meetingBookedAt",
-                "purchased",
-                "purchasedAt",
                 "signup",
-                "signupAt",
                 "formSubmission",
-                "formSubmissionAt"
+                "purchased"
               ]
-            }
+            },
+            "description": "WHICH PER-LEAD OUTCOMES THIS READ COULD ATTRIBUTE — a fact about the READ, never about the leads. A consumer that shows an outcome only once this service attributes it cannot derive that from `leads[]` any more: a brand with a live tracker and zero signups serves zero outcome-carrying rows, so the derivation would read 'signup is not attributed' and silently drop a surface from a brand measuring signups perfectly well. 'Attributed, nobody has reached it yet' and 'not measured here' are different statements and only the producer can tell them apart. Derived from the SAME evidence the funnel walk reports its rungs on, so a rung that reads null and a surface that hides can never name different producers: `clicked`/`repliedPositive` ride the fail-loud core lead read and are attributed wherever the leads were read at all; `meetingBooked`/`purchased` need EITHER the human step statements or the legacy qualifications; `meetingAttended` needs the statements alone (nothing else in the fleet observes somebody showing up); `signup`/`formSubmission` need lead-service's matched-lead email set per event. EMPTY only where the leads were never read (no funnel wired)."
           },
           "events": {
             "type": "array",
@@ -6156,6 +6353,7 @@
           "roiHistory",
           "organizations",
           "leads",
+          "attributedOutcomes",
           "events",
           "outcomes",
           "funnelSteps",
@@ -8022,216 +8220,314 @@
             }
           },
           "leads": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "leadId": {
-                  "type": "string"
-                },
-                "firstName": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "lastName": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "photoUrl": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "orgName": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "orgLogoUrl": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "orgDomain": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
-                },
-                "title": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the person's current-employer job title (lead-service currentTitle, #336). Null when unknown; never synthesized."
-                },
-                "seniority": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the person's Apollo seniority band (e.g. \"vp\", \"director\", \"manager\") (lead-service seniority, #327). Null when unknown; never synthesized."
-                },
-                "orgIndustry": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's industry (lead-service organization.industry, #327). Null when unknown; never synthesized."
-                },
-                "orgEmployeeCount": {
-                  "type": "integer",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's estimated headcount (raw number from lead-service organization.estimatedNumEmployees, #327). The consumer bands it for display (e.g. \"11-50\"); NOT pre-banded here. Null when unknown; never synthesized."
-                },
-                "orgCity": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's city (lead-service organization.city, #327). Null when unknown; never synthesized."
-                },
-                "orgCountry": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's country (lead-service organization.country, #327). Null when unknown; never synthesized."
-                },
-                "tags": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "expectedRevenueUsd": {
-                  "type": "number",
-                  "description": "Expected revenue for this lead. On a lensed (?lens=) response this is the lens's expected revenue = (conversionProbabilityPct/100) × LTR; otherwise the engine's furthest-stage EV."
-                },
-                "date": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."
-                },
-                "contacted": {
-                  "type": "boolean",
-                  "description": "True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."
-                },
-                "contactedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
-                },
-                "bounced": {
-                  "type": "boolean",
-                  "description": "True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."
-                },
-                "unsubscribed": {
-                  "type": "boolean",
-                  "description": "True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."
-                },
-                "opened": {
-                  "type": "boolean",
-                  "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
-                },
-                "openedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of first open (email-gateway firstOpenedAt). Null when not opened, or opened with no known date. No synthesis."
-                },
-                "clicked": {
-                  "type": "boolean",
-                  "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
-                },
-                "clickedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of first click (email-gateway firstClickedAt). Null when not clicked, or clicked with no known date. No synthesis."
-                },
-                "repliedPositive": {
-                  "type": "boolean",
-                  "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
-                },
-                "repliedPositiveAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of the first reply, surfaced ONLY when the reply is positive-classified (matches repliedPositive; date = email-gateway firstRepliedAt). Null when there is no positive reply — INCLUDING a negative/neutral-only replier (whose firstRepliedAt is deliberately NOT surfaced) — or positive with no known date. No synthesis."
-                },
-                "meetingBooked": {
-                  "type": "boolean",
-                  "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
-                },
-                "meetingAttended": {
-                  "type": "boolean",
-                  "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
-                },
-                "meetingAttendedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp the meeting was attended, as stated. Null when not attended, or attended with no known date. No synthesis."
-                },
-                "meetingBookedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
-                },
-                "purchased": {
-                  "type": "boolean",
-                  "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
-                },
-                "purchasedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
-                },
-                "signup": {
-                  "type": "boolean",
-                  "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
-                },
-                "signupAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
-                },
-                "formSubmission": {
-                  "type": "boolean",
-                  "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
-                },
-                "formSubmissionAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
-                },
-                "conversionProbabilityPct": {
-                  "type": "number",
-                  "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "leadId": {
+                      "type": "string"
+                    },
+                    "clicked": {
+                      "type": "boolean",
+                      "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
+                    },
+                    "repliedPositive": {
+                      "type": "boolean",
+                      "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
+                    },
+                    "meetingBooked": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
+                    },
+                    "meetingAttended": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
+                    },
+                    "signup": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
+                    },
+                    "formSubmission": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
+                    },
+                    "purchased": {
+                      "type": "boolean",
+                      "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
+                    },
+                    "signupAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
+                    },
+                    "meetingBookedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
+                    },
+                    "formSubmissionAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
+                    },
+                    "purchasedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
+                    },
+                    "conversionProbabilityPct": {
+                      "type": "number",
+                      "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+                    }
+                  },
+                  "required": [
+                    "leadId",
+                    "clicked",
+                    "repliedPositive",
+                    "meetingBooked",
+                    "meetingAttended",
+                    "signup",
+                    "formSubmission",
+                    "purchased",
+                    "signupAt",
+                    "meetingBookedAt",
+                    "formSubmissionAt",
+                    "purchasedAt"
+                  ]
                 }
               },
-              "required": [
-                "leadId",
-                "firstName",
-                "lastName",
-                "photoUrl",
-                "orgName",
-                "orgLogoUrl",
-                "orgDomain",
-                "title",
-                "seniority",
-                "orgIndustry",
-                "orgEmployeeCount",
-                "orgCity",
-                "orgCountry",
-                "tags",
-                "expectedRevenueUsd",
-                "date",
-                "contacted",
-                "contactedAt",
-                "bounced",
-                "unsubscribed",
-                "opened",
-                "openedAt",
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "leadId": {
+                      "type": "string"
+                    },
+                    "firstName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "photoUrl": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "orgName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "orgLogoUrl": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "orgDomain": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
+                    },
+                    "title": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the person's current-employer job title (lead-service currentTitle, #336). Null when unknown; never synthesized."
+                    },
+                    "seniority": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the person's Apollo seniority band (e.g. \"vp\", \"director\", \"manager\") (lead-service seniority, #327). Null when unknown; never synthesized."
+                    },
+                    "orgIndustry": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's industry (lead-service organization.industry, #327). Null when unknown; never synthesized."
+                    },
+                    "orgEmployeeCount": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's estimated headcount (raw number from lead-service organization.estimatedNumEmployees, #327). The consumer bands it for display (e.g. \"11-50\"); NOT pre-banded here. Null when unknown; never synthesized."
+                    },
+                    "orgCity": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's city (lead-service organization.city, #327). Null when unknown; never synthesized."
+                    },
+                    "orgCountry": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's country (lead-service organization.country, #327). Null when unknown; never synthesized."
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "expectedRevenueUsd": {
+                      "type": "number",
+                      "description": "Expected revenue for this lead. On a lensed (?lens=) response this is the lens's expected revenue = (conversionProbabilityPct/100) × LTR; otherwise the engine's furthest-stage EV."
+                    },
+                    "date": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."
+                    },
+                    "contacted": {
+                      "type": "boolean",
+                      "description": "True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."
+                    },
+                    "contactedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
+                    },
+                    "bounced": {
+                      "type": "boolean",
+                      "description": "True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."
+                    },
+                    "unsubscribed": {
+                      "type": "boolean",
+                      "description": "True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."
+                    },
+                    "opened": {
+                      "type": "boolean",
+                      "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
+                    },
+                    "openedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of first open (email-gateway firstOpenedAt). Null when not opened, or opened with no known date. No synthesis."
+                    },
+                    "clicked": {
+                      "type": "boolean",
+                      "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
+                    },
+                    "clickedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of first click (email-gateway firstClickedAt). Null when not clicked, or clicked with no known date. No synthesis."
+                    },
+                    "repliedPositive": {
+                      "type": "boolean",
+                      "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
+                    },
+                    "repliedPositiveAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the first reply, surfaced ONLY when the reply is positive-classified (matches repliedPositive; date = email-gateway firstRepliedAt). Null when there is no positive reply — INCLUDING a negative/neutral-only replier (whose firstRepliedAt is deliberately NOT surfaced) — or positive with no known date. No synthesis."
+                    },
+                    "meetingBooked": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
+                    },
+                    "meetingAttended": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
+                    },
+                    "meetingAttendedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the meeting was attended, as stated. Null when not attended, or attended with no known date. No synthesis."
+                    },
+                    "meetingBookedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
+                    },
+                    "purchased": {
+                      "type": "boolean",
+                      "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
+                    },
+                    "purchasedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
+                    },
+                    "signup": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
+                    },
+                    "signupAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
+                    },
+                    "formSubmission": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
+                    },
+                    "formSubmissionAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
+                    },
+                    "conversionProbabilityPct": {
+                      "type": "number",
+                      "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+                    }
+                  },
+                  "required": [
+                    "leadId",
+                    "firstName",
+                    "lastName",
+                    "photoUrl",
+                    "orgName",
+                    "orgLogoUrl",
+                    "orgDomain",
+                    "title",
+                    "seniority",
+                    "orgIndustry",
+                    "orgEmployeeCount",
+                    "orgCity",
+                    "orgCountry",
+                    "tags",
+                    "expectedRevenueUsd",
+                    "date",
+                    "contacted",
+                    "contactedAt",
+                    "bounced",
+                    "unsubscribed",
+                    "opened",
+                    "openedAt",
+                    "clicked",
+                    "clickedAt",
+                    "repliedPositive",
+                    "repliedPositiveAt",
+                    "meetingBooked",
+                    "meetingAttended",
+                    "meetingAttendedAt",
+                    "meetingBookedAt",
+                    "purchased",
+                    "purchasedAt",
+                    "signup",
+                    "signupAt",
+                    "formSubmission",
+                    "formSubmissionAt"
+                  ]
+                }
+              }
+            ],
+            "description": "The people. WHICH SHAPE depends on `?leads=`: omitted or `outcomes` (the DEFAULT) serves the NARROW row — a lead's id, its seven outcome flags and its four realized-outcome timestamps — on the rows that REACHED something; `full` serves every contacted lead fully hydrated (name, photo, org, logo, domain, tags, firmographics, every timestamp). The default moved because a body answering a question about MONEY was 99.6% people: measured in prod (brand 75d7e3e8-…, 2026-08-31) the hydrated array was 10,860,781 bytes of a 10,903,573-byte body, and the consumer's persisted cache refuses anything over 2MB, so every money card on every brand, offer, funnel and campaign page cold-skeletoned on every load. A row that reached nothing is dropped rather than narrowed: a `false` flag is this service saying 'measured, did not happen', which no consumer acts on. Whether an outcome is ATTRIBUTED AT ALL is a separate statement and is served separately — see `attributedOutcomes`, which is why a narrowed array costs nobody an answer."
+          },
+          "attributedOutcomes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
                 "clicked",
-                "clickedAt",
                 "repliedPositive",
-                "repliedPositiveAt",
                 "meetingBooked",
                 "meetingAttended",
-                "meetingAttendedAt",
-                "meetingBookedAt",
-                "purchased",
-                "purchasedAt",
                 "signup",
-                "signupAt",
                 "formSubmission",
-                "formSubmissionAt"
+                "purchased"
               ]
-            }
+            },
+            "description": "WHICH PER-LEAD OUTCOMES THIS READ COULD ATTRIBUTE — a fact about the READ, never about the leads. A consumer that shows an outcome only once this service attributes it cannot derive that from `leads[]` any more: a brand with a live tracker and zero signups serves zero outcome-carrying rows, so the derivation would read 'signup is not attributed' and silently drop a surface from a brand measuring signups perfectly well. 'Attributed, nobody has reached it yet' and 'not measured here' are different statements and only the producer can tell them apart. Derived from the SAME evidence the funnel walk reports its rungs on, so a rung that reads null and a surface that hides can never name different producers: `clicked`/`repliedPositive` ride the fail-loud core lead read and are attributed wherever the leads were read at all; `meetingBooked`/`purchased` need EITHER the human step statements or the legacy qualifications; `meetingAttended` needs the statements alone (nothing else in the fleet observes somebody showing up); `signup`/`formSubmission` need lead-service's matched-lead email set per event. EMPTY only where the leads were never read (no funnel wired)."
           },
           "events": {
             "type": "array",
@@ -8765,6 +9061,7 @@
           "roiHistory",
           "organizations",
           "leads",
+          "attributedOutcomes",
           "events",
           "outcomes",
           "funnelSteps",
@@ -10273,216 +10570,314 @@
             }
           },
           "leads": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "leadId": {
-                  "type": "string"
-                },
-                "firstName": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "lastName": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "photoUrl": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "orgName": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "orgLogoUrl": {
-                  "type": "string",
-                  "nullable": true
-                },
-                "orgDomain": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
-                },
-                "title": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the person's current-employer job title (lead-service currentTitle, #336). Null when unknown; never synthesized."
-                },
-                "seniority": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the person's Apollo seniority band (e.g. \"vp\", \"director\", \"manager\") (lead-service seniority, #327). Null when unknown; never synthesized."
-                },
-                "orgIndustry": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's industry (lead-service organization.industry, #327). Null when unknown; never synthesized."
-                },
-                "orgEmployeeCount": {
-                  "type": "integer",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's estimated headcount (raw number from lead-service organization.estimatedNumEmployees, #327). The consumer bands it for display (e.g. \"11-50\"); NOT pre-banded here. Null when unknown; never synthesized."
-                },
-                "orgCity": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's city (lead-service organization.city, #327). Null when unknown; never synthesized."
-                },
-                "orgCountry": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "FIRMOGRAPHIC — the company's country (lead-service organization.country, #327). Null when unknown; never synthesized."
-                },
-                "tags": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "expectedRevenueUsd": {
-                  "type": "number",
-                  "description": "Expected revenue for this lead. On a lensed (?lens=) response this is the lens's expected revenue = (conversionProbabilityPct/100) × LTR; otherwise the engine's furthest-stage EV."
-                },
-                "date": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."
-                },
-                "contacted": {
-                  "type": "boolean",
-                  "description": "True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."
-                },
-                "contactedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
-                },
-                "bounced": {
-                  "type": "boolean",
-                  "description": "True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."
-                },
-                "unsubscribed": {
-                  "type": "boolean",
-                  "description": "True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."
-                },
-                "opened": {
-                  "type": "boolean",
-                  "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
-                },
-                "openedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of first open (email-gateway firstOpenedAt). Null when not opened, or opened with no known date. No synthesis."
-                },
-                "clicked": {
-                  "type": "boolean",
-                  "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
-                },
-                "clickedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of first click (email-gateway firstClickedAt). Null when not clicked, or clicked with no known date. No synthesis."
-                },
-                "repliedPositive": {
-                  "type": "boolean",
-                  "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
-                },
-                "repliedPositiveAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of the first reply, surfaced ONLY when the reply is positive-classified (matches repliedPositive; date = email-gateway firstRepliedAt). Null when there is no positive reply — INCLUDING a negative/neutral-only replier (whose firstRepliedAt is deliberately NOT surfaced) — or positive with no known date. No synthesis."
-                },
-                "meetingBooked": {
-                  "type": "boolean",
-                  "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
-                },
-                "meetingAttended": {
-                  "type": "boolean",
-                  "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
-                },
-                "meetingAttendedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp the meeting was attended, as stated. Null when not attended, or attended with no known date. No synthesis."
-                },
-                "meetingBookedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
-                },
-                "purchased": {
-                  "type": "boolean",
-                  "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
-                },
-                "purchasedAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
-                },
-                "signup": {
-                  "type": "boolean",
-                  "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
-                },
-                "signupAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
-                },
-                "formSubmission": {
-                  "type": "boolean",
-                  "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
-                },
-                "formSubmissionAt": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
-                },
-                "conversionProbabilityPct": {
-                  "type": "number",
-                  "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "leadId": {
+                      "type": "string"
+                    },
+                    "clicked": {
+                      "type": "boolean",
+                      "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
+                    },
+                    "repliedPositive": {
+                      "type": "boolean",
+                      "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
+                    },
+                    "meetingBooked": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
+                    },
+                    "meetingAttended": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
+                    },
+                    "signup": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
+                    },
+                    "formSubmission": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
+                    },
+                    "purchased": {
+                      "type": "boolean",
+                      "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
+                    },
+                    "signupAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
+                    },
+                    "meetingBookedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
+                    },
+                    "formSubmissionAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
+                    },
+                    "purchasedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
+                    },
+                    "conversionProbabilityPct": {
+                      "type": "number",
+                      "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+                    }
+                  },
+                  "required": [
+                    "leadId",
+                    "clicked",
+                    "repliedPositive",
+                    "meetingBooked",
+                    "meetingAttended",
+                    "signup",
+                    "formSubmission",
+                    "purchased",
+                    "signupAt",
+                    "meetingBookedAt",
+                    "formSubmissionAt",
+                    "purchasedAt"
+                  ]
                 }
               },
-              "required": [
-                "leadId",
-                "firstName",
-                "lastName",
-                "photoUrl",
-                "orgName",
-                "orgLogoUrl",
-                "orgDomain",
-                "title",
-                "seniority",
-                "orgIndustry",
-                "orgEmployeeCount",
-                "orgCity",
-                "orgCountry",
-                "tags",
-                "expectedRevenueUsd",
-                "date",
-                "contacted",
-                "contactedAt",
-                "bounced",
-                "unsubscribed",
-                "opened",
-                "openedAt",
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "leadId": {
+                      "type": "string"
+                    },
+                    "firstName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lastName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "photoUrl": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "orgName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "orgLogoUrl": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "orgDomain": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."
+                    },
+                    "title": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the person's current-employer job title (lead-service currentTitle, #336). Null when unknown; never synthesized."
+                    },
+                    "seniority": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the person's Apollo seniority band (e.g. \"vp\", \"director\", \"manager\") (lead-service seniority, #327). Null when unknown; never synthesized."
+                    },
+                    "orgIndustry": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's industry (lead-service organization.industry, #327). Null when unknown; never synthesized."
+                    },
+                    "orgEmployeeCount": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's estimated headcount (raw number from lead-service organization.estimatedNumEmployees, #327). The consumer bands it for display (e.g. \"11-50\"); NOT pre-banded here. Null when unknown; never synthesized."
+                    },
+                    "orgCity": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's city (lead-service organization.city, #327). Null when unknown; never synthesized."
+                    },
+                    "orgCountry": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "FIRMOGRAPHIC — the company's country (lead-service organization.country, #327). Null when unknown; never synthesized."
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "expectedRevenueUsd": {
+                      "type": "number",
+                      "description": "Expected revenue for this lead. On a lensed (?lens=) response this is the lens's expected revenue = (conversionProbabilityPct/100) × LTR; otherwise the engine's furthest-stage EV."
+                    },
+                    "date": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."
+                    },
+                    "contacted": {
+                      "type": "boolean",
+                      "description": "True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."
+                    },
+                    "contactedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
+                    },
+                    "bounced": {
+                      "type": "boolean",
+                      "description": "True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."
+                    },
+                    "unsubscribed": {
+                      "type": "boolean",
+                      "description": "True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."
+                    },
+                    "opened": {
+                      "type": "boolean",
+                      "description": "True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."
+                    },
+                    "openedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of first open (email-gateway firstOpenedAt). Null when not opened, or opened with no known date. No synthesis."
+                    },
+                    "clicked": {
+                      "type": "boolean",
+                      "description": "True when the lead clicked / visited the website (email-gateway). The signal the Clicks daily-graph actual buckets; ALSO the signup-goal's observed outcome (a downstream account signup is not tracked here) — features-service#377."
+                    },
+                    "clickedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of first click (email-gateway firstClickedAt). Null when not clicked, or clicked with no known date. No synthesis."
+                    },
+                    "repliedPositive": {
+                      "type": "boolean",
+                      "description": "True when the lead sent a positive reply (replied && replyClassification \"positive\" — the SAME classification the booked-meetings lens P=replyToMeeting + audience-stats positiveReplies use). The signal the positive-replies daily-graph actual buckets; the meeting-goal engagement Outcome, distinct from meetingBooked (the booked meeting is its downstream outcome). features-service#390."
+                    },
+                    "repliedPositiveAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the first reply, surfaced ONLY when the reply is positive-classified (matches repliedPositive; date = email-gateway firstRepliedAt). Null when there is no positive reply — INCLUDING a negative/neutral-only replier (whose firstRepliedAt is deliberately NOT surfaced) — or positive with no known date. No synthesis."
+                    },
+                    "meetingBooked": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was BOOKED (lead-service step statements). The meeting-goal outcome the goal daily-graph actual buckets."
+                    },
+                    "meetingAttended": {
+                      "type": "boolean",
+                      "description": "True when a human stated the meeting was ATTENDED — the rung ABOVE booked, and the one the lead's expected revenue is priced on once reached (booked is priced through the show-up rate, attended is not). Statable by hand only: attendance happens off the client's website, so no page-load tag can observe it."
+                    },
+                    "meetingAttendedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the meeting was attended, as stated. Null when not attended, or attended with no known date. No synthesis."
+                    },
+                    "meetingBookedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the meeting was booked, as stated (the date the outcome HAPPENED, not when we heard about it). Null when no meeting, or no known date. No synthesis."
+                    },
+                    "purchased": {
+                      "type": "boolean",
+                      "description": "True when the lead became a paying client / closed. Realized revenue: when the statement named an amount, THAT amount is what the lead is worth, not the brand's average lifetime revenue."
+                    },
+                    "purchasedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the close (instantly manual-qualification closedAt). Null when not closed, or no known date. No synthesis."
+                    },
+                    "signup": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the SIGNUP conversion — lead-service conversion tracker matched a website signup back to this lead by email (REAL producer-side attribution, the SAME matched-email join audience-stats uses). Distinct from `clicked` (the website-visit signup PROXY the funnel EV math anchors to). features-service#476."
+                    },
+                    "signupAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."
+                    },
+                    "formSubmission": {
+                      "type": "boolean",
+                      "description": "True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."
+                    },
+                    "formSubmissionAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
+                    },
+                    "conversionProbabilityPct": {
+                      "type": "number",
+                      "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
+                    }
+                  },
+                  "required": [
+                    "leadId",
+                    "firstName",
+                    "lastName",
+                    "photoUrl",
+                    "orgName",
+                    "orgLogoUrl",
+                    "orgDomain",
+                    "title",
+                    "seniority",
+                    "orgIndustry",
+                    "orgEmployeeCount",
+                    "orgCity",
+                    "orgCountry",
+                    "tags",
+                    "expectedRevenueUsd",
+                    "date",
+                    "contacted",
+                    "contactedAt",
+                    "bounced",
+                    "unsubscribed",
+                    "opened",
+                    "openedAt",
+                    "clicked",
+                    "clickedAt",
+                    "repliedPositive",
+                    "repliedPositiveAt",
+                    "meetingBooked",
+                    "meetingAttended",
+                    "meetingAttendedAt",
+                    "meetingBookedAt",
+                    "purchased",
+                    "purchasedAt",
+                    "signup",
+                    "signupAt",
+                    "formSubmission",
+                    "formSubmissionAt"
+                  ]
+                }
+              }
+            ],
+            "description": "The people. WHICH SHAPE depends on `?leads=`: omitted or `outcomes` (the DEFAULT) serves the NARROW row — a lead's id, its seven outcome flags and its four realized-outcome timestamps — on the rows that REACHED something; `full` serves every contacted lead fully hydrated (name, photo, org, logo, domain, tags, firmographics, every timestamp). The default moved because a body answering a question about MONEY was 99.6% people: measured in prod (brand 75d7e3e8-…, 2026-08-31) the hydrated array was 10,860,781 bytes of a 10,903,573-byte body, and the consumer's persisted cache refuses anything over 2MB, so every money card on every brand, offer, funnel and campaign page cold-skeletoned on every load. A row that reached nothing is dropped rather than narrowed: a `false` flag is this service saying 'measured, did not happen', which no consumer acts on. Whether an outcome is ATTRIBUTED AT ALL is a separate statement and is served separately — see `attributedOutcomes`, which is why a narrowed array costs nobody an answer."
+          },
+          "attributedOutcomes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
                 "clicked",
-                "clickedAt",
                 "repliedPositive",
-                "repliedPositiveAt",
                 "meetingBooked",
                 "meetingAttended",
-                "meetingAttendedAt",
-                "meetingBookedAt",
-                "purchased",
-                "purchasedAt",
                 "signup",
-                "signupAt",
                 "formSubmission",
-                "formSubmissionAt"
+                "purchased"
               ]
-            }
+            },
+            "description": "WHICH PER-LEAD OUTCOMES THIS READ COULD ATTRIBUTE — a fact about the READ, never about the leads. A consumer that shows an outcome only once this service attributes it cannot derive that from `leads[]` any more: a brand with a live tracker and zero signups serves zero outcome-carrying rows, so the derivation would read 'signup is not attributed' and silently drop a surface from a brand measuring signups perfectly well. 'Attributed, nobody has reached it yet' and 'not measured here' are different statements and only the producer can tell them apart. Derived from the SAME evidence the funnel walk reports its rungs on, so a rung that reads null and a surface that hides can never name different producers: `clicked`/`repliedPositive` ride the fail-loud core lead read and are attributed wherever the leads were read at all; `meetingBooked`/`purchased` need EITHER the human step statements or the legacy qualifications; `meetingAttended` needs the statements alone (nothing else in the fleet observes somebody showing up); `signup`/`formSubmission` need lead-service's matched-lead email set per event. EMPTY only where the leads were never read (no funnel wired)."
           },
           "events": {
             "type": "array",
@@ -10844,6 +11239,7 @@
           "roiHistory",
           "organizations",
           "leads",
+          "attributedOutcomes",
           "events",
           "outcomes",
           "funnelSteps",
@@ -15140,6 +15536,20 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "outcomes",
+                "full"
+              ],
+              "description": "HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."
+            },
+            "required": false,
+            "description": "HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick.",
+            "name": "leads",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "format": "uuid",
               "description": "Internal org UUID from client-service"
             },
@@ -18360,6 +18770,20 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "outcomes",
+                "full"
+              ],
+              "description": "HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."
+            },
+            "required": false,
+            "description": "HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick.",
+            "name": "leads",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "format": "uuid",
               "description": "Internal org UUID from client-service"
             },
@@ -19074,6 +19498,20 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "outcomes",
+                "full"
+              ],
+              "description": "HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."
+            },
+            "required": false,
+            "description": "HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick.",
+            "name": "leads",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "format": "uuid",
               "description": "Internal org UUID from client-service"
             },
@@ -19619,6 +20057,20 @@
             "required": false,
             "description": "Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross.",
             "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "outcomes",
+                "full"
+              ],
+              "description": "HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."
+            },
+            "required": false,
+            "description": "HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick.",
+            "name": "leads",
             "in": "query"
           },
           {

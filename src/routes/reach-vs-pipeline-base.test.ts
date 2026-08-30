@@ -326,7 +326,7 @@ const FIXTURE: Fixture = {
 const OUT_OF_FUNNEL = BOUNCED.length + UNSUBSCRIBED.length + 1;
 
 const revenue = (query = "") =>
-  request(app).get(`/features/${PITCH}/revenue?brandId=${BRAND}${query}`).set(AUTH);
+  request(app).get(`/features/${PITCH}/revenue?leads=full&brandId=${BRAND}${query}`).set(AUTH);
 
 describe("reach and the pipeline base", () => {
   beforeEach(() => {

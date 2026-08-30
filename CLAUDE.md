@@ -1,5 +1,81 @@
 # Features Service — CLAUDE.md
 
+## A `/revenue` READ ANSWERS ABOUT MONEY — `?leads=outcomes` is the default, `full` is the digest's, and a row that reached NOTHING is dropped
+
+`GET /brands/:brandId/revenue` answered **10,903,573 bytes** for brand `75d7e3e8-…` (prod, 2026-08-31,
+measured from inside the container). **10,860,781 of them were `leads[]`** — 9,854 rows, each fully
+hydrated with a name, a photo, an org, a logo, tags, seniority, industry, headcount and every
+timestamp. Everything the read exists to say — the headline, the economics, the spend block, every
+count series, the ROI history, the funnel walk, the organisations, the events, the channels — was
+**43KB combined**. The per-feature read was the same body; `?groupBy=campaignId` was already fine at
+118KB because it carries no leads.
+
+The consumer cost was not a slow page, it was NO page. The dashboard's persisted query cache refuses
+a snapshot over 2MB, so `brandRevenue` / `offerRevenue` / `offerFunnelRevenue` / `featureRevenue` were
+never written to disk — and those four keys back every stat card, the return-on-spend chart and the
+cost card. Every one of them cold-skeletoned on EVERY load of every brand, offer, funnel and campaign
+page, for as long as the cap had existed ("sur chaque page du user dashboard je vois du skeleton
+loader"). The dashboard shipped its half (distribute.you#3790) by narrowing at its parse boundary,
+which fixed the cache and left the 10.9MB crossing the network and being `JSON.parse`d by `fetch` on
+every poll of every open tab. Only this service could fix that half.
+
+- **`?leads=` SAYS HOW MUCH OF A PERSON RIDES ALONG, and there are exactly TWO answers**
+  (`lib/lead-detail.ts`). **`outcomes` (the DEFAULT)** serves the twelve fields a BROWSER surface can
+  read — the lead's id, the seven outcome flags (`clicked` / `repliedPositive` / `meetingBooked` /
+  `meetingAttended` / `signup` / `formSubmission` / `purchased`) and the four realized-outcome
+  timestamps — on the rows that REACHED something. Every browser consumer builds the same thing out of
+  that array, a `leadId → outcome` map. **`full`** serves today's hydrated array, byte for byte.
+- **A ROW THAT REACHED NOTHING IS DROPPED, NOT NARROWED.** A lead with every flag false and every date
+  null is looked up in that map and found absent either way, so carrying it says nothing and costs, at
+  the measured population, 10.8MB to say it. A `false` is deliberately NOT an outcome — it is this
+  service saying "measured, did not happen", which is precisely the row worth dropping. On that brand
+  it is **72 rows of 9,854**.
+- **THE DEFAULT MOVED, AND THE OLD DEFAULT FAILS LOUD.** A money surface that must opt IN to a lean
+  body is a money surface that ships fat, so silence is `outcomes`. The one consumer that genuinely
+  needs people — the dashboard's nightly outcome-digest cron, which NAMES each person and what they
+  did on the day — asks for `full`, and its own parse REQUIRES the hydrated fields
+  (`firstName`, `photoUrl`, `orgName`, `tags`, `expectedRevenueUsd`, `date`), so an unconverted digest
+  fails its schema rather than reporting "nothing landed" for every brand on the platform. Deploy
+  order is consumer-first and was already satisfied: distribute.you#3790 had merged, so no live
+  browser caller read the fat array.
+- **`attributedOutcomes` IS WHY NARROWING COSTS NOBODY AN ANSWER.** The Leads page shows an outcome
+  only once this service attributes it (#476) and it used to derive that from the array ("does any row
+  carry the key"). That derivation dies on a narrowed array: a brand with a live tracker and ZERO
+  signups serves zero outcome-carrying rows, so it would read "signup is not attributed" and silently
+  drop a surface from a brand measuring signups perfectly well. "Attributed, nobody has reached it
+  yet" and "not measured here" are different statements and only the producer can tell them apart, so
+  it is SERVED — a top-level array of the outcome names this READ could attribute. It is derived from
+  the SAME `StepEvidence` the funnel walk reports its rungs on (`attributedOutcomesFor`), so a rung
+  that reads `null` and a surface that hides can never name different producers: `clicked` /
+  `repliedPositive` ride the fail-loud core lead read; `meetingBooked` / `purchased` need EITHER the
+  human statements or the legacy qualifications; `meetingAttended` needs the statements alone; the two
+  website conversions need lead-service's matched-lead email set per event. EMPTY only where the leads
+  were never read (the no-funnel short-circuit).
+- **NOT A PAGE, on purpose.** The digest wants the whole set and the browser wants a filtered subset;
+  neither is a page, and a `?limit=`/`?cursor=` pair would answer neither question.
+- **THE DETAIL RIDES THE `scope_key`, so the SNAPSHOT is narrow too.** The projection happens INSIDE
+  the cached compute — a jsonb cell holding 10.9MB of people is the same waste one layer down — and the
+  two answers are two cells, so the digest's nightly `full` read never fattens the cell every browser
+  polls.
+- **EVERY MONEY GRAIN MOVED AT ONCE, because a grain left behind reproduces the bug one click away** —
+  `/features/:slug/revenue` (un-grouped and `?lens=`), `/brands/:brandId/revenue`,
+  `/offers/:offerId/revenue` and `/offers/:offerId/funnels/:funnelKey/revenue`. An unrecognised word is
+  a **400** on all four, never a silent pick. The `?groupBy=` groups carry no leads and are untouched;
+  so is the cross-org `/public/stats/revenue`, which never emitted them.
+- **NOTHING ELSE ON THE BODY MOVED.** The headline, the economics, the spend block, the outcomes block,
+  the funnel walk and every count series are byte-identical under both values — the series are built
+  from the engine's own full `leads[]` BEFORE the projection, so narrowing the wire can never move a
+  count.
+- Guards: `src/routes/lean-revenue-leads.test.ts` — ONE fixture (10 contacted, 3 of them reaching a
+  click / a positive reply / a stated booked meeting, and a signup tracker answering with an EMPTY
+  set): the default's row set and its exact twelve keys, the money-dominates-the-body inequality in
+  both directions, `full` still carrying every hydrated row beside identical money, the attributed
+  list including the outcome nobody reached, a degraded producer dropping its outcomes from that list,
+  attended having only one producer, all four grains, the lensed read keeping
+  `conversionProbabilityPct`, and the 400. The pre-existing hydrated-row suites
+  (`revenue.test.ts`, `reach-vs-pipeline-base.test.ts`) now say `?leads=full` explicitly, which is what
+  they were always asserting about. (Set 2026-08-31, features-service#873.)
+
 ## A BRAND'S CONVERSION RATES ARE READ PER LEG — a stated leg wins, a named rate covers what it covers, and an arrow nobody priced is UNMEASURABLE
 
 Every rate this service prices on arrived as a NAMED field — `replyToMeetingPct`, `visitToSignupPct`,
