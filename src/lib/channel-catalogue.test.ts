@@ -174,7 +174,12 @@ describe("building the public catalogue", () => {
     const [channel] = buildChannelCatalogue([row({ slug: "closing", acquisitionChannel: CLOSER })]);
     expect(channel.producibleSteps).toEqual([]);
     expect(channel.stepTransitions).toEqual([
-      { from: expect.objectContaining({ key: "meeting_attended" }), to: expect.objectContaining({ key: "paid_client" }) },
+      {
+        // Every published leg carries the ONE canonical identifier of the arrow it is.
+        arrowKey: "meeting_attended_to_paid_client",
+        from: expect.objectContaining({ key: "meeting_attended" }),
+        to: expect.objectContaining({ key: "paid_client" }),
+      },
     ]);
     expect(channel.salesFunnels.map((f) => f.key)).toEqual([
       "sales_meetings_from_conversation",

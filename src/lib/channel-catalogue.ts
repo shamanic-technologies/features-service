@@ -28,6 +28,7 @@ import {
   type ChannelStepTransition,
   type AcquisitionChannel,
 } from "./acquisition-channels.js";
+import { arrowKeyFor, FUNNEL_ARROWS, type FunnelArrowDef } from "./funnel-arrows.js";
 import { SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
 
 /** A feature row, narrowed to what the catalogue reads. */
@@ -52,8 +53,13 @@ export interface ChannelStepDefWire {
 }
 
 /** One leg, rendered: the step it takes a lead out of (null when the lead did not exist on the funnel
- *  yet) and the step it moves them to, each carrying its own buyer-facing wording. */
+ *  yet) and the step it moves them to, each carrying its own buyer-facing wording — plus the ONE
+ *  canonical identifier of the arrow it is (`lib/funnel-arrows.ts`). The identifier is what the fleet
+ *  keys a campaign and a budget on, so a consumer names this leg with `arrowKey` alone and reads
+ *  `from`/`to` as data rather than splitting the string. An ENTRY leg carries an ordinary key too. */
 export interface ChannelStepTransitionWire {
+  /** The arrow's single canonical identifier. Published contract — never parsed back into its parts. */
+  arrowKey: string;
   from: ChannelStepDefWire | null;
   to: ChannelStepDefWire;
 }
@@ -200,6 +206,7 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
       operatedBy: channel.operatedBy,
       terms: channel.terms,
       stepTransitions: channel.stepTransitions.map((t) => ({
+        arrowKey: arrowKeyFor(t),
         from: t.from == null ? null : stepWire(t.from),
         to: stepWire(t.to),
       })),
@@ -212,6 +219,14 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
     });
   }
   return channels.sort((a, b) => a.displayOrder - b.displayOrder || a.slug.localeCompare(b.slug));
+}
+
+/** The ARROW vocabulary itself, published beside the channels so a consumer never has to hardcode it
+ *  and never has to derive an arrow from a pair of steps. Every arrow of every declared funnel, each
+ *  naming the funnels it is a leg of — usually several, which is why a campaign is bought per arrow
+ *  rather than per funnel. Their figures overlap and must never be summed. */
+export function funnelArrowCatalogue(): FunnelArrowDef[] {
+  return FUNNEL_ARROWS.map((a) => ({ ...a, funnelKeys: [...a.funnelKeys] }));
 }
 
 /** The step vocabulary itself, published beside the channels so a consumer never has to hardcode it. */

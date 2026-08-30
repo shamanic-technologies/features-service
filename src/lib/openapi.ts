@@ -457,6 +457,7 @@ const funnelStepCustomerCostSchema = z.object({
 // divided into each other. It is what makes a four-step reply-to-meeting funnel renderable at all:
 // "Meeting attended" has a per-lead flag and had no count and no cost anywhere else on this response.
 const funnelStepSchema = z.object({
+  arrowKey: z.string().describe("The ARROW this rung IS — the single canonical identifier of the leg that moves a lead onto this step (the same value /public/channels publishes and /features/{featureSlug}/workflow-projection?arrow= is asked with). Performance is measured per arrow and a campaign is bought per arrow, so this is what joins a rung to the campaign that bought it and to the projection that priced it. The SAME arrow appears on every funnel containing it, which is why a funnel's figures are COMPOSED from its arrows and why two funnels' figures must never be summed."),
   step: z.string().describe("The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."),
   leadField: z.enum(["clicked", "repliedPositive", "meetingBooked", "meetingAttended", "signup", "formSubmission", "purchased"]).describe("The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response."),
   recipientsReached: z.number().int().nullable().describe("DISTINCT leads that reached this rung. 0 is MEASURED — 'nobody got here', which is the answer a customer asking 'is this working?' is owed. NULL is 'we could not measure this': the producer behind this rung's signal degraded on this request (the observed-step statements and the website-conversion attribution sets are each fail-soft) or was never read on this path. A null count nulls its cost and both rates that touch it."),
@@ -691,11 +692,28 @@ const workflowProjectionEconomicsSchema = z.object({
 
 const salesFunnelKeyEnum = z.enum(["sales_meetings_from_conversation", "sales_meetings_from_website", "website_purchases", "form_magnet"]);
 
+/** One end of an arrow, worded for a buyer — the same shape /public/channels publishes as a step. */
+const arrowStepSchema = z.object({ key: z.string(), label: z.string(), description: z.string() });
+
 const workflowProjectionResponseSchema = z.object({
   featureSlug: z.string(),
   funnelKey: salesFunnelKeyEnum.optional().describe("The SALES FUNNEL this projection was priced on — present ONLY when the request named one via `?funnel=`. It is the authoritative answer to what was priced: the two meeting funnels carry the SAME `goal`/`objective` echo and DIFFERENT numbers, which is why the goal was retired as an identity. Absent on a goal-keyed request, so an existing consumer reads a byte-identical body."),
   objective: z.enum(["meeting-booked", "self-serve", "signup", "website_purchase", "sales", "website_visits", "positive_replies", "form_submissions", "whatsapp_conversations"]).describe("Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params. website_purchase is the RENAMED former `purchase` goal (multi-step self-serve/meeting close; legacy `purchase` input still accepted). sales is the COMBINED goal (a paying client won via EITHER visit→paid OR reply→paid, valued at CLTV; cost-per-outcome == cost-per-sale). whatsapp_conversations is a click-outcome goal (cost-per-outcome = CPC; no paid-client/ROI economics — those read null). A present-but-unrecognised goal fails loud (400)."),
   goal: z.enum(["meetingBooked", "signup", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).describe("Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup. websitePurchase = renamed former purchase goal; sales = combined-sales goal."),
+  arrow: z.object({
+    arrowKey: z.string().describe("The arrow that was asked for, echoed."),
+    fromStep: arrowStepSchema.nullable().describe("The step a lead is taken out of; null on an entry arrow. Read these rather than splitting `arrowKey`."),
+    toStep: arrowStepSchema.describe("The step a lead is moved to."),
+    candidateFunnelKeys: z.array(salesFunnelKeyEnum).describe("Every DECLARED funnel of this brand containing the arrow — what the pick chose between. Their figures overlap on the shared arrow and must never be summed."),
+    basisFunnelKey: salesFunnelKeyEnum.describe("The funnel the numbers on this body were priced through. Equals `funnelKey`, so an arrow-keyed answer and the same brand's `?funnel=` answer for that funnel are the same body."),
+    basis: z.enum(["sole_declared_funnel", "best_returning_declared_funnel", "no_return_evidence"]).describe("WHY that funnel: it was the only declared one containing the arrow; it returned best per dollar; or nothing containing the arrow has a measurable return yet and the catalogue's canonical order broke the tie deterministically. Stated so a caller never assumes the answer rests on measured returns when it does not."),
+    returnPerDollar: z.number().nullable().describe("The basis funnel's return per dollar — the figure the pick was made on, the IDENTICAL definition /funnel-ranking ranks on. Null under basis='no_return_evidence': nothing was measurable, and 0 would say the funnel returns nothing."),
+    evidence: z.object({
+      grain: z.enum(["audience", "brand", "crossOrg"]).nullable().describe("Whose results the recommendation's numbers are — crossOrg is the FLEET BENCHMARK, not this brand's own. Null when nothing measured it."),
+      measured: z.boolean().describe("Whether the recommended row rests on real evidence at all."),
+      resolvedOutcomeCount: z.number().nullable().describe("How many of the basis funnel's outcomes were actually observed behind the recommended workflow — HOW MUCH the recommendation rests on. A handful is noise, and the caller is owed the number rather than a verdict. Null is 'we could not count this', never 0."),
+    }).describe("What the recommendation rests on, in the vocabulary the rows already use."),
+  }).optional().describe("Present ⟺ the request named an ARROW (`?arrow=`), and it states which of the brand's declared funnels the arrow was priced through and what that answer rests on. Absent on every funnel- or goal-keyed request, so those bodies are byte-identical to what they have always been."),
   economics: workflowProjectionEconomicsSchema.nullable().describe("Null only at cold start (no effective economics) — rows still emit with null projected."),
   rows: z.array(workflowProjectionRowSchema),
   recommendedWorkflowDynastySlug: z.string().nullable().describe("Dynasty of the MEASURED row with the lowest resolved.costPerOutcomeUsd. An unmeasured row (explore allowance) is reachable but never recommended. Null when none has usable data."),
@@ -726,14 +744,15 @@ registry.registerPath({
       goal: z.string().optional().describe("Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/websitePurchase/sales/whatsappConversation), snake (website_visits/positive_replies/form_submissions/website_purchase/whatsapp_conversations), kebab, the legacy `purchase` spelling (→ websitePurchase), `combinedSales` (→ sales), and the whatsapp display value ('WhatsApp conversations'). Also accepted via `objective`. Defaults to meeting-booked; a present-but-unrecognised goal fails loud (400). websitePurchase = renamed former purchase (multi-step close). sales = COMBINED goal (paying client via either visit→paid OR reply→paid, valued at CLTV). whatsapp_conversations is a click-outcome goal — cost-per-outcome = CPC, no paid-client/ROI economics."),
       objective: z.string().optional().describe("Alias of `goal` (snake/kebab spelling). Either param is accepted."),
       funnel: z.string().optional().describe("The SALES FUNNEL to price on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`, priced replyUsd / replyToMeetingPct) from one bought with a click onto the site (`sales_meetings_from_website`, priced clickUsd / visitToMeetingPct). A goal cannot express that difference: both echo `meetingBooked`, and a goal-keyed request funnels from BOTH channels. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases (visit → signup → paid), form_magnet (visit → form → paid); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever and resolve to the canonical key. WINS over `goal`/`objective` when both are sent. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared') — 'we could not estimate this' and 'it costs zero' are different statements. An unrecognised value is a 400, never a silent fall back to the goal."),
+      arrow: z.string().optional().describe("ONE ARROW of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_filled`, `form_filled_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one arrow belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the arrow, on the IDENTICAL returnPerDollar basis /funnel-ranking ranks funnels on, so an arrow yields ONE answer whichever funnel the caller had in mind and the two surfaces can never name different funnels. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `arrow`. Sending BOTH `arrow` and `funnel` is a 400 (reason='arrow_and_funnel'); an unrecognised arrow is a 400 (reason='arrow_unrecognised'); an arrow no declared funnel of this brand contains is a 404 (reason='arrow_not_declared')."),
       budgetUsd: z.string().optional().describe("Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface)."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (each grain's unitCosts + projected cost-per-outcome, resolved.costPerOutcomeUsd, roiMultiple, cacPct, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the discounted figures, sourced from runs-service's FROZEN net cost amounts at every grain of the crossOrg→brand→audience ladder (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. Non-money fields (counts, rates, economics rates) are identical either way."),
     }),
   },
   responses: {
     200: { description: "Workflow projection ladder", content: { "application/json": { schema: workflowProjectionResponseSchema } } },
-    400: { description: "Missing brandId, or an unrecognised goal / funnel / pricing value", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "Feature not found, or (reason='funnel_not_declared') the requested `?funnel=` is not one this brand declared — the body carries `declaredFunnelKeys`", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing brandId, an unrecognised goal / funnel / pricing value, an unrecognised arrow (reason='arrow_unrecognised'), or an arrow sent beside a funnel (reason='arrow_and_funnel')", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found; (reason='funnel_not_declared') the requested `?funnel=` is not one this brand declared; or (reason='arrow_not_declared') no funnel this brand declared contains the requested `?arrow=` — both bodies carry `declaredFunnelKeys`", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error (reason='declared_funnels_unavailable' when the declared-funnel read could not be answered)", content: { "application/json": { schema: errorResponse } } },
   },
 });
@@ -2531,7 +2550,18 @@ const channelStepSchema = z.object({
   description: z.string(),
 });
 
+const funnelArrowSchema = registry.register(
+  "FunnelArrow",
+  z.object({
+    arrowKey: z.string().describe("The arrow's single canonical identifier — minted and owned here, and a PUBLISHED CONTRACT: the fleet keys campaigns and budgets on it. Join it against this catalogue; never parse it back into its parts."),
+    fromStep: channelStepSchema.nullable().describe("The step a lead is taken OUT of. NULL is 'from nothing' — this arrow STARTS a funnel. That is the special case in the DATA only: the identifier is as ordinary as any other, so a caller never spells an entry arrow differently."),
+    toStep: channelStepSchema.describe("The step a lead is moved TO."),
+    funnelKeys: z.array(salesFunnelKeyEnum).describe("EVERY declared sales funnel this arrow is a leg of, in catalogue order. Usually several — an ENTRY arrow feeds every funnel that contains it AT ONCE, since nobody can buy traffic that travels down only one of them. Their figures therefore overlap and must never be summed."),
+  }),
+);
+
 const channelStepTransitionSchema = z.object({
+  arrowKey: z.string().describe("The ONE canonical identifier of the ARROW this leg is (e.g. `start_to_conversation`, `meeting_booked_to_meeting_attended`) — minted and owned by features-service, and the value the fleet keys a campaign and a budget on. Performance is measured per ARROW; a sales funnel is a way of READING arrows, because one arrow belongs to several funnels at once. Name a leg with this alone: the two steps ride BESIDE it as `from`/`to`, so a consumer READS them and NEVER splits the string. An arrow that STARTS a funnel carries an ordinary identifier like every other — `from: null` is the special case in the data, never in the vocabulary."),
   from: channelStepSchema.nullable().describe("The step this channel takes a lead OUT of. NULL is 'from nothing' — the lead was not on the funnel at all until this channel produced its first step, which is the SPECIAL case rather than the rule."),
   to: channelStepSchema.describe("The step this channel moves the lead TO."),
 });
@@ -2557,6 +2587,7 @@ const channelCatalogueResponseSchema = registry.register(
   "ChannelCatalogueResponse",
   z.object({
     channels: z.array(publicChannelSchema),
+    arrows: z.array(funnelArrowSchema).describe("The ARROW vocabulary — every arrow of every declared sales funnel, each with its single canonical identifier, the two steps it connects, and the funnels it is a leg of. Published so a consumer never derives an arrow from a pair of steps and never hardcodes the list. An arrow usually belongs to SEVERAL funnels (a booked meeting becomes an attended meeting in both meeting funnels), which is exactly why a campaign is bought per ARROW rather than per funnel — and why two funnels' figures OVERLAP on their shared arrows and must never be summed."),
     steps: z.array(channelStepSchema).describe("The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at."),
   }),
 );
