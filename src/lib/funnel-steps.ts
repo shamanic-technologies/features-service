@@ -65,6 +65,7 @@
  */
 import { observedCostPerOutcome } from "./cost-engine.js";
 import { coverageOf, type CustomerDeclaredCost, type FunnelCostCoverage } from "./funnel-customer-costs.js";
+import { arrowKeysOfFunnel } from "./funnel-arrows.js";
 import { FUNNEL_LEG_SIGNALS } from "./funnel-registry.js";
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import { SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
@@ -219,6 +220,14 @@ export interface FunnelStepCustomerCost extends CustomerDeclaredCost {
 
 /** One rung of a funnel: who reached it, what that cost, and what share of the rung before converted. */
 export interface FunnelStep {
+  /**
+   * The ARROW this rung IS — the single canonical identifier of the leg that moves a lead onto this
+   * step (`lib/funnel-arrows.ts`). Performance is measured per arrow and a campaign is bought per
+   * arrow, so this is what makes a rung joinable to the campaign that bought it and to the projection
+   * that priced it. The SAME arrow appears on every funnel that contains it — which is exactly why a
+   * funnel's figures are COMPOSED from its arrows and why two funnels' figures must never be summed.
+   */
+  arrowKey: string;
   /** The funnel's own label for this step, in brand-service's words (`SALES_FUNNELS[key].steps`). */
   step: string;
   /** The `leads[]` boolean this step counts, so a consumer can reconcile it against the rows. */
@@ -309,6 +318,10 @@ export function buildFunnelSteps(
   // after the divergence carries the wrong name — a silent mislabel, so it fails loud instead.
   if (def.steps.length !== legs.length) throw new FunnelStepShapeError(funnelKey, def.steps.length, legs.length);
 
+  // The funnel's own arrows, in its own order — derived from the same catalogue the labels and the
+  // legs are, so a rung, its label and its arrow can never come from three different walks.
+  const arrowKeys = arrowKeysOfFunnel(funnelKey);
+
   const deduped = dedupPersonsByLead(persons);
   const contactedRecipients = deduped.reduce((n, p) => n + (p.signals.contacted ? 1 : 0), 0);
   const convertibleRecipients = deduped.reduce(
@@ -341,6 +354,7 @@ export function buildFunnelSteps(
       : null;
 
     steps.push({
+      arrowKey: arrowKeys[i],
       step: def.steps[i],
       leadField,
       recipientsReached,

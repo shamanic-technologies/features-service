@@ -1914,6 +1914,10 @@
                 "items": {
                   "type": "object",
                   "properties": {
+                    "arrowKey": {
+                      "type": "string",
+                      "description": "The ARROW this rung IS — the single canonical identifier of the leg that moves a lead onto this step (the same value /public/channels publishes and /features/{featureSlug}/workflow-projection?arrow= is asked with). Performance is measured per arrow and a campaign is bought per arrow, so this is what joins a rung to the campaign that bought it and to the projection that priced it. The SAME arrow appears on every funnel containing it, which is why a funnel's figures are COMPOSED from its arrows and why two funnels' figures must never be summed."
+                    },
                     "step": {
                       "type": "string",
                       "description": "The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."
@@ -1997,6 +2001,7 @@
                     }
                   },
                   "required": [
+                    "arrowKey",
                     "step",
                     "leadField",
                     "recipientsReached",
@@ -2613,6 +2618,134 @@
               "whatsappConversation"
             ],
             "description": "Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup. websitePurchase = renamed former purchase goal; sales = combined-sales goal."
+          },
+          "arrow": {
+            "type": "object",
+            "properties": {
+              "arrowKey": {
+                "type": "string",
+                "description": "The arrow that was asked for, echoed."
+              },
+              "fromStep": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description"
+                ],
+                "description": "The step a lead is taken out of; null on an entry arrow. Read these rather than splitting `arrowKey`."
+              },
+              "toStep": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description"
+                ],
+                "description": "The step a lead is moved to."
+              },
+              "candidateFunnelKeys": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "sales_meetings_from_conversation",
+                    "sales_meetings_from_website",
+                    "website_purchases",
+                    "form_magnet"
+                  ]
+                },
+                "description": "Every DECLARED funnel of this brand containing the arrow — what the pick chose between. Their figures overlap on the shared arrow and must never be summed."
+              },
+              "basisFunnelKey": {
+                "type": "string",
+                "enum": [
+                  "sales_meetings_from_conversation",
+                  "sales_meetings_from_website",
+                  "website_purchases",
+                  "form_magnet"
+                ],
+                "description": "The funnel the numbers on this body were priced through. Equals `funnelKey`, so an arrow-keyed answer and the same brand's `?funnel=` answer for that funnel are the same body."
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "sole_declared_funnel",
+                  "best_returning_declared_funnel",
+                  "no_return_evidence"
+                ],
+                "description": "WHY that funnel: it was the only declared one containing the arrow; it returned best per dollar; or nothing containing the arrow has a measurable return yet and the catalogue's canonical order broke the tie deterministically. Stated so a caller never assumes the answer rests on measured returns when it does not."
+              },
+              "returnPerDollar": {
+                "type": "number",
+                "nullable": true,
+                "description": "The basis funnel's return per dollar — the figure the pick was made on, the IDENTICAL definition /funnel-ranking ranks on. Null under basis='no_return_evidence': nothing was measurable, and 0 would say the funnel returns nothing."
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "grain": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "audience",
+                      "brand",
+                      "crossOrg"
+                    ],
+                    "description": "Whose results the recommendation's numbers are — crossOrg is the FLEET BENCHMARK, not this brand's own. Null when nothing measured it."
+                  },
+                  "measured": {
+                    "type": "boolean",
+                    "description": "Whether the recommended row rests on real evidence at all."
+                  },
+                  "resolvedOutcomeCount": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "How many of the basis funnel's outcomes were actually observed behind the recommended workflow — HOW MUCH the recommendation rests on. A handful is noise, and the caller is owed the number rather than a verdict. Null is 'we could not count this', never 0."
+                  }
+                },
+                "required": [
+                  "grain",
+                  "measured",
+                  "resolvedOutcomeCount"
+                ],
+                "description": "What the recommendation rests on, in the vocabulary the rows already use."
+              }
+            },
+            "required": [
+              "arrowKey",
+              "fromStep",
+              "toStep",
+              "candidateFunnelKeys",
+              "basisFunnelKey",
+              "basis",
+              "returnPerDollar",
+              "evidence"
+            ],
+            "description": "Present ⟺ the request named an ARROW (`?arrow=`), and it states which of the brand's declared funnels the arrow was priced through and what that answer rests on. Absent on every funnel- or goal-keyed request, so those bodies are byte-identical to what they have always been."
           },
           "economics": {
             "type": "object",
@@ -5735,6 +5868,10 @@
                 "items": {
                   "type": "object",
                   "properties": {
+                    "arrowKey": {
+                      "type": "string",
+                      "description": "The ARROW this rung IS — the single canonical identifier of the leg that moves a lead onto this step (the same value /public/channels publishes and /features/{featureSlug}/workflow-projection?arrow= is asked with). Performance is measured per arrow and a campaign is bought per arrow, so this is what joins a rung to the campaign that bought it and to the projection that priced it. The SAME arrow appears on every funnel containing it, which is why a funnel's figures are COMPOSED from its arrows and why two funnels' figures must never be summed."
+                    },
                     "step": {
                       "type": "string",
                       "description": "The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."
@@ -5818,6 +5955,7 @@
                     }
                   },
                   "required": [
+                    "arrowKey",
                     "step",
                     "leadField",
                     "recipientsReached",
@@ -8170,6 +8308,10 @@
                 "items": {
                   "type": "object",
                   "properties": {
+                    "arrowKey": {
+                      "type": "string",
+                      "description": "The ARROW this rung IS — the single canonical identifier of the leg that moves a lead onto this step (the same value /public/channels publishes and /features/{featureSlug}/workflow-projection?arrow= is asked with). Performance is measured per arrow and a campaign is bought per arrow, so this is what joins a rung to the campaign that bought it and to the projection that priced it. The SAME arrow appears on every funnel containing it, which is why a funnel's figures are COMPOSED from its arrows and why two funnels' figures must never be summed."
+                    },
                     "step": {
                       "type": "string",
                       "description": "The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."
@@ -8253,6 +8395,7 @@
                     }
                   },
                   "required": [
+                    "arrowKey",
                     "step",
                     "leadField",
                     "recipientsReached",
@@ -10416,6 +10559,10 @@
                 "items": {
                   "type": "object",
                   "properties": {
+                    "arrowKey": {
+                      "type": "string",
+                      "description": "The ARROW this rung IS — the single canonical identifier of the leg that moves a lead onto this step (the same value /public/channels publishes and /features/{featureSlug}/workflow-projection?arrow= is asked with). Performance is measured per arrow and a campaign is bought per arrow, so this is what joins a rung to the campaign that bought it and to the projection that priced it. The SAME arrow appears on every funnel containing it, which is why a funnel's figures are COMPOSED from its arrows and why two funnels' figures must never be summed."
+                    },
                     "step": {
                       "type": "string",
                       "description": "The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."
@@ -10499,6 +10646,7 @@
                     }
                   },
                   "required": [
+                    "arrowKey",
                     "step",
                     "leadField",
                     "recipientsReached",
@@ -13070,6 +13218,97 @@
           "asOf"
         ]
       },
+      "FunnelArrow": {
+        "type": "object",
+        "properties": {
+          "arrowKey": {
+            "type": "string",
+            "description": "The arrow's single canonical identifier — minted and owned here, and a PUBLISHED CONTRACT: the fleet keys campaigns and budgets on it. Join it against this catalogue; never parse it back into its parts."
+          },
+          "fromStep": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "key": {
+                "type": "string",
+                "enum": [
+                  "conversation",
+                  "website_visit",
+                  "meeting_booked",
+                  "meeting_attended",
+                  "signup",
+                  "form_filled",
+                  "paid_client",
+                  "in_ad_form_submission",
+                  "in_ad_booked_meeting"
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "label",
+              "description"
+            ],
+            "description": "The step a lead is taken OUT of. NULL is 'from nothing' — this arrow STARTS a funnel. That is the special case in the DATA only: the identifier is as ordinary as any other, so a caller never spells an entry arrow differently."
+          },
+          "toStep": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "enum": [
+                  "conversation",
+                  "website_visit",
+                  "meeting_booked",
+                  "meeting_attended",
+                  "signup",
+                  "form_filled",
+                  "paid_client",
+                  "in_ad_form_submission",
+                  "in_ad_booked_meeting"
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "label",
+              "description"
+            ],
+            "description": "The step a lead is moved TO."
+          },
+          "funnelKeys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sales_meetings_from_conversation",
+                "sales_meetings_from_website",
+                "website_purchases",
+                "form_magnet"
+              ]
+            },
+            "description": "EVERY declared sales funnel this arrow is a leg of, in catalogue order. Usually several — an ENTRY arrow feeds every funnel that contains it AT ONCE, since nobody can buy traffic that travels down only one of them. Their figures therefore overlap and must never be summed."
+          }
+        },
+        "required": [
+          "arrowKey",
+          "fromStep",
+          "toStep",
+          "funnelKeys"
+        ]
+      },
       "PublicAcquisitionChannel": {
         "type": "object",
         "properties": {
@@ -13133,6 +13372,10 @@
             "items": {
               "type": "object",
               "properties": {
+                "arrowKey": {
+                  "type": "string",
+                  "description": "The ONE canonical identifier of the ARROW this leg is (e.g. `start_to_conversation`, `meeting_booked_to_meeting_attended`) — minted and owned by features-service, and the value the fleet keys a campaign and a budget on. Performance is measured per ARROW; a sales funnel is a way of READING arrows, because one arrow belongs to several funnels at once. Name a leg with this alone: the two steps ride BESIDE it as `from`/`to`, so a consumer READS them and NEVER splits the string. An arrow that STARTS a funnel carries an ordinary identifier like every other — `from: null` is the special case in the data, never in the vocabulary."
+                },
                 "from": {
                   "type": "object",
                   "nullable": true,
@@ -13198,6 +13441,7 @@
                 }
               },
               "required": [
+                "arrowKey",
                 "from",
                 "to"
               ]
@@ -13288,6 +13532,13 @@
               "$ref": "#/components/schemas/PublicAcquisitionChannel"
             }
           },
+          "arrows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FunnelArrow"
+            },
+            "description": "The ARROW vocabulary — every arrow of every declared sales funnel, each with its single canonical identifier, the two steps it connects, and the funnels it is a leg of. Published so a consumer never derives an arrow from a pair of steps and never hardcodes the list. An arrow usually belongs to SEVERAL funnels (a booked meeting becomes an attended meeting in both meeting funnels), which is exactly why a campaign is bought per ARROW rather than per funnel — and why two funnels' figures OVERLAP on their shared arrows and must never be summed."
+          },
           "steps": {
             "type": "array",
             "items": {
@@ -13325,6 +13576,7 @@
         },
         "required": [
           "channels",
+          "arrows",
           "steps"
         ]
       },
@@ -15021,6 +15273,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "ONE ARROW of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_filled`, `form_filled_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one arrow belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the arrow, on the IDENTICAL returnPerDollar basis /funnel-ranking ranks funnels on, so an arrow yields ONE answer whichever funnel the caller had in mind and the two surfaces can never name different funnels. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `arrow`. Sending BOTH `arrow` and `funnel` is a 400 (reason='arrow_and_funnel'); an unrecognised arrow is a 400 (reason='arrow_unrecognised'); an arrow no declared funnel of this brand contains is a 404 (reason='arrow_not_declared')."
+            },
+            "required": false,
+            "description": "ONE ARROW of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_filled`, `form_filled_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one arrow belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the arrow, on the IDENTICAL returnPerDollar basis /funnel-ranking ranks funnels on, so an arrow yields ONE answer whichever funnel the caller had in mind and the two surfaces can never name different funnels. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `arrow`. Sending BOTH `arrow` and `funnel` is a 400 (reason='arrow_and_funnel'); an unrecognised arrow is a 400 (reason='arrow_unrecognised'); an arrow no declared funnel of this brand contains is a 404 (reason='arrow_not_declared').",
+            "name": "arrow",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface)."
             },
             "required": false,
@@ -15135,6 +15397,134 @@
                         "whatsappConversation"
                       ],
                       "description": "Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup. websitePurchase = renamed former purchase goal; sales = combined-sales goal."
+                    },
+                    "arrow": {
+                      "type": "object",
+                      "properties": {
+                        "arrowKey": {
+                          "type": "string",
+                          "description": "The arrow that was asked for, echoed."
+                        },
+                        "fromStep": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "description": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "label",
+                            "description"
+                          ],
+                          "description": "The step a lead is taken out of; null on an entry arrow. Read these rather than splitting `arrowKey`."
+                        },
+                        "toStep": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "description": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "label",
+                            "description"
+                          ],
+                          "description": "The step a lead is moved to."
+                        },
+                        "candidateFunnelKeys": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "sales_meetings_from_conversation",
+                              "sales_meetings_from_website",
+                              "website_purchases",
+                              "form_magnet"
+                            ]
+                          },
+                          "description": "Every DECLARED funnel of this brand containing the arrow — what the pick chose between. Their figures overlap on the shared arrow and must never be summed."
+                        },
+                        "basisFunnelKey": {
+                          "type": "string",
+                          "enum": [
+                            "sales_meetings_from_conversation",
+                            "sales_meetings_from_website",
+                            "website_purchases",
+                            "form_magnet"
+                          ],
+                          "description": "The funnel the numbers on this body were priced through. Equals `funnelKey`, so an arrow-keyed answer and the same brand's `?funnel=` answer for that funnel are the same body."
+                        },
+                        "basis": {
+                          "type": "string",
+                          "enum": [
+                            "sole_declared_funnel",
+                            "best_returning_declared_funnel",
+                            "no_return_evidence"
+                          ],
+                          "description": "WHY that funnel: it was the only declared one containing the arrow; it returned best per dollar; or nothing containing the arrow has a measurable return yet and the catalogue's canonical order broke the tie deterministically. Stated so a caller never assumes the answer rests on measured returns when it does not."
+                        },
+                        "returnPerDollar": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The basis funnel's return per dollar — the figure the pick was made on, the IDENTICAL definition /funnel-ranking ranks on. Null under basis='no_return_evidence': nothing was measurable, and 0 would say the funnel returns nothing."
+                        },
+                        "evidence": {
+                          "type": "object",
+                          "properties": {
+                            "grain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "audience",
+                                "brand",
+                                "crossOrg"
+                              ],
+                              "description": "Whose results the recommendation's numbers are — crossOrg is the FLEET BENCHMARK, not this brand's own. Null when nothing measured it."
+                            },
+                            "measured": {
+                              "type": "boolean",
+                              "description": "Whether the recommended row rests on real evidence at all."
+                            },
+                            "resolvedOutcomeCount": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "How many of the basis funnel's outcomes were actually observed behind the recommended workflow — HOW MUCH the recommendation rests on. A handful is noise, and the caller is owed the number rather than a verdict. Null is 'we could not count this', never 0."
+                            }
+                          },
+                          "required": [
+                            "grain",
+                            "measured",
+                            "resolvedOutcomeCount"
+                          ],
+                          "description": "What the recommendation rests on, in the vocabulary the rows already use."
+                        }
+                      },
+                      "required": [
+                        "arrowKey",
+                        "fromStep",
+                        "toStep",
+                        "candidateFunnelKeys",
+                        "basisFunnelKey",
+                        "basis",
+                        "returnPerDollar",
+                        "evidence"
+                      ],
+                      "description": "Present ⟺ the request named an ARROW (`?arrow=`), and it states which of the brand's declared funnels the arrow was priced through and what that answer rests on. Absent on every funnel- or goal-keyed request, so those bodies are byte-identical to what they have always been."
                     },
                     "economics": {
                       "type": "object",
@@ -15651,7 +16041,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId, or an unrecognised goal / funnel / pricing value",
+            "description": "Missing brandId, an unrecognised goal / funnel / pricing value, an unrecognised arrow (reason='arrow_unrecognised'), or an arrow sent beside a funnel (reason='arrow_and_funnel')",
             "content": {
               "application/json": {
                 "schema": {
@@ -15669,7 +16059,7 @@
             }
           },
           "404": {
-            "description": "Feature not found, or (reason='funnel_not_declared') the requested `?funnel=` is not one this brand declared — the body carries `declaredFunnelKeys`",
+            "description": "Feature not found; (reason='funnel_not_declared') the requested `?funnel=` is not one this brand declared; or (reason='arrow_not_declared') no funnel this brand declared contains the requested `?arrow=` — both bodies carry `declaredFunnelKeys`",
             "content": {
               "application/json": {
                 "schema": {
