@@ -64,7 +64,7 @@ import { servedCached, PLATFORM_SCOPE_ORG_ID } from "../lib/view-cache.js";
 import {
   buildChannelCatalogue,
   channelStepCatalogue,
-  funnelArrowCatalogue,
+  funnelLegCatalogue,
   type PublicChannel,
 } from "../lib/channel-catalogue.js";
 import { pricePair, type PairResult } from "../lib/channel-funnel-economics.js";
@@ -2225,11 +2225,11 @@ async function loadPublishedChannels(): Promise<PublicChannel[]> {
 
 interface ChannelCataloguePayload {
   channels: PublicChannel[];
-  /** The ARROW vocabulary — every arrow of every declared funnel, each with its ONE canonical
+  /** The LEG vocabulary — every leg of every declared funnel, each with its ONE canonical
    *  identifier, the two steps it connects, and the funnels it is a leg of. Performance is measured
-   *  per arrow and a campaign is bought per arrow, so this is the list a consumer keys on; the funnels
-   *  an arrow lists OVERLAP (a shared arrow is on several) and their figures must never be summed. */
-  arrows: ReturnType<typeof funnelArrowCatalogue>;
+   *  per leg and a campaign is bought per leg, so this is the list a consumer keys on; the funnels
+   *  a leg lists OVERLAP (a shared leg is on several) and their figures must never be summed. */
+  legs: ReturnType<typeof funnelLegCatalogue>;
   /** The step vocabulary itself, so a consumer never hardcodes it to join a channel's legs against a
    *  funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel
    *  that performs an internal leg names the step it moves a lead OUT of, and that step is never one. */
@@ -2244,7 +2244,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
     label: "acquisition-channel catalogue",
     compute: async () => ({
       channels: await loadPublishedChannels(),
-      arrows: funnelArrowCatalogue(),
+      legs: funnelLegCatalogue(),
       steps: channelStepCatalogue(),
     }),
   });
