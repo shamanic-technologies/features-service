@@ -91,6 +91,7 @@ import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-
 import { computeBrandPipelineActivity } from "./pipeline-activity.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
 import { parsePricing } from "../lib/pricing.js";
 import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
@@ -187,6 +188,13 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
     if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
     const { brandId, pricing, headers, channels, featureSlugs } = resolved;
 
+    // HOW MUCH OF A PERSON this body carries — omitted → `outcomes`, the twelve fields a browser reads
+    // on the rows that reached something. `full` is the hydrated array. See lib/lead-detail.ts.
+    const leadDetail = parseLeadDetail(req.query.leads);
+    if (leadDetail === null) {
+      return res.status(400).json({ error: `leads must be one of: ${LEAD_DETAIL_VALUES.join(", ")}` });
+    }
+
     // `?funnel=` names the SALES FUNNEL the spend block's cost-per-outcome columns are priced on, with
     // the same meaning and the same fail-loud parse as the per-feature read.
     let requestedFunnel: SalesFunnelKey | undefined;
@@ -222,6 +230,9 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
         decl,
         pricing,
         econ,
+        // Two different answers ⇒ two cells, which also keeps the stored snapshot narrow for the
+        // read every browser makes.
+        leads: leadDetail,
       }),
       orgId: headers.orgId,
       compute: async () => {
@@ -273,7 +284,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
             costEconomics: channelBody.costEconomics,
           };
         });
-        return { brandId, costBasis: "charged" as const, channels: groups, ...body };
+        return { brandId, costBasis: "charged" as const, channels: groups, ...applyLeadDetail(body, leadDetail) };
       },
     });
 

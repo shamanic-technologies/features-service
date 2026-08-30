@@ -262,14 +262,14 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("404 when feature not found", async () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(undefined as any);
-    const res = await request(app).get("/features/unknown/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/unknown/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(404);
   });
 
   it("null pipeline when feature has no funnel wired (economicsSource null)", async () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue({ ...SALES_FEATURE, slug: "pr-cold-email-outreach" } as any);
     mockFetch();
-    const res = await request(app).get("/features/pr-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/pr-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeNull();
     expect(res.body.headline.economicsSource).toBeNull();
@@ -278,7 +278,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("null pipeline when brand has no saved economics AND no cross-brand average (cold start)", async () => {
     mockFetch({ economics: null }); // no saved + no average → effective { economics: null, source: null }
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeNull();
     expect(res.body.headline.economicsSource).toBeNull();
@@ -304,7 +304,7 @@ describe("GET /features/:featureSlug/revenue", () => {
         "reply@y.com": { firstRepliedAt: replyAt },
       },
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     // o1: visit EV 34.7, o2: reply EV 120 → total 154.7
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5);
@@ -331,7 +331,7 @@ describe("GET /features/:featureSlug/revenue", () => {
         "reply@y.com": { firstContactedAt: contactedAt, firstRepliedAt: daysAgo(1) },
       },
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     // Outreach stat card = count of contacted leads on THIS payload (no separate email-gateway aggregate).
     expect(res.body.leads.every((l: any) => l.contacted === true)).toBe(true);
@@ -351,7 +351,7 @@ describe("GET /features/:featureSlug/revenue", () => {
         "reply@y.com": { firstContactedAt: `${day}T23:30:00.000Z`, firstRepliedAt: `${day}T23:45:00.000Z` },
       },
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     const oc = res.body.recipientsContacted;
     // Stat card.
@@ -376,7 +376,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       leads: HAPPY_LEADS, // contacted total = 2, first-contacted months ago in these fixtures
       sequencesGroups: [{ key: day, contacted: 34 }],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.sequences).toEqual({ total: 34, daily: [{ date: day, count: 34 }], undatedCount: 0 });
     // Grain independence: activity (actions/day) legitimately exceeds recipientsContacted (distinct leads).
@@ -393,7 +393,7 @@ describe("GET /features/:featureSlug/revenue", () => {
         { key: "2026-06-29", contacted: 0 }, // dropped — no activity that day
       ],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.sequences.daily).toEqual([
       { date: "2026-06-30", count: 3 },
@@ -405,7 +405,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("sequences — email-gateway failure degrades to null (fail-soft), pipeline + leads stay intact (#415)", async () => {
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, sequencesFail: true });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.sequences).toBeNull();
     // Rest of the response is unaffected by the degraded outreach-activity read.
@@ -423,7 +423,7 @@ describe("GET /features/:featureSlug/revenue", () => {
         "reply@y.com": { firstContactedAt: `${day}T23:30:00.000Z`, firstOpenedAt: `${day}T23:40:00.000Z`, firstRepliedAt: `${day}T23:45:00.000Z` },
       },
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     const { recipientsContacted: oc, recipientsOpened: opened, recipientsClicked: clicked, recipientsRepliesPositive: repliedPositive, meetingsBooked, purchased, signups, formSubmissions } = res.body;
     // Each series carries the same shape as recipientsContacted.
@@ -461,7 +461,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       leads: HAPPY_LEADS, // click@x.com + reply@y.com
       conversionEmails: { signup: ["click@x.com"], form_submission: ["reply@y.com"] },
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     const leads = res.body.leads as Array<{ leadId: string; signup: boolean; signupAt: string | null; formSubmission: boolean; formSubmissionAt: string | null }>;
     const l1 = leads.find((l) => l.leadId === "l1")!; // click@x.com
@@ -486,7 +486,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("degrades (still 200, per-lead conversion flags false) when converted-lead-emails fails (#476)", async () => {
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, conversionEmailsFail: true });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.leads.every((l: any) => l.signup === false && l.formSubmission === false)).toBe(true);
     expect(res.body.signups).toEqual({ total: 0, daily: [], undatedCount: 0 });
@@ -502,7 +502,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       leads: HAPPY_LEADS,
       timestamps: { "click@x.com": { firstClickedAt: daysAgo(13) }, "reply@y.com": { firstRepliedAt: daysAgo(5) } },
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // visit 34.7 + reply 120, computed on the average
     expect(res.body.headline.economicsSource).toBe("cross-brand-average");
@@ -515,7 +515,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       leads: [leadRow({ leadId: "lboth", email: "both@x.com", clicked: true, replied: true, replyClassification: "positive", lead: { firstName: "Bo", lastName: "Th", photoUrl: null, organization: { id: "ob", name: "OrgB", logoUrl: null } } })],
       timestamps: { "both@x.com": { firstClickedAt: daysAgo(5), firstRepliedAt: daysAgo(5) } }, // reply within its 14d window → alive
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     // LTR=1000, visit EV 34.7 + reply EV 120 → combined 1000·(1−(1−0.0347)(1−0.12)) = 150.536 (> MAX 120, < sum 154.7)
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(150.536, 5);
@@ -532,7 +532,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       economics: ECONOMICS,
       leads: [leadRow({ leadId: "l3", email: "cold@z.com", lead: { firstName: "Cold", lastName: "Z", photoUrl: null, organization: { id: "o3", name: "Org3", logoUrl: null } } })],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(0);
     expect(res.body.organizations).toEqual([]);
@@ -555,7 +555,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       economics: ECONOMICS,
       leads: [leadRow({ leadId: "l4", email: "bounce@z.com", clicked: true, bounced: true })],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     // The EV math is untouched: a bounced lead's conversion legs never fire, so it is worth 0 even
     // though it clicked before bouncing.
@@ -586,7 +586,7 @@ describe("GET /features/:featureSlug/revenue", () => {
         leadRow({ leadId: "lok", email: "ok@z.com" }),
       ],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(0);
     expect(res.body.outcomes.recipientsContacted).toBe(2);
@@ -605,7 +605,7 @@ describe("GET /features/:featureSlug/revenue", () => {
         leadRow({ leadId: "lok", email: "ok@z.com" }),
       ],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     const o = res.body.outcomes;
     expect(o.recipientsContacted).toBe(2);
@@ -627,7 +627,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("lens=signups — only clicked leads; prob == v2s, revenue == (v2s/100)·LTR", async () => {
     mockFetch({ economics: ECONOMICS, leads: LENS_LEADS });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=signups").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=signups").set(AUTH);
     expect(res.status).toBe(200);
     // clicked leads = lc + lb (the both-signals lead clicked too); reply-only + cold excluded
     expect(res.body.leads.map((l: any) => l.leadId).sort()).toEqual(["lb", "lc"]);
@@ -646,7 +646,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("lens=booked-meetings — only positive-reply leads; prob == r2m, revenue == (r2m/100)·LTR", async () => {
     mockFetch({ economics: ECONOMICS, leads: LENS_LEADS });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=booked-meetings").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=booked-meetings").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.leads.map((l: any) => l.leadId).sort()).toEqual(["lb", "lr"]); // reply leads = lr + lb
     for (const lead of res.body.leads) {
@@ -658,7 +658,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("lens=website_purchase — RENAMED former sales lens; multi-step self-serve/meeting close funnel (unchanged math)", async () => {
     mockFetch({ economics: ECONOMICS, leads: LENS_LEADS });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=website_purchase").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=website_purchase").set(AUTH);
     expect(res.status).toBe(200);
     const byId = Object.fromEntries(res.body.leads.map((l: any) => [l.leadId, l]));
     expect(Object.keys(byId).sort()).toEqual(["lb", "lc", "lr"]); // cold excluded
@@ -679,7 +679,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("legacy `purchase` lens spelling still normalises to website_purchase (input tolerance)", async () => {
     mockFetch({ economics: ECONOMICS, leads: LENS_LEADS });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=purchase").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=purchase").set(AUTH);
     expect(res.status).toBe(200);
     const byId = Object.fromEntries(res.body.leads.map((l: any) => [l.leadId, l]));
     expect(byId.lc.conversionProbabilityPct).toBeCloseTo(3.47, 6); // same as website_purchase
@@ -692,7 +692,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     // v2pc=5%, r2pc=20%. Per-LEAD probability combines the two paths as an OR (a lead converts at most
     // once) — NOT the population additive SUM (that's the projection surface, funnel-registry test).
     mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=sales").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=sales").set(AUTH);
     expect(res.status).toBe(200);
     const byId = Object.fromEntries(res.body.leads.map((l: any) => [l.leadId, l]));
     expect(Object.keys(byId).sort()).toEqual(["lb", "lc", "lr"]); // cold (no engagement) excluded
@@ -717,7 +717,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("lens=website_visits — clicked leads; prob == visitToPaidClient; revenue == (rate/100)·LTR (single step)", async () => {
     mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=website_visits").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=website_visits").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.leads.map((l: any) => l.leadId).sort()).toEqual(["lb", "lc"]); // clicked leads
     for (const lead of res.body.leads) {
@@ -737,7 +737,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       leads: [negLead, ...LENS_LEADS],
       timestamps: { "neg@x.com": { firstContactedAt: "2026-06-20T09:00:00.000Z", firstClickedAt: "2026-06-20T10:00:00.000Z", firstRepliedAt: "2026-06-21T09:00:00.000Z" } },
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=website_visits").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=website_visits").set(AUTH);
     expect(res.status).toBe(200);
     const neg = res.body.leads.find((l: any) => l.leadId === "lneg");
     expect(neg).toBeDefined();
@@ -747,7 +747,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("lens=positive_replies — reply leads; prob == replyToPaidClient; revenue == (rate/100)·LTR (single step)", async () => {
     mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=positive_replies").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=positive_replies").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.leads.map((l: any) => l.leadId).sort()).toEqual(["lb", "lr"]); // reply leads
     for (const lead of res.body.leads) {
@@ -759,20 +759,20 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("camelCase lens spelling (positiveReply) is accepted", async () => {
     mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=positiveReply").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=positiveReply").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.leads.every((l: any) => l.conversionProbabilityPct === 20)).toBe(true);
   });
 
   it("single-step lens with the rate field ABSENT → fail loud (502), not NaN / zero", async () => {
     mockFetch({ economics: ECONOMICS, leads: LENS_LEADS }); // no visitToPaidClientPct on the wire
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=website_visits").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=website_visits").set(AUTH);
     expect(res.status).toBe(502);
   });
 
   it("lens with no matching leads → empty leads + 0 pipeline; expectedConversions 0, costPerConversionUsd null", async () => {
     mockFetch({ economics: ECONOMICS, leads: [LENS_LEADS[3]], costCents: 5000 }); // only the cold lead, $50 cost
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=signups").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=signups").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.leads).toEqual([]);
     expect(res.body.headline.totalPipelineUsd).toBe(0);
@@ -782,7 +782,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("lens costEconomics — expectedConversions == sum(p); costPerConversionUsd == actualCostUsd / sum(p)", async () => {
     mockFetch({ economics: ECONOMICS, leads: LENS_LEADS, costCents: 8000 }); // $80 cost
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=website_purchase").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=website_purchase").set(AUTH);
     expect(res.status).toBe(200);
     // website_purchase lens: lc=0.0347 + lr=0.12 + lb=0.150536 = 0.305236 (cold excluded)
     const sumP = 0.0347 + 0.12 + 0.150536;
@@ -794,13 +794,13 @@ describe("GET /features/:featureSlug/revenue", () => {
   });
 
   it("invalid lens value → 400", async () => {
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=bogus").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=bogus").set(AUTH);
     expect(res.status).toBe(400);
   });
 
   it("no lens → leads carry NO conversionProbabilityPct (back-compat)", async () => {
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.leads.length).toBeGreaterThan(0);
     for (const lead of res.body.leads) expect(lead).not.toHaveProperty("conversionProbabilityPct");
@@ -816,7 +816,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       economics: ECONOMICS,
       leads: [leadRow({ leadId: "l1", email: "click@cascobay.com", clicked: true, lead: { firstName: "Click", lastName: "X", photoUrl: null, organization: { id: "o1", name: "Casco Bay", logoUrl: null, primaryDomain: "cascobay.com" } } })],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.organizations[0].orgDomain).toBe("cascobay.com");
     expect(res.body.leads[0].orgDomain).toBe("cascobay.com");
@@ -827,7 +827,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       economics: ECONOMICS,
       leads: [leadRow({ leadId: "l1", email: "click@cascobay.com", clicked: true, lead: { firstName: "Click", lastName: "X", photoUrl: null, organization: { id: "o1", name: "Casco Bay", logoUrl: null, primaryDomain: null, websiteUrl: "https://www.cascobay.com/about" } } })],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.organizations[0].orgDomain).toBe("cascobay.com"); // protocol + www + path stripped
     expect(res.body.leads[0].orgDomain).toBe("cascobay.com");
@@ -838,7 +838,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       economics: ECONOMICS,
       leads: [leadRow({ leadId: "l1", email: "click@x.com", clicked: true, lead: { firstName: "Click", lastName: "X", photoUrl: null, organization: { id: "o1", name: "Org1", logoUrl: null } } })],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.organizations[0].orgDomain).toBeNull();
     expect(res.body.leads[0].orgDomain).toBeNull();
@@ -853,7 +853,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       if (url.includes("/orgs/status")) return new Response("boom", { status: 502 });
       return new Response("{}", { status: 200 });
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // pipeline still exact
     expect(res.body.timeSeries).toEqual([]); // enrichment absent
@@ -869,7 +869,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       if (url.includes("/orgs/leads")) return new Response("boom", { status: 500 });
       return new Response("{}", { status: 200 });
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(502);
   });
 
@@ -885,7 +885,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       }
       return new Response("{}", { status: 200 });
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(leadsUrl).toBeDefined();
     expect(new URL(leadsUrl!).searchParams.get("view")).toBe("basic");
@@ -895,7 +895,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("costEconomics — normal: finite cost-of-acquisition % and ROI multiple", async () => {
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000 }); // $70 cost, pipeline 154.7
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5);
     expect(res.body.costEconomics.actualCostUsd).toBe(70);
@@ -905,7 +905,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("costEconomics — null pipeline (no economics): both ratios null, actualCostUsd real", async () => {
     mockFetch({ economics: null, costCents: 5000 });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeNull();
     expect(res.body.costEconomics.actualCostUsd).toBe(50);
@@ -916,7 +916,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("costEconomics — null pipeline (no funnel): present with both ratios null", async () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue({ ...SALES_FEATURE, slug: "pr-cold-email-outreach" } as any);
     mockFetch({ costCents: 3000 });
-    const res = await request(app).get("/features/pr-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/pr-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeNull();
     expect(res.body.costEconomics.actualCostUsd).toBe(30);
@@ -926,7 +926,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("costEconomics — zero cost: roiMultiple null, costOfAcquisitionPct 0", async () => {
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 0 }); // pipeline 154.7, no cost
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5);
     expect(res.body.costEconomics.actualCostUsd).toBe(0);
@@ -942,7 +942,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
       return new Response("{}", { status: 200 });
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(502);
   });
 
@@ -954,7 +954,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       leads: [leadRow({ leadId: "lo", email: "open@x.com", lead: { firstName: "Op", lastName: "En", photoUrl: null, organization: { id: "o1", name: "Org1", logoUrl: null } } })],
       timestamps: { "open@x.com": { firstDeliveredAt: daysAgo(3), firstOpenedAt: daysAgo(2) } },
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(0); // an open buys no step of any funnel
     expect(res.body.leads[0].expectedRevenueUsd).toBe(0);
@@ -967,7 +967,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       leads: [leadRow({ leadId: "lr", email: "reply@x.com", replied: true, replyClassification: "positive", lead: { firstName: "Re", lastName: "Ply", photoUrl: null, organization: { id: "o9", name: "Org9", logoUrl: null } } })],
       timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(200) } }, // replied 200d ago — used to be zeroed
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(120); // the brand-wide 12%, undiminished by age
     expect(res.body.organizations).toHaveLength(1);
@@ -1008,7 +1008,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       // The declared funnel: 50% reply→meeting × 70% attended→paid = 35% reply→paid.
       salesFunnels: [declaredFunnel({ rates: { replyToMeetingPct: 50, meetingToClosePct: 70 } })],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(350); // 1000 × 0.35 — NOT the brand-wide $120
   });
@@ -1021,7 +1021,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       // Only the reply→meeting leg is declared; meeting→close falls through to the brand-wide 30%.
       salesFunnels: [declaredFunnel({ rates: { replyToMeetingPct: 50 } })],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(150); // 1000 × 0.50 × 0.30 — never 0, never half a funnel
   });
@@ -1034,7 +1034,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       // booked→paid = attended→paid 70% × show-up 50% = 35% ⇒ reply→paid = 50% × 35% = 17.5%.
       salesFunnels: [declaredFunnel({ rates: { replyToMeetingPct: 50, meetingToClosePct: 70, meetingBookedToAttendedPct: 50 } })],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(175);
   });
@@ -1046,7 +1046,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(30) } },
       salesFunnels: [declaredFunnel({ rates: { replyToMeetingPct: 50, meetingToClosePct: 70 }, lifetimeRevenueUsd: 2500 })],
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(875); // 2500 × 0.35 — the brief's per-reply figure
   });
@@ -1062,11 +1062,11 @@ describe("GET /features/:featureSlug/revenue", () => {
       ],
     });
     // Unqualified → the FIRST declared funnel in catalogue order (the conversation funnel).
-    const first = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const first = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(first.body.headline.totalPipelineUsd).toBe(350);
     // Named → that funnel alone, on its own terms AND its own legs. A positive reply is not a step of
     // the WEBSITE funnel (Website visit → Meeting booked → …), so this lead buys nothing under it.
-    const named = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&funnel=sales_meetings_from_website").set(AUTH);
+    const named = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&funnel=sales_meetings_from_website").set(AUTH);
     expect(named.body.headline.totalPipelineUsd).toBe(0);
   });
 
@@ -1077,7 +1077,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     ];
     // Declares ONLY the conversation funnel: the reply is a leg, the website visit is not.
     mockFetch({ economics: ECONOMICS, leads: CLICK_AND_REPLY, salesFunnels: [declaredFunnel({ rates: {} })] });
-    const conversation = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const conversation = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(conversation.status).toBe(200);
     expect(conversation.body.headline.totalPipelineUsd).toBe(120); // the reply alone, brand-wide 12%
     expect(conversation.body.organizations.map((o: any) => o.orgId)).toEqual(["or"]);
@@ -1088,7 +1088,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       leads: CLICK_AND_REPLY,
       salesFunnels: [declaredFunnel({ funnelKey: "website_purchases", name: "Website purchases", steps: ["Website visit", "Signup", "Paid client"], rates: {} })],
     });
-    const website = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const website = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(website.status).toBe(200);
     expect(website.body.headline.totalPipelineUsd).toBeCloseTo(34.7, 5); // the click alone
     expect(website.body.organizations.map((o: any) => o.orgId)).toEqual(["oc"]);
@@ -1102,7 +1102,7 @@ describe("GET /features/:featureSlug/revenue", () => {
         declaredFunnel({ funnelKey: "website_purchases", name: "Website purchases", steps: ["Website visit", "Signup", "Paid client"], rates: {} }),
       ],
     });
-    const both = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const both = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(both.status).toBe(200);
     expect(both.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // 120 + 34.7, two distinct orgs
   });
@@ -1114,7 +1114,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(30) } },
       // no salesFunnels → brand-service 404s, the shape a brand with no declaration produces
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(120); // the brand-wide 12%
   });
@@ -1131,7 +1131,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(20) } },
       quals: { "reply@x.com": { meetingBookedAt: daysAgo(5) } },
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(300); // meeting EV bump over reply's 120
     expect(res.body.leads[0].expectedRevenueUsd).toBe(300);
@@ -1145,7 +1145,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(420) } },
       quals: { "reply@x.com": { meetingBookedAt: daysAgo(410), closedAt: daysAgo(400) } },
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(1000); // full LTR realized
     expect(res.body.leads[0].expectedRevenueUsd).toBe(1000);
@@ -1161,7 +1161,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(200) } },
       quals: {},
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(120); // the reply-stage EV, undiminished by age
     expect(res.body.organizations).toHaveLength(1);
@@ -1181,7 +1181,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       email: `lead${i}@x.com`, status: "lead_meeting_booked", qualifiedBy: "u1", notes: null, qualifiedAt: daysAgo(1),
     }));
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, qualRowsRaw: capped });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(warnSpy.mock.calls.some(([msg]) => typeof msg === "string" && msg.includes("manual-qualifications hit 500-row cap"))).toBe(true);
   });
@@ -1197,7 +1197,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       if (url.includes("/orgs/status")) return new Response(JSON.stringify({ results: [] }), { status: 200 });
       return new Response("{}", { status: 200 });
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // click 34.7 + reply 120, unaffected by the missing statements
   });
@@ -1207,7 +1207,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("spend — reconciled by construction: committed/actual/provisioned + each CPC == its own spend / clicked.total", async () => {
     // HAPPY_LEADS = 1 click + 1 reply. mock total==actual==7000 → provisioned 0. CPC = 7000/1.
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000 });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     // total (committed) = actual + provisioned. With total==actual in this mock, provisioned is 0.
     expect(res.body.spend.totalSpentCents).toBe(7000);
@@ -1254,7 +1254,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       if (url.includes("/orgs/status")) return json({ results: [] });
       return json({});
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     // Real tracked counts, verbatim from lead-service.
     expect(res.body.spend.signupsCount).toBe(4);
@@ -1285,7 +1285,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("spend — REAL conversions null-denominator: 0 signups/meetings → cpsCents/cpsmCents null (never a false $0), count still 0", async () => {
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000, conversionCounts: { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 } });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.spend.signupsCount).toBe(0);
     expect(res.body.spend.salesMeetingsCount).toBe(0);
@@ -1305,7 +1305,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("spend — positive replies null-denominator: 0 positive replies → positiveRepliesCount 0 + cpprCents null (never a false $0) (features-service#482)", async () => {
     // No leads carry a positive reply → count 0, cost null even though there IS committed spend.
     mockFetch({ economics: ECONOMICS, leads: [], costCents: 8000 });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.spend.totalSpentCents).toBe(8000);
     expect(res.body.spend.positiveRepliesCount).toBe(0);
@@ -1317,7 +1317,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     // conversion tiles (signups/meetings) degrade to ABSENT, but the positive-reply outcome rides the
     // leads snapshot (a fail-loud core input), so it stays present.
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000, conversionCountsFail: true });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.spend).not.toHaveProperty("signupsCount");
     expect(res.body.spend.positiveRepliesCount).toBe(1);
@@ -1326,7 +1326,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("spend — lead-service unavailable (pre-rollout) → conversion tiles ABSENT, rest of spend block intact (fail-soft)", async () => {
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000, conversionCountsFail: true });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200); // the tiles degrade; the Overview never 502s on the counts read
     expect(res.body.spend.totalSpentCents).toBe(7000);
     expect(res.body.spend).not.toHaveProperty("signupsCount");
@@ -1351,7 +1351,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       if (url.includes("/orgs/status")) return json({ results: [] });
       return json({});
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.spend.totalSpentCents).toBe(10000); // committed
     expect(res.body.spend.actualSpentCents).toBe(6000); // billed
@@ -1373,7 +1373,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     // Reply-only lead → 0 clicks → every CPC null (no denominator).
     const replyOnly = [leadRow({ leadId: "lr", email: "reply@y.com", replied: true, replyClassification: "positive", lead: { firstName: "R", lastName: "Y", photoUrl: null, organization: { id: "o2", name: "O2", logoUrl: null } } })];
     mockFetch({ economics: ECONOMICS, leads: replyOnly, costCents: 5000 });
-    let res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    let res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.recipientsClicked.total).toBe(0);
     expect(res.body.spend.totalCpcCents).toBeNull();
@@ -1382,7 +1382,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
     // 0 spend → every CPC null even with clicks (no attributed spend, not $0.00).
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 0 });
-    res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.body.spend.totalSpentCents).toBe(0);
     expect(res.body.spend.actualSpentCents).toBe(0);
     expect(res.body.spend.provisionedSpentCents).toBe(0);
@@ -1414,7 +1414,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       if (url.includes("/orgs/status")) return json({ results: [] });
       return json({});
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.spend.totalSpentCents).toBe(8000); // 6000 + 2000 (zero-line filtered out)
     expect(res.body.spend.totalSpentTodayCents).toBe(1500);
@@ -1428,7 +1428,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   it("spend — null on the lensed response (brand-total concept; lens pages use costPerConversionUsd)", async () => {
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, costCents: 7000 });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=signups").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=signups").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.spend).toBeNull();
   });
@@ -1472,7 +1472,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       return json({});
     });
 
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(inFlight).toBe(EXPECTED_CONCURRENT); // all Wave-A calls were in flight simultaneously
   });
@@ -1561,7 +1561,7 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
         c2: { costCents: 1000, leads: [deliveredLead("o2")] }, // merely delivered → no pipeline, $10 cost
       },
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&groupBy=campaignId").set(AUTH);
     expect(res.status).toBe(200);
     expect(Object.keys(res.body).sort()).toEqual(["costBasis", "featureSlug", "groupBy", "groups"]);
     expect(res.body.featureSlug).toBe("sales-cold-email-outreach");
@@ -1594,12 +1594,12 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
       },
     };
     mockFetchGrouped(opts);
-    const single = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&campaignId=c1").set(AUTH);
+    const single = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&campaignId=c1").set(AUTH);
     expect(single.status).toBe(200);
     expect(single.body.headline.totalPipelineUsd).toBe(1000); // close-win books realized LTR
 
     mockFetchGrouped(opts);
-    const grouped = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId").set(AUTH);
+    const grouped = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&groupBy=campaignId").set(AUTH);
     expect(grouped.status).toBe(200);
     const g = grouped.body.groups.find((x: any) => x.campaignId === "c1");
     expect(g.headline).toEqual(single.body.headline);
@@ -1608,7 +1608,7 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
 
   it("empty groups[] when no campaign has runs for the brand+feature", async () => {
     mockFetchGrouped({ economics: ECONOMICS, campaigns: {} });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&groupBy=campaignId").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.groupBy).toBe("campaignId");
     expect(res.body.groups).toEqual([]);
@@ -1623,7 +1623,7 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
         c3: { costCents: 2000, leads: [replyLead("o3")] },
       },
     });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&groupBy=campaignId").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.groups).toHaveLength(3);
 
@@ -1638,7 +1638,7 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
 
   it("unknown groupBy value falls back to the ungrouped overview response (no groupBy/groups keys)", async () => {
     mockFetch({ economics: null });
-    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=foo").set(AUTH);
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&groupBy=foo").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("headline");
     expect(res.body).toHaveProperty("costEconomics");
@@ -1670,7 +1670,7 @@ describe("GET /features/:featureSlug/revenue — the brand Overview money row", 
 
     it("answers what it cost to win ONE customer, for the brand as a whole", async () => {
       mockFetch({ economics: ECONOMICS, leads: LEADS, costCents: 50000 });
-      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
       expect(res.status).toBe(200);
 
       const { actualCostUsd, costOfAcquisitionPct, roiMultiple, costPerAcquisitionUsd } = res.body.costEconomics;
@@ -1693,7 +1693,7 @@ describe("GET /features/:featureSlug/revenue — the brand Overview money row", 
 
       mockFetch({ economics: ECONOMICS, leads: onlyClickers, costCents: 50000 });
       const lensed = await request(app)
-        .get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=signups")
+        .get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=signups")
         .set(AUTH);
       expect(lensed.status).toBe(200);
 
@@ -1708,14 +1708,14 @@ describe("GET /features/:featureSlug/revenue — the brand Overview money row", 
 
     it("is NULL — never 0 — when the brand states no lifetime revenue", async () => {
       mockFetch({ economics: { ...ECONOMICS, lifetimeRevenueUsd: 0 }, leads: LEADS, costCents: 50000 });
-      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
       expect(res.body.costEconomics.costPerAcquisitionUsd).toBeNull();
     });
 
     it("is NULL when no funnel is wired (no economics ⇒ no expected client count)", async () => {
       vi.mocked(db.query.features.findFirst).mockResolvedValue({ ...SALES_FEATURE, slug: "pr-cold-email-outreach" } as any);
       mockFetch();
-      const res = await request(app).get("/features/pr-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+      const res = await request(app).get("/features/pr-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
       expect(res.body.costEconomics.costPerAcquisitionUsd).toBeNull();
     });
 
@@ -1725,7 +1725,7 @@ describe("GET /features/:featureSlug/revenue — the brand Overview money row", 
         campaigns: { c1: { costCents: 7000, leads: [replyLead("o1")] } },
       });
       const res = await request(app)
-        .get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId")
+        .get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&groupBy=campaignId")
         .set(AUTH);
       expect(res.status).toBe(200);
       expect(res.body.groups).toHaveLength(1);
@@ -1757,7 +1757,7 @@ describe("GET /features/:featureSlug/revenue — the brand Overview money row", 
 
     it("charts BOTH legs cumulatively and terminates ON the headline ROI", async () => {
       mockFetch({ economics: ECONOMICS, leads: DATED_LEADS, timestamps: TIMESTAMPS, costCents: 50000, spendByDay: SPEND_BY_DAY });
-      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
       expect(res.status).toBe(200);
 
       const history = res.body.roiHistory;
@@ -1783,7 +1783,7 @@ describe("GET /features/:featureSlug/revenue — the brand Overview money row", 
         costCents: 50000,
         spendByDay: SPEND_BY_DAY,
       });
-      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
 
       const { datedPipelineUsd, undatedPipelineUsd } = res.body.roiHistory;
       expect(undatedPipelineUsd).toBeGreaterThan(0);
@@ -1792,7 +1792,7 @@ describe("GET /features/:featureSlug/revenue — the brand Overview money row", 
 
     it("degrades to NULL — not a fabricated flat curve — when the dated-spend read fails", async () => {
       mockFetch({ economics: ECONOMICS, leads: DATED_LEADS, timestamps: TIMESTAMPS, costCents: 50000, spendByDayFail: true });
-      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
 
       expect(res.status).toBe(200); // never 502s the Overview — display enrichment
       expect(res.body.roiHistory).toBeNull();
@@ -1803,7 +1803,7 @@ describe("GET /features/:featureSlug/revenue — the brand Overview money row", 
       mockFetch({ economics: ECONOMICS, leads: DATED_LEADS, timestamps: TIMESTAMPS, costCents: 50000, spendByDay: SPEND_BY_DAY });
 
       const lensed = await request(app)
-        .get("/features/sales-cold-email-outreach/revenue?brandId=b1&lens=signups")
+        .get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=signups")
         .set(AUTH);
       expect(lensed.body.roiHistory).toBeNull();
 
@@ -1814,7 +1814,7 @@ describe("GET /features/:featureSlug/revenue — the brand Overview money row", 
         campaigns: { c1: { costCents: 7000, leads: [replyLead("o1")] } },
       });
       const grouped = await request(app)
-        .get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId")
+        .get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&groupBy=campaignId")
         .set(AUTH);
       expect(grouped.body.groups).toHaveLength(1);
       for (const group of grouped.body.groups) {
