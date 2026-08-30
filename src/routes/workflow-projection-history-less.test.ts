@@ -157,6 +157,7 @@ describe("workflow-projection: a channel with no history still answers who it co
       expect(row.resolved).toEqual({
         grain: null,
         costBasis: null,
+        conversionRatePct: null,
         costPerClickUsd: null,
         costPerOutcomeUsd: null,
         costPerPaidClientUsd: null,

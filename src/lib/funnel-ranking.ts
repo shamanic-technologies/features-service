@@ -69,6 +69,7 @@ import {
   type WorkflowProjectionEvidence,
   type WorkflowProjectionResponse,
 } from "../routes/workflow-projection.js";
+import { DEFAULT_MAXIMIZE, type Maximize } from "./maximize.js";
 import type { RankableFunnel } from "./declared-funnels.js";
 import type { SalesEconomics } from "./funnel-registry.js";
 import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
@@ -82,7 +83,11 @@ export type UnrankableReason =
   /** The funnel has no defined path to a paying client (a leg of its own funnel sits at 0 / undeclared). */
   | "no_paid_client_path"
   /** A paid-client cost exists but the return is not a positive finite number (e.g. no lifetime revenue). */
-  | "no_return_defined";
+  | "no_return_defined"
+  /** `?maximize=conversionRate` only: the funnel's best workflow has reached people but converted none
+   *  of them, so there is no positive rate to rank on. A measured 0 is a real answer about the funnel
+   *  and it is stated here rather than ranked as if it were a rate. */
+  | "no_conversion_rate";
 
 export interface RankedWorkflow {
   workflowDynastySlug: string;
@@ -108,8 +113,13 @@ export interface RankedFunnel {
   /** True ⟺ this funnel has a defined, positive return per dollar and therefore carries a `rank`. */
   rankable: boolean;
   unrankableReason: UnrankableReason | null;
-  /** lifetimeRevenueUsd / costPerPaidClientUsd of the funnel's best workflow. Null ⟺ not rankable. */
+  /** lifetimeRevenueUsd / costPerPaidClientUsd of the funnel's best workflow. Null when the brand
+   *  states no return for it — under `?maximize=conversionRate` a funnel can rank WITHOUT one. */
   returnPerDollar: number | null;
+  /** The best workflow's measured outcomes per 100 people reached — what `?maximize=conversionRate`
+   *  ranks on. Stated under BOTH objectives so the two orderings are readable side by side. Null when
+   *  nothing measured it; a measured 0 is a real answer and is reported as 0. */
+  conversionRatePct: number | null;
   costPerOutcomeUsd: number | null;
   costPerPaidClientUsd: number | null;
   /** Provenance label of the best row's resolved pick (audience > brand > crossOrg benchmark). */
@@ -125,7 +135,10 @@ export interface FunnelRecommendation {
   name: string;
   goal: GoalEcho;
   objective: Objective;
-  returnPerDollar: number;
+  /** Null only under `?maximize=conversionRate`, where a funnel ranks on its rate and needs no return.
+   *  Always a number on the default `return` objective, exactly as before. */
+  returnPerDollar: number | null;
+  conversionRatePct: number | null;
   costPerOutcomeUsd: number | null;
   costPerPaidClientUsd: number | null;
   grain: GrainName | null;
@@ -137,6 +150,9 @@ export type ArbitrationReason = "no_declared_funnels" | "no_rankable_funnel";
 
 export interface GoalArbitrationResponse {
   featureSlug: string;
+  /** WHAT THIS RANKING WAS RANKED UNDER. Always stated, so a consumer can never present the order
+   *  without knowing what produced it. `return` is the default and what every existing caller reads. */
+  maximize: Maximize;
   /**
    * EVERY funnel the brand declared, funded or not, best return first and the unrankable ones after —
    * the answer this endpoint exists to give. A funnel's rank says how it has performed, never whether
@@ -159,6 +175,7 @@ export interface GoalArbitrationResponse {
     objective: Objective | null;
     reason: ArbitrationReason | null;
     returnPerDollar: number | null;
+    conversionRatePct: number | null;
     costPerOutcomeUsd: number | null;
     costPerPaidClientUsd: number | null;
     grain: GrainName | null;
@@ -208,8 +225,9 @@ function scoreFunnel(input: {
   funnel: RankableFunnel;
   evidence: WorkflowProjectionEvidence;
   economics: SalesEconomics | null;
+  maximize: Maximize;
 }): ScoredFunnel {
-  const { featureSlug, funnel, evidence } = input;
+  const { featureSlug, funnel, evidence, maximize } = input;
   // Priced on the FUNNEL, not on a goal. `meetingChannel` is what makes the two meeting funnels
   // different numbers against the identical evidence: the conversation funnel is priced on
   // replyUsd / replyToMeetingPct, the website one on clickUsd / visitToMeetingPct.
@@ -235,6 +253,7 @@ function scoreFunnel(input: {
     objective,
     rank: null,
     returnPerDollar: null,
+    conversionRatePct: null,
     costPerOutcomeUsd: null,
     costPerPaidClientUsd: null,
     grain: null,
@@ -249,46 +268,75 @@ function scoreFunnel(input: {
 
   if (!economics) return unrankable("no_economics");
 
-  // Best workflow = argmin cost-of-this-funnel's-outcome over the BRAND-LEVEL rows — the same ungated
-  // argmin the Strategy page and the audience-stats floor parent use, so all three agree.
+  // The funnel's best workflow, over the BRAND-LEVEL rows and picked on whatever the caller is
+  // maximising — the same ungated argmin `/workflow-projection` makes for the same objective, so the
+  // funnel a leg is priced through and the workflow recommended inside it can never disagree about
+  // which question was asked. On the default `return` objective this is byte-for-byte the argmin the
+  // Strategy page and the audience-stats floor parent use, so all three still agree.
+  //
+  // MEASURED rows only, under both objectives. An unproven workflow carries an EXPLORE ALLOWANCE so a
+  // serving consumer can reach it (see workflow-projection.ts) — it is not evidence, so it can never
+  // crown a funnel whose figures a customer reads.
   let best: ProjectionRow | null = null;
   for (const row of projection.rows) {
     if (row.audienceId !== null) continue;
-    // MEASURED rows only. An unproven workflow carries an EXPLORE ALLOWANCE so a serving consumer can
-    // reach it (see workflow-projection.ts) — it is not evidence, so it can never crown a funnel whose
-    // return a customer reads.
     if (!row.measured) continue;
+    if (maximize === "conversionRate") {
+      const rate = row.resolved.conversionRatePct;
+      if (!isPositiveFinite(rate)) continue;
+      const incumbent = best?.resolved.conversionRatePct ?? null;
+      if (incumbent == null || rate > incumbent) best = row;
+      continue;
+    }
     const cost = row.resolved.costPerOutcomeUsd;
     if (!isPositiveFinite(cost)) continue;
     const incumbent = best?.resolved.costPerOutcomeUsd ?? null;
     if (incumbent == null || cost < incumbent) best = row;
   }
-  if (!best) return unrankable("no_workflow_evidence");
+  if (!best) {
+    // Under `conversionRate` the funnel may have plenty of cost evidence and simply no conversions to
+    // rate — a different statement from "no workflow has run this funnel", so it gets its own reason.
+    return unrankable(
+      maximize === "conversionRate" && projection.rows.some((r) => r.audienceId === null && r.measured)
+        ? "no_conversion_rate"
+        : "no_workflow_evidence",
+    );
+  }
 
   const workflow: RankedWorkflow = {
     workflowDynastySlug: best.workflow.workflowDynastySlug,
     workflowDynastyName: best.workflow.workflowDynastyName,
   };
   const withRow: Partial<RankedFunnel> = {
+    conversionRatePct: best.resolved.conversionRatePct,
     costPerOutcomeUsd: best.resolved.costPerOutcomeUsd,
     costPerPaidClientUsd: best.resolved.costPerPaidClientUsd,
     grain: best.resolved.grain,
     workflow,
   };
 
-  // No path to a paying client → no return to compare. Any funnel with an undeclared or zero leg lands
-  // here — including a meeting funnel whose OWN channel has no rate, which is exactly the case a
-  // goal-keyed score used to hide behind the other channel's contribution.
-  if (!isPositiveFinite(best.resolved.costPerPaidClientUsd)) return unrankable("no_paid_client_path", withRow);
-  // roiMultiple = lifetimeRevenueUsd / costPerPaidClientUsd — non-positive/absent when the brand states
-  // no lifetime revenue, so there is a paid-client cost but no return to rank on.
-  if (!isPositiveFinite(best.resolved.roiMultiple)) return unrankable("no_return_defined", withRow);
+  // A funnel is rankable when the figure being maximised is a positive finite number, and the two
+  // objectives need DIFFERENT ingredients. Under `conversionRate` a paying client's price is not one of
+  // them: the rate is measured off the funnel's own outcomes, so a brand that has declared no lifetime
+  // revenue still gets a ranking — which is the point, since a rate question is not a money question.
+  const returnPerDollar = isPositiveFinite(best.resolved.costPerPaidClientUsd) && isPositiveFinite(best.resolved.roiMultiple)
+    ? best.resolved.roiMultiple
+    : null;
+  if (maximize !== "conversionRate") {
+    // No path to a paying client → no return to compare. Any funnel with an undeclared or zero leg
+    // lands here — including a meeting funnel whose OWN channel has no rate, which is exactly the case
+    // a goal-keyed score used to hide behind the other channel's contribution.
+    if (!isPositiveFinite(best.resolved.costPerPaidClientUsd)) return unrankable("no_paid_client_path", withRow);
+    // roiMultiple = lifetimeRevenueUsd / costPerPaidClientUsd — non-positive/absent when the brand
+    // states no lifetime revenue, so there is a paid-client cost but no return to rank on.
+    if (!isPositiveFinite(best.resolved.roiMultiple)) return unrankable("no_return_defined", withRow);
+  }
 
   return {
     candidate: {
       ...base,
       ...withRow,
-      returnPerDollar: best.resolved.roiMultiple,
+      returnPerDollar,
       rankable: true,
       unrankableReason: null,
     },
@@ -309,19 +357,24 @@ export function rankDeclaredFunnels(input: {
   funnels: RankableFunnel[];
   evidence: WorkflowProjectionEvidence;
   economics: SalesEconomics | null;
+  /** What the caller is maximising. Absent ⟺ `return` — the ordering this has always produced. */
+  maximize?: Maximize;
 }): GoalArbitrationResponse {
   const { featureSlug, funnels, evidence, economics } = input;
+  const maximize = input.maximize ?? DEFAULT_MAXIMIZE;
 
-  const scored = funnels.map((funnel) => scoreFunnel({ featureSlug, funnel, evidence, economics }));
+  const scored = funnels.map((funnel) => scoreFunnel({ featureSlug, funnel, evidence, economics, maximize }));
 
-  // Rankable funnels first, best return per dollar down. Ties break on the canonical goal order and
-  // then on funnelKey, so the same evidence always produces the same list. Unrankable funnels keep
-  // brand-service's own order behind them — they are listed, never dropped.
+  // Rankable funnels first, best-on-the-asked-for-figure down: return per dollar, or conversion rate.
+  // Ties break on the canonical goal order and then on funnelKey, so the same evidence and the same
+  // objective always produce the same list. Unrankable funnels keep brand-service's own order behind
+  // them — they are listed, never dropped, under either objective.
   const rankableScored = scored
     .filter((s) => s.candidate.rankable)
     .sort((a, b) => {
-      const byReturn = b.candidate.returnPerDollar! - a.candidate.returnPerDollar!;
-      if (byReturn !== 0) return byReturn;
+      const score = (c: RankedFunnel) => (maximize === "conversionRate" ? c.conversionRatePct : c.returnPerDollar) ?? 0;
+      const byScore = score(b.candidate) - score(a.candidate);
+      if (byScore !== 0) return byScore;
       return salesFunnelIndex(a.candidate.funnelKey) - salesFunnelIndex(b.candidate.funnelKey);
     });
   rankableScored.forEach((s, i) => {
@@ -334,6 +387,7 @@ export function rankDeclaredFunnels(input: {
   if (!top) {
     return {
       featureSlug,
+      maximize,
       ranking,
       recommendation: null,
       arbitration: {
@@ -343,6 +397,7 @@ export function rankDeclaredFunnels(input: {
         objective: null,
         reason: funnels.length === 0 ? "no_declared_funnels" : "no_rankable_funnel",
         returnPerDollar: null,
+        conversionRatePct: null,
         costPerOutcomeUsd: null,
         costPerPaidClientUsd: null,
         grain: null,
@@ -368,7 +423,8 @@ export function rankDeclaredFunnels(input: {
     name: candidate.name,
     goal: candidate.goal,
     objective: candidate.objective,
-    returnPerDollar: candidate.returnPerDollar!,
+    returnPerDollar: candidate.returnPerDollar,
+    conversionRatePct: candidate.conversionRatePct,
     costPerOutcomeUsd: candidate.costPerOutcomeUsd,
     costPerPaidClientUsd: candidate.costPerPaidClientUsd,
     grain: candidate.grain,
@@ -377,6 +433,7 @@ export function rankDeclaredFunnels(input: {
 
   return {
     featureSlug,
+    maximize,
     ranking,
     recommendation,
     arbitration: {
@@ -386,6 +443,7 @@ export function rankDeclaredFunnels(input: {
       objective: recommendation.objective,
       reason: null,
       returnPerDollar: recommendation.returnPerDollar,
+      conversionRatePct: recommendation.conversionRatePct,
       costPerOutcomeUsd: recommendation.costPerOutcomeUsd,
       costPerPaidClientUsd: recommendation.costPerPaidClientUsd,
       grain: recommendation.grain,

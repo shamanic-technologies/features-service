@@ -9,6 +9,7 @@ import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError, UnknownSalesFu
 import { rankDeclaredFunnels } from "../lib/funnel-ranking.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
+import { MAXIMIZE_ERROR, parseMaximize } from "../lib/maximize.js";
 import { fetchWorkflowProjectionEvidence } from "./workflow-projection.js";
 import type { Identity } from "../lib/workflow-projection-grains.js";
 
@@ -18,8 +19,10 @@ const router = Router();
 //
 // THE NAME SAYS WHAT IT DOES. This endpoint used to be `goal-arbitration`, and it used to BE the
 // decision: campaign-service asked which goal to work and ran the one that came back. It does not
-// arbitrate anything any more, and the objective is not a variable — it is always the same one, maximise
-// return per dollar. So it RANKS the sales funnels a brand declared it sells through, best return first.
+// arbitrate anything any more: it RANKS the sales funnels a brand declared it sells through, on what
+// the CALLER says it is maximising (`?maximize=return|conversionRate`, defaulting to return per dollar
+// and stated back on `maximize`) — see lib/maximize.ts for why a rate is a different question and why
+// the word is not `objective`.
 // `/features/:featureSlug/goal-arbitration` stays mounted as a DEPRECATED ALIAS serving a byte-identical
 // body, for exactly as long as it takes the fleet's callers to move to `/funnel-ranking`; its removal is
 // a separate change.
@@ -68,6 +71,15 @@ const handleFunnelRanking = async (req: Request, res: Response) => {
     return res.status(400).json({ error: "pricing must be one of: gross, net" });
   }
 
+  // WHAT THE CALLER IS MAXIMISING — a RETURN per dollar (the default, and the only ordering this
+  // endpoint produced before) or a CONVERSION RATE, for the brand whose binding constraint is a finite
+  // list rather than its budget. Absent → `return`, byte-identical; unrecognised → loud 400.
+  const maximizeParam = parseMaximize(req.query as Record<string, unknown>);
+  if (!maximizeParam.ok) {
+    return res.status(400).json({ error: MAXIMIZE_ERROR, reason: "maximize_unrecognised" });
+  }
+  const maximize = maximizeParam.maximize;
+
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) {
@@ -100,6 +112,7 @@ const handleFunnelRanking = async (req: Request, res: Response) => {
       funnels: declaredFunnelsToRank(funnels),
       evidence,
       economics: effective.economics,
+      maximize,
     });
     res.json(response);
   } catch (error) {
