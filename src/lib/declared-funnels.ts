@@ -39,6 +39,7 @@
  * Copying that one across by name overstates the meeting funnel's return by the show-up rate.
  */
 
+import { declaredFunnelLegs, statedLegRates } from "./funnel-leg-rates.js";
 import type { SalesEconomics } from "./funnel-registry.js";
 import type { DeclaredSalesFunnel, SalesFunnelKey } from "./sales-funnels-client.js";
 
@@ -131,7 +132,18 @@ export function meetingAttendedCloseRate(
   return finite(rates?.meetingToClosePct);
 }
 
-/** The declared numbers on one funnel, dropping every rate the brand never gave us. */
+/**
+ * The declared numbers on one funnel, dropping every rate the brand never gave us.
+ *
+ * WHERE A RATE COMES FROM, and the precedence is stated once here: **a rate the brand stated FOR THAT
+ * LEG wins; else the named rate that covers the leg; else we have no rate for it** and the field is
+ * dropped, so the brand's effective economics apply unchanged downstream. Nothing is defaulted,
+ * averaged or invented for an arrow nobody has priced.
+ *
+ * A brand that has stated only the named rates reads BYTE-IDENTICALLY to before: the leg overlay is
+ * empty unless some leg was stated for itself (`funnel-leg-rates.ts`), so the named block below is the
+ * whole answer for every brand in production today.
+ */
 function declaredEconomics(funnel: DeclaredSalesFunnel): Partial<SalesEconomics> | null {
   const out: Record<string, number> = {};
   const rates = funnel.rates;
@@ -145,6 +157,8 @@ function declaredEconomics(funnel: DeclaredSalesFunnel): Partial<SalesEconomics>
   if (bookedToPaid !== null) out.meetingToClosePct = bookedToPaid;
   const attendedToPaid = meetingAttendedCloseRate(rates);
   if (attendedToPaid !== null) out.meetingAttendedToPaidClientPct = attendedToPaid;
+  // The leg-level answer, LAST, so a rate stated for an arrow wins over the named rate that covered it.
+  Object.assign(out, statedLegRates(funnel.funnelKey, declaredFunnelLegs(funnel)));
   if (typeof funnel.lifetimeRevenueUsd === "number" && Number.isFinite(funnel.lifetimeRevenueUsd)) {
     out.lifetimeRevenueUsd = funnel.lifetimeRevenueUsd;
   }
