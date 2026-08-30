@@ -20,6 +20,7 @@ import {
   matchFunnelLegKey,
   type FunnelLegDef,
 } from "../lib/funnel-legs.js";
+import { DEFAULT_MAXIMIZE, MAXIMIZE_ERROR, parseMaximize, type Maximize } from "../lib/maximize.js";
 import { rankDeclaredFunnels } from "../lib/funnel-ranking.js";
 import {
   fetchPublicWorkflows,
@@ -143,6 +144,19 @@ interface ResolvedBlock {
   costPerMeetingBookedUsd: number | null;
   roiMultiple: number | null;
   cacPct: number | null;
+  /**
+   * HOW MUCH OF THE LIST THIS WORKFLOW BURNS PER OUTCOME, as a percentage of the people it reached —
+   * `100 × resolvedOutcomeCount / observedContacted`, read off the SAME grain the numbers above came
+   * from (`numberGrain`), so the three figures describe one body of evidence: that grain's spend over
+   * its outcomes is `costPerOutcomeUsd`, and its outcomes over its people are this.
+   *
+   * It is the figure a caller maximises when the binding constraint is the INVENTORY rather than the
+   * budget (`?maximize=conversionRate`). A measured 0 is a real answer — a workflow that reached people
+   * and converted nobody genuinely converts at 0% — while NULL is "we could not count this": the grain
+   * reached nobody, or there is no economics to resolve an outcome count through (cold start), or this
+   * is an UNMEASURED row whose figures are an explore allowance rather than a measurement.
+   */
+  conversionRatePct: number | null;
 }
 
 export interface ProjectionRow {
@@ -181,6 +195,7 @@ const UNMEASURED_RESOLVED: ResolvedBlock = {
   costPerMeetingBookedUsd: null,
   roiMultiple: null,
   cacPct: null,
+  conversionRatePct: null,
 };
 
 interface EconomicsEcho {
@@ -223,13 +238,24 @@ export interface ProjectionLeg {
   candidateFunnelKeys: SalesFunnelKey[];
   /** The funnel the numbers on this body were priced through. Equals `funnelKey`. */
   basisFunnelKey: SalesFunnelKey;
-  /** WHY that funnel: it was the only declared one containing the leg, it returned best, or nothing
-   *  containing the leg has a return yet and the catalogue's canonical order broke the tie. A caller
-   *  reads this rather than assuming the answer rests on measured returns. */
-  basis: "sole_declared_funnel" | "best_returning_declared_funnel" | "no_return_evidence";
-  /** The basis funnel's return per dollar — the figure the pick was made on. Null under
-   *  `no_return_evidence`: nothing was measurable, and 0 would say the funnel returns nothing. */
+  /** WHY that funnel: it was the only declared one containing the leg, it scored best on whatever the
+   *  caller is maximising, or nothing containing the leg has that figure yet and the catalogue's
+   *  canonical order broke the tie. A caller reads this rather than assuming the answer rests on
+   *  measured evidence — and it names WHICH figure won, so it can never say "returned best" about a
+   *  pick made on conversion rate. */
+  basis:
+    | "sole_declared_funnel"
+    | "best_returning_declared_funnel"
+    | "best_converting_declared_funnel"
+    | "no_return_evidence"
+    | "no_conversion_evidence";
+  /** The basis funnel's return per dollar. Null when nothing measurable stated one — 0 would say the
+   *  funnel returns nothing. Stated whether or not the pick was made on it, so the two objectives'
+   *  answers are readable side by side. */
   returnPerDollar: number | null;
+  /** The basis funnel's conversion rate, on the same terms — its best workflow's measured outcomes per
+   *  100 people reached. The figure `?maximize=conversionRate` picks on. Null when unmeasured. */
+  conversionRatePct: number | null;
   /**
    * HOW MUCH THE RECOMMENDATION RESTS ON. A recommendation standing on a handful of terminal outcomes
    * is noise, and this states it in the vocabulary the rows already use rather than hiding it:
@@ -248,6 +274,12 @@ export interface ProjectionLeg {
 export interface WorkflowProjectionResponse {
   featureSlug: string;
   objective: Objective;
+  /**
+   * WHAT THIS ANSWER WAS RANKED UNDER — always stated, so a consumer can never present a recommendation
+   * without knowing what it optimised for. `return` is the default and what every caller that names
+   * nothing gets. NOT the same question as `objective`/`goal`, which name the OUTCOME being bought.
+   */
+  maximize: Maximize;
   goal: GoalEcho;
   /**
    * The SALES FUNNEL this projection is priced on, when the caller named one (`?funnel=`). Absent on a
@@ -688,7 +720,25 @@ function resolvePick(
     costPerMeetingBookedUsd: block.projected.costPerMeetingBookedUsd,
     roiMultiple: block.projected.roiMultiple,
     cacPct: block.projected.cacPct,
+    // Same grain, same evidence as the costs above — never a blend of a measured rate with a floored
+    // cost. Null rather than 0 when the grain reached nobody or nothing resolved an outcome count.
+    conversionRatePct: conversionRatePctOf(block),
   };
+}
+
+/**
+ * The conversion rate of ONE grain: its resolved outcomes over the people it actually reached.
+ *
+ * `resolvedOutcomeCount` uses ONLY observed evidence (no cascade floor), so this is a measurement and
+ * never a projection dressed as one — which is exactly what makes it rankable against its siblings.
+ * There is deliberately no floor here: the cascade floors a COST so a barely-tried workflow cannot look
+ * free, and the mirror of that for a RATE is to report the honest measured rate. A workflow with no
+ * evidence at all is `measured: false` and is excluded from every recommendation on that flag already.
+ */
+function conversionRatePctOf(block: GrainBlock): number | null {
+  const contacted = block.evidence.observedContacted;
+  if (block.resolvedOutcomeCount == null || contacted <= 0) return null;
+  return (100 * block.resolvedOutcomeCount) / contacted;
 }
 
 /**
@@ -757,6 +807,10 @@ function exploreResolved(
     costPerMeetingBookedUsd: null,
     roiMultiple: null,
     cacPct: null,
+    // An allowance says what a first outreach costs; it says NOTHING about how many of the people it
+    // reaches convert, because it has reached none. A 0 there would rank an unproven workflow last on
+    // a claim nobody measured.
+    conversionRatePct: null,
   };
 }
 
@@ -851,6 +905,14 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     return res.status(400).json({ error: "pricing must be one of: gross, net" });
   }
 
+  // WHAT THE CALLER IS MAXIMISING. Absent → `return`, byte-identically to every answer given before
+  // this existed; a present-but-unrecognised word FAILS LOUD rather than quietly ranking on return.
+  const maximizeParam = parseMaximize(req.query as Record<string, unknown>);
+  if (!maximizeParam.ok) {
+    return res.status(400).json({ error: MAXIMIZE_ERROR, reason: "maximize_unrecognised" });
+  }
+  const maximize = maximizeParam.maximize;
+
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) {
@@ -941,26 +1003,36 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     let legBasisFunnelKey: SalesFunnelKey | null = null;
     let legBasis: ProjectionLeg["basis"] = "sole_declared_funnel";
     let legReturnPerDollar: number | null = null;
+    let legConversionRatePct: number | null = null;
     if (legKey && declaredFunnels) {
       const ranked = rankDeclaredFunnels({
         featureSlug,
         funnels: declaredFunnelsToRank(declaredFunnels).filter((f) => legCandidates.includes(f.funnelKey)),
         evidence,
         economics: effective.economics,
+        // The leg is priced through the funnel that is best AT WHAT THE CALLER ASKED FOR. Ranking the
+        // basis funnel on return while ranking the workflows on conversion rate would make one body
+        // answer two questions at once, which is the contradiction this parameter exists to remove.
+        maximize,
       });
       // Nothing containing the leg has a measurable return yet — the leg is still answerable, so the
       // catalogue's canonical order breaks the tie deterministically and `basis` says so out loud.
       legBasisFunnelKey =
         ranked.recommendation?.funnelKey ??
         [...legCandidates].sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b))[0];
-      legReturnPerDollar =
-        ranked.ranking.find((r) => r.funnelKey === legBasisFunnelKey)?.returnPerDollar ?? null;
+      const basisEntry = ranked.ranking.find((r) => r.funnelKey === legBasisFunnelKey) ?? null;
+      legReturnPerDollar = basisEntry?.returnPerDollar ?? null;
+      legConversionRatePct = basisEntry?.conversionRatePct ?? null;
       legBasis =
         legCandidates.length === 1
           ? "sole_declared_funnel"
           : ranked.recommendation
-            ? "best_returning_declared_funnel"
-            : "no_return_evidence";
+            ? maximize === "conversionRate"
+              ? "best_converting_declared_funnel"
+              : "best_returning_declared_funnel"
+            : maximize === "conversionRate"
+              ? "no_conversion_evidence"
+              : "no_return_evidence";
       funnelEconomics = declaredEconomicsForFunnel(declaredFunnels, legBasisFunnelKey);
       ({ objective, goal, singleStepGoal, formSubmissionGoal, meetingChannel } = inputsForFunnel(legBasisFunnelKey));
     }
@@ -976,6 +1048,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       ...(pricedFunnelKey ? { funnelKey: pricedFunnelKey } : {}),
       evidence,
       economics: mergeFunnelEconomics(effective.economics, funnelEconomics),
+      maximize,
     });
 
     if (legKey && legBasisFunnelKey) {
@@ -995,6 +1068,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         basisFunnelKey: legBasisFunnelKey,
         basis: legBasis,
         returnPerDollar: legReturnPerDollar,
+        conversionRatePct: legConversionRatePct,
         evidence: {
           grain: recommendedRow?.resolved.grain ?? null,
           measured: recommendedRow?.measured ?? false,
@@ -1126,8 +1200,15 @@ export function projectFromEvidence(input: {
   funnelKey?: SalesFunnelKey;
   evidence: WorkflowProjectionEvidence;
   economics: SalesEconomics | null;
+  /**
+   * WHAT THE RECOMMENDATION IS RANKED ON. Absent ⟺ `return` — the objective this has always had, so
+   * every existing caller reads a byte-identical body. It shapes ONLY the pick (and the echo): every
+   * row carries both figures either way, so the two answers are comparable side by side.
+   */
+  maximize?: Maximize;
 }): WorkflowProjectionResponse {
   const { featureSlug, objective, goal, singleStepGoal, formSubmissionGoal, evidence, economics } = input;
+  const maximize = input.maximize ?? DEFAULT_MAXIMIZE;
   const meetingChannel = input.meetingChannel ?? null;
   const workflows = evidence.workflows;
   const costGroups = evidence.crossOrgCostGroups;
@@ -1368,22 +1449,39 @@ export function projectFromEvidence(input: {
             ? "no_active_workflows"
             : "no_spend_recorded";
 
-    // Recommendation: the row with the LOWEST resolved cost-per-outcome for the requested goal.
+    // RECOMMENDATION — ranked on whatever the caller said it is maximising, and on nothing else.
+    //
+    //  • `return` (the default, and what this has always done): the row with the LOWEST resolved
+    //    cost-per-outcome. A dollar buys the most outcome here.
+    //  • `conversionRate`: the row with the HIGHEST measured conversion rate. A PERSON buys the most
+    //    outcome here — which is the question when the list, not the budget, is what runs out.
+    //
+    // Both skip UNMEASURED rows for the same reason: the explore allowance is what makes a workflow
+    // REACHABLE, not a recommendation to put a customer's budget behind it.
     let recommended: ProjectionRow | null = null;
     for (const row of rows) {
-      // An UNMEASURED row is never recommended: the explore allowance is what makes a workflow
-      // REACHABLE, not a recommendation to put a customer's budget behind it.
       if (!row.measured) continue;
+      if (maximize === "conversionRate") {
+        const rate = row.resolved.conversionRatePct;
+        if (rate == null || rate <= 0) continue;
+        const current = recommended?.resolved.conversionRatePct ?? null;
+        if (current == null || rate > current) recommended = row;
+        continue;
+      }
       const metric = row.resolved.costPerOutcomeUsd;
       if (metric == null || metric <= 0) continue;
       const current = recommended?.resolved.costPerOutcomeUsd ?? null;
       if (current == null || metric < current) recommended = row;
     }
+    // The budget still answers "what does a month of this cost", whichever way the pick was made — it is
+    // priced off the RECOMMENDED row's own cost per outcome, so it describes the workflow that was
+    // actually chosen rather than the one the other objective would have chosen.
     const recommendedCost = recommended?.resolved.costPerOutcomeUsd ?? null;
 
     return {
       featureSlug,
       objective,
+      maximize,
       goal,
       ...(input.funnelKey ? { funnelKey: input.funnelKey } : {}),
       economics: economicsEcho,

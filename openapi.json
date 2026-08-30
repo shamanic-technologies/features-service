@@ -2580,6 +2580,14 @@
           "featureSlug": {
             "type": "string"
           },
+          "maximize": {
+            "type": "string",
+            "enum": [
+              "return",
+              "conversionRate"
+            ],
+            "description": "WHAT THIS ANSWER WAS RANKED UNDER — always present, so a consumer can never present a recommendation without knowing what it optimised for. `return` is the default and what every caller that names nothing gets. Distinct from `objective`/`goal`, which name the OUTCOME being bought rather than the thing being maximised."
+          },
           "funnelKey": {
             "type": "string",
             "enum": [
@@ -2695,14 +2703,21 @@
                 "enum": [
                   "sole_declared_funnel",
                   "best_returning_declared_funnel",
-                  "no_return_evidence"
+                  "best_converting_declared_funnel",
+                  "no_return_evidence",
+                  "no_conversion_evidence"
                 ],
-                "description": "WHY that funnel: it was the only declared one containing the leg; it returned best per dollar; or nothing containing the leg has a measurable return yet and the catalogue's canonical order broke the tie deterministically. Stated so a caller never assumes the answer rests on measured returns when it does not."
+                "description": "WHY that funnel: it was the only declared one containing the leg; it scored best on WHAT THE CALLER ASKED TO MAXIMISE (best_returning_* under `return`, best_converting_* under `conversionRate`); or nothing containing the leg has that figure yet and the catalogue's canonical order broke the tie deterministically (no_return_evidence / no_conversion_evidence). It names WHICH figure won, so a body ranked on a rate can never claim it ranked on a return."
               },
               "returnPerDollar": {
                 "type": "number",
                 "nullable": true,
-                "description": "The basis funnel's return per dollar — the figure the pick was made on, the IDENTICAL definition /funnel-ranking ranks on. Null under basis='no_return_evidence': nothing was measurable, and 0 would say the funnel returns nothing."
+                "description": "The basis funnel's return per dollar — the IDENTICAL definition /funnel-ranking ranks on. Stated whether or not the pick was made on it, so the two objectives' answers are readable side by side. Null when nothing measurable stated one; 0 would say the funnel returns nothing."
+              },
+              "conversionRatePct": {
+                "type": "number",
+                "nullable": true,
+                "description": "The basis funnel's conversion rate on the same terms — its best workflow's measured outcomes per 100 people reached, the figure `?maximize=conversionRate` picks on. Stated under both objectives. Null when nothing measured it."
               },
               "evidence": {
                 "type": "object",
@@ -2743,6 +2758,7 @@
               "basisFunnelKey",
               "basis",
               "returnPerDollar",
+              "conversionRatePct",
               "evidence"
             ],
             "description": "Present ⟺ the request named a LEG (`?leg=`), and it states which of the brand's declared funnels the leg was priced through and what that answer rests on. Absent on every funnel- or goal-keyed request, so those bodies are byte-identical to what they have always been."
@@ -3196,6 +3212,11 @@
                     "cacPct": {
                       "type": "number",
                       "nullable": true
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "HOW MUCH OF THE LIST THIS WORKFLOW BURNS PER OUTCOME — 100 × resolvedOutcomeCount / observedContacted, read off the SAME grain the costs above came from, so the three figures describe one body of evidence (that grain's spend over its outcomes is costPerOutcomeUsd, and its outcomes over its people are this). It is what `?maximize=conversionRate` ranks on, and it is stated under BOTH objectives so the two answers are readable side by side. Measured only — no cascade floor, since the mirror of flooring a COST is reporting the honest measured RATE. A measured 0 is a real answer (this workflow reached people and converted nobody); NULL is 'we could not count this': the grain reached nobody, economics are absent (cold start), or this is an UNMEASURED row whose figures are an explore allowance rather than a measurement."
                     }
                   },
                   "required": [
@@ -3206,7 +3227,8 @@
                     "costPerPaidClientUsd",
                     "costPerMeetingBookedUsd",
                     "roiMultiple",
-                    "cacPct"
+                    "cacPct",
+                    "conversionRatePct"
                   ]
                 },
                 "measured": {
@@ -3226,7 +3248,7 @@
           "recommendedWorkflowDynastySlug": {
             "type": "string",
             "nullable": true,
-            "description": "Dynasty of the MEASURED row with the lowest resolved.costPerOutcomeUsd. An unmeasured row (explore allowance) is reachable but never recommended. Null when none has usable data."
+            "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. Null when none has usable data."
           },
           "recommendedBudgetUsd": {
             "type": "number",
@@ -3249,6 +3271,7 @@
         },
         "required": [
           "featureSlug",
+          "maximize",
           "objective",
           "goal",
           "economics",
@@ -3263,6 +3286,14 @@
         "properties": {
           "featureSlug": {
             "type": "string"
+          },
+          "maximize": {
+            "type": "string",
+            "enum": [
+              "return",
+              "conversionRate"
+            ],
+            "description": "WHAT THIS RANKING WAS RANKED UNDER — always present, so a consumer can never present the order without knowing what produced it. `return` is the default and what every existing caller reads."
           },
           "ranking": {
             "type": "array",
@@ -3328,14 +3359,20 @@
                     "no_economics",
                     "no_workflow_evidence",
                     "no_paid_client_path",
-                    "no_return_defined"
+                    "no_return_defined",
+                    "no_conversion_rate"
                   ],
-                  "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client — a leg of its OWN funnel is undeclared or sits at 0. Note a channel-scoped meeting funnel lands here whenever ITS channel has no rate, which a goal-keyed score used to hide behind the other channel's contribution. `no_workflow_evidence` = no history to compare it on yet. Null ⟺ rankable."
+                  "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client — a leg of its OWN funnel is undeclared or sits at 0. Note a channel-scoped meeting funnel lands here whenever ITS channel has no rate, which a goal-keyed score used to hide behind the other channel's contribution. `no_workflow_evidence` = no history to compare it on yet. `no_conversion_rate` fires under `?maximize=conversionRate` ONLY: the funnel's best workflow has reached people and converted none of them, so there is no positive rate to rank on — a different statement from having no history at all. Note `no_paid_client_path` / `no_return_defined` cannot fire under `conversionRate`, which needs no paid-client price. Null ⟺ rankable."
                 },
                 "returnPerDollar": {
                   "type": "number",
                   "nullable": true,
-                  "description": "lifetimeRevenueUsd / costPerPaidClientUsd of this funnel's best workflow (= the workflow-projection roiMultiple, = 100 / cacPct). THE ranking basis: the only cross-funnel-comparable number, since each funnel's own outcome is denominated differently. Null ⟺ not rankable."
+                  "description": "lifetimeRevenueUsd / costPerPaidClientUsd of this funnel's best workflow (= the workflow-projection roiMultiple, = 100 / cacPct). THE ranking basis under `maximize=return` (the default): the only cross-funnel-comparable MONEY number, since each funnel's own outcome is denominated differently. Stated under both objectives. Null when the brand states no return for the funnel — under `conversionRate` a funnel can be rankable WITHOUT one, since a rate question is not a money question."
+                },
+                "conversionRatePct": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "The funnel's best workflow's measured outcomes per 100 people reached — THE ranking basis under `maximize=conversionRate`, which is the question when the binding constraint is a finite list rather than a budget. Comparable across funnels for the same reason a return is: it is denominated in people, not in each funnel's own outcome. Stated under both objectives so the two orderings are readable side by side. Null when nothing measured it; a measured 0 is reported as 0."
                 },
                 "costPerOutcomeUsd": {
                   "type": "number",
@@ -3387,6 +3424,7 @@
                 "rankable",
                 "unrankableReason",
                 "returnPerDollar",
+                "conversionRatePct",
                 "costPerOutcomeUsd",
                 "costPerPaidClientUsd",
                 "grain",
@@ -3441,7 +3479,13 @@
               },
               "returnPerDollar": {
                 "type": "number",
-                "description": "Always a positive finite number."
+                "nullable": true,
+                "description": "Always a positive finite number under `maximize=return`. Null only under `maximize=conversionRate`, where a funnel ranks on its rate and needs no return."
+              },
+              "conversionRatePct": {
+                "type": "number",
+                "nullable": true,
+                "description": "The recommended funnel's conversion rate — the figure the pick was made on under `maximize=conversionRate`."
               },
               "costPerOutcomeUsd": {
                 "type": "number",
@@ -3483,12 +3527,13 @@
               "goal",
               "objective",
               "returnPerDollar",
+              "conversionRatePct",
               "costPerOutcomeUsd",
               "costPerPaidClientUsd",
               "grain",
               "workflow"
             ],
-            "description": "The best-returning funnel — the head of `ranking`, named as what it is: advice, not an instruction. Null when nothing in `ranking` could be ranked."
+            "description": "The best funnel on whatever was asked for — the head of `ranking`, named as what it is: advice, not an instruction. Null when nothing in `ranking` could be ranked."
           },
           "arbitration": {
             "type": "object",
@@ -3554,7 +3599,12 @@
               "returnPerDollar": {
                 "type": "number",
                 "nullable": true,
-                "description": "The recommended funnel's expected revenue per dollar of spend. Always a positive finite number when status = resolved."
+                "description": "The recommended funnel's expected revenue per dollar of spend. Always a positive finite number when status = resolved AND maximize = return."
+              },
+              "conversionRatePct": {
+                "type": "number",
+                "nullable": true,
+                "description": "The recommended funnel's measured outcomes per 100 people reached — the figure the pick was made on under maximize=conversionRate."
               },
               "costPerOutcomeUsd": {
                 "type": "number",
@@ -3581,6 +3631,7 @@
               "objective",
               "reason",
               "returnPerDollar",
+              "conversionRatePct",
               "costPerOutcomeUsd",
               "costPerPaidClientUsd",
               "grain"
@@ -3603,7 +3654,7 @@
               "workflowDynastySlug",
               "workflowDynastyName"
             ],
-            "description": "The best workflow FOR THE RECOMMENDED FUNNEL — argmin resolved.costPerOutcomeUsd over the brand-level rows, the same ungated argmin the Strategy page ranks on. Null ⟺ status = unrankable."
+            "description": "The best workflow FOR THE RECOMMENDED FUNNEL, picked on WHAT WAS ASKED FOR: argmin resolved.costPerOutcomeUsd under `maximize=return` (the same ungated argmin the Strategy page ranks on), argmax resolved.conversionRatePct under `maximize=conversionRate`. Null ⟺ status = unrankable."
           },
           "economics": {
             "type": "object",
@@ -4054,6 +4105,11 @@
                     "cacPct": {
                       "type": "number",
                       "nullable": true
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "HOW MUCH OF THE LIST THIS WORKFLOW BURNS PER OUTCOME — 100 × resolvedOutcomeCount / observedContacted, read off the SAME grain the costs above came from, so the three figures describe one body of evidence (that grain's spend over its outcomes is costPerOutcomeUsd, and its outcomes over its people are this). It is what `?maximize=conversionRate` ranks on, and it is stated under BOTH objectives so the two answers are readable side by side. Measured only — no cascade floor, since the mirror of flooring a COST is reporting the honest measured RATE. A measured 0 is a real answer (this workflow reached people and converted nobody); NULL is 'we could not count this': the grain reached nobody, economics are absent (cold start), or this is an UNMEASURED row whose figures are an explore allowance rather than a measurement."
                     }
                   },
                   "required": [
@@ -4064,7 +4120,8 @@
                     "costPerPaidClientUsd",
                     "costPerMeetingBookedUsd",
                     "roiMultiple",
-                    "cacPct"
+                    "cacPct",
+                    "conversionRatePct"
                   ]
                 },
                 "measured": {
@@ -4090,6 +4147,7 @@
         },
         "required": [
           "featureSlug",
+          "maximize",
           "ranking",
           "recommendation",
           "arbitration",
@@ -15283,6 +15341,26 @@
           {
             "schema": {
               "type": "string",
+              "description": "WHAT TO MAXIMISE. `return` (DEFAULT, and byte-identical to every answer given before this existed) ranks on the most outcome per DOLLAR — the right question while the pool of people to reach is effectively unbounded and the binding constraint is the customer's budget. `conversionRate` ranks on the most outcome per PERSON REACHED — the right question when the pool is small and finite, because the list is what runs out and burning fewer people per outcome matters more than what each outcome costs. Snake/kebab spellings accepted; the key may also be spelled `maximise`. A present-but-unrecognised word is a 400 (reason='maximize_unrecognised'), never a silent fall back to `return`. NOT the same question as `goal`/`objective`, which name the kind of OUTCOME being bought. On this endpoint it shapes the RECOMMENDATION (which workflow) and, on a `?leg=` request, which of the brand's declared funnels the leg is priced through — nothing else: every row carries both figures either way."
+            },
+            "required": false,
+            "description": "WHAT TO MAXIMISE. `return` (DEFAULT, and byte-identical to every answer given before this existed) ranks on the most outcome per DOLLAR — the right question while the pool of people to reach is effectively unbounded and the binding constraint is the customer's budget. `conversionRate` ranks on the most outcome per PERSON REACHED — the right question when the pool is small and finite, because the list is what runs out and burning fewer people per outcome matters more than what each outcome costs. Snake/kebab spellings accepted; the key may also be spelled `maximise`. A present-but-unrecognised word is a 400 (reason='maximize_unrecognised'), never a silent fall back to `return`. NOT the same question as `goal`/`objective`, which name the kind of OUTCOME being bought. On this endpoint it shapes the RECOMMENDATION (which workflow) and, on a `?leg=` request, which of the brand's declared funnels the leg is priced through — nothing else: every row carries both figures either way.",
+            "name": "maximize",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Alias of `maximize` (British spelling of the key). Either is accepted; the value vocabulary is identical."
+            },
+            "required": false,
+            "description": "Alias of `maximize` (British spelling of the key). Either is accepted; the value vocabulary is identical.",
+            "name": "maximise",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface)."
             },
             "required": false,
@@ -15358,6 +15436,14 @@
                   "properties": {
                     "featureSlug": {
                       "type": "string"
+                    },
+                    "maximize": {
+                      "type": "string",
+                      "enum": [
+                        "return",
+                        "conversionRate"
+                      ],
+                      "description": "WHAT THIS ANSWER WAS RANKED UNDER — always present, so a consumer can never present a recommendation without knowing what it optimised for. `return` is the default and what every caller that names nothing gets. Distinct from `objective`/`goal`, which name the OUTCOME being bought rather than the thing being maximised."
                     },
                     "funnelKey": {
                       "type": "string",
@@ -15474,14 +15560,21 @@
                           "enum": [
                             "sole_declared_funnel",
                             "best_returning_declared_funnel",
-                            "no_return_evidence"
+                            "best_converting_declared_funnel",
+                            "no_return_evidence",
+                            "no_conversion_evidence"
                           ],
-                          "description": "WHY that funnel: it was the only declared one containing the leg; it returned best per dollar; or nothing containing the leg has a measurable return yet and the catalogue's canonical order broke the tie deterministically. Stated so a caller never assumes the answer rests on measured returns when it does not."
+                          "description": "WHY that funnel: it was the only declared one containing the leg; it scored best on WHAT THE CALLER ASKED TO MAXIMISE (best_returning_* under `return`, best_converting_* under `conversionRate`); or nothing containing the leg has that figure yet and the catalogue's canonical order broke the tie deterministically (no_return_evidence / no_conversion_evidence). It names WHICH figure won, so a body ranked on a rate can never claim it ranked on a return."
                         },
                         "returnPerDollar": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The basis funnel's return per dollar — the figure the pick was made on, the IDENTICAL definition /funnel-ranking ranks on. Null under basis='no_return_evidence': nothing was measurable, and 0 would say the funnel returns nothing."
+                          "description": "The basis funnel's return per dollar — the IDENTICAL definition /funnel-ranking ranks on. Stated whether or not the pick was made on it, so the two objectives' answers are readable side by side. Null when nothing measurable stated one; 0 would say the funnel returns nothing."
+                        },
+                        "conversionRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The basis funnel's conversion rate on the same terms — its best workflow's measured outcomes per 100 people reached, the figure `?maximize=conversionRate` picks on. Stated under both objectives. Null when nothing measured it."
                         },
                         "evidence": {
                           "type": "object",
@@ -15522,6 +15615,7 @@
                         "basisFunnelKey",
                         "basis",
                         "returnPerDollar",
+                        "conversionRatePct",
                         "evidence"
                       ],
                       "description": "Present ⟺ the request named a LEG (`?leg=`), and it states which of the brand's declared funnels the leg was priced through and what that answer rests on. Absent on every funnel- or goal-keyed request, so those bodies are byte-identical to what they have always been."
@@ -15975,6 +16069,11 @@
                               "cacPct": {
                                 "type": "number",
                                 "nullable": true
+                              },
+                              "conversionRatePct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "HOW MUCH OF THE LIST THIS WORKFLOW BURNS PER OUTCOME — 100 × resolvedOutcomeCount / observedContacted, read off the SAME grain the costs above came from, so the three figures describe one body of evidence (that grain's spend over its outcomes is costPerOutcomeUsd, and its outcomes over its people are this). It is what `?maximize=conversionRate` ranks on, and it is stated under BOTH objectives so the two answers are readable side by side. Measured only — no cascade floor, since the mirror of flooring a COST is reporting the honest measured RATE. A measured 0 is a real answer (this workflow reached people and converted nobody); NULL is 'we could not count this': the grain reached nobody, economics are absent (cold start), or this is an UNMEASURED row whose figures are an explore allowance rather than a measurement."
                               }
                             },
                             "required": [
@@ -15985,7 +16084,8 @@
                               "costPerPaidClientUsd",
                               "costPerMeetingBookedUsd",
                               "roiMultiple",
-                              "cacPct"
+                              "cacPct",
+                              "conversionRatePct"
                             ]
                           },
                           "measured": {
@@ -16005,7 +16105,7 @@
                     "recommendedWorkflowDynastySlug": {
                       "type": "string",
                       "nullable": true,
-                      "description": "Dynasty of the MEASURED row with the lowest resolved.costPerOutcomeUsd. An unmeasured row (explore allowance) is reachable but never recommended. Null when none has usable data."
+                      "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. Null when none has usable data."
                     },
                     "recommendedBudgetUsd": {
                       "type": "number",
@@ -16028,6 +16128,7 @@
                   },
                   "required": [
                     "featureSlug",
+                    "maximize",
                     "objective",
                     "goal",
                     "economics",
@@ -16041,7 +16142,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId, an unrecognised goal / funnel / pricing value, an unrecognised leg (reason='leg_unrecognised'), or a leg sent beside a funnel (reason='leg_and_funnel')",
+            "description": "Missing brandId, an unrecognised goal / funnel / pricing value, an unrecognised leg (reason='leg_unrecognised'), a leg sent beside a funnel (reason='leg_and_funnel'), or an unrecognised maximize value (reason='maximize_unrecognised')",
             "content": {
               "application/json": {
                 "schema": {
@@ -16099,8 +16200,8 @@
     },
     "/features/{featureSlug}/funnel-ranking": {
       "get": {
-        "summary": "Rank the brand's DECLARED sales funnels by return per dollar (a recommendation, not a selection)",
-        "description": "NAMED FOR WHAT IT DOES. This endpoint was `/goal-arbitration`, back when it WAS the decision (campaign-service asked which goal to work and ran the answer). It arbitrates nothing now, and the objective is not a variable — it is always maximise return per dollar — so it ranks the funnels a brand declared it sells through. `/features/{featureSlug}/goal-arbitration` remains mounted as a DEPRECATED alias serving a byte-identical body while callers migrate; its removal is a separate change. ONE answer per brand: EVERY sales funnel the brand DECLARED, ranked by what it returns per dollar, plus the best workflow and the per-audience evidence for the best-returning one — so a consumer never issues one request per funnel and never ranks economics itself. IT IS ADVICE, NOT A GATE. Which funnel actually runs is decided by what the customer FUNDS: each funnel carries its own daily ceiling (billing-service) and campaign-service works every funded funnel, pacing each against its own ceiling. This endpoint answers the other question — which funnel has returned best, and how do the others compare — so a customer can decide where to move their money. The value is the COMPARISON in `ranking`; `recommendation` is simply its head. AN UNFUNDED FUNNEL IS STILL RANKED. Ranking is about history: what a funnel has returned is what makes it comparable, and being unfunded is a decision the customer just made, not a reason to hide how it performed. features-service never asks billing which funnels are funded. RANKING BASIS: returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-funnel-comparable number — a cost per outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting), so normalising through each funnel's own funnel to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. Rankable funnels sort on returnPerDollar descending, ties broken by the canonical funnel-catalogue order, so the same evidence + the same economics always produce the same list. Per funnel, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a funnel, since the outcome→paid rate is a constant for it), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. EACH FUNNEL IS PRICED ON ITS OWN FUNNEL, keyed on funnelKey and not on a goal. A funnel carries no goal since brand-service retired the vocabulary, and the goal could not have answered this: sales_meetings_from_conversation and sales_meetings_from_website both mapped onto `meetingBooked`, so the two were charged one blended both-channel price and a brand running the reply-driven funnel was benchmarked against clicks it never buys. The conversation funnel now prices replyUsd / replyToMeetingPct and the website one clickUsd / visitToMeetingPct, so a brand declaring both gets two different costs — and often two different best workflows. A funnel with NO defined return is ranked LAST, never dropped: a funnel whose own legs are undeclared or sit at 0 has no path to a paying client, and a funnel with no economics / no workflow evidence / a non-positive return is likewise listed with rank=null, rankable=false and its reason. When nothing can be ranked at all the response is arbitration.status='unrankable' with a reason — distinguishable from a recommendation, never an error that hides why. ONE ENTRY PER FUNNEL: the two meeting funnels (booked from a reply, booked from a website visit) are ranked SEPARATELY and each priced on its own channel and its own declared terms, because the customer funds them separately — a merged row could not answer 'where should I move my budget?' for either. A rate a funnel does not state falls back to the brand's effective economics, never to zero. The DECLARED SET is brand-service's to own, read from brand-service, never accepted from the caller and never inferred (a brand no longer has an optimizationGoal at all — that column was NOT NULL with a server default, so it said 'website purchases' for brands that had chosen nothing — and the brand-wide economics row cannot stand in either, every rate of which is server-defaulted and so signals nothing). When that declaration cannot be READ — transport, a non-OK response, or an empty list, i.e. this org has never STATED what it sells through — the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set. Cost: two small brand-service reads (the effective economics and the declared funnels) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — ranking N funnels adds zero IO over reading one. /workflow-projection itself is unchanged.",
+        "summary": "Rank the brand's DECLARED sales funnels on what the caller is maximising — return per dollar (default) or conversion rate (a recommendation, not a selection)",
+        "description": "NAMED FOR WHAT IT DOES. This endpoint was `/goal-arbitration`, back when it WAS the decision (campaign-service asked which goal to work and ran the answer). It arbitrates nothing now — it ranks the funnels a brand declared it sells through, on what the CALLER says it is maximising (`?maximize=`), which defaults to return per dollar and is stated back on `maximize`. `/features/{featureSlug}/goal-arbitration` remains mounted as a DEPRECATED alias serving a byte-identical body while callers migrate; its removal is a separate change. ONE answer per brand: EVERY sales funnel the brand DECLARED, ranked by what it returns per dollar, plus the best workflow and the per-audience evidence for the best-returning one — so a consumer never issues one request per funnel and never ranks economics itself. IT IS ADVICE, NOT A GATE. Which funnel actually runs is decided by what the customer FUNDS: each funnel carries its own daily ceiling (billing-service) and campaign-service works every funded funnel, pacing each against its own ceiling. This endpoint answers the other question — which funnel has returned best, and how do the others compare — so a customer can decide where to move their money. The value is the COMPARISON in `ranking`; `recommendation` is simply its head. AN UNFUNDED FUNNEL IS STILL RANKED. Ranking is about history: what a funnel has returned is what makes it comparable, and being unfunded is a decision the customer just made, not a reason to hide how it performed. features-service never asks billing which funnels are funded. RANKING BASIS (default, `maximize=return`): returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-funnel-comparable number — a cost per outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting), so normalising through each funnel's own funnel to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. Rankable funnels sort on returnPerDollar descending, ties broken by the canonical funnel-catalogue order, so the same evidence + the same economics + the same objective always produce the same list. RANKING BASIS (`maximize=conversionRate`): conversionRatePct = the funnel's best workflow's measured outcomes per 100 people REACHED. Where the pool is small and finite the binding constraint is the inventory rather than the money, so burning fewer people per outcome matters more than what each outcome costs — and the same declared funnels legitimately order differently. It needs no lifetime revenue, so a funnel with no defined return is still rankable under it; a funnel whose best workflow converted nobody is not (unrankableReason='no_conversion_rate'). Both figures are stated on every row under both objectives. Per funnel, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a funnel, since the outcome→paid rate is a constant for it), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. EACH FUNNEL IS PRICED ON ITS OWN FUNNEL, keyed on funnelKey and not on a goal. A funnel carries no goal since brand-service retired the vocabulary, and the goal could not have answered this: sales_meetings_from_conversation and sales_meetings_from_website both mapped onto `meetingBooked`, so the two were charged one blended both-channel price and a brand running the reply-driven funnel was benchmarked against clicks it never buys. The conversation funnel now prices replyUsd / replyToMeetingPct and the website one clickUsd / visitToMeetingPct, so a brand declaring both gets two different costs — and often two different best workflows. A funnel with NO defined return is ranked LAST, never dropped: a funnel whose own legs are undeclared or sit at 0 has no path to a paying client, and a funnel with no economics / no workflow evidence / a non-positive return is likewise listed with rank=null, rankable=false and its reason. When nothing can be ranked at all the response is arbitration.status='unrankable' with a reason — distinguishable from a recommendation, never an error that hides why. ONE ENTRY PER FUNNEL: the two meeting funnels (booked from a reply, booked from a website visit) are ranked SEPARATELY and each priced on its own channel and its own declared terms, because the customer funds them separately — a merged row could not answer 'where should I move my budget?' for either. A rate a funnel does not state falls back to the brand's effective economics, never to zero. The DECLARED SET is brand-service's to own, read from brand-service, never accepted from the caller and never inferred (a brand no longer has an optimizationGoal at all — that column was NOT NULL with a server default, so it said 'website purchases' for brands that had chosen nothing — and the brand-wide economics row cannot stand in either, every rate of which is server-defaulted and so signals nothing). When that declaration cannot be READ — transport, a non-OK response, or an empty list, i.e. this org has never STATED what it sells through — the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set. Cost: two small brand-service reads (the effective economics and the declared funnels) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — ranking N funnels adds zero IO over reading one. /workflow-projection itself is unchanged.",
         "tags": [
           "Stats"
         ],
@@ -16135,6 +16236,26 @@
             "required": false,
             "description": "Pricing basis for every MONEY metric (unit costs, cost-per-outcome, cost-per-paid-client, returnPerDollar, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when those are unavailable — never a silent fallback to gross.",
             "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "WHAT TO MAXIMISE. `return` (DEFAULT, byte-identical to every ordering this endpoint produced before) ranks the declared funnels on returnPerDollar — the most paying client per DOLLAR, the right question while the pool of people to reach is effectively unbounded and the binding constraint is the customer's budget. `conversionRate` ranks them on conversionRatePct — the most outcome per PERSON REACHED, the right question when the pool is small and finite, because the list is what runs out. The SAME declared funnels legitimately order differently under the two. Snake/kebab spellings accepted; the key may also be spelled `maximise`. A present-but-unrecognised word is a 400 (reason='maximize_unrecognised'), never a silent fall back to `return`. NOT the same question as a funnel's `goal`/`objective`, which name the OUTCOME being bought."
+            },
+            "required": false,
+            "description": "WHAT TO MAXIMISE. `return` (DEFAULT, byte-identical to every ordering this endpoint produced before) ranks the declared funnels on returnPerDollar — the most paying client per DOLLAR, the right question while the pool of people to reach is effectively unbounded and the binding constraint is the customer's budget. `conversionRate` ranks them on conversionRatePct — the most outcome per PERSON REACHED, the right question when the pool is small and finite, because the list is what runs out. The SAME declared funnels legitimately order differently under the two. Snake/kebab spellings accepted; the key may also be spelled `maximise`. A present-but-unrecognised word is a 400 (reason='maximize_unrecognised'), never a silent fall back to `return`. NOT the same question as a funnel's `goal`/`objective`, which name the OUTCOME being bought.",
+            "name": "maximize",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Alias of `maximize` (British spelling of the key). Either is accepted; the value vocabulary is identical."
+            },
+            "required": false,
+            "description": "Alias of `maximize` (British spelling of the key). Either is accepted; the value vocabulary is identical.",
+            "name": "maximise",
             "in": "query"
           },
           {
@@ -16183,7 +16304,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Every declared funnel ranked by return per dollar + the recommended funnel's best workflow and per-audience rows (or a distinguishable unrankable verdict)",
+            "description": "Every declared funnel ranked on what the caller asked to maximise + the recommended funnel's best workflow and per-audience rows (or a distinguishable unrankable verdict)",
             "content": {
               "application/json": {
                 "schema": {
@@ -16191,6 +16312,14 @@
                   "properties": {
                     "featureSlug": {
                       "type": "string"
+                    },
+                    "maximize": {
+                      "type": "string",
+                      "enum": [
+                        "return",
+                        "conversionRate"
+                      ],
+                      "description": "WHAT THIS RANKING WAS RANKED UNDER — always present, so a consumer can never present the order without knowing what produced it. `return` is the default and what every existing caller reads."
                     },
                     "ranking": {
                       "type": "array",
@@ -16256,14 +16385,20 @@
                               "no_economics",
                               "no_workflow_evidence",
                               "no_paid_client_path",
-                              "no_return_defined"
+                              "no_return_defined",
+                              "no_conversion_rate"
                             ],
-                            "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client — a leg of its OWN funnel is undeclared or sits at 0. Note a channel-scoped meeting funnel lands here whenever ITS channel has no rate, which a goal-keyed score used to hide behind the other channel's contribution. `no_workflow_evidence` = no history to compare it on yet. Null ⟺ rankable."
+                            "description": "Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client — a leg of its OWN funnel is undeclared or sits at 0. Note a channel-scoped meeting funnel lands here whenever ITS channel has no rate, which a goal-keyed score used to hide behind the other channel's contribution. `no_workflow_evidence` = no history to compare it on yet. `no_conversion_rate` fires under `?maximize=conversionRate` ONLY: the funnel's best workflow has reached people and converted none of them, so there is no positive rate to rank on — a different statement from having no history at all. Note `no_paid_client_path` / `no_return_defined` cannot fire under `conversionRate`, which needs no paid-client price. Null ⟺ rankable."
                           },
                           "returnPerDollar": {
                             "type": "number",
                             "nullable": true,
-                            "description": "lifetimeRevenueUsd / costPerPaidClientUsd of this funnel's best workflow (= the workflow-projection roiMultiple, = 100 / cacPct). THE ranking basis: the only cross-funnel-comparable number, since each funnel's own outcome is denominated differently. Null ⟺ not rankable."
+                            "description": "lifetimeRevenueUsd / costPerPaidClientUsd of this funnel's best workflow (= the workflow-projection roiMultiple, = 100 / cacPct). THE ranking basis under `maximize=return` (the default): the only cross-funnel-comparable MONEY number, since each funnel's own outcome is denominated differently. Stated under both objectives. Null when the brand states no return for the funnel — under `conversionRate` a funnel can be rankable WITHOUT one, since a rate question is not a money question."
+                          },
+                          "conversionRatePct": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The funnel's best workflow's measured outcomes per 100 people reached — THE ranking basis under `maximize=conversionRate`, which is the question when the binding constraint is a finite list rather than a budget. Comparable across funnels for the same reason a return is: it is denominated in people, not in each funnel's own outcome. Stated under both objectives so the two orderings are readable side by side. Null when nothing measured it; a measured 0 is reported as 0."
                           },
                           "costPerOutcomeUsd": {
                             "type": "number",
@@ -16315,6 +16450,7 @@
                           "rankable",
                           "unrankableReason",
                           "returnPerDollar",
+                          "conversionRatePct",
                           "costPerOutcomeUsd",
                           "costPerPaidClientUsd",
                           "grain",
@@ -16369,7 +16505,13 @@
                         },
                         "returnPerDollar": {
                           "type": "number",
-                          "description": "Always a positive finite number."
+                          "nullable": true,
+                          "description": "Always a positive finite number under `maximize=return`. Null only under `maximize=conversionRate`, where a funnel ranks on its rate and needs no return."
+                        },
+                        "conversionRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The recommended funnel's conversion rate — the figure the pick was made on under `maximize=conversionRate`."
                         },
                         "costPerOutcomeUsd": {
                           "type": "number",
@@ -16411,12 +16553,13 @@
                         "goal",
                         "objective",
                         "returnPerDollar",
+                        "conversionRatePct",
                         "costPerOutcomeUsd",
                         "costPerPaidClientUsd",
                         "grain",
                         "workflow"
                       ],
-                      "description": "The best-returning funnel — the head of `ranking`, named as what it is: advice, not an instruction. Null when nothing in `ranking` could be ranked."
+                      "description": "The best funnel on whatever was asked for — the head of `ranking`, named as what it is: advice, not an instruction. Null when nothing in `ranking` could be ranked."
                     },
                     "arbitration": {
                       "type": "object",
@@ -16482,7 +16625,12 @@
                         "returnPerDollar": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The recommended funnel's expected revenue per dollar of spend. Always a positive finite number when status = resolved."
+                          "description": "The recommended funnel's expected revenue per dollar of spend. Always a positive finite number when status = resolved AND maximize = return."
+                        },
+                        "conversionRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The recommended funnel's measured outcomes per 100 people reached — the figure the pick was made on under maximize=conversionRate."
                         },
                         "costPerOutcomeUsd": {
                           "type": "number",
@@ -16509,6 +16657,7 @@
                         "objective",
                         "reason",
                         "returnPerDollar",
+                        "conversionRatePct",
                         "costPerOutcomeUsd",
                         "costPerPaidClientUsd",
                         "grain"
@@ -16531,7 +16680,7 @@
                         "workflowDynastySlug",
                         "workflowDynastyName"
                       ],
-                      "description": "The best workflow FOR THE RECOMMENDED FUNNEL — argmin resolved.costPerOutcomeUsd over the brand-level rows, the same ungated argmin the Strategy page ranks on. Null ⟺ status = unrankable."
+                      "description": "The best workflow FOR THE RECOMMENDED FUNNEL, picked on WHAT WAS ASKED FOR: argmin resolved.costPerOutcomeUsd under `maximize=return` (the same ungated argmin the Strategy page ranks on), argmax resolved.conversionRatePct under `maximize=conversionRate`. Null ⟺ status = unrankable."
                     },
                     "economics": {
                       "type": "object",
@@ -16982,6 +17131,11 @@
                               "cacPct": {
                                 "type": "number",
                                 "nullable": true
+                              },
+                              "conversionRatePct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "HOW MUCH OF THE LIST THIS WORKFLOW BURNS PER OUTCOME — 100 × resolvedOutcomeCount / observedContacted, read off the SAME grain the costs above came from, so the three figures describe one body of evidence (that grain's spend over its outcomes is costPerOutcomeUsd, and its outcomes over its people are this). It is what `?maximize=conversionRate` ranks on, and it is stated under BOTH objectives so the two answers are readable side by side. Measured only — no cascade floor, since the mirror of flooring a COST is reporting the honest measured RATE. A measured 0 is a real answer (this workflow reached people and converted nobody); NULL is 'we could not count this': the grain reached nobody, economics are absent (cold start), or this is an UNMEASURED row whose figures are an explore allowance rather than a measurement."
                               }
                             },
                             "required": [
@@ -16992,7 +17146,8 @@
                               "costPerPaidClientUsd",
                               "costPerMeetingBookedUsd",
                               "roiMultiple",
-                              "cacPct"
+                              "cacPct",
+                              "conversionRatePct"
                             ]
                           },
                           "measured": {
@@ -17018,6 +17173,7 @@
                   },
                   "required": [
                     "featureSlug",
+                    "maximize",
                     "ranking",
                     "recommendation",
                     "arbitration",
@@ -17031,7 +17187,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId, or invalid pricing value",
+            "description": "Missing brandId, an invalid pricing value, or an unrecognised maximize value (reason='maximize_unrecognised')",
             "content": {
               "application/json": {
                 "schema": {
