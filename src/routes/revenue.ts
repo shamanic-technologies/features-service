@@ -38,6 +38,15 @@ import {
 } from "../lib/revenue-engine.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import {
+  applyLeadDetail,
+  attributedOutcomesFor,
+  parseLeadDetail,
+  LEAD_DETAIL_VALUES,
+  DELIVERY_ATTRIBUTED_OUTCOMES,
+  type LeadDetail,
+  type LeadOutcomeFlag,
+} from "../lib/lead-detail.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError, type DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
 import { declaredEconomicsForFunnel, mergeFunnelEconomics } from "../lib/declared-funnels.js";
@@ -478,6 +487,20 @@ interface RevenueResponse {
   roiHistory: RoiHistory | null;
   organizations: OrganizationRow[];
   leads: LeadRow[];
+  /**
+   * WHICH PER-LEAD OUTCOMES THIS READ COULD ATTRIBUTE — a fact about the READ, never about the leads,
+   * and the reason `?leads=outcomes` can narrow the array without costing anybody an answer.
+   *
+   * A consumer that shows an outcome only once this service attributes it used to derive that from the
+   * array itself ("does any row carry the key"). That derivation dies on a narrowed array: a brand with
+   * a live tracker and zero signups serves zero outcome-carrying rows, so it would read "signup is not
+   * attributed" and silently drop a surface from a brand measuring signups perfectly well. "Attributed,
+   * nobody has reached it yet" and "not measured here" are different statements and only the producer
+   * can tell them apart, so it is SERVED — derived from the SAME `StepEvidence` the funnel walk reports
+   * its rungs on, so a rung that reads `null` and a surface that hides can never name different
+   * producers. Empty only where the leads were never read at all (no funnel wired).
+   */
+  attributedOutcomes: LeadOutcomeFlag[];
   events: EventRow[];
   /**
    * Server-computed "contacted" aggregates for the Overview's Outreach surfaces — the stat-card
@@ -609,6 +632,10 @@ function emptyBody(
   // is: the leads were never read, so every rung would report a 0 nobody counted. On the cold-start
   // path the caller passes the real chain — a brand with no economics still knows who reached what.
   funnelSteps: FunnelStepBreakdown | null = null,
+  // WHICH per-lead outcomes this read could attribute. `[]` on the no-funnel short-circuit, where the
+  // leads were never read at all — the same reason `outcomes` and `funnelSteps` are null there. The
+  // cold-start path DID read the leads, so it passes the two the core read alone evidences.
+  attributedOutcomes: LeadOutcomeFlag[] = [],
 ): RevenueBody {
   return {
     headline: { totalPipelineUsd, economicsSource: null },
@@ -622,6 +649,7 @@ function emptyBody(
     roiHistory,
     organizations: [],
     leads: [],
+    attributedOutcomes,
     events: [],
     recipientsContacted: buildContactedSeries([]),
     ...buildOutcomeSeries([]),
@@ -898,6 +926,9 @@ function buildLensBody(
     roiHistory: null,
     organizations: [],
     leads,
+    // The lens short-circuits before the Wave B overlays, so the only outcomes this body could
+    // attribute are the two the core lead read alone evidences.
+    attributedOutcomes: DELIVERY_ATTRIBUTED_OUTCOMES,
     events: [],
     recipientsContacted: buildContactedSeries(leads),
     ...buildOutcomeSeries(leads),
@@ -1106,6 +1137,9 @@ export async function computeFeatureRevenue(
             customerStepMap(customerStepCosts),
           )
         : null,
+      // The leads WERE read on this path, so the two outcomes the core read alone evidences are
+      // attributed — "we could not price this" and "we could not measure this" are different answers.
+      DELIVERY_ATTRIBUTED_OUTCOMES,
     );
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
@@ -1213,6 +1247,9 @@ export async function computeFeatureRevenue(
       : null,
     organizations: result.organizations,
     leads: result.leads,
+    // The SAME evidence the funnel walk reports its rungs on — one implementation, so an unmeasured
+    // rung and a hidden outcome surface can never name different producers.
+    attributedOutcomes: attributedOutcomesFor(stepEvidence),
     events: result.events,
     recipientsContacted: buildContactedSeries(result.leads),
     ...buildOutcomeSeries(result.leads),
@@ -1321,6 +1358,14 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
   const pricing = parsePricing(req.query.pricing);
   if (pricing === null) {
     return res.status(400).json({ error: "pricing must be one of: gross, net" });
+  }
+
+  // HOW MUCH OF A PERSON this body carries. Omitted → `outcomes`: the twelve fields a browser reads,
+  // on the rows that reached something. `full` is the hydrated array this service has always served
+  // and exactly one consumer needs. See lib/lead-detail.ts.
+  const leadDetail = parseLeadDetail(req.query.leads);
+  if (leadDetail === null) {
+    return res.status(400).json({ error: `leads must be one of: ${LEAD_DETAIL_VALUES.join(", ")}` });
   }
 
   try {
@@ -1552,6 +1597,9 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         decl,
         pricing,
         econ,
+        // The narrow body and the hydrated one are two different answers, so they are two cells —
+        // which also keeps the stored snapshot narrow for the read that every browser makes.
+        leads: leadDetail,
       }),
       orgId,
       compute: async () => {
@@ -1566,7 +1614,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         // platform comped is absent from it (they did not pay it), which is the opposite of the
         // cross-org benchmark on /workflow-projection's crossOrg grain and /public/stats/*, where
         // the same words mean what the workflow COST to produce an outcome. See lib/cost-basis.ts.
-        return { featureSlug, costBasis: "charged" as const, ...body, campaignIdentity: campaignId ? describeIdentity(identity, campaignId) : undefined };
+        return { featureSlug, costBasis: "charged" as const, ...applyLeadDetail(body, leadDetail), campaignIdentity: campaignId ? describeIdentity(identity, campaignId) : undefined };
       },
     });
 

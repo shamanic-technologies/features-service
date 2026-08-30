@@ -61,6 +61,7 @@ import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-
 import { computeOfferPipelineActivity } from "./pipeline-activity.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
@@ -215,6 +216,13 @@ router.get("/offers/:offerId/funnels/:funnelKey/revenue", apiKeyAuth, async (req
     if (!resolved.ok) return res.status(resolved.status).json(resolved.body);
     const { offerId, brandId, pricing, headers, row } = resolved.scope;
 
+    // HOW MUCH OF A PERSON this body carries — omitted → `outcomes`, the twelve fields a browser reads
+    // on the rows that reached something. `full` is the hydrated array. See lib/lead-detail.ts.
+    const leadDetail = parseLeadDetail(req.query.leads);
+    if (leadDetail === null) {
+      return res.status(400).json({ error: `leads must be one of: ${LEAD_DETAIL_VALUES.join(", ")}` });
+    }
+
     // The MEASUREMENT funnel of this funnel's OWN channels — a funnel whose channels price two ways
     // says so (409) rather than having one silently picked for it.
     const funnel = resolveOfferFunnel(offerId, row.channels);
@@ -266,6 +274,8 @@ router.get("/offers/:offerId/funnels/:funnelKey/revenue", apiKeyAuth, async (req
         decl,
         pricing,
         econ,
+        // Two different answers ⇒ two cells, which also keeps the stored snapshot narrow.
+        leads: leadDetail,
       }),
       orgId: headers.orgId,
       compute: async () => {
@@ -340,7 +350,7 @@ router.get("/offers/:offerId/funnels/:funnelKey/revenue", apiKeyAuth, async (req
             totalPipelineUsd: body.headline.totalPipelineUsd,
             lifetimeRevenueUsd: economicsOverride?.economics.economics?.lifetimeRevenueUsd ?? null,
           }),
-          ...body,
+          ...applyLeadDetail(body, leadDetail),
         };
       },
     });
