@@ -911,7 +911,7 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
     // No salary to carry — the standing cost is a nominal dollar, and the real spend is the metered API
     // cost declared on each run.
     terms: terms(100, 30, 1),
-    description: "Our AI replies to the prospects who showed sales interest, within minutes, and books the meeting on your calendar.",
+    description: "Our AI replies to the prospects who answered you, within minutes, and books the meeting on your calendar.",
     inputs: OFFER_INPUTS },
   { slug: "agency-meeting-booking", name: "Agency Meeting Booking", displayOrder: 42, icon: "calendar-plus", family: "conversion", stepTransitions: BOOKS_THE_MEETING,
     terms: terms(0, 30, 3),

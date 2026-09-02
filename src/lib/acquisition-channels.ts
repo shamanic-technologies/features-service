@@ -119,10 +119,11 @@ export interface ChannelStepDef {
 export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
   conversation: {
     key: "conversation",
-    // "Sales interest" is what every customer-facing surface in the product calls this step, and the
-    // marketing site is generated from here — so the label is the product's word. The KEY stays
-    // `conversation`: it is the wire token every consumer already reads.
-    label: "Sales interest",
+    // "Conversation", NOT "Sales interest". Sales interest is the CATEGORY every entry signal belongs
+    // to — a positive reply, a website visit, a form filled in an ad are all a buyer showing interest —
+    // so putting it on ONE of them names the category as if it were the member, and leaves the siblings
+    // unreadable beside it. This step is the specific thing that happened: the buyer answered.
+    label: "Conversation",
     description: "A buyer answers and a conversation opens, on whatever medium the channel runs on.",
   },
   website_visit: {
