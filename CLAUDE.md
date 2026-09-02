@@ -1129,11 +1129,14 @@ from what we actually charge and actually measured.
   catalogue. The step vocabulary rides the payload under `steps` (renamed from `producibleSteps` when it
   widened past the entry subset; the gateway does not proxy `/public/*`, so it had no outside consumer)
   so nothing hardcodes it.
-- **THE `conversation` STEP IS LABELLED "Sales interest", and the KEY DID NOT MOVE.** Every
-  customer-facing surface in the product says "Sales interest"; the marketing site and the staff model
-  page are generated from this payload, so the buyer-facing LABEL is the product's word. The wire token
-  stays `conversation` — it is what every consumer already reads, and renaming it would be the
-  two-vocabularies bug for a display string. (Set 2026-09-02.)
+- **THE `conversation` STEP IS LABELLED "Conversation", AND "Sales interest" IS NOT ITS NAME.** Sales
+  interest is the CATEGORY every entry signal belongs to — a positive reply, a website visit, a form
+  filled inside an ad are all a buyer showing interest — so putting that phrase on ONE step names the
+  category as if it were the member, and leaves its siblings unreadable beside it. The label is the
+  specific thing that happened: the buyer answered. Shipped as "Sales interest" in #879 on a brief that
+  said the product used that wording everywhere, and reverted the same day
+  (Kevin: *"SalesInterest is something else than conversation. It can be any interest, like positive
+  reply, website visit, etc"*). The wire token was never touched. (Set 2026-09-02.)
 - **`/public/channel-funnel-economics`** serves ONE ROW PER PAIR — the grain the marketing site prints.
   A customer buys a PAIR, and the same funnel costs a very different amount through a phone channel than
   through paid search, so a brand-level or channel-level aggregate cannot answer it. `?channelSlug=`
