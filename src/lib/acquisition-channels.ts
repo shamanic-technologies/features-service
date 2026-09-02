@@ -38,12 +38,17 @@
  *
  * ── WHO OPERATES IT, AND WHY A ZERO DAILY COST IS NOT A HOLE ──────────────────────────────────────
  *
- * A leg somebody performs by hand can be performed by US (a specialist we put on it) or by the CUSTOMER
- * (their own founder, their own team). A customer-run channel spends none of the platform's money, so
- * its daily operating cost is genuinely ZERO — and a zero that nobody can read is indistinguishable
- * from a figure nobody filled in. `operatedBy` is what makes the zero legible: "you run this" rather
- * than "we run this and it is free". What each of those legs costs the customer is something they state
- * per lead, to lead-service; it is not ours to guess, and inventing a flat daily figure to make the
+ * A leg can be performed by our SOFTWARE (the AI answers the prospect in minutes), by US BY HAND (a
+ * specialist we put on it), or by the CUSTOMER (their own founder, their own team). The channel's NAME
+ * is what says which — a buyer picks between them, so it cannot be a field they have to look up.
+ *
+ * A ZERO DAILY OPERATING COST DOES NOT MEAN THE CUSTOMER RUNS IT, and reading it that way is the one
+ * mistake this paragraph exists to prevent. It means only that no standing DAY of work is charged for
+ * this channel. That is true of every customer-run channel (we put nobody on it), and it is equally
+ * true of a channel we run where the owner has priced the day at zero. What a run actually costs is
+ * metered elsewhere: an automated leg declares its API spend per run against runs-service, and what a
+ * customer-run leg costs THEM is stated per lead against lead-service. `operatedBy` is what says who is
+ * on it; the zero says only what the day-rate is, and inventing a flat daily figure to make the
  * catalogue look uniform would be fabricating a price nobody set.
  *
  * ── NO "COMING SOON" ──────────────────────────────────────────────────────────────────────────────
@@ -114,7 +119,10 @@ export interface ChannelStepDef {
 export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
   conversation: {
     key: "conversation",
-    label: "Conversation",
+    // "Sales interest" is what every customer-facing surface in the product calls this step, and the
+    // marketing site is generated from here — so the label is the product's word. The KEY stays
+    // `conversation`: it is the wire token every consumer already reads.
+    label: "Sales interest",
     description: "A buyer answers and a conversation opens, on whatever medium the channel runs on.",
   },
   website_visit: {
@@ -289,10 +297,15 @@ export const CHANNEL_FAMILIES = ["outbound_one_to_one", "paid_reach", "earned", 
 export type ChannelFamily = (typeof CHANNEL_FAMILIES)[number];
 
 /**
- * WHO puts the hours in. `platform` is us — we operate it, and its daily operating cost is what that
- * costs. `customer` is them — their founder takes the call, their team confirms the meeting — so the
- * platform spends nothing and the daily operating cost is 0, stated rather than left blank. What the
- * leg costs THEM is declared per lead against lead-service; this catalogue does not guess at it.
+ * WHO puts the hours in. `platform` is us — either our software or a specialist of ours, and the
+ * channel's NAME says which. `customer` is them — their founder takes the call, their team confirms the
+ * meeting — so the platform puts nobody on it and the daily operating cost is 0, stated rather than
+ * left blank. What the leg costs THEM is declared per lead against lead-service; this catalogue does not
+ * guess at it.
+ *
+ * The converse does NOT hold: a 0 daily operating cost does not imply `customer`. A platform-run channel
+ * can legitimately carry no standing day-rate (an automated leg whose real cost is metered per run, or a
+ * hand-run leg the owner prices at zero), so read `operatedBy` for who is on it and never the price.
  */
 export const CHANNEL_OPERATORS = ["platform", "customer"] as const;
 export type ChannelOperator = (typeof CHANNEL_OPERATORS)[number];

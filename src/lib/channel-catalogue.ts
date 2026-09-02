@@ -71,8 +71,11 @@ export interface PublicChannel {
   icon: string;
   displayOrder: number;
   family: ChannelFamily;
-  /** Who puts the hours in. A `customer`-operated channel spends none of the platform's money, which is
-   *  what makes its zero daily operating cost a statement rather than a blank. */
+  /** Who puts the hours in: `platform` is us (our software, or a specialist of ours — the channel's NAME
+   *  says which), `customer` is their own founder or team. A `customer`-operated channel puts nobody of
+   *  ours on it, which is what makes its zero daily operating cost a statement rather than a blank. The
+   *  converse does not hold: a platform-run channel can carry a zero day-rate too, so read this field
+   *  for who is on it and never infer it from the price. */
   operatedBy: ChannelOperator;
   /** The commercial terms a buyer commits to, before any performance is measured. */
   terms: AcquisitionChannel["terms"];

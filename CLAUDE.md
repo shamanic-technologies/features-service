@@ -992,21 +992,42 @@ per funded (funnel, channel) pair, so the catalogue was the only thing in the wa
   / `form_filled` / `paid_client` joined the four that were there. This is precisely why the `in_ad_`
   prefix was load-bearing all along — `form_filled` and `meeting_booked` are now real keys in the same
   list, so the shorter spellings would COLLIDE outright.
-- **`operatedBy` SAYS WHO PUTS THE HOURS IN, and it is what makes a ZERO daily cost legible.** A leg a
-  human performs can be run by US (`platform` — the daily operating cost is that specialist's day) or by
-  the CUSTOMER (`customer` — their founder takes the call, their team confirms the meeting). A
-  customer-run channel spends none of the platform's money, so its `dailyOperatingCostCents` is
-  genuinely **0**, and the parser REFUSES a customer-operated channel that states anything else: we do
-  not charge for a day of work we do not do. **Do NOT invent a flat daily figure for those to make the
-  family look uniform** — what the leg costs THEM is stated per lead against lead-service, and a zero
-  nobody can read is indistinguishable from a field nobody filled in. Every channel that FINDS people
-  (any `from: null` leg) is `platform`-operated; a zero there WOULD be a hole, and is guarded.
-- **THE SAME LEG IS PUBLISHED TWICE, ours and theirs**, because those are two different things to buy:
-  `managed-meeting-booking` / `in-house-meeting-booking`, `managed-meeting-attendance` /
-  `in-house-meeting-attendance`, `managed-closing-calls` / `founder-led-closing`,
-  `managed-signup-conversion` / `in-house-signup-conversion`. Each pair states the IDENTICAL legs and
-  therefore the identical sellable funnels; only the operator and the price differ. They carry the new
-  `conversion` family — nothing here finds anybody.
+- **`operatedBy` SAYS WHO PUTS THE HOURS IN, AND A ZERO DAILY COST DOES NOT IMPLY THE CUSTOMER RUNS IT
+  (supersedes the zero-means-customer wording of #837).** A leg can be run by our SOFTWARE, by US BY
+  HAND, or by the CUSTOMER (`operatedBy` distinguishes only `platform` from `customer`; the channel's
+  NAME says which kind of platform). `dailyOperatingCostCents` is the STANDING DAY-RATE and nothing
+  else: **0** means no day of work is charged for the channel, which is true of every customer-run
+  channel (we put nobody on it) AND of a platform-run channel whose real cost is metered per run or
+  which the owner prices at zero. Two live examples of the second: `ai-meeting-booking` at 100¢ nominal
+  with its API spend declared per run, and `agency-meeting-booking` priced at 0. The parser still
+  REFUSES a customer-operated channel stating anything but 0 (we do not charge for work we do not do),
+  but there is deliberately **no converse guard** — a platform zero is legal and meaningful. Reading the
+  price to infer the operator is the bug this wording exists to prevent, and the published
+  `/public/channels` description was corrected in the same ship because the marketing site and the staff
+  model page are generated from it. **Do NOT invent a flat daily figure for a customer-run leg to make
+  the family look uniform** — what it costs THEM is stated per lead against lead-service. Every channel
+  that FINDS people (any `from: null` leg) is `platform`-operated; a zero there WOULD be a hole, and is
+  guarded.
+- **THE SAME LEG IS PUBLISHED ONCE PER OPERATOR, AND THE NAME STATES THE OPERATOR** (supersedes the
+  `managed-` / `in-house-` pairs of #837, renamed 2026-09-02 with ZERO campaigns and ZERO budget rows on
+  any of the eight old slugs — a free rename, no retirement marker, no deploy ordering). Three
+  operators, each naming itself in the channel's own title: **AI** (our software), **Agency** (us by
+  hand), **Your Team** (the customer's). `ai-meeting-booking` / `agency-meeting-booking` /
+  `your-team-meeting-booking`, `agency-meeting-attendance` / `your-team-meeting-attendance`,
+  `agency-closing-calls` / `your-team-closing-calls`, `agency-signup-conversion` /
+  `your-team-signup-conversion`. The old names duplicated `operatedBy` and still left a reader unable to
+  tell a person from a machine on the platform-run half, which is the whole reason a NAME carries it: a
+  buyer choosing between them cannot be made to look up a field. Slug prefix and name agree, and both
+  are guarded. Every hand-run pair states IDENTICAL legs and therefore identical sellable funnels; only
+  the operator and the price differ. They carry the `conversion` family — nothing here finds anybody.
+- **THE AI BOOKS A MEETING BY ANSWERING THE PROSPECT'S OWN EMAIL, AND PERFORMS THAT LEG ALONE.**
+  `ai-meeting-booking` states `{from: "conversation", to: "meeting_booked"}` and nothing else, so it
+  sells through `sales_meetings_from_conversation` only. **The website-visit variant is deliberately
+  ABSENT**: a visit produces no email to reply to, so publishing that leg would sell something nothing
+  performs. It is a later ship — do NOT add it here to make the AI channel match the agency one, whose
+  human can work a visit. Terms are `terms(100, 30, 1)`: a nominal dollar a day because there is no
+  salary on it, and the tightest first-production promise in the catalogue because it answers in
+  minutes.
 - **A LEG CHANNEL IS PAIRED FROM DAY ONE AND ANSWERS `no_spend_recorded`.** `channel.salesFunnels` is
   what `/public/channel-funnel-economics` builds pairs from, so these get their rows immediately; with
   no run behind them the pooled evidence is empty and the pair states the honest missing ingredient.
@@ -1108,6 +1129,11 @@ from what we actually charge and actually measured.
   catalogue. The step vocabulary rides the payload under `steps` (renamed from `producibleSteps` when it
   widened past the entry subset; the gateway does not proxy `/public/*`, so it had no outside consumer)
   so nothing hardcodes it.
+- **THE `conversation` STEP IS LABELLED "Sales interest", and the KEY DID NOT MOVE.** Every
+  customer-facing surface in the product says "Sales interest"; the marketing site and the staff model
+  page are generated from this payload, so the buyer-facing LABEL is the product's word. The wire token
+  stays `conversation` — it is what every consumer already reads, and renaming it would be the
+  two-vocabularies bug for a display string. (Set 2026-09-02.)
 - **`/public/channel-funnel-economics`** serves ONE ROW PER PAIR — the grain the marketing site prints.
   A customer buys a PAIR, and the same funnel costs a very different amount through a phone channel than
   through paid search, so a brand-level or channel-level aggregate cannot answer it. `?channelSlug=`
