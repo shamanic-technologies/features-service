@@ -59,6 +59,10 @@ const BOOKS_THE_MEETING: readonly ChannelStepTransition[] = [
   { from: "conversation", to: "meeting_booked" },
   { from: "website_visit", to: "meeting_booked" },
 ];
+// The AI answers the prospect's own email, so the only lead it can move is one who has already answered
+// ours. A website visit produces no email to reply to, so it is deliberately NOT one of these legs —
+// that variant is a later ship, and stating it now would sell a leg nothing performs.
+const AI_BOOKS_THE_MEETING: readonly ChannelStepTransition[] = [{ from: "conversation", to: "meeting_booked" }];
 const GETS_THE_MEETING_HELD: readonly ChannelStepTransition[] = [{ from: "meeting_booked", to: "meeting_attended" }];
 const CLOSES_THE_MEETING: readonly ChannelStepTransition[] = [{ from: "meeting_attended", to: "paid_client" }];
 const CONVERTS_THE_SELF_SERVE_LEAD: readonly ChannelStepTransition[] = [
@@ -887,51 +891,62 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
 
   // ── Conversion ──────────────────────────────────────────────────────────────────────────────────
   // Nothing here finds anybody. Each of these takes a lead who is ALREADY on the funnel and moves them
-  // one step along it, which is why every one of them states a `from`. The same leg is published twice,
-  // once run by us and once run by the customer, because those are genuinely two different things to
-  // buy: ours carries the specialist's day; theirs costs the platform nothing, and says so with a zero
-  // rather than with a blank.
+  // one step along it, which is why every one of them states a `from`.
   //
-  // The customer-run half declares `dailyOperatingCostCents: 0` and that figure is TRUE, not a
-  // placeholder — we do not put anyone on it, so there is no day of ours to charge for. What the leg
-  // costs THEM is something they state per lead against lead-service; guessing a flat daily figure here
-  // to make the family look uniform would publish a price nobody set.
+  // The same leg is published once per OPERATOR, because who does the work is the whole difference
+  // between the things a customer is choosing between, and a name that does not say it is a name they
+  // cannot act on. There are three operators and each names itself in the channel's own title:
+  //
+  //   AI        — our software does it, in minutes, with nobody on it.
+  //   Agency    — a specialist of ours does it by hand.
+  //   Your Team — the customer's own founder or team does it.
+  //
+  // A ZERO DAILY OPERATING COST DOES NOT MEAN THE CUSTOMER RUNS IT. It means no standing DAY of work is
+  // charged for this channel — true of every `Your Team` channel (we put nobody on it) and true of an
+  // `Agency` leg the owner prices at zero. What a run actually costs is metered elsewhere: the AI's leg
+  // declares its API spend per run, and what a `Your Team` leg costs THEM is stated per lead against
+  // lead-service. `operatedBy` is what says who is on it; the zero says only what the day-rate is.
 
-  { slug: "managed-meeting-booking", name: "Managed Meeting Booking", displayOrder: 41, icon: "calendar-plus", family: "conversion", stepTransitions: BOOKS_THE_MEETING,
-    // A person works the replies and the visits all day whether or not anyone takes a slot.
-    terms: terms(20000, 30, 3),
-    description: "We work the replies and site visits you already have, and turn them into meetings on your calendar.",
+  { slug: "ai-meeting-booking", name: "AI Meeting Booking", displayOrder: 41, icon: "calendar-check", family: "conversion", stepTransitions: AI_BOOKS_THE_MEETING,
+    // No salary to carry — the standing cost is a nominal dollar, and the real spend is the metered API
+    // cost declared on each run.
+    terms: terms(100, 30, 1),
+    description: "Our AI replies to the prospects who showed sales interest, within minutes, and books the meeting on your calendar.",
     inputs: OFFER_INPUTS },
-  { slug: "in-house-meeting-booking", name: "In-House Meeting Booking", displayOrder: 42, icon: "calendar-plus", family: "conversion", operatedBy: "customer", stepTransitions: BOOKS_THE_MEETING,
+  { slug: "agency-meeting-booking", name: "Agency Meeting Booking", displayOrder: 42, icon: "calendar-plus", family: "conversion", stepTransitions: BOOKS_THE_MEETING,
+    terms: terms(0, 30, 3),
+    description: "Our team works the replies and site visits you already have by hand, and turns them into meetings on your calendar.",
+    inputs: OFFER_INPUTS },
+  { slug: "your-team-meeting-booking", name: "Your Team Meeting Booking", displayOrder: 43, icon: "calendar-plus", family: "conversion", operatedBy: "customer", stepTransitions: BOOKS_THE_MEETING,
     terms: terms(0, 30, 1),
     description: "Your own team works the replies and site visits, and books the meetings itself.",
     inputs: OFFER_INPUTS },
 
-  { slug: "managed-meeting-attendance", name: "Managed Meeting Attendance", displayOrder: 43, icon: "bell", family: "conversion", stepTransitions: GETS_THE_MEETING_HELD,
+  { slug: "agency-meeting-attendance", name: "Agency Meeting Attendance", displayOrder: 44, icon: "bell", family: "conversion", stepTransitions: GETS_THE_MEETING_HELD,
     // Confirming, reminding and rescheduling is a standing job, not a per-meeting one.
     terms: terms(6000, 30, 3),
-    description: "We confirm, remind and reschedule so the meetings on your calendar are actually held.",
+    description: "Our team confirms, reminds and reschedules so the meetings on your calendar are actually held.",
     inputs: OFFER_INPUTS },
-  { slug: "in-house-meeting-attendance", name: "In-House Meeting Attendance", displayOrder: 44, icon: "bell", family: "conversion", operatedBy: "customer", stepTransitions: GETS_THE_MEETING_HELD,
+  { slug: "your-team-meeting-attendance", name: "Your Team Meeting Attendance", displayOrder: 45, icon: "bell", family: "conversion", operatedBy: "customer", stepTransitions: GETS_THE_MEETING_HELD,
     terms: terms(0, 30, 1),
     description: "Your own team confirms and reminds, so the meetings you booked do not become no-shows.",
     inputs: OFFER_INPUTS },
 
-  { slug: "managed-closing-calls", name: "Managed Closing Calls", displayOrder: 45, icon: "handshake", family: "conversion", stepTransitions: CLOSES_THE_MEETING,
+  { slug: "agency-closing-calls", name: "Agency Closing Calls", displayOrder: 46, icon: "handshake", family: "conversion", stepTransitions: CLOSES_THE_MEETING,
     // A closer on your account is the most expensive day in the catalogue, and the one that ends in a sale.
     terms: terms(30000, 60, 7),
     description: "We put a closer on your account to run the meetings you get held and turn them into paying clients.",
     inputs: OFFER_INPUTS },
-  { slug: "founder-led-closing", name: "Founder Led Closing", displayOrder: 46, icon: "handshake", family: "conversion", operatedBy: "customer", stepTransitions: CLOSES_THE_MEETING,
+  { slug: "your-team-closing-calls", name: "Your Team Closing Calls", displayOrder: 47, icon: "handshake", family: "conversion", operatedBy: "customer", stepTransitions: CLOSES_THE_MEETING,
     terms: terms(0, 30, 1),
     description: "You run the meetings yourself and close them, which is what most founders do best early on.",
     inputs: OFFER_INPUTS },
 
-  { slug: "managed-signup-conversion", name: "Managed Signup Conversion", displayOrder: 47, icon: "user-check", family: "conversion", stepTransitions: CONVERTS_THE_SELF_SERVE_LEAD,
+  { slug: "agency-signup-conversion", name: "Agency Signup Conversion", displayOrder: 48, icon: "user-check", family: "conversion", stepTransitions: CONVERTS_THE_SELF_SERVE_LEAD,
     terms: terms(15000, 30, 5),
-    description: "We follow up the people who signed up or filled your form until they become paying clients.",
+    description: "Our team follows up the people who signed up or filled your form until they become paying clients.",
     inputs: OFFER_INPUTS },
-  { slug: "in-house-signup-conversion", name: "In-House Signup Conversion", displayOrder: 48, icon: "user-check", family: "conversion", operatedBy: "customer", stepTransitions: CONVERTS_THE_SELF_SERVE_LEAD,
+  { slug: "your-team-signup-conversion", name: "Your Team Signup Conversion", displayOrder: 49, icon: "user-check", family: "conversion", operatedBy: "customer", stepTransitions: CONVERTS_THE_SELF_SERVE_LEAD,
     terms: terms(0, 30, 1),
     description: "Your own team follows up the signups and form fills until they become paying clients.",
     inputs: OFFER_INPUTS },

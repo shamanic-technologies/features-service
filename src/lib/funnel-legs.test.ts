@@ -36,7 +36,7 @@ describe("funnel legs", () => {
     expect(entry!.legKey).toBe("start_to_conversation");
     expect(entry!.fromStep).toBeNull();
     expect(entry!.toStep.key).toBe("conversation");
-    expect(entry!.toStep.label).toBe("Conversation");
+    expect(entry!.toStep.label).toBe("Sales interest");
   });
 
   it("a NON-entry leg states both of its steps beside the identifier, so nobody parses the string", () => {

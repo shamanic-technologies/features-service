@@ -94,16 +94,17 @@ describe("the published acquisition-channel catalogue", () => {
       "organic-x-publishing",
       "organic-reddit-publishing",
       "organic-youtube-publishing",
-      // Conversion — the legs a human performs once a lead is already on the funnel, published twice
-      // over: once run by a specialist of ours, once run by the customer themselves.
-      "managed-meeting-booking",
-      "in-house-meeting-booking",
-      "managed-meeting-attendance",
-      "in-house-meeting-attendance",
-      "managed-closing-calls",
-      "founder-led-closing",
-      "managed-signup-conversion",
-      "in-house-signup-conversion",
+      // Conversion — the legs performed once a lead is already on the funnel, published once per
+      // OPERATOR, each naming its operator in its own title: our AI, our agency by hand, their team.
+      "ai-meeting-booking",
+      "agency-meeting-booking",
+      "your-team-meeting-booking",
+      "agency-meeting-attendance",
+      "your-team-meeting-attendance",
+      "agency-closing-calls",
+      "your-team-closing-calls",
+      "agency-signup-conversion",
+      "your-team-signup-conversion",
     ];
     for (const slug of expected) {
       expect(bySlug(slug), slug).toBeDefined();
@@ -321,35 +322,35 @@ describe("A FUNNEL IS SOLD LEG BY LEG — a channel states where it picks a lead
   it("the three legs of a meeting funnel are three separate things to buy", () => {
     // Booking it, getting it held, and closing it. Each has its own channel, its own budget and its own
     // stats, which is the entire reason the catalogue had to stop describing only entry steps.
-    expect(bySlug("managed-meeting-booking")!.acquisitionChannel!.stepTransitions).toEqual([
+    expect(bySlug("agency-meeting-booking")!.acquisitionChannel!.stepTransitions).toEqual([
       { from: "conversation", to: "meeting_booked" },
       { from: "website_visit", to: "meeting_booked" },
     ]);
-    expect(bySlug("managed-meeting-attendance")!.acquisitionChannel!.stepTransitions).toEqual([
+    expect(bySlug("agency-meeting-attendance")!.acquisitionChannel!.stepTransitions).toEqual([
       { from: "meeting_booked", to: "meeting_attended" },
     ]);
-    expect(bySlug("managed-closing-calls")!.acquisitionChannel!.stepTransitions).toEqual([
+    expect(bySlug("agency-closing-calls")!.acquisitionChannel!.stepTransitions).toEqual([
       { from: "meeting_attended", to: "paid_client" },
     ]);
 
     // Both meeting funnels share every leg after the meeting is booked, so those two sell both.
-    expect(bySlug("managed-meeting-attendance")!.salesFunnels).toEqual([
+    expect(bySlug("agency-meeting-attendance")!.salesFunnels).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
     ]);
-    expect(bySlug("managed-closing-calls")!.salesFunnels).toEqual([
+    expect(bySlug("agency-closing-calls")!.salesFunnels).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
     ]);
   });
 
   it("closing a self-serve lead sells the two self-serve funnels, and neither meeting funnel", () => {
-    expect(bySlug("managed-signup-conversion")!.salesFunnels).toEqual(["website_purchases", "form_magnet"]);
-    expect(bySlug("in-house-signup-conversion")!.salesFunnels).toEqual(["website_purchases", "form_magnet"]);
+    expect(bySlug("agency-signup-conversion")!.salesFunnels).toEqual(["website_purchases", "form_magnet"]);
+    expect(bySlug("your-team-signup-conversion")!.salesFunnels).toEqual(["website_purchases", "form_magnet"]);
   });
 
   it("a channel that performs only an internal leg produces NOTHING, and that is a real answer", () => {
-    for (const slug of ["managed-closing-calls", "founder-led-closing", "managed-meeting-attendance"]) {
+    for (const slug of ["agency-closing-calls", "your-team-closing-calls", "agency-meeting-attendance"]) {
       expect(producibleStepsOf(bySlug(slug)!.acquisitionChannel!.stepTransitions), slug).toEqual([]);
     }
   });
@@ -382,12 +383,12 @@ describe("WHO operates a channel, and why a zero daily cost is a statement rathe
     }
   });
 
-  it("the SAME leg is sold both ways, and only the platform-run one carries a day of ours", () => {
+  it("the SAME leg is sold once per operator, differing only in who does the work", () => {
     const pairs: Array<[string, string]> = [
-      ["managed-meeting-booking", "in-house-meeting-booking"],
-      ["managed-meeting-attendance", "in-house-meeting-attendance"],
-      ["managed-closing-calls", "founder-led-closing"],
-      ["managed-signup-conversion", "in-house-signup-conversion"],
+      ["agency-meeting-booking", "your-team-meeting-booking"],
+      ["agency-meeting-attendance", "your-team-meeting-attendance"],
+      ["agency-closing-calls", "your-team-closing-calls"],
+      ["agency-signup-conversion", "your-team-signup-conversion"],
     ];
     for (const [ours, theirs] of pairs) {
       const a = bySlug(ours)!;
@@ -397,8 +398,18 @@ describe("WHO operates a channel, and why a zero daily cost is a statement rathe
       expect(a.salesFunnels, theirs).toEqual(b.salesFunnels);
       expect(a.acquisitionChannel!.operatedBy, ours).toBe("platform");
       expect(b.acquisitionChannel!.operatedBy, theirs).toBe("customer");
-      expect(a.acquisitionChannel!.terms.dailyOperatingCostCents, ours).toBeGreaterThan(0);
       expect(b.acquisitionChannel!.terms.dailyOperatingCostCents, theirs).toBe(0);
+    }
+  });
+
+  it("a ZERO daily cost does NOT imply the customer runs it — the price is not the operator", () => {
+    // This is the whole reason the published description had to move. Two platform-run channels carry
+    // no standing day-rate: the AI leg (its real cost is metered per run) and the agency booking leg
+    // (priced at zero). Anything reading a zero as "the customer operates this" would mislabel them.
+    for (const slug of ["ai-meeting-booking", "agency-meeting-booking"]) {
+      const channel = bySlug(slug)!.acquisitionChannel!;
+      expect(channel.operatedBy, slug).toBe("platform");
+      expect(channel.terms.dailyOperatingCostCents, slug).toBeLessThanOrEqual(100);
     }
   });
 
@@ -428,5 +439,73 @@ describe("the catalogue reads as a price list a buyer can act on", () => {
         expect(input.placeholder ?? "", channel.slug).not.toContain("—");
       }
     }
+  });
+});
+
+describe("EACH OPERATOR NAMES ITSELF — a buyer picks between them without reading the operator field", () => {
+  const conversion = channels.filter((c) => c.acquisitionChannel!.family === "conversion");
+
+  it("every conversion channel's NAME states who does the work", () => {
+    // The old names ("Managed", "In-House") duplicated `operatedBy` and still left a reader unable to
+    // tell whether a person or a machine was on the platform-run half.
+    for (const channel of conversion) {
+      expect(
+        /^(AI|Agency|Your Team) /.test(channel.name),
+        `${channel.slug} names no operator: ${channel.name}`,
+      ).toBe(true);
+    }
+    expect(conversion.some((c) => c.name.startsWith("AI "))).toBe(true);
+    expect(conversion.some((c) => c.name.startsWith("Agency "))).toBe(true);
+    expect(conversion.some((c) => c.name.startsWith("Your Team "))).toBe(true);
+  });
+
+  it("the slug and the name agree on the operator", () => {
+    const prefix: Record<string, string> = { AI: "ai-", Agency: "agency-", "Your Team": "your-team-" };
+    for (const channel of conversion) {
+      const operator = Object.keys(prefix).find((word) => channel.name.startsWith(`${word} `))!;
+      expect(channel.slug.startsWith(prefix[operator]), channel.slug).toBe(true);
+    }
+  });
+
+  it("no conversion channel still carries a retired spelling", () => {
+    for (const channel of conversion) {
+      expect(channel.slug.startsWith("managed-"), channel.slug).toBe(false);
+      expect(channel.slug.startsWith("in-house-"), channel.slug).toBe(false);
+      expect(channel.slug, channel.slug).not.toBe("founder-led-closing");
+    }
+  });
+});
+
+describe("THE AI BOOKS THE MEETING BY ANSWERING THE PROSPECT'S OWN EMAIL", () => {
+  const ai = () => bySlug("ai-meeting-booking")!;
+
+  it("performs the sales-interest leg, and ONLY that leg", () => {
+    // The website-visit variant is deliberately absent: a visit produces no email to reply to, so
+    // publishing it would sell a leg nothing performs. It is a later ship.
+    expect(ai().acquisitionChannel!.stepTransitions).toEqual([
+      { from: "conversation", to: "meeting_booked" },
+    ]);
+  });
+
+  it("sells through the funnel that leg belongs to, and finds nobody", () => {
+    expect(ai().salesFunnels).toEqual(["sales_meetings_from_conversation"]);
+    expect(producibleStepsOf(ai().acquisitionChannel!.stepTransitions)).toEqual([]);
+  });
+
+  it("carries a nominal day-rate, because there is no salary on it", () => {
+    // ~$1/day. The real cost is the metered API spend declared on each run, not a standing day.
+    const terms = ai().acquisitionChannel!.terms;
+    expect(terms.dailyOperatingCostCents).toBe(100);
+    expect(ai().acquisitionChannel!.operatedBy).toBe("platform");
+    // It answers in minutes, so the promise on first production is the tightest in the catalogue.
+    expect(terms.maxDaysToFirstProduction).toBeLessThanOrEqual(terms.minimumCommitmentDays);
+  });
+
+  it("is a DIFFERENT product from the agency leg it sits beside, at a different price", () => {
+    const agency = bySlug("agency-meeting-booking")!.acquisitionChannel!;
+    expect(agency.stepTransitions.length).toBeGreaterThan(ai().acquisitionChannel!.stepTransitions.length);
+    expect(agency.terms.dailyOperatingCostCents).not.toBe(
+      ai().acquisitionChannel!.terms.dailyOperatingCostCents,
+    );
   });
 });
