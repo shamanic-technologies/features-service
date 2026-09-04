@@ -1,5 +1,86 @@
 # Features Service — CLAUDE.md
 
+## A RETURN ON OUR OUTREACH LEAVES OUT A DEAL THE CUSTOMER SAYS WE DID NOT CAUSE — `?cause=`, three states, and the third is NOT a missing answer
+
+A brand contacts people through us and also through everything else it already does: referrals,
+conferences, an existing pipeline, another agency. So some of the people we email go on to buy for
+reasons that have nothing to do with our outreach, and until lead-service#511 nobody could say so —
+the value of those deals landed in the same place as the value of the deals we produced, and every
+return, pipeline revenue and cost of acquisition this service reported on OUR outreach was too good
+by however much of it we did not cause.
+
+The customer can now say so, per statement. lead-service froze `causedByOutreach` on the
+`conversion_events` row and exposes the answer on the two reads this service already consumed:
+`causedByOutreach` per row on `/internal/brands/:brandId/converted-leads`, and
+`byCause.outreach|other|unstated` on `/internal/brands/:brandId/conversion-counts`.
+
+- **`?cause=` IS A COMMA-SEPARATED SET OF THE PRODUCER'S OWN THREE WORDS** (`lib/outcome-cause.ts`),
+  any order, any case, canonicalised at parse so `unstated,outreach` and `outreach,unstated` are ONE
+  cache cell and ONE echo. Not a composite name of our own invention: one vocabulary, so a features
+  figure and a lead-service count can never be talking about different partitions.
+  - **`outreach`** — the customer states OUR outreach caused it.
+  - **`other`** — they state something else of theirs did. **A REAL DEAL**: it stays in lead-service's
+    counts, in the brand's own revenue and on the lead's own standing, and saying so honestly costs
+    them nothing they can see. That is the whole reason it is safe to say — a customer who is punished
+    for honesty stops being honest, and the number we most need is the one they stop giving us.
+  - **`unstated`** — **NOBODY WAS ASKED.** Every statement made before the field existed, and every
+    tracker-reported outcome, because a page-load tag observes a page load and cannot know why
+    somebody bought.
+- **THE THIRD STATE IS NEVER FOLDED INTO EITHER ANSWER, and that is the decision with teeth.**
+  Reading `unstated` as ours is exactly today's overstatement; reading it as theirs would wipe out the
+  measured pipeline of every brand on the platform overnight, since almost every outcome in the system
+  is in that state. So it is a state the CALLER names, and the response says which states it counted.
+- **SILENCE IS EVERY STATE, BYTE-IDENTICALLY.** A read that names nothing counts all three, which is
+  what this service has always counted. Guarded by a case that asserts an omitted parameter and an
+  explicit `cause=unstated,other,outreach` produce the SAME body. An unrecognised word — or a list
+  naming no state — is a **400 `cause_unrecognised`**, never a quiet pick. The tracker's
+  `attributed / needs_review / unmatched` vocabulary is REFUSED: it answers whether we managed to
+  identify who somebody was, lead-service deliberately kept the two apart, and so does this.
+- **A STATE LEFT OUT DROPS THE OUTCOME'S RUNG *AND* ITS STATED VALUE, at the ROW, in ONE place**
+  (`fetchObservedStepFacts`). Leaving the rung out while the amount still scaled the ladder underneath
+  it would price a lead on a deal the read is not counting — so the filter is applied before the
+  per-lead collapse, and the lead falls back to exactly the forecast it would have had with no
+  statement at all. Guarded to the cent, which is what proves the amount did not survive.
+- **DROPPING THE RUNG IS DELIBERATELY NOT STATING A `never`.** The customer said our outreach did not
+  cause this deal; they did not say the person will never buy through us, and inventing a
+  disqualification out of a cause answer would put words in their mouth. The mechanism for "it will
+  never happen" exists and is a statement a human makes.
+- **THE LEGACY INSTANTLY QUALIFICATIONS RIDE `unstated`** (`applySignalOverlays`). One carries no cause
+  and never can — nobody was ever asked about a manual qualification — so a read not counting that
+  state must not take a booked meeting or a closed deal from it either. Filtering one producer and not
+  the other is two answers to one question inside a single body.
+- **EVERY MONEY GRAIN MOVED AT ONCE, because a grain left behind reproduces the overstatement one
+  click away** — `/features/:slug/revenue` (un-grouped, `?lens=`, `?groupBy=campaignId`,
+  `?groupBy=workflow`, `?groupBy=offerId`), `/brands/:brandId/revenue`, `/brands/:brandId/offers`,
+  `/offers/:offerId/revenue`, `/offers/:offerId/funnels` and
+  `/offers/:offerId/funnels/:funnelKey/revenue`. It rides every `scope_key` (absent for the default
+  set, so today's keys are unmoved).
+- **A CONSUMER CAN ALWAYS NAME WHAT IT IS READING — `outcomeCauses` on the body.** `counted` is a fact
+  about the REQUEST and is ALWAYS present, on every grain and every path, the lens included (where no
+  figure moves with the parameter — a consumer has to be able to SEE that rather than infer it from a
+  missing key). A return that silently changed basis is worse than one that did not change: the
+  dashboard states these figures beside each other at several grains, and two of them built on
+  different bases under one label is a screen contradicting itself. The two lean TABLES carry
+  `outcomeCauses.counted` once at the payload level, since a lean row has no block of its own.
+- **`counts` IS THE DATA HALF AND IS NOT FILTERED, on purpose.** How many stated outcomes sit in each
+  state, per step, so a surface can say WHY a figure looks the way it does instead of leaving a reader
+  to guess — and the consumer leaving a state out is exactly the one that has to say how much it left
+  out. Brand-scoped, like the statement read it is tallied from. **NULL is "we could not count this"**
+  (the no-funnel short-circuit and the cold-start path never read the statements; a degraded read nulls
+  it) and never a 0 that would say the brand has no outcomes.
+- **NOTHING ELSE ON THE BODY MOVES.** The volume half (`outcomes`), the spend block, the count series
+  and every recipient figure are identical under every cause set — a deal we did not cause was still
+  outreach we reached somebody with and paid for. Guarded.
+- **A PRODUCER PREDATING THE FIELD READS AS `unstated`**, never as `false`: absent and explicit-null
+  are the same honest answer, and "they say we did not cause it" is a statement a human made.
+- Guards: `src/lib/outcome-cause.test.ts` (the vocabulary, the refusals, the canonical key) +
+  `src/routes/outcome-cause-grain.test.ts` — ONE fixture of four people in four organisations, each a
+  different sentence about the same $5,000 deal (ours / theirs / nobody-asked / a legacy
+  qualification), all four also clicked and replied so each has the identical $150.536 forecast to fall
+  back to. Every case asserts the DIVERGENCE between two cause sets on that one fixture: a suite that
+  only checked "a number came back" would pass on an implementation that ignored the parameter.
+  (Set 2026-09-04, features-service#882; Wave 2 of 3 behind lead-service#511.)
+
 ## A `/revenue` READ ANSWERS ABOUT MONEY — `?leads=outcomes` is the default, `full` is the digest's, and a row that reached NOTHING is dropped
 
 `GET /brands/:brandId/revenue` answered **10,903,573 bytes** for brand `75d7e3e8-…` (prod, 2026-08-31,

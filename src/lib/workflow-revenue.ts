@@ -80,6 +80,7 @@ import { fetchLeadsForRevenue } from "./leads-client.js";
 import { fetchRunsCostCentsByWorkflowSlug, type RunsCostCents } from "./runs-cost-client.js";
 import { fetchEventTimestamps } from "./email-status-client.js";
 import { fetchObservedStepFacts } from "./observed-steps.js";
+import { ALL_OUTCOME_CAUSES, type OutcomeCause } from "./outcome-cause.js";
 import { fetchQualifications } from "./qualifications-client.js";
 import { applySignalOverlays } from "./signal-overlays.js";
 import { fetchPublicWorkflows, type WorkflowMetadata } from "./public-stats-clients.js";
@@ -265,8 +266,15 @@ export async function computeWorkflowRevenueGroups(input: {
   headers: Headers;
   pricing: Pricing;
   priced: { economics: EffectiveEconomics; pricedFunnelKeys: SalesFunnelKey[] } | null;
+  /**
+   * WHOSE WINS THIS GRAIN COUNTS (`lib/outcome-cause.ts`). Threaded so a workflow row and the brand
+   * read above it can never be built on two different bases — a grain left behind reproduces the
+   * overstatement one click away. Defaults to every state: byte-identical to today.
+   */
+  causes?: readonly OutcomeCause[];
 }): Promise<WorkflowRevenueGroup[]> {
   const { featureSlug, brandId, funnel, headers, pricing, priced } = input;
+  const causes = input.causes ?? ALL_OUTCOME_CAUSES;
 
   const [costCentsBySlug, persons, workflows] = await Promise.all([
     fetchRunsCostCentsByWorkflowSlug(brandId, featureSlug, headers, pricing),
@@ -284,7 +292,7 @@ export async function computeWorkflowRevenueGroups(input: {
       console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
       return null;
     }),
-    fetchObservedStepFacts(brandId).catch((err) => {
+    fetchObservedStepFacts(brandId, causes).catch((err) => {
       console.warn(`[features-service] observed step statements failed (degrading to the projection alone): ${(err as Error).message}`);
       return null;
     }),
@@ -294,7 +302,7 @@ export async function computeWorkflowRevenueGroups(input: {
       return null;
     }),
   ]);
-  applySignalOverlays(persons, timestamps, observed, quals, priced?.pricedFunnelKeys ?? []);
+  applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, priced?.pricedFunnelKeys ?? [], causes);
 
   return buildWorkflowRevenueGroups({ persons, costCentsBySlug, workflows, funnel, priced });
 }

@@ -21,7 +21,14 @@ import { fetchConversionCounts, type ConversionCounts } from "../lib/conversion-
 import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { fetchSequencesByDay } from "../lib/sequences-client.js";
-import { fetchObservedStepFacts } from "../lib/observed-steps.js";
+import { fetchObservedStepFacts, type OutcomeCauseCounts } from "../lib/observed-steps.js";
+import {
+  ALL_OUTCOME_CAUSES,
+  OUTCOME_CAUSES,
+  causeScopeKeyPart,
+  parseOutcomeCauses,
+  type OutcomeCause,
+} from "../lib/outcome-cause.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
 import { observedCostPerOutcome, flooredCostPerOutcome, derivedCostPerOutcome } from "../lib/cost-engine.js";
 import {
@@ -455,6 +462,31 @@ function buildSpend(
   };
 }
 
+/**
+ * WHOSE WIN EACH OUTCOME WAS — what this body counted, and how much sits in each of the three states.
+ *
+ * A brand contacts people through us AND through everything else it already does (referrals,
+ * conferences, an existing pipeline, another agency), so some of the people we email buy for reasons
+ * that have nothing to do with our outreach. lead-service records the answer per statement and this
+ * read acts on it: see `lib/outcome-cause.ts` for the three states and why the third is not a missing
+ * answer.
+ */
+interface OutcomeCauses {
+  /**
+   * The states this body COUNTED — the echo of `?cause=`, canonical order. A fact about the REQUEST,
+   * so it is ALWAYS present on every grain and every path: a consumer reading two of these figures
+   * side by side has to be able to name the basis of each, or one screen contradicts itself.
+   */
+  counted: OutcomeCause[];
+  /**
+   * How many stated outcomes exist in each state, per step — NOT filtered by `?cause=`, because a
+   * consumer leaving a state out is exactly the consumer that has to say how much it left out. Null
+   * when the statements could not be read on this path (no funnel wired, cold start, or a degraded
+   * read): a 0 there would say the brand has no outcomes.
+   */
+  counts: OutcomeCauseCounts | null;
+}
+
 interface RevenueResponse {
   featureSlug: string;
   /**
@@ -591,6 +623,8 @@ interface RevenueResponse {
    * not. Within it, a step's `null` count is "we could not measure this" and `0` is "nobody got here".
    */
   funnelSteps: FunnelStepBreakdown | null;
+  /** WHOSE WINS THIS BODY COUNTED, and how many outcomes sit in each state. See {@link OutcomeCauses}. */
+  outcomeCauses: OutcomeCauses;
 }
 
 /**
@@ -636,6 +670,11 @@ function emptyBody(
   // leads were never read at all — the same reason `outcomes` and `funnelSteps` are null there. The
   // cold-start path DID read the leads, so it passes the two the core read alone evidences.
   attributedOutcomes: LeadOutcomeFlag[] = [],
+  // WHOSE WINS THE REQUEST COUNTED. Always stated, even here — it is a fact about the request, and a
+  // consumer must be able to name the basis of a figure whatever else the read could not measure.
+  // `counts` is null on both of these paths: the no-funnel path never reads the statements at all, and
+  // the cold-start path short-circuits before them, so a 0 would say the brand has none.
+  causes: readonly OutcomeCause[] = ALL_OUTCOME_CAUSES,
 ): RevenueBody {
   return {
     headline: { totalPipelineUsd, economicsSource: null },
@@ -657,6 +696,7 @@ function emptyBody(
     spend,
     outcomes,
     funnelSteps,
+    outcomeCauses: { counted: [...causes], counts: null },
   };
 }
 
@@ -840,6 +880,10 @@ function buildLensBody(
   economics: SalesEconomics,
   economicsSource: EconomicsSource,
   cost: RunsCostCents,
+  // Stated on the lens too: the lens prices a lead off engagement rates rather than off a stated
+  // outcome, so no figure here moves with the parameter — but a consumer reading two bodies side by
+  // side must be able to see that, rather than infer it from a missing key.
+  causes: readonly OutcomeCause[] = ALL_OUTCOME_CAUSES,
 ): RevenueBody {
   const ltr = economics.lifetimeRevenueUsd;
   const leads: LeadRow[] = [];
@@ -944,6 +988,10 @@ function buildLensBody(
     // Same gate, same reason — a chain of rungs counted over a lensed subset, divided by the brand's
     // whole spend, would state a cost per rung that belongs to neither scope.
     funnelSteps: null,
+    // The lens prices engagement through declared rates and reads no stated outcome, so nothing here
+    // moves with the parameter — `counted` is echoed anyway so a consumer can SEE that, and `counts`
+    // is null because this path never reads the statements.
+    outcomeCauses: { counted: [...causes], counts: null },
   };
 }
 
@@ -1009,6 +1057,11 @@ export async function computeFeatureRevenue(
   //               funnel (a lean group discards `funnelSteps`, so fetching for it would buy nothing).
   //   null      — the caller read them and the read degraded. Every rung's customer half is null.
   customerStepCosts?: BrandStepCosts | null,
+  // WHOSE WINS THIS READ COUNTS (`lib/outcome-cause.ts`). Defaults to every state, which is what this
+  // service counted before a caller could say — so an unchanged caller reads an unchanged body. A
+  // state left out drops its outcomes' RUNGS and their STATED VALUES from the pipeline, the return and
+  // the cost of acquisition; it never removes them from the brand's own ledger, which lead-service owns.
+  causes: readonly OutcomeCause[] = ALL_OUTCOME_CAUSES,
 ): Promise<RevenueBody> {
   // The single campaign id the campaign-SCOPED downstream reads still take: the requested campaign
   // for a single scope, `undefined` for a family (no producer accepts a campaign list). The reads
@@ -1045,10 +1098,15 @@ export async function computeFeatureRevenue(
         { committedCents: breakdown.totalSpentCents, actualCents: breakdown.actualSpentCents },
         buildSpend(breakdown, [], counts, parents),
         sequences,
+        null,
+        null,
+        null,
+        [],
+        causes,
       );
     }
     const cost = await fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing);
-    return emptyBody(null, cost, null);
+    return emptyBody(null, cost, null, null, null, null, null, [], causes);
   }
 
   // ── Wave A: the downstream reads with NO data dependency on each other, in parallel.
@@ -1140,6 +1198,7 @@ export async function computeFeatureRevenue(
       // The leads WERE read on this path, so the two outcomes the core read alone evidences are
       // attributed — "we could not price this" and "we could not measure this" are different answers.
       DELIVERY_ATTRIBUTED_OUTCOMES,
+      causes,
     );
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
@@ -1147,7 +1206,7 @@ export async function computeFeatureRevenue(
   // Lensed overview: a fixed per-signal probability from sales economics. Uses ONLY Wave A
   // (economics + persons' clicked / positiveReply) — short-circuit BEFORE Wave B + the engine.
   if (lens) {
-    return buildLensBody(lens, persons, economics, economicsSource, cost);
+    return buildLensBody(lens, persons, economics, economicsSource, cost, causes);
   }
 
   // ONLY THE LEGS OF THE FUNNELS BEING PRICED. A signal that is not a step of one of the brand's
@@ -1175,7 +1234,7 @@ export async function computeFeatureRevenue(
       console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
       return null;
     }),
-    fetchObservedStepFacts(brandId).catch((err) => {
+    fetchObservedStepFacts(brandId, causes).catch((err) => {
       console.warn(`[features-service] observed step statements failed (degrading to the projection alone): ${(err as Error).message}`);
       return null;
     }),
@@ -1198,7 +1257,7 @@ export async function computeFeatureRevenue(
 
   // The identical merge the per-workflow grain applies (`lib/signal-overlays.ts`) — one copy, so the
   // two grains can never disagree about whether a lead opened, or when.
-  applySignalOverlays(persons, timestamps, observed, quals, priced.pricedFunnelKeys);
+  applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, priced.pricedFunnelKeys, causes);
 
   // Per-lead SIGNUP / FORM-SUBMISSION outcome attribution (lead-service conversion tracker). The
   // producer matches each website conversion back to a lead we emailed and exposes the DISTINCT
@@ -1265,6 +1324,10 @@ export async function computeFeatureRevenue(
     funnelSteps: stepsFunnel
       ? buildFunnelSteps(stepsFunnel, persons, cost.committedCents, stepEvidence, customerStepMap(stepCosts))
       : null,
+    // WHOSE WINS THIS BODY COUNTED, and how many outcomes sit in each state. `counted` is a fact about
+    // the REQUEST and is always stated, so a consumer can never be looking at a figure whose basis it
+    // cannot name; `counts` is a fact about the DATA and is null when the statements could not be read.
+    outcomeCauses: { counted: [...causes], counts: observed?.causeCounts ?? null },
   };
 }
 
@@ -1368,6 +1431,18 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     return res.status(400).json({ error: `leads must be one of: ${LEAD_DETAIL_VALUES.join(", ")}` });
   }
 
+  // WHOSE WINS THIS READ COUNTS. Omitted → every state → byte-identical to today. An unrecognised
+  // word is a 400, never a silent pick: counting a set the caller did not ask for is the whole
+  // misunderstanding this parameter exists to remove. See lib/outcome-cause.ts.
+  const causes = parseOutcomeCauses(req.query.cause);
+  if (causes === null) {
+    return res.status(400).json({
+      error: `cause must be a comma-separated subset of: ${OUTCOME_CAUSES.join(", ")}`,
+      reason: "cause_unrecognised",
+    });
+  }
+  const causeKey = causeScopeKeyPart(causes);
+
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) {
@@ -1429,7 +1504,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         // No `campaignId` and no `funnel`: the grain is the brand's whole spend, priced on the
         // brand's own declared funnels (a workflow states none of its own). `econ` + `decl` carry the
         // economics + declaration the pipeline is priced on, exactly as the sibling grains do.
-        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "workflow", pricing, econ, decl }),
+        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "workflow", pricing, econ, decl, cause: causeKey }),
         orgId,
         compute: async () => {
           const groups = await computeWorkflowRevenueGroups({
@@ -1439,6 +1514,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
             headers,
             pricing,
             priced: brandPriced ?? null,
+            causes,
           });
 
           traceEvent(runId, { service: "features-service", event: "feature-revenue-by-workflow", detail: `featureSlug=${featureSlug}, brandId=${brandId}, workflows=${groups.length}` }, req.headers).catch(() => {});
@@ -1473,7 +1549,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         // the offer itself states — brand-service owns that, and inventing it here would price a funnel
         // the offer never declared). `econ` + `decl` carry the economics + declaration exactly as the
         // sibling grains do.
-        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "offerId", pricing, econ, decl }),
+        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "offerId", pricing, econ, decl, cause: causeKey }),
         orgId,
         compute: async () => {
           const offers = await fetchOfferCampaigns(brandId, featureSlug, headers);
@@ -1486,7 +1562,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
               // `pricingForIdentity(null)` is the BRAND's pick, deliberately: an offer states no funnel
               // to this service, and its campaigns may state several, so pricing on one member's funnel
               // would answer for the offer with one campaign's vocabulary.
-              const body = await computeFeatureRevenue(featureSlug, brandId, campaignIds, funnel, headers, undefined, pricingForIdentity(null), false, pricing, requestedFunnel);
+              const body = await computeFeatureRevenue(featureSlug, brandId, campaignIds, funnel, headers, undefined, pricingForIdentity(null), false, pricing, requestedFunnel, undefined, undefined, causes);
               return { offerId: id, campaignIds, headline: body.headline, costEconomics: body.costEconomics };
             }),
           );
@@ -1505,7 +1581,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     if (groupBy === "campaignId") {
       const payload = await servedCached({
         view: "revenue-grouped",
-        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing, econ, decl }),
+        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing, econ, decl, cause: causeKey }),
         orgId,
         compute: async () => {
           const [campaignIds, families] = await Promise.all([
@@ -1534,7 +1610,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
                 // own still belongs to the campaign, and dropping it would drop its leads.
                 const identity = families.identityOf(idsWithRuns[0]);
                 const scope = identity?.campaignIds ?? idsWithRuns;
-                const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, pricingForIdentity(identity?.funnelKey), false, pricing, requestedFunnel);
+                const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, pricingForIdentity(identity?.funnelKey), false, pricing, requestedFunnel, undefined, undefined, causes);
                 return idsWithRuns.map((cid) => ({
                   campaignId: cid,
                   campaignIdentity: describeIdentity(identity, cid),
@@ -1600,13 +1676,16 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         // The narrow body and the hydrated one are two different answers, so they are two cells —
         // which also keeps the stored snapshot narrow for the read that every browser makes.
         leads: leadDetail,
+        // A read counting a different set of causes is a different answer, so it is a different cell.
+        // Absent for the default set → dropped by buildScopeKey → today's keys are unmoved.
+        cause: causeKey,
       }),
       orgId,
       compute: async () => {
         traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
 
         // Overview (no lens) emits the canonical spend block; the lens path omits it (brand-total concept).
-        const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, lens, pricingForIdentity(campaignId ? identity?.funnelKey : null), !lens, pricing, requestedFunnel);
+        const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, lens, pricingForIdentity(campaignId ? identity?.funnelKey : null), !lens, pricing, requestedFunnel, undefined, undefined, causes);
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 

@@ -1977,6 +1977,61 @@
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
+          "outcomeCauses": {
+            "type": "object",
+            "properties": {
+              "counted": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "outreach",
+                    "other",
+                    "unstated"
+                  ]
+                },
+                "description": "WHOSE WINS THIS BODY COUNTED — the echo of `?cause=`, in canonical order. A fact about the REQUEST, so it is ALWAYS present, on every grain and on every path: a return that silently changed basis is worse than one that did not change, because the dashboard states these figures beside each other at several grains and two of them built on different bases under the same label is one screen contradicting itself. Omitted `?cause=` echoes all three, which is what this service counted before the parameter existed."
+              },
+              "counts": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "outreach": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Outcomes the customer states OUR outreach caused, per step."
+                  },
+                  "other": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Outcomes the customer states something else of theirs caused — a referral, a conference, their existing pipeline, another agency. REAL outcomes: they stay in lead-service's own counts, in the brand's own revenue and on the lead's own standing. Stating one honestly costs the customer nothing they can see; what it buys is leaving its value out of the return computed on OUR outreach."
+                  },
+                  "unstated": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Outcomes NOBODY WAS ASKED about — every statement made before the field existed, and every tracker-reported one, because a page-load tag observes a page load and cannot know why somebody bought. Never folded into either other answer: reading it as ours is the overstatement this parameter removes, and reading it as theirs would wipe out the measured pipeline of every brand on the platform overnight. Almost every outcome in the system is in this state today, which is exactly why a surface has to be able to SAY so rather than leave a reader to guess why a figure looks the way it does."
+                  }
+                },
+                "required": [
+                  "outreach",
+                  "other",
+                  "unstated"
+                ],
+                "description": "How many stated outcomes sit in each of the three states, keyed by step (signup | form_submission | meeting_booked | meeting_attended | sale). NOT filtered by `?cause=` — the point is that a consumer leaving a state out can say how much it left out. BRAND-scoped, like the statement read it comes from. Null when the statements could not be read on this path: the no-funnel short-circuit and the cold-start path never read them, and a degraded read nulls it rather than reporting a 0 that would say the brand has no outcomes. The legacy instantly qualifications are a different producer carrying no cause and are counted nowhere here."
+              }
+            },
+            "required": [
+              "counted",
+              "counts"
+            ],
+            "description": "WHOSE WIN EACH OUTCOME WAS. A brand contacts people through us AND through everything else it already does — referrals, conferences, an existing pipeline, another agency — so some of the people we email buy for reasons that have nothing to do with our outreach. lead-service records the answer per statement (`causedByOutreach`); this block states what this read counted and what exists. Deliberately NOT the tracker's `attributed / needs_review / unmatched` vocabulary, which answers whether we managed to identify who somebody was."
+          },
           "funnelSteps": {
             "type": "object",
             "nullable": true,
@@ -2146,6 +2201,7 @@
           "attributedOutcomes",
           "events",
           "outcomes",
+          "outcomeCauses",
           "funnelSteps"
         ]
       },
@@ -6088,6 +6144,61 @@
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
+          "outcomeCauses": {
+            "type": "object",
+            "properties": {
+              "counted": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "outreach",
+                    "other",
+                    "unstated"
+                  ]
+                },
+                "description": "WHOSE WINS THIS BODY COUNTED — the echo of `?cause=`, in canonical order. A fact about the REQUEST, so it is ALWAYS present, on every grain and on every path: a return that silently changed basis is worse than one that did not change, because the dashboard states these figures beside each other at several grains and two of them built on different bases under the same label is one screen contradicting itself. Omitted `?cause=` echoes all three, which is what this service counted before the parameter existed."
+              },
+              "counts": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "outreach": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Outcomes the customer states OUR outreach caused, per step."
+                  },
+                  "other": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Outcomes the customer states something else of theirs caused — a referral, a conference, their existing pipeline, another agency. REAL outcomes: they stay in lead-service's own counts, in the brand's own revenue and on the lead's own standing. Stating one honestly costs the customer nothing they can see; what it buys is leaving its value out of the return computed on OUR outreach."
+                  },
+                  "unstated": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Outcomes NOBODY WAS ASKED about — every statement made before the field existed, and every tracker-reported one, because a page-load tag observes a page load and cannot know why somebody bought. Never folded into either other answer: reading it as ours is the overstatement this parameter removes, and reading it as theirs would wipe out the measured pipeline of every brand on the platform overnight. Almost every outcome in the system is in this state today, which is exactly why a surface has to be able to SAY so rather than leave a reader to guess why a figure looks the way it does."
+                  }
+                },
+                "required": [
+                  "outreach",
+                  "other",
+                  "unstated"
+                ],
+                "description": "How many stated outcomes sit in each of the three states, keyed by step (signup | form_submission | meeting_booked | meeting_attended | sale). NOT filtered by `?cause=` — the point is that a consumer leaving a state out can say how much it left out. BRAND-scoped, like the statement read it comes from. Null when the statements could not be read on this path: the no-funnel short-circuit and the cold-start path never read them, and a degraded read nulls it rather than reporting a 0 that would say the brand has no outcomes. The legacy instantly qualifications are a different producer carrying no cause and are counted nowhere here."
+              }
+            },
+            "required": [
+              "counted",
+              "counts"
+            ],
+            "description": "WHOSE WIN EACH OUTCOME WAS. A brand contacts people through us AND through everything else it already does — referrals, conferences, an existing pipeline, another agency — so some of the people we email buy for reasons that have nothing to do with our outreach. lead-service records the answer per statement (`causedByOutreach`); this block states what this read counted and what exists. Deliberately NOT the tracker's `attributed / needs_review / unmatched` vocabulary, which answers whether we managed to identify who somebody was."
+          },
           "funnelSteps": {
             "type": "object",
             "nullable": true,
@@ -6356,6 +6467,7 @@
           "attributedOutcomes",
           "events",
           "outcomes",
+          "outcomeCauses",
           "funnelSteps",
           "offerId",
           "brandId",
@@ -6370,6 +6482,26 @@
           },
           "brandId": {
             "type": "string"
+          },
+          "outcomeCauses": {
+            "type": "object",
+            "properties": {
+              "counted": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "outreach",
+                    "other",
+                    "unstated"
+                  ]
+                },
+                "description": "WHOSE WINS EVERY ROW COUNTED — the echo of `?cause=`, canonical order, stated ONCE for the table because a lean row carries no block of its own. Always present: the money in these rows moves with the parameter, and a consumer has to be able to name the basis of a figure it is about to render beside another. Omitted `?cause=` echoes all three. The per-state COUNTS ride the full read (`outcomeCauses.counts` on /revenue), which is where a surface explaining a figure gets them."
+              }
+            },
+            "required": [
+              "counted"
+            ]
           },
           "costBasis": {
             "type": "string",
@@ -6730,6 +6862,7 @@
         "required": [
           "offerId",
           "brandId",
+          "outcomeCauses",
           "costBasis",
           "costCoverage",
           "customerCost",
@@ -8627,6 +8760,61 @@
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
+          "outcomeCauses": {
+            "type": "object",
+            "properties": {
+              "counted": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "outreach",
+                    "other",
+                    "unstated"
+                  ]
+                },
+                "description": "WHOSE WINS THIS BODY COUNTED — the echo of `?cause=`, in canonical order. A fact about the REQUEST, so it is ALWAYS present, on every grain and on every path: a return that silently changed basis is worse than one that did not change, because the dashboard states these figures beside each other at several grains and two of them built on different bases under the same label is one screen contradicting itself. Omitted `?cause=` echoes all three, which is what this service counted before the parameter existed."
+              },
+              "counts": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "outreach": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Outcomes the customer states OUR outreach caused, per step."
+                  },
+                  "other": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Outcomes the customer states something else of theirs caused — a referral, a conference, their existing pipeline, another agency. REAL outcomes: they stay in lead-service's own counts, in the brand's own revenue and on the lead's own standing. Stating one honestly costs the customer nothing they can see; what it buys is leaving its value out of the return computed on OUR outreach."
+                  },
+                  "unstated": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Outcomes NOBODY WAS ASKED about — every statement made before the field existed, and every tracker-reported one, because a page-load tag observes a page load and cannot know why somebody bought. Never folded into either other answer: reading it as ours is the overstatement this parameter removes, and reading it as theirs would wipe out the measured pipeline of every brand on the platform overnight. Almost every outcome in the system is in this state today, which is exactly why a surface has to be able to SAY so rather than leave a reader to guess why a figure looks the way it does."
+                  }
+                },
+                "required": [
+                  "outreach",
+                  "other",
+                  "unstated"
+                ],
+                "description": "How many stated outcomes sit in each of the three states, keyed by step (signup | form_submission | meeting_booked | meeting_attended | sale). NOT filtered by `?cause=` — the point is that a consumer leaving a state out can say how much it left out. BRAND-scoped, like the statement read it comes from. Null when the statements could not be read on this path: the no-funnel short-circuit and the cold-start path never read them, and a degraded read nulls it rather than reporting a 0 that would say the brand has no outcomes. The legacy instantly qualifications are a different producer carrying no cause and are counted nowhere here."
+              }
+            },
+            "required": [
+              "counted",
+              "counts"
+            ],
+            "description": "WHOSE WIN EACH OUTCOME WAS. A brand contacts people through us AND through everything else it already does — referrals, conferences, an existing pipeline, another agency — so some of the people we email buy for reasons that have nothing to do with our outreach. lead-service records the answer per statement (`causedByOutreach`); this block states what this read counted and what exists. Deliberately NOT the tracker's `attributed / needs_review / unmatched` vocabulary, which answers whether we managed to identify who somebody was."
+          },
           "funnelSteps": {
             "type": "object",
             "nullable": true,
@@ -9064,6 +9252,7 @@
           "attributedOutcomes",
           "events",
           "outcomes",
+          "outcomeCauses",
           "funnelSteps",
           "offerId",
           "brandId",
@@ -10977,6 +11166,61 @@
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
+          "outcomeCauses": {
+            "type": "object",
+            "properties": {
+              "counted": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "outreach",
+                    "other",
+                    "unstated"
+                  ]
+                },
+                "description": "WHOSE WINS THIS BODY COUNTED — the echo of `?cause=`, in canonical order. A fact about the REQUEST, so it is ALWAYS present, on every grain and on every path: a return that silently changed basis is worse than one that did not change, because the dashboard states these figures beside each other at several grains and two of them built on different bases under the same label is one screen contradicting itself. Omitted `?cause=` echoes all three, which is what this service counted before the parameter existed."
+              },
+              "counts": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "outreach": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Outcomes the customer states OUR outreach caused, per step."
+                  },
+                  "other": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Outcomes the customer states something else of theirs caused — a referral, a conference, their existing pipeline, another agency. REAL outcomes: they stay in lead-service's own counts, in the brand's own revenue and on the lead's own standing. Stating one honestly costs the customer nothing they can see; what it buys is leaving its value out of the return computed on OUR outreach."
+                  },
+                  "unstated": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Outcomes NOBODY WAS ASKED about — every statement made before the field existed, and every tracker-reported one, because a page-load tag observes a page load and cannot know why somebody bought. Never folded into either other answer: reading it as ours is the overstatement this parameter removes, and reading it as theirs would wipe out the measured pipeline of every brand on the platform overnight. Almost every outcome in the system is in this state today, which is exactly why a surface has to be able to SAY so rather than leave a reader to guess why a figure looks the way it does."
+                  }
+                },
+                "required": [
+                  "outreach",
+                  "other",
+                  "unstated"
+                ],
+                "description": "How many stated outcomes sit in each of the three states, keyed by step (signup | form_submission | meeting_booked | meeting_attended | sale). NOT filtered by `?cause=` — the point is that a consumer leaving a state out can say how much it left out. BRAND-scoped, like the statement read it comes from. Null when the statements could not be read on this path: the no-funnel short-circuit and the cold-start path never read them, and a degraded read nulls it rather than reporting a 0 that would say the brand has no outcomes. The legacy instantly qualifications are a different producer carrying no cause and are counted nowhere here."
+              }
+            },
+            "required": [
+              "counted",
+              "counts"
+            ],
+            "description": "WHOSE WIN EACH OUTCOME WAS. A brand contacts people through us AND through everything else it already does — referrals, conferences, an existing pipeline, another agency — so some of the people we email buy for reasons that have nothing to do with our outreach. lead-service records the answer per statement (`causedByOutreach`); this block states what this read counted and what exists. Deliberately NOT the tracker's `attributed / needs_review / unmatched` vocabulary, which answers whether we managed to identify who somebody was."
+          },
           "funnelSteps": {
             "type": "object",
             "nullable": true,
@@ -11242,6 +11486,7 @@
           "attributedOutcomes",
           "events",
           "outcomes",
+          "outcomeCauses",
           "funnelSteps",
           "brandId",
           "channels"
@@ -11250,6 +11495,26 @@
       "BrandOffersResponse": {
         "type": "object",
         "properties": {
+          "outcomeCauses": {
+            "type": "object",
+            "properties": {
+              "counted": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "outreach",
+                    "other",
+                    "unstated"
+                  ]
+                },
+                "description": "WHOSE WINS EVERY ROW COUNTED — the echo of `?cause=`, canonical order, stated ONCE for the table because a lean row carries no block of its own. Always present: the money in these rows moves with the parameter, and a consumer has to be able to name the basis of a figure it is about to render beside another. Omitted `?cause=` echoes all three. The per-state COUNTS ride the full read (`outcomeCauses.counts` on /revenue), which is where a surface explaining a figure gets them."
+              }
+            },
+            "required": [
+              "counted"
+            ]
+          },
           "costBasis": {
             "type": "string",
             "enum": [
@@ -11373,6 +11638,7 @@
           }
         },
         "required": [
+          "outcomeCauses",
           "costBasis",
           "brandId",
           "offers"
@@ -15536,6 +15802,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "WHOSE WINS THIS READ COUNTS — a comma-separated subset of outreach | other | unstated (any order, any case). A brand contacts people through us AND through everything else it already does (referrals, conferences, an existing pipeline, another agency), so some of the people we email buy for reasons that have nothing to do with our outreach; lead-service records the answer per statement and this parameter decides which answers the pipeline revenue, the return and the cost of acquisition are computed over. 'outreach' — the customer states OUR outreach caused it. 'other' — they state something else of theirs did: a REAL outcome that stays in their own counts, their own revenue and their own ledger, simply not one to compute OUR return on. 'unstated' — NOBODY WAS ASKED, which is every statement made before the field existed and every tracker-reported one (a page-load tag cannot know why somebody bought); it is never folded into either other answer, because reading it as ours is the overstatement this removes and reading it as theirs would wipe out the measured pipeline of every brand on the platform. A state left out drops its outcomes' RUNGS and their STATED VALUES — never both halves apart, or a lead would be priced on a deal the read is not counting — and the legacy instantly qualifications go with 'unstated', since nobody was ever asked about one. Omitted → all three, byte-identical to what this service has always counted. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. Deliberately NOT the tracker's attributed / needs_review / unmatched vocabulary, which answers whether we identified who somebody was. The echo rides every response as `outcomeCauses.counted`."
+            },
+            "required": false,
+            "description": "WHOSE WINS THIS READ COUNTS — a comma-separated subset of outreach | other | unstated (any order, any case). A brand contacts people through us AND through everything else it already does (referrals, conferences, an existing pipeline, another agency), so some of the people we email buy for reasons that have nothing to do with our outreach; lead-service records the answer per statement and this parameter decides which answers the pipeline revenue, the return and the cost of acquisition are computed over. 'outreach' — the customer states OUR outreach caused it. 'other' — they state something else of theirs did: a REAL outcome that stays in their own counts, their own revenue and their own ledger, simply not one to compute OUR return on. 'unstated' — NOBODY WAS ASKED, which is every statement made before the field existed and every tracker-reported one (a page-load tag cannot know why somebody bought); it is never folded into either other answer, because reading it as ours is the overstatement this removes and reading it as theirs would wipe out the measured pipeline of every brand on the platform. A state left out drops its outcomes' RUNGS and their STATED VALUES — never both halves apart, or a lead would be priced on a deal the read is not counting — and the legacy instantly qualifications go with 'unstated', since nobody was ever asked about one. Omitted → all three, byte-identical to what this service has always counted. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. Deliberately NOT the tracker's attributed / needs_review / unmatched vocabulary, which answers whether we identified who somebody was. The echo rides every response as `outcomeCauses.counted`.",
+            "name": "cause",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "enum": [
                 "outcomes",
                 "full"
@@ -18770,6 +19046,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "WHOSE WINS THIS READ COUNTS — a comma-separated subset of outreach | other | unstated (any order, any case). A brand contacts people through us AND through everything else it already does (referrals, conferences, an existing pipeline, another agency), so some of the people we email buy for reasons that have nothing to do with our outreach; lead-service records the answer per statement and this parameter decides which answers the pipeline revenue, the return and the cost of acquisition are computed over. 'outreach' — the customer states OUR outreach caused it. 'other' — they state something else of theirs did: a REAL outcome that stays in their own counts, their own revenue and their own ledger, simply not one to compute OUR return on. 'unstated' — NOBODY WAS ASKED, which is every statement made before the field existed and every tracker-reported one (a page-load tag cannot know why somebody bought); it is never folded into either other answer, because reading it as ours is the overstatement this removes and reading it as theirs would wipe out the measured pipeline of every brand on the platform. A state left out drops its outcomes' RUNGS and their STATED VALUES — never both halves apart, or a lead would be priced on a deal the read is not counting — and the legacy instantly qualifications go with 'unstated', since nobody was ever asked about one. Omitted → all three, byte-identical to what this service has always counted. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. Deliberately NOT the tracker's attributed / needs_review / unmatched vocabulary, which answers whether we identified who somebody was. The echo rides every response as `outcomeCauses.counted`."
+            },
+            "required": false,
+            "description": "WHOSE WINS THIS READ COUNTS — a comma-separated subset of outreach | other | unstated (any order, any case). A brand contacts people through us AND through everything else it already does (referrals, conferences, an existing pipeline, another agency), so some of the people we email buy for reasons that have nothing to do with our outreach; lead-service records the answer per statement and this parameter decides which answers the pipeline revenue, the return and the cost of acquisition are computed over. 'outreach' — the customer states OUR outreach caused it. 'other' — they state something else of theirs did: a REAL outcome that stays in their own counts, their own revenue and their own ledger, simply not one to compute OUR return on. 'unstated' — NOBODY WAS ASKED, which is every statement made before the field existed and every tracker-reported one (a page-load tag cannot know why somebody bought); it is never folded into either other answer, because reading it as ours is the overstatement this removes and reading it as theirs would wipe out the measured pipeline of every brand on the platform. A state left out drops its outcomes' RUNGS and their STATED VALUES — never both halves apart, or a lead would be priced on a deal the read is not counting — and the legacy instantly qualifications go with 'unstated', since nobody was ever asked about one. Omitted → all three, byte-identical to what this service has always counted. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. Deliberately NOT the tracker's attributed / needs_review / unmatched vocabulary, which answers whether we identified who somebody was. The echo rides every response as `outcomeCauses.counted`.",
+            "name": "cause",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "enum": [
                 "outcomes",
                 "full"
@@ -18949,6 +19235,16 @@
             "required": false,
             "description": "Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross.",
             "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "WHOSE WINS EACH ROW COUNTS — a comma-separated subset of outreach | other | unstated, the same parameter and the same three states /brands/{brandId}/revenue takes (see there for why the third is not a missing answer). Threaded so a lean table row and the full read it drills into can never be built on two different bases. Omitted → all three, byte-identical to today. An unrecognised word is a 400 with reason 'cause_unrecognised'."
+            },
+            "required": false,
+            "description": "WHOSE WINS EACH ROW COUNTS — a comma-separated subset of outreach | other | unstated, the same parameter and the same three states /brands/{brandId}/revenue takes (see there for why the third is not a missing answer). Threaded so a lean table row and the full read it drills into can never be built on two different bases. Omitted → all three, byte-identical to today. An unrecognised word is a 400 with reason 'cause_unrecognised'.",
+            "name": "cause",
             "in": "query"
           },
           {
@@ -19493,6 +19789,16 @@
             "required": false,
             "description": "Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross.",
             "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "WHOSE WINS THIS READ COUNTS — a comma-separated subset of outreach | other | unstated (any order, any case). A brand contacts people through us AND through everything else it already does (referrals, conferences, an existing pipeline, another agency), so some of the people we email buy for reasons that have nothing to do with our outreach; lead-service records the answer per statement and this parameter decides which answers the pipeline revenue, the return and the cost of acquisition are computed over. 'outreach' — the customer states OUR outreach caused it. 'other' — they state something else of theirs did: a REAL outcome that stays in their own counts, their own revenue and their own ledger, simply not one to compute OUR return on. 'unstated' — NOBODY WAS ASKED, which is every statement made before the field existed and every tracker-reported one (a page-load tag cannot know why somebody bought); it is never folded into either other answer, because reading it as ours is the overstatement this removes and reading it as theirs would wipe out the measured pipeline of every brand on the platform. A state left out drops its outcomes' RUNGS and their STATED VALUES — never both halves apart, or a lead would be priced on a deal the read is not counting — and the legacy instantly qualifications go with 'unstated', since nobody was ever asked about one. Omitted → all three, byte-identical to what this service has always counted. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. Deliberately NOT the tracker's attributed / needs_review / unmatched vocabulary, which answers whether we identified who somebody was. The echo rides every response as `outcomeCauses.counted`."
+            },
+            "required": false,
+            "description": "WHOSE WINS THIS READ COUNTS — a comma-separated subset of outreach | other | unstated (any order, any case). A brand contacts people through us AND through everything else it already does (referrals, conferences, an existing pipeline, another agency), so some of the people we email buy for reasons that have nothing to do with our outreach; lead-service records the answer per statement and this parameter decides which answers the pipeline revenue, the return and the cost of acquisition are computed over. 'outreach' — the customer states OUR outreach caused it. 'other' — they state something else of theirs did: a REAL outcome that stays in their own counts, their own revenue and their own ledger, simply not one to compute OUR return on. 'unstated' — NOBODY WAS ASKED, which is every statement made before the field existed and every tracker-reported one (a page-load tag cannot know why somebody bought); it is never folded into either other answer, because reading it as ours is the overstatement this removes and reading it as theirs would wipe out the measured pipeline of every brand on the platform. A state left out drops its outcomes' RUNGS and their STATED VALUES — never both halves apart, or a lead would be priced on a deal the read is not counting — and the legacy instantly qualifications go with 'unstated', since nobody was ever asked about one. Omitted → all three, byte-identical to what this service has always counted. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. Deliberately NOT the tracker's attributed / needs_review / unmatched vocabulary, which answers whether we identified who somebody was. The echo rides every response as `outcomeCauses.counted`.",
+            "name": "cause",
             "in": "query"
           },
           {
@@ -20062,6 +20368,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "WHOSE WINS THIS READ COUNTS — a comma-separated subset of outreach | other | unstated (any order, any case). A brand contacts people through us AND through everything else it already does (referrals, conferences, an existing pipeline, another agency), so some of the people we email buy for reasons that have nothing to do with our outreach; lead-service records the answer per statement and this parameter decides which answers the pipeline revenue, the return and the cost of acquisition are computed over. 'outreach' — the customer states OUR outreach caused it. 'other' — they state something else of theirs did: a REAL outcome that stays in their own counts, their own revenue and their own ledger, simply not one to compute OUR return on. 'unstated' — NOBODY WAS ASKED, which is every statement made before the field existed and every tracker-reported one (a page-load tag cannot know why somebody bought); it is never folded into either other answer, because reading it as ours is the overstatement this removes and reading it as theirs would wipe out the measured pipeline of every brand on the platform. A state left out drops its outcomes' RUNGS and their STATED VALUES — never both halves apart, or a lead would be priced on a deal the read is not counting — and the legacy instantly qualifications go with 'unstated', since nobody was ever asked about one. Omitted → all three, byte-identical to what this service has always counted. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. Deliberately NOT the tracker's attributed / needs_review / unmatched vocabulary, which answers whether we identified who somebody was. The echo rides every response as `outcomeCauses.counted`."
+            },
+            "required": false,
+            "description": "WHOSE WINS THIS READ COUNTS — a comma-separated subset of outreach | other | unstated (any order, any case). A brand contacts people through us AND through everything else it already does (referrals, conferences, an existing pipeline, another agency), so some of the people we email buy for reasons that have nothing to do with our outreach; lead-service records the answer per statement and this parameter decides which answers the pipeline revenue, the return and the cost of acquisition are computed over. 'outreach' — the customer states OUR outreach caused it. 'other' — they state something else of theirs did: a REAL outcome that stays in their own counts, their own revenue and their own ledger, simply not one to compute OUR return on. 'unstated' — NOBODY WAS ASKED, which is every statement made before the field existed and every tracker-reported one (a page-load tag cannot know why somebody bought); it is never folded into either other answer, because reading it as ours is the overstatement this removes and reading it as theirs would wipe out the measured pipeline of every brand on the platform. A state left out drops its outcomes' RUNGS and their STATED VALUES — never both halves apart, or a lead would be priced on a deal the read is not counting — and the legacy instantly qualifications go with 'unstated', since nobody was ever asked about one. Omitted → all three, byte-identical to what this service has always counted. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. Deliberately NOT the tracker's attributed / needs_review / unmatched vocabulary, which answers whether we identified who somebody was. The echo rides every response as `outcomeCauses.counted`.",
+            "name": "cause",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "enum": [
                 "outcomes",
                 "full"
@@ -20241,6 +20557,16 @@
             "required": false,
             "description": "Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross.",
             "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "WHOSE WINS EACH ROW COUNTS — a comma-separated subset of outreach | other | unstated, the same parameter and the same three states /brands/{brandId}/revenue takes (see there for why the third is not a missing answer). Threaded so a lean table row and the full read it drills into can never be built on two different bases. Omitted → all three, byte-identical to today. An unrecognised word is a 400 with reason 'cause_unrecognised'."
+            },
+            "required": false,
+            "description": "WHOSE WINS EACH ROW COUNTS — a comma-separated subset of outreach | other | unstated, the same parameter and the same three states /brands/{brandId}/revenue takes (see there for why the third is not a missing answer). Threaded so a lean table row and the full read it drills into can never be built on two different bases. Omitted → all three, byte-identical to today. An unrecognised word is a 400 with reason 'cause_unrecognised'.",
+            "name": "cause",
             "in": "query"
           },
           {
