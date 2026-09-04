@@ -74,6 +74,17 @@ export interface StepOutcomeRow {
   valueCents: number | null;
   /** Whether a human stated it or the website tracker reported it. Frozen at write, never inferred. */
   source: "manual" | "tracker";
+  /**
+   * WHOSE WIN IT WAS. `true` — the customer states OUR outreach caused it. `false` — they state
+   * something else of theirs did (a referral, a conference, their existing pipeline, another agency):
+   * the outcome is REAL and stays in every count they read, it is simply not one to compute OUR return
+   * on. `null` — NOBODY WAS ASKED, which is every statement made before the field existed and every
+   * tracker-reported outcome, because a page-load tag cannot know why somebody bought.
+   *
+   * Null is never read as either answer — see `lib/outcome-cause.ts`. A producer predating
+   * lead-service#511 omits the field entirely, which lands here as the same honest `null`.
+   */
+  causedByOutreach: boolean | null;
 }
 
 function leadServiceConfig(): { url: string; apiKey: string } {
@@ -140,6 +151,10 @@ export async function fetchStepOutcomes(
                 );
               })(),
       source: row.source === "manual" ? "manual" : "tracker",
+      // Absent (a producer predating the field) and explicitly `null` (nobody was asked) are the SAME
+      // honest answer, and neither may become `false`: "they say we did not cause it" is a statement a
+      // human made, and inventing one would put words in the customer's mouth.
+      causedByOutreach: typeof row.causedByOutreach === "boolean" ? row.causedByOutreach : null,
     } satisfies StepOutcomeRow;
   });
 }

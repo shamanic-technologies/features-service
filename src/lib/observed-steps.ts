@@ -4,6 +4,12 @@ import {
   type LeadStepOutcome,
   type StepOutcomeRow,
 } from "./step-outcomes-client.js";
+import {
+  ALL_OUTCOME_CAUSES,
+  causeOf,
+  zeroCauseTally,
+  type OutcomeCause,
+} from "./outcome-cause.js";
 
 /**
  * WHAT A HUMAN OBSERVED, TURNED INTO WHAT THE ENGINE PRICES.
@@ -23,6 +29,19 @@ import {
  *     dead lead can be told from a pending one. The pending lead keeps the forecast its evidence
  *     earns. The dead one has no path left, and a forecast of a thing that will not happen is worth
  *     nothing.
+ *
+ * ── WHOSE WIN IT WAS ────────────────────────────────────────────────────────────────────────────
+ *
+ * A statement now also carries WHO caused the outcome (`lib/outcome-cause.ts`), and this is the ONE
+ * place the answer is acted on. A row whose state the caller is not counting is DROPPED before the
+ * collapse — so it contributes neither its RUNG nor its VALUE, and the lead falls back to whatever
+ * else it has. Filtering at the row is what keeps the two coherent: leaving the rung out while its
+ * stated amount still scaled the ladder would price a lead on a deal this read is not counting.
+ *
+ * Dropping the rung is deliberately NOT the same as stating a `never`. The customer said our outreach
+ * did not cause this deal; they did not say the person will never buy through us, and inventing a
+ * disqualification from a cause answer would put words in their mouth. The mechanism for "it will
+ * never happen" exists and is a statement a human makes.
  */
 
 /** The producer's step vocabulary → the engine's signal. One entry per step a lead can be stated at. */
@@ -52,6 +71,24 @@ const ALL_STEPS: readonly LeadStepOutcome[] = [
   "sale",
 ];
 
+/** How many stated outcomes sit in each of the three cause states, per step. */
+export type OutcomeCauseCounts = Record<OutcomeCause, Record<LeadStepOutcome, number>>;
+
+/** What this brand's statements say, and how much of it each cause state accounts for. */
+export interface ObservedStepFacts {
+  /** Per-lead facts, keyed by the canonical email this service joins on — the COUNTED rows only. */
+  byEmail: Map<string, ObservedLeadFacts>;
+  /**
+   * EVERY stated outcome this read saw, tallied by cause state and step — the filter is NOT applied
+   * here on purpose. A consumer that is leaving a state out has to be able to say how much it left
+   * out, and a surface that cannot distinguish "nobody was asked" from "there were none" leaves a
+   * reader to guess why a figure looks the way it does. Brand-scoped, exactly like the read it comes
+   * from. The five priced/statable steps only; the legacy instantly qualifications are a different
+   * producer and carry no cause, so nothing here counts them.
+   */
+  causeCounts: OutcomeCauseCounts;
+}
+
 /** What a human observed about one lead, in the engine's own terms. */
 export interface ObservedLeadFacts {
   /** signal → the ISO date the lead reached that rung (null when the outcome is genuinely undated). */
@@ -80,13 +117,23 @@ export interface ObservedLeadFacts {
  */
 export async function fetchObservedStepFacts(
   brandId: string,
-): Promise<Map<string, ObservedLeadFacts>> {
+  /**
+   * WHICH CAUSE STATES to count. Defaults to every state — what this service counted before the
+   * caller could say, so an unchanged caller reads an unchanged answer.
+   */
+  causes: readonly OutcomeCause[] = ALL_OUTCOME_CAUSES,
+): Promise<ObservedStepFacts> {
   const [outcomesByStep, dead] = await Promise.all([
     Promise.all(ALL_STEPS.map((step) => fetchStepOutcomes(brandId, step))).then(
       (lists) => new Map(ALL_STEPS.map((step, i) => [step, lists[i]] as const)),
     ),
     fetchStepDisqualifications(brandId),
   ]);
+
+  const counted = new Set<OutcomeCause>(causes);
+  const causeCounts = zeroCauseTally(
+    () => Object.fromEntries(ALL_STEPS.map((s) => [s, 0])) as Record<LeadStepOutcome, number>,
+  );
 
   const byEmail = new Map<string, ObservedLeadFacts>();
   const facts = (email: string): ObservedLeadFacts => {
@@ -102,6 +149,10 @@ export async function fetchObservedStepFacts(
   // and each rung it passed keeps its own date.
   for (const step of ALL_STEPS) {
     for (const row of outcomesByStep.get(step) ?? []) {
+      // Tallied BEFORE anything is skipped: the counts state what exists, the filter states what was
+      // counted, and a reader needs both to understand the figure above them.
+      causeCounts[causeOf(row.causedByOutreach)][step] += 1;
+      if (!counted.has(causeOf(row.causedByOutreach))) continue;
       if (!row.email) continue;
       const entry = facts(row.email);
       if (PRICED_STEPS.includes(step)) {
@@ -120,7 +171,7 @@ export async function fetchObservedStepFacts(
     }
   }
 
-  return byEmail;
+  return { byEmail, causeCounts };
 }
 
 /**
