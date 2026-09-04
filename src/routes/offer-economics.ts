@@ -84,6 +84,11 @@ import { fetchEffectiveEconomics, economicsFingerprint, type EffectiveEconomics 
 import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
+import {
+  OUTCOME_CAUSES,
+  causeScopeKeyPart,
+  parseOutcomeCauses,
+} from "../lib/outcome-cause.js";
 import { parsePricing } from "../lib/pricing.js";
 import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
@@ -259,6 +264,17 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
       return res.status(400).json({ error: `leads must be one of: ${LEAD_DETAIL_VALUES.join(", ")}` });
     }
 
+    // WHOSE WINS THIS READ COUNTS. Omitted → every state → byte-identical to today. An unrecognised
+    // word is a 400, never a silent pick. See lib/outcome-cause.ts.
+    const causes = parseOutcomeCauses(req.query.cause);
+    if (causes === null) {
+      return res.status(400).json({
+        error: `cause must be a comma-separated subset of: ${OUTCOME_CAUSES.join(", ")}`,
+        reason: "cause_unrecognised",
+      });
+    }
+    const causeKey = causeScopeKeyPart(causes);
+
     // `?funnel=` names the SALES FUNNEL the spend block's cost-per-outcome columns are priced on, with
     // the same meaning and the same fail-loud parse as the per-feature read.
     let requestedFunnel: SalesFunnelKey | undefined;
@@ -304,6 +320,9 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
         econ,
         // Two different answers ⇒ two cells, which also keeps the stored snapshot narrow.
         leads: leadDetail,
+        // A read counting a different set of causes is a different answer, so it is a different cell.
+        // Absent for the default set → today's keys are unmoved.
+        cause: causeKey,
       }),
       orgId: headers.orgId,
       compute: async () => {
@@ -321,6 +340,8 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
           pricing,
           requestedFunnel,
           offerId,
+          undefined,
+          causes,
         );
         // The breakdown. LEAN on purpose (headline + costEconomics, the shape the per-offer and
         // per-workflow groups already use): a full body per channel would repeat the whole lead
@@ -338,6 +359,8 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
             pricing,
             requestedFunnel,
             offerId,
+            undefined,
+            causes,
           );
           return {
             featureSlug: channel.featureSlug,
@@ -532,6 +555,17 @@ router.get("/offers/:offerId/funnels", apiKeyAuth, async (req, res) => {
     const pricing = parsePricing(req.query.pricing);
     if (pricing === null) return res.status(400).json({ error: "pricing must be one of: gross, net" });
 
+    // WHOSE WINS THIS READ COUNTS. Omitted → every state → byte-identical to today. An unrecognised
+    // word is a 400, never a silent pick. See lib/outcome-cause.ts.
+    const causes = parseOutcomeCauses(req.query.cause);
+    if (causes === null) {
+      return res.status(400).json({
+        error: `cause must be a comma-separated subset of: ${OUTCOME_CAUSES.join(", ")}`,
+        reason: "cause_unrecognised",
+      });
+    }
+    const causeKey = causeScopeKeyPart(causes);
+
     const headers: DownstreamHeaders = {
       orgId: authed.orgId,
       userId: authed.userId,
@@ -597,6 +631,9 @@ router.get("/offers/:offerId/funnels", apiKeyAuth, async (req, res) => {
           : "unavailable",
         decl,
         pricing,
+        // A read counting a different set of causes is a different answer, so it is a different cell.
+        // Absent for the default set → today's keys are unmoved.
+        cause: causeKey,
         econ,
       }),
       orgId: headers.orgId,
@@ -624,6 +661,8 @@ router.get("/offers/:offerId/funnels", apiKeyAuth, async (req, res) => {
             pricing,
             row.funnelKey,
             offerId,
+            undefined,
+            causes,
           );
           // The customer's own legs, scoped by the SAME campaign set the charged money is scoped by.
           // `null` only when the statements could not be read at all — never when nobody stated one,
@@ -663,6 +702,8 @@ router.get("/offers/:offerId/funnels", apiKeyAuth, async (req, res) => {
           offerId,
           brandId,
           costBasis: "charged" as const,
+          // WHOSE WINS EVERY ROW COUNTED — stated once for the table, since a lean row carries none.
+          outcomeCauses: { counted: [...causes] },
           // The WEAKEST coverage among the rows, because the marker is an admission: a payload holding
           // one fully-costed funnel and one that could not be costed at all is not a fully-costed payload.
           costCoverage: summariseCoverage(groups.map((g) => g.costCoverage)),

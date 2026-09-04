@@ -62,6 +62,11 @@ import { computeOfferPipelineActivity } from "./pipeline-activity.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
+import {
+  OUTCOME_CAUSES,
+  causeScopeKeyPart,
+  parseOutcomeCauses,
+} from "../lib/outcome-cause.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
@@ -223,6 +228,17 @@ router.get("/offers/:offerId/funnels/:funnelKey/revenue", apiKeyAuth, async (req
       return res.status(400).json({ error: `leads must be one of: ${LEAD_DETAIL_VALUES.join(", ")}` });
     }
 
+    // WHOSE WINS THIS READ COUNTS. Omitted → every state → byte-identical to today. An unrecognised
+    // word is a 400, never a silent pick. See lib/outcome-cause.ts.
+    const causes = parseOutcomeCauses(req.query.cause);
+    if (causes === null) {
+      return res.status(400).json({
+        error: `cause must be a comma-separated subset of: ${OUTCOME_CAUSES.join(", ")}`,
+        reason: "cause_unrecognised",
+      });
+    }
+    const causeKey = causeScopeKeyPart(causes);
+
     // The MEASUREMENT funnel of this funnel's OWN channels — a funnel whose channels price two ways
     // says so (409) rather than having one silently picked for it.
     const funnel = resolveOfferFunnel(offerId, row.channels);
@@ -276,6 +292,9 @@ router.get("/offers/:offerId/funnels/:funnelKey/revenue", apiKeyAuth, async (req
         econ,
         // Two different answers ⇒ two cells, which also keeps the stored snapshot narrow.
         leads: leadDetail,
+        // A read counting a different set of causes is a different answer, so it is a different cell.
+        // Absent for the default set → today's keys are unmoved.
+        cause: causeKey,
       }),
       orgId: headers.orgId,
       compute: async () => {
@@ -297,7 +316,8 @@ router.get("/offers/:offerId/funnels/:funnelKey/revenue", apiKeyAuth, async (req
           // request: the per-rung answer is a partition of those rows, so the page cannot state one
           // basis for the funnel and another for its steps, and nothing is fetched twice.
           stepCosts,
-        );
+                  causes,
+                );
         // The per-channel breakdown WITHIN the funnel — which of its legs is funded, and what each one
         // cost and returned. LEAN, like every other breakdown here: the bodies would otherwise repeat
         // the whole lead population once per leg for figures the funnel body already carries.
@@ -314,6 +334,8 @@ router.get("/offers/:offerId/funnels/:funnelKey/revenue", apiKeyAuth, async (req
             pricing,
             row.funnelKey,
             offerId,
+            undefined,
+            causes,
           );
           return {
             featureSlug: channel.featureSlug,

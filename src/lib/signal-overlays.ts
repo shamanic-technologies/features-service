@@ -27,6 +27,7 @@ import type { ObservedLeadFacts } from "./observed-steps.js";
 import type { QualificationDates } from "./qualifications-client.js";
 import { deadLegSignalsFor } from "./funnel-registry.js";
 import type { SalesFunnelKey } from "./sales-funnels-client.js";
+import { ALL_OUTCOME_CAUSES, type OutcomeCause } from "./outcome-cause.js";
 
 export function applySignalOverlays(
   persons: EnginePerson[],
@@ -45,6 +46,15 @@ export function applySignalOverlays(
    * funnel the dead step is not on keeps that funnel's value for the lead.
    */
   pricedFunnelKeys: readonly SalesFunnelKey[] = [],
+  /**
+   * WHICH CAUSE STATES this read counts (`lib/outcome-cause.ts`). The statement half is already
+   * filtered at the row by `fetchObservedStepFacts`; what this decides is the LEGACY half. An
+   * instantly manual qualification carries no cause and never can — nobody was ever asked about one —
+   * so it is `unstated`, and a read that is not counting that state must not take a booked meeting or
+   * a closed deal from it either. Anything else would leave one producer filtered and the other not,
+   * which is two answers to one question inside a single body.
+   */
+  countedCauses: readonly OutcomeCause[] = ALL_OUTCOME_CAUSES,
 ): void {
   if (timestamps) {
     for (const person of persons) {
@@ -64,7 +74,7 @@ export function applySignalOverlays(
     }
   }
 
-  if (quals) {
+  if (quals && countedCauses.includes("unstated")) {
     for (const person of persons) {
       const q = person.email ? quals.get(person.email) : undefined;
       if (!q) continue;
