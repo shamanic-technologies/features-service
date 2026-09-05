@@ -4324,6 +4324,8 @@ derived keys to their numerator+denominator sources and flags `needsRunFilter` f
 (runFilter) family; unknown keys (chart ids like `funnel`) are ignored, so deep-collecting every
 nested `key` from outputs+charts and passing the lot is safe.
 
+**A test that asserts two reads are BYTE-IDENTICAL must freeze every wall-clock-derived fixture value.** A `daysAgo(n)` helper computes off `Date.now()` at CALL time, so a mock re-armed between the two requests hands out timestamps a few milliseconds apart and the `toEqual` fails on `events[].eventDate` — which reads as the parameter under test having changed the body when it changed nothing. Compute the dates ONCE at module load (`const CLOSED_AT = daysAgo(2)`) and reference the constants. Observed 2026-09-04 (`outcome-cause-grain.test.ts`, the omitted-vs-explicit `?cause=` identity case).
+
 **Test gotcha:** a feature mock fed to this handler MUST carry realistic `outputs`/`charts` — a mock
 without them yields an EMPTY required-source set and every source-fetcher is skipped, silently
 breaking mapping/resilience suites. `stats.test.ts`'s `MOCK_FEATURE` declares EVERY registry key
