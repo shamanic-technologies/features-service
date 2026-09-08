@@ -115,9 +115,13 @@ that makes them true.
   not know — contributes NOTHING; it is never parked on a default. Every showcase brand sells exactly
   one today.
 - **IT IS THE BYTE-SAME COMPUTE `/brands/:brandId/revenue?funnel=<key>` MAKES** — the brand's whole
-  channel set, no campaign narrowing, ONE engine pass, `includeSpend: false` (nothing here is money).
-  So a showcase figure and the customer's own dashboard can never disagree about how many people
-  reached a rung.
+  channel set, no campaign narrowing, ONE engine pass. So a showcase figure and the customer's own
+  dashboard can never disagree about how many people reached a rung. **`includeSpend` is TRUE even
+  though nothing here is money, and that is load-bearing**: the per-lead SIGNUP / FORM-SUBMISSION
+  attribution sets are fetched on that flag alone, so the cheaper read would leave the middle rung of a
+  website funnel permanently NULL — a gate excluding the very funnel one of the showcase brands sells.
+  A rung we COULD have measured must never read as one we could not. The extra reads it buys are
+  discarded; three brands behind a 15-minute window pay for them once.
 - **THE ORG IS RESOLVED THE WAY THE CROSS-ORG REVENUE READ RESOLVES IT** — lead-service's feature
   memberships enumerate which (org, brand) pairs actually have leads, and the OWNING org's identity is
   forwarded to the existing `/orgs/*` reads. Nothing is guessed: a brand with no membership answers
