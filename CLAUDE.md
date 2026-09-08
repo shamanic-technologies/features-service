@@ -81,6 +81,60 @@ The customer can now say so, per statement. lead-service froze `causedByOutreach
   only checked "a number came back" would pass on an implementation that ignored the parameter.
   (Set 2026-09-04, features-service#882; Wave 2 of 3 behind lead-service#511.)
 
+## OUR OWN HOMEPAGE STATES THREE CLIENTS' FUNNEL COUNTS — `GET /public/stats/showcase-funnels`, and the brands are decided HERE, never by the caller
+
+The apex page (indexable, no session) names three clients and states, under each, how many people we
+contacted and how many reached each subsequent step. Those figures were read out of production BY HAND
+on 2026-09-06 and pasted in as literals. Nothing refreshed them: a client's funnel moves every day, the
+page renders perfectly either way, and it NUDGES the counters in-session for a live feel — so a reader
+watching a number climb was watching an invented increment climb from a frozen base. This is the read
+that makes them true.
+
+- **THE ALLOWLIST IS IN THE SERVICE, AND THE ROUTE TAKES NO PARAMETER NAMING A BRAND**
+  (`lib/showcase-funnels.ts`, `SHOWCASE_BRAND_IDS`). This is an unauthenticated read of NAMED clients'
+  funnel figures, published because we agreed to publish those three; a caller-supplied identifier
+  would turn the same route into a way to read ANY brand's funnel with no session at all. The list is
+  the whole access-control story, which is why it is a frozen constant reviewed like code rather than a
+  row somebody can add to from outside. Adding a brand to it PUBLISHES that brand's funnel to the
+  internet. Guarded: a `?brandId=` on the request produces a BYTE-IDENTICAL body, and a non-allowlisted
+  brand is absent however it is asked for.
+- **COUNTS ONLY, because the page computes nothing.** No money, no rate, nothing to divide — every step
+  carries `peopleReached` and its own name. **`0` is MEASURED** ("nobody got here") and **`null` is "we
+  have no figure"** (the producer behind that rung degraded on this read), exactly as `funnelSteps`
+  states it one layer down. A zero standing in for an unknown is the one answer this must never give:
+  on a marketing page it reads as a fact about the CLIENT rather than as a gap in our own reading.
+- **A STEP NOBODY REACHED IS STILL A STEP.** The chain is served in the funnel's OWN order under the
+  funnel's OWN names, first to last, with the outreach base (`key: "contacted"`) as its FIRST entry —
+  the page draws the funnel in order and hides zero-valued cells itself, so pruning an empty rung here
+  would silently change the shape of somebody's funnel. The base carries the same shape as every other
+  rung rather than a special-cased field a consumer must branch on; `key` is the canonical LEG key, so
+  nobody keys off buyer-facing wording.
+- **ONE CHAIN PER FUNNEL THE BRAND'S OWN CAMPAIGNS STATE THEY SELL** (`brandSoldFunnels`), in catalogue
+  order. Two funnels share legs, so their figures overlap and must never be summed, and picking one
+  would state a funnel nobody asked about. A campaign stating no funnel — or a word the catalogue does
+  not know — contributes NOTHING; it is never parked on a default. Every showcase brand sells exactly
+  one today.
+- **IT IS THE BYTE-SAME COMPUTE `/brands/:brandId/revenue?funnel=<key>` MAKES** — the brand's whole
+  channel set, no campaign narrowing, ONE engine pass, `includeSpend: false` (nothing here is money).
+  So a showcase figure and the customer's own dashboard can never disagree about how many people
+  reached a rung.
+- **THE ORG IS RESOLVED THE WAY THE CROSS-ORG REVENUE READ RESOLVES IT** — lead-service's feature
+  memberships enumerate which (org, brand) pairs actually have leads, and the OWNING org's identity is
+  forwarded to the existing `/orgs/*` reads. Nothing is guessed: a brand with no membership answers
+  `no_lead_membership` rather than being read under a plausible stand-in.
+- **A BRAND WITH NOTHING TO WALK NAMES ITS REASON** — `brand_has_no_channels` / `no_funnel_sold` /
+  `no_lead_membership` / `read_failed`. Every allowlisted brand is ALWAYS in the body, in the
+  allowlist's order, and **one brand's failed read is logged loud and nulls only that brand** — a
+  marketing section must not blank because one client degraded.
+- Rides `LIFETIME_AGGREGATE_WINDOWS` through `servedPublicCached` (15 min fresh / 6 h stale,
+  single-flighted), like every other cross-org public surface. **The api-service gateway does NOT proxy
+  `/public/*`** (no wildcard there), so a consumer outside the cluster needs its own forward.
+- Guards: `src/routes/showcase-funnels.test.ts` — ONE fixture of three brands selling two different
+  funnels: the no-brand-parameter identity, the allowlist's order, the ordered chain with a MEASURED 0
+  at the rung nobody reached, each brand on its OWN funnel, a degraded producer nulling the rung it
+  alone evidences, all four unmeasured reasons, and one brand's failure leaving the others intact.
+  (Set 2026-09-08.)
+
 ## A WHOLE-POPULATION READ IS WALKED AND CAPPED PROCESS-WIDE — abandoning one must COST the downstream one page, not minutes
 
 lead-service was down for **11.5 hours** on 2026-09-07 (18:59 UTC → 06:40 UTC), taking every consumer

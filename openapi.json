@@ -23254,6 +23254,132 @@
         }
       }
     },
+    "/public/stats/showcase-funnels": {
+      "get": {
+        "summary": "Ordered funnel counts for the SHOWCASE brands named on our homepage (public, no auth)",
+        "description": "The current funnel counts of the named client brands our public homepage states — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. TAKES NO PARAMETER NAMING A BRAND, and never will: the brands are a FROZEN SERVER-SIDE ALLOWLIST (src/lib/showcase-funnels.ts), because a caller-supplied identifier would turn this unauthenticated read of clients we agreed to publish into a way to read ANY brand's funnel with no session. COUNTS ONLY — no money, no rate, nothing to divide. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
+        "tags": [
+          "Public"
+        ],
+        "responses": {
+          "200": {
+            "description": "Ordered funnel counts for every allowlisted showcase brand",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "brands": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "brand": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "name": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "domain": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "domain"
+                            ]
+                          },
+                          "funnels": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "funnelKey": {
+                                  "type": "string",
+                                  "description": "The sales funnel this chain walks — brand-service's own catalogue key."
+                                },
+                                "funnelName": {
+                                  "type": "string",
+                                  "description": "The funnel's own name, so a consumer renders the chain without holding the catalogue."
+                                },
+                                "steps": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "key": {
+                                        "type": "string",
+                                        "description": "Stable machine key of the rung — the canonical LEG key, or 'contacted' for the outreach base. Key off this, not off the buyer-facing label."
+                                      },
+                                      "label": {
+                                        "type": "string",
+                                        "description": "The funnel's OWN name for this step, in the words the customer's screen uses."
+                                      },
+                                      "peopleReached": {
+                                        "type": "integer",
+                                        "nullable": true,
+                                        "description": "DISTINCT people who reached this step. 0 is MEASURED ('nobody got here'); null is 'we have no figure' (the producer behind this rung was unreadable on this read) — NEVER a 0 standing in for an unknown."
+                                      }
+                                    },
+                                    "required": [
+                                      "key",
+                                      "label",
+                                      "peopleReached"
+                                    ]
+                                  },
+                                  "description": "The rungs in the funnel's OWN order, first to last, with the outreach base first. Never pruned: a step nobody reached is still a step, and a consumer hides empty cells itself."
+                                }
+                              },
+                              "required": [
+                                "funnelKey",
+                                "funnelName",
+                                "steps"
+                              ]
+                            },
+                            "description": "One chain per funnel the brand's OWN campaigns state they sell, in catalogue order. Two funnels share legs, so their figures overlap and must NEVER be summed."
+                          },
+                          "measured": {
+                            "type": "boolean",
+                            "description": "True iff at least one chain was walked. False always names its reason."
+                          },
+                          "unmeasuredReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "brand_has_no_channels",
+                              "no_funnel_sold",
+                              "no_lead_membership",
+                              "read_failed"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "brand",
+                          "funnels",
+                          "measured",
+                          "unmeasuredReason"
+                        ]
+                      },
+                      "description": "One entry per allowlisted showcase brand, in the allowlist's own order — always all of them, degraded ones included."
+                    }
+                  },
+                  "required": [
+                    "brands"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/public/stats/cost-per-outcome-distribution": {
       "get": {
         "summary": "Cross-org distribution (histogram) of cost-per-outcome across brands for an objective (public, no auth)",
