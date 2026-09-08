@@ -130,6 +130,12 @@ never came back on its own.
   cursor, or a walk past `MAX_LEAD_PAGES` (500), THROWS. A truncated population would silently
   under-report every figure derived from it, which is worse than a 502 saying the read did not
   complete. The slot is released on the failure path too, so one failure cannot wedge the cap shut.
+- **A COLD cross-org read is now PACED, and that is the cost, not a regression to undo.** Measured in
+  prod on the day it shipped: `/public/stats/revenue?featureSlug=sales-cold-email-outreach` builds in
+  **~101s** cold across 31 brands, against ~13s when it fanned out unbounded. It rides
+  `LIFETIME_AGGREGATE_WINDOWS` (15 min fresh / 6 h stale, single-flighted) so only a genuinely cold key
+  ever waits, and the wait is what buys lead-service the headroom to stay up. Do NOT "fix" it by
+  raising `LEAD_READ_CONCURRENCY` toward the number that caused the outage.
 - **This does NOT replace the lead-service hotfix** that stops an abandoned client pinning a
   connection forever. That one makes the outage survivable; this one stops generating the burst.
 - Guards: `src/lib/bounded-lead-fanout.test.ts` — the walk returning the complete population in order
