@@ -135,3 +135,48 @@ export const committedMrrSnapshots = pgTable(
 );
 
 export type CommittedMrrSnapshot = typeof committedMrrSnapshots.$inferSelect;
+
+/**
+ * FLEET RETURN-ON-SPEND snapshot store (`fleet_return_snapshots`) — one row per acquisition channel.
+ *
+ * WHY IT IS PERSISTED AND NOT MERELY CACHED. The public landing states, beside two live figures it
+ * already reads, the MEDIAN return on spend our clients get. That figure rests on the SAME per-brand
+ * expected-pipeline compute the customer's own dashboard runs (`computeFeatureRevenue`, one engine pass
+ * per (org, brand)), which takes MINUTES across the fleet and reads a brand's whole lead population —
+ * so it can never sit on a landing request, whose budget is 8 seconds and whose fallback is to drop the
+ * stat entirely. An in-memory SWR cache does not solve it: a process restart or a quiet night empties
+ * it and the very next reader pays the full minutes-long build synchronously.
+ *
+ * So the heavy compute runs OFF the request path and writes its per-brand rows here; the public read is
+ * one indexed SELECT plus arithmetic. The rows stored are the INGREDIENTS (each brand's committed spend
+ * and its expected pipeline), never a finished median — so the SPEND FLOOR stays a parameter of the
+ * QUESTION (`?minSpendUsd=`), answerable at any value from one snapshot, rather than being frozen into
+ * the write. A brand appears here only under its id; no name, no domain, nothing a public response
+ * echoes back.
+ *
+ * DERIVED + REBUILDABLE, unlike `committed_mrr_snapshots`: every row can be recomputed from the
+ * siblings at any time, so dropping the table is safe (the next warm refills it). Idempotent: upsert on
+ * `feature_slug`, one row per channel, overwritten whole by each warm.
+ */
+export const fleetReturnSnapshots = pgTable(
+  "fleet_return_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Acquisition-channel slug the snapshot is for, unique — one row per channel. */
+    featureSlug: text("feature_slug").notNull(),
+    /**
+     * The per-brand INGREDIENTS, as an array of
+     * `{ brandId, committedSpendUsd, expectedPipelineUsd | null }`. `expectedPipelineUsd` is null when
+     * the brand has no usable economics — "we could not price this", never a 0 that would say the
+     * brand's outreach returned nothing.
+     */
+    brands: jsonb("brands").notNull(),
+    /** When the warm that wrote this row finished — drives the staleness check on read. */
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("idx_fleet_return_snapshots_feature").on(table.featureSlug),
+  ]
+);
+
+export type FleetReturnSnapshot = typeof fleetReturnSnapshots.$inferSelect;
