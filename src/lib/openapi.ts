@@ -2482,6 +2482,27 @@ const costPerOutcomeLifetimeResponseSchema = z.object({
   brandCount: z.number().int().describe("Number of client brands with usable economics that backed the fleet-mean projection."),
 });
 
+const showcaseFunnelsResponseSchema = z.object({
+  brands: z.array(z.object({
+    brand: z.object({
+      id: z.string().uuid(),
+      name: z.string().nullable(),
+      domain: z.string().nullable(),
+    }),
+    funnels: z.array(z.object({
+      funnelKey: z.string().describe("The sales funnel this chain walks — brand-service's own catalogue key."),
+      funnelName: z.string().describe("The funnel's own name, so a consumer renders the chain without holding the catalogue."),
+      steps: z.array(z.object({
+        key: z.string().describe("Stable machine key of the rung — the canonical LEG key, or 'contacted' for the outreach base. Key off this, not off the buyer-facing label."),
+        label: z.string().describe("The funnel's OWN name for this step, in the words the customer's screen uses."),
+        peopleReached: z.number().int().nullable().describe("DISTINCT people who reached this step. 0 is MEASURED ('nobody got here'); null is 'we have no figure' (the producer behind this rung was unreadable on this read) — NEVER a 0 standing in for an unknown."),
+      })).describe("The rungs in the funnel's OWN order, first to last, with the outreach base first. Never pruned: a step nobody reached is still a step, and a consumer hides empty cells itself."),
+    })).describe("One chain per funnel the brand's OWN campaigns state they sell, in catalogue order. Two funnels share legs, so their figures overlap and must NEVER be summed."),
+    measured: z.boolean().describe("True iff at least one chain was walked. False always names its reason."),
+    unmeasuredReason: z.enum(["brand_has_no_channels", "no_funnel_sold", "no_lead_membership", "read_failed"]).nullable(),
+  })).describe("One entry per allowlisted showcase brand, in the allowlist's own order — always all of them, degraded ones included."),
+});
+
 const costPerOutcomeDistributionResponseSchema = z.object({
   costBasis: z.literal("incurred").describe("PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."),
   featureSlug: z.string(),
@@ -2758,6 +2779,20 @@ registry.registerPath({
     200: { description: "Lifetime cross-org average cost-per-outcome per objective", content: { "application/json": { schema: costPerOutcomeLifetimeResponseSchema } } },
     400: { description: "Missing parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/showcase-funnels ───────────────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/showcase-funnels",
+  summary: "Ordered funnel counts for the SHOWCASE brands named on our homepage (public, no auth)",
+  description:
+    "The current funnel counts of the named client brands our public homepage states — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. TAKES NO PARAMETER NAMING A BRAND, and never will: the brands are a FROZEN SERVER-SIDE ALLOWLIST (src/lib/showcase-funnels.ts), because a caller-supplied identifier would turn this unauthenticated read of clients we agreed to publish into a way to read ANY brand's funnel with no session. COUNTS ONLY — no money, no rate, nothing to divide. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
+  tags: ["Public"],
+  responses: {
+    200: { description: "Ordered funnel counts for every allowlisted showcase brand", content: { "application/json": { schema: showcaseFunnelsResponseSchema } } },
   },
 });
 

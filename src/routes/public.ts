@@ -60,6 +60,18 @@ import { buildActiveUsersByUser, type ActiveUsersByUser } from "../lib/active-us
 import { apiKeyOnly } from "../middleware/auth.js";
 import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
+import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
+import { distinctChannelFunnels } from "./offer-economics.js";
+import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
+import { buildBrandChannels, brandFeatureSlugs } from "../lib/brand-channels.js";
+import {
+  SHOWCASE_BRAND_IDS,
+  brandSoldFunnels,
+  showcaseFunnelOf,
+  type ShowcaseBrandFunnels,
+  type ShowcaseFunnel,
+  type ShowcaseFunnelsPayload,
+} from "../lib/showcase-funnels.js";
 import { servedCached, PLATFORM_SCOPE_ORG_ID } from "../lib/view-cache.js";
 import {
   buildChannelCatalogue,
@@ -255,6 +267,7 @@ function allPublicCaches(): PublicCache[] {
     revenueHistoryCache,
     channelCatalogueCache,
     channelFunnelEconomicsCache,
+    showcaseFunnelsCache,
   ];
 }
 
@@ -2564,6 +2577,156 @@ export async function handleChannelFunnelEconomics(
   res.json(payload);
 }
 
+// ── Showcase funnel counts (public, org-less, allowlisted brands) ────────────
+//
+// The homepage's three named clients, each walked down its own funnel. See lib/showcase-funnels.ts
+// for the whole doctrine: the brands are the SERVICE's decision, the answer is COUNTS only, and a
+// step nobody reached is still a step.
+//
+// ── HOW A BRAND'S ORG IS RESOLVED WITHOUT A CALLER ──────────────────────────────────────────────
+//
+// Every downstream read here is org-scoped (`x-org-id`), and this route has no session. So the org
+// is resolved the way the cross-org revenue read already resolves it: lead-service's feature
+// memberships enumerate which (org, brand) pairs actually have leads, and the OWNING org's identity
+// is what is forwarded to the existing /orgs/* reads. Nothing is guessed, and a brand with no
+// membership says so rather than being read under some plausible stand-in.
+//
+// ── ONE BRAND'S FAILURE IS ONE BRAND'S FAILURE ──────────────────────────────────────────────────
+//
+// A per-brand read that throws nulls THAT brand's chains with `read_failed` and is logged loud; the
+// other two still answer. This is a marketing page — one degraded client must not blank the section
+// — and the degradation is stated on the wire rather than dressed as zeros.
+const showcaseFunnelsCache: PublicCache = new Map();
+
+/** Test seam — reset the showcase funnel-counts cache (entries + in-flight). */
+export function __resetShowcaseFunnelsCache(): void {
+  clearPublicCache(showcaseFunnelsCache);
+}
+
+/** How many showcase brands are read at once. Three today; the bound is about the downstream fan-out
+ *  each one drives (leads, runs, brand, email-gateway), not about the list's length. */
+const SHOWCASE_BRAND_CONCURRENCY = 2;
+
+/** Walk every funnel one showcase brand's campaigns sell, under the org that owns its leads. */
+async function computeShowcaseBrand(
+  brandId: string,
+  orgId: string | undefined,
+  info: { name: string | null; domain: string | null } | undefined,
+): Promise<ShowcaseBrandFunnels> {
+  const brand = { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null };
+  if (!orgId) {
+    return { brand, funnels: [], measured: false, unmeasuredReason: "no_lead_membership" };
+  }
+
+  const headers: DownstreamHeaders = { orgId };
+  // ONE campaign read per brand, reused for BOTH questions it answers: which channels the brand runs
+  // (the feature scope its evidence is read over) and which funnels its campaigns state they sell.
+  const rows = await fetchBrandCampaignRows(brandId, undefined, { orgId });
+  const channels = buildBrandChannels(rows);
+  if (channels.length === 0) {
+    return { brand, funnels: [], measured: false, unmeasuredReason: "brand_has_no_channels" };
+  }
+  const soldFunnels = brandSoldFunnels(rows);
+  if (soldFunnels.length === 0) {
+    return { brand, funnels: [], measured: false, unmeasuredReason: "no_funnel_sold" };
+  }
+
+  const featureSlugs = brandFeatureSlugs(channels);
+  // The funnel DEFINITION the brand's channels price on — the registry's, not the campaign's stated
+  // key. A channel that declares none contributes nothing; several different ones cannot happen today
+  // and would mean the brand's evidence cannot be walked as one chain, so the read says so.
+  const distinct = distinctChannelFunnels(channels);
+  if (distinct.length > 1) {
+    throw new Error(`showcase brand ${brandId} runs channels that price on different funnel definitions`);
+  }
+  const funnel = distinct[0] ?? null;
+
+  // Economics are BRAND-scoped, so they are read ONCE and shared by every chain: N funnels cost one
+  // brand-service call. They do not move a single COUNT — the chain's rungs are people, not money —
+  // but the engine needs them to take the priced path rather than the cold-start short-circuit, which
+  // reads every statement-backed rung as UNMEASURED.
+  const [declaredFunnels, brandEconomics] = funnel
+    ? await Promise.all([fetchDeclaredFunnelsSoft(brandId, orgId), fetchEffectiveEconomics(brandId, headers)])
+    : [[], null];
+
+  const funnels: ShowcaseFunnel[] = [];
+  for (const funnelKey of soldFunnels) {
+    const brandPriced = brandEconomics
+      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, funnelKey)
+      : undefined;
+    // The byte-same call `/brands/:brandId/revenue?funnel=<key>` makes for its own body: the brand's
+    // whole channel set, no campaign narrowing, ONE engine pass, the named funnel walked. `includeSpend`
+    // is false because nothing here is money — a spend breakdown would be fetched for a block this
+    // payload does not carry.
+    const body = await computeFeatureRevenue(
+      featureSlugs,
+      brandId,
+      undefined,
+      funnel,
+      headers,
+      undefined,
+      brandPriced,
+      false,
+      "gross",
+      funnelKey,
+    );
+    if (body.funnelSteps) funnels.push(showcaseFunnelOf(body.funnelSteps));
+  }
+
+  return {
+    brand,
+    funnels,
+    measured: funnels.length > 0,
+    // The chain resolves for every funnel the campaigns state, so an empty list here means the engine
+    // could not walk one — the same "we could not read this" a per-rung null says, one level up.
+    unmeasuredReason: funnels.length > 0 ? null : "read_failed",
+  };
+}
+
+export async function handleShowcaseFunnels(res: import("express").Response): Promise<void> {
+  const payload = await servedPublicCached<ShowcaseFunnelsPayload>({
+    cache: showcaseFunnelsCache,
+    key: "__showcase__",
+    windows: LIFETIME_AGGREGATE_WINDOWS,
+    label: "showcase funnels",
+    compute: async () => {
+      // Every seed slug in one membership read (308 rows fleet-wide, 2026-09-08) rather than a guess
+      // at which channels a showcase brand happens to run — a brand that moves to a new channel keeps
+      // answering with no change here.
+      const allSlugs = (await db.query.features.findMany()).map((f) => f.slug);
+      const memberships = allSlugs.length > 0 ? await fetchFeatureMemberships(allSlugs.join(",")) : [];
+      const orgByBrand = new Map<string, string>();
+      for (const m of memberships) {
+        if (!orgByBrand.has(m.brandId)) orgByBrand.set(m.brandId, m.orgId);
+      }
+
+      const brandInfo = await fetchBrandInfoBatch([...SHOWCASE_BRAND_IDS]);
+
+      const brands = await mapWithConcurrency(
+        [...SHOWCASE_BRAND_IDS],
+        SHOWCASE_BRAND_CONCURRENCY,
+        async (brandId): Promise<ShowcaseBrandFunnels> => {
+          try {
+            return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
+          } catch (error) {
+            console.error(`[features-service] showcase funnel read failed for brand ${brandId}:`, error);
+            const info = brandInfo.get(brandId);
+            return {
+              brand: { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null },
+              funnels: [],
+              measured: false,
+              unmeasuredReason: "read_failed",
+            };
+          }
+        },
+      );
+
+      return { brands };
+    },
+  });
+  res.json(payload);
+}
+
 // ── GET /public/channels ─────────────────────────────────────────────────────
 
 router.get("/public/channels", async (_req, res) => {
@@ -2582,6 +2745,17 @@ router.get("/public/channel-funnel-economics", async (req, res) => {
     await handleChannelFunnelEconomics(req.query.channelSlug as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public channel-funnel economics error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/showcase-funnels ───────────────────────────────────────
+
+router.get("/public/stats/showcase-funnels", async (_req, res) => {
+  try {
+    await handleShowcaseFunnels(res);
+  } catch (error) {
+    console.error("[features-service] Public showcase funnels error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
