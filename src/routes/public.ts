@@ -68,6 +68,13 @@ import {
   type PublicChannel,
 } from "../lib/channel-catalogue.js";
 import { pricePair, type PairResult } from "../lib/channel-funnel-economics.js";
+import {
+  buildFleetReturnOnSpend,
+  parseMinSpendUsd,
+  type BrandReturnRow,
+  type FleetReturnOnSpend,
+} from "../lib/fleet-return-on-spend.js";
+import { readFleetReturnSnapshotSoft, writeFleetReturnSnapshotSoft } from "../lib/fleet-return-store.js";
 import type { SalesFunnelKey } from "../lib/sales-funnels.js";
 
 const router = Router();
@@ -784,6 +791,41 @@ function revenueRollup(payload: PublicRevenuePayload): { featureSlug: string; to
   };
 }
 
+/**
+ * How many (org, brand) engine passes may be in flight at once. Each one reads a brand's whole lead
+ * population, so this is a memory AND a socket bound, not a politeness knob (this process runs with
+ * `--max-old-space-size=384`).
+ */
+const PUBLIC_REVENUE_BRAND_CONCURRENCY = 4;
+
+/** One (org, brand) engine pass, or null when the membership is stale (the brand moved orgs). */
+async function computePairRevenue(
+  featureSlug: string,
+  funnel: ReturnType<typeof getFunnel>,
+  orgId: string,
+  brandId: string,
+) {
+  const headers: DownstreamHeaders = { orgId, featureSlug };
+  try {
+    const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers);
+    return {
+      brandId,
+      pipeline: body.headline.totalPipelineUsd,
+      committedCostUsd: body.costEconomics.committedCostUsd,
+      actualCostUsd: body.costEconomics.actualCostUsd,
+      timeSeries: body.timeSeries,
+    };
+  } catch (error) {
+    if (error instanceof BrandOwnershipError) {
+      console.log(
+        `[features-service] skipping stale feature membership for public revenue: featureSlug=${featureSlug}, orgId=${orgId}, brandId=${brandId}`,
+      );
+      return null;
+    }
+    throw error;
+  }
+}
+
 export async function handlePublicRevenue(
   featureSlug: string | undefined,
   groupBy: string | undefined,
@@ -823,28 +865,15 @@ export async function handlePublicRevenue(
       ...new Map(memberships.map((m) => [pairKey(m.orgId, m.brandId), { orgId: m.orgId, brandId: m.brandId }])).values(),
     ];
 
-    const computed = await Promise.all(
-      pairs.map(async ({ orgId, brandId }) => {
-        const headers: DownstreamHeaders = { orgId, featureSlug };
-        try {
-          const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers);
-          return {
-            brandId,
-            pipeline: body.headline.totalPipelineUsd,
-            committedCostUsd: body.costEconomics.committedCostUsd,
-            actualCostUsd: body.costEconomics.actualCostUsd,
-            timeSeries: body.timeSeries,
-          };
-        } catch (error) {
-          if (error instanceof BrandOwnershipError) {
-            console.log(
-              `[features-service] skipping stale feature membership for public revenue: featureSlug=${featureSlug}, orgId=${orgId}, brandId=${brandId}`,
-            );
-            return null;
-          }
-          throw error;
-        }
-      }),
+    // BOUNDED, not `Promise.all`. Each pair is a full engine pass that reads that brand's WHOLE lead
+    // population, so firing all ~27 at once put ~27 simultaneous multi-megabyte reads on the siblings
+    // and the request died on a downstream socket rather than on any logic — measured in production
+    // 2026-09-08: `TypeError: terminated / SocketError: other side closed` at 161s, a 500 on a public
+    // read. Capping does not make this read FAST (it cannot be: the work is minutes of engine passes),
+    // it makes it FINISH. The answer a landing needs off this data lives on
+    // /public/stats/return-on-spend, which is served from a persisted snapshot instead.
+    const computed = await mapWithConcurrency(pairs, PUBLIC_REVENUE_BRAND_CONCURRENCY, ({ orgId, brandId }) =>
+      computePairRevenue(featureSlug, funnel, orgId, brandId),
     );
 
     // Aggregate per brand: pipeline = sum of the orgs' non-null pipelines (null iff EVERY org's is
@@ -913,6 +942,190 @@ export async function handlePublicRevenue(
   });
   // The rollup is a pure projection of the SAME cached payload — never a second compute.
   res.json(rollup ? revenueRollup(payload) : payload);
+}
+
+// ── Public FLEET RETURN-ON-SPEND handler ─────────────────────────────────────
+//
+// THE MEDIAN RETURN ON SPEND OUR CLIENTS GET, over the brands that actually spent — the third live
+// figure on the public competitor-comparison band, beside the reach and the median cost of a hot lead
+// it already states. The arithmetic and the doctrine live in `lib/fleet-return-on-spend.ts`; what lives
+// here is the reason it is served from a SNAPSHOT and never computed on the request path.
+//
+// The figure rests on the per-brand engine pass above. That pass reads a brand's whole lead population
+// and, across the fleet, takes MINUTES — measured in production 2026-09-08 at 161s before it 500'd on a
+// downstream socket. The consumer is a statically-rendered public page that gives the whole band 8
+// seconds and DROPS the stat rather than block a build, so a read that can ever take minutes is the same
+// as no read at all. An in-memory SWR cache does not fix that: a deploy, a restart or a quiet night
+// empties it and the next reader pays the full build synchronously.
+//
+// So the heavy pass runs OFF the request path (a single-flight background warm, on boot and whenever a
+// read finds the snapshot stale) and writes its per-brand rows to `fleet_return_snapshots`. The public
+// read is one indexed SELECT plus arithmetic, and it NEVER awaits the warm — a request that arrives
+// before the first warm has finished answers `measured: false, reason: "no_snapshot_yet"`, which is a
+// real answer the consumer already knows how to drop.
+//
+// The SPEND FLOOR is applied HERE, over stored ingredients, so `?minSpendUsd=` is answerable at any
+// value from one snapshot without recomputing anything.
+
+/** A read older than this kicks a background refresh (it is still SERVED — nobody waits on the warm). */
+const FLEET_RETURN_STALE_MS = 60 * 60 * 1000;
+/** A single brand's engine pass may not hang the whole warm; a hung fetch never rejects on its own. */
+const FLEET_RETURN_BRAND_TIMEOUT_MS = 120_000;
+
+/** Single-flight guard, per feature slug — a burst of cold reads must kick exactly ONE warm. */
+const fleetReturnWarmInFlight = new Map<string, Promise<void>>();
+
+/** Test seam — await any in-flight fleet-return warm(s) so a follow-up read observes the snapshot. */
+export async function __awaitFleetReturnWarm(): Promise<void> {
+  await Promise.allSettled([...fleetReturnWarmInFlight.values()]);
+}
+
+/**
+ * Recompute one channel's per-brand rows and persist them. Runs OFF the request path.
+ *
+ * PER-BRAND RESILIENT: one brand's failed or hung pass is logged loud and contributes NO row, rather
+ * than aborting a warm that had already computed the other twenty-six. That is the documented shape for
+ * an off-request-path fan-out here, and it is not a swallowed error — the omission is visible on the
+ * wire, because `brandCount` says how many brands the median was actually taken over.
+ */
+export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void> {
+  const existing = fleetReturnWarmInFlight.get(featureSlug);
+  if (existing) return existing;
+
+  const run = (async () => {
+    const funnel = getFunnel(featureSlug);
+    const memberships = await fetchFeatureMemberships(featureSlug);
+    const pairs = [
+      ...new Map(
+        memberships.map((m) => [`${m.orgId}::${m.brandId}`, { orgId: m.orgId, brandId: m.brandId }]),
+      ).values(),
+    ];
+
+    const computed = await mapWithConcurrency(pairs, PUBLIC_REVENUE_BRAND_CONCURRENCY, async ({ orgId, brandId }) => {
+      try {
+        return await withTimeout(
+          computePairRevenue(featureSlug, funnel, orgId, brandId),
+          FLEET_RETURN_BRAND_TIMEOUT_MS,
+          `fleet-return warm ${featureSlug} brand ${brandId}`,
+        );
+      } catch (err) {
+        console.error(
+          `[features-service] fleet-return warm: brand ${brandId} (org ${orgId}) failed and contributes no data point:`,
+          err,
+        );
+        return null;
+      }
+    });
+
+    // A brand claimed by several orgs is ONE brand to the fleet: its spend sums and its pipeline sums
+    // (leads are disjoint per org, so nothing is double-counted), exactly as the per-brand revenue read
+    // above aggregates it. A pipeline stays null only when EVERY org's is null — no usable economics
+    // anywhere — and null is never coerced to 0.
+    const byBrand = new Map<string, { spend: number; pipeline: number; hasPipeline: boolean }>();
+    for (const c of computed) {
+      if (c === null) continue;
+      const agg = byBrand.get(c.brandId) ?? { spend: 0, pipeline: 0, hasPipeline: false };
+      agg.spend += c.committedCostUsd;
+      if (c.pipeline !== null) {
+        agg.pipeline += c.pipeline;
+        agg.hasPipeline = true;
+      }
+      byBrand.set(c.brandId, agg);
+    }
+
+    const rows: BrandReturnRow[] = [...byBrand.entries()].map(([brandId, agg]) => ({
+      brandId,
+      committedSpendUsd: agg.spend,
+      expectedPipelineUsd: agg.hasPipeline ? agg.pipeline : null,
+    }));
+
+    await writeFleetReturnSnapshotSoft(featureSlug, rows, new Date());
+    console.log(
+      `[features-service] fleet-return warm complete for ${featureSlug}: ${rows.length} brand(s) of ${pairs.length} membership pair(s)`,
+    );
+  })()
+    .catch((err) => {
+      console.error(`[features-service] fleet-return warm failed for ${featureSlug}:`, err);
+    })
+    .finally(() => {
+      fleetReturnWarmInFlight.delete(featureSlug);
+    });
+
+  fleetReturnWarmInFlight.set(featureSlug, run);
+  return run;
+}
+
+/**
+ * Warm every cold-email channel's snapshot, fire-and-forget. Called AFTER `app.listen()` so a deploy
+ * fills the snapshot without ever blocking the port bind (the boot-window rule: this fan-out is O(brands)
+ * and takes minutes).
+ */
+export function warmFleetReturnSnapshotsOnBoot(): void {
+  void (async () => {
+    try {
+      const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
+      const slugs = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug));
+      // Sequential ACROSS channels: each warm is already an O(brands) fan-out with its own cap, and
+      // running several at once would put every channel's engine passes on the siblings at the same time.
+      for (const slug of slugs) await warmFleetReturnSnapshot(slug);
+    } catch (err) {
+      console.error("[features-service] fleet-return boot warm failed:", err);
+    }
+  })();
+}
+
+interface FleetReturnPayload extends FleetReturnOnSpend {
+  /**
+   * ACCOUNTING — this is the CUSTOMERS' money: what each brand was CHARGED (comped spend is absent),
+   * on the COMMITTED basis every money figure in this service rides. Same basis as the ROI the client
+   * reads on their own dashboard, so the fleet median and any one client's number are the same
+   * statistic at two grains. See lib/cost-basis.ts.
+   */
+  costBasis: "charged";
+  featureSlug: string;
+  /** Each data point is one brand's realized return on its own spend. */
+  unit: "brand";
+  /** When the snapshot the figures were taken from was computed. Null when there is no snapshot yet. */
+  computedAt: string | null;
+}
+
+export async function handleFleetReturnOnSpend(
+  featureSlug: string | undefined,
+  minSpendUsdParam: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  if (!featureSlug) {
+    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
+    return;
+  }
+  const minSpendUsd = parseMinSpendUsd(minSpendUsdParam);
+  if (minSpendUsd === null) {
+    res.status(400).json({ error: "Query parameter 'minSpendUsd' must be a number >= 0" });
+    return;
+  }
+
+  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
+  if (!feature) {
+    res.status(404).json({ error: "Feature not found" });
+    return;
+  }
+
+  const snapshot = await readFleetReturnSnapshotSoft(featureSlug);
+
+  // Kick the warm when there is nothing, or when what there is has aged out. Deliberately NOT awaited:
+  // the whole point of the snapshot is that no caller ever pays for the compute.
+  if (snapshot === null || Date.now() - snapshot.computedAt.getTime() > FLEET_RETURN_STALE_MS) {
+    void warmFleetReturnSnapshot(featureSlug);
+  }
+
+  const payload: FleetReturnPayload = {
+    costBasis: "charged",
+    featureSlug,
+    unit: "brand",
+    computedAt: snapshot?.computedAt.toISOString() ?? null,
+    ...buildFleetReturnOnSpend(snapshot?.brands ?? null, minSpendUsd),
+  };
+  res.json(payload);
 }
 
 // ── Public workflow engagement latency handler ───────────────────────────────
@@ -2408,6 +2621,21 @@ router.get("/public/stats/revenue", async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] Public stats revenue error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/return-on-spend ────────────────────────────────────────
+
+router.get("/public/stats/return-on-spend", async (req, res) => {
+  try {
+    await handleFleetReturnOnSpend(
+      req.query.featureSlug as string | undefined,
+      req.query.minSpendUsd as string | undefined,
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] Public stats return-on-spend error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

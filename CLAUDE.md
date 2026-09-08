@@ -81,6 +81,78 @@ The customer can now say so, per statement. lead-service froze `causedByOutreach
   only checked "a number came back" would pass on an implementation that ignored the parameter.
   (Set 2026-09-04, features-service#882; Wave 2 of 3 behind lead-service#511.)
 
+## THE MEDIAN RETURN ON SPEND OUR CLIENTS GET — `GET /public/stats/return-on-spend`, served from a PERSISTED snapshot because the compute takes MINUTES
+
+The public competitor-comparison pages close on a dark band of live figures, next to competitors who
+publish nothing comparable. Two were answerable — how many people we reached for how many companies,
+and the median cost of a hot lead, both read off `/public/stats/ranked?groupBy=brand` — and the third,
+what a dollar our clients put through the channel comes back as, was answerable NOWHERE. The read
+designed to carry it was down: `/public/stats/revenue?groupBy=brand` answered **HTTP 500 after 161
+seconds** in prod (2026-09-08), and the two other candidates carry no return at all.
+
+- **THE FIGURE IS THE BRAND'S OWN REALIZED RETURN, AND IT IS NOT `returnPerDollar`.** This is
+  `costEconomics.roiMultiple` — expected pipeline over COMMITTED spend — the exact ratio each client
+  reads as ROI on their own dashboard, taken per brand and then across brands. `returnPerDollar`
+  (`channel-funnel-economics.ts`, `/funnel-ranking`, `/audience-stats`) is a FORWARD unit-economics
+  projection: a brand's lifetime revenue over a MODELLED cost per paying client. They answer different
+  questions and in production they are an order apart — the fleet projection on cold email reads
+  **0.71x** while the measured median reads several multiples. **Neither may be relabelled as the
+  other**, and the projected figure must not be substituted here because it is cheap.
+- **THE UNIT IS THE BRAND AND THE STATISTIC IS THE MEDIAN, never a mean.** A handful of brands sit tens
+  of multiples above the rest, so an average describes nobody in the population. The quartiles, the min
+  and the max ride beside it so a consumer can show the bulk instead of one scalar.
+- **THE SPEND FLOOR IS THE POPULATION — `?minSpendUsd=`, default 100.** A brand three days into its
+  first campaign has spent a few dollars and its ratio is whatever its first reply happened to do: real
+  arithmetic, no information. The floor is applied at READ time over the stored INGREDIENTS (each
+  brand's committed spend and its expected pipeline), never frozen at write time, so **one snapshot
+  answers at any floor** and no recompute is needed to move it. An unreadable or negative value is a
+  **400**, never a quiet fall back to the default.
+- **IT IS SERVED FROM A PERSISTED SNAPSHOT, AND THAT IS THE WHOLE DESIGN.** The underlying work is one
+  `computeFeatureRevenue` engine pass per (org, brand), each reading that brand's WHOLE lead
+  population — minutes across the fleet, on a 384 MB heap. The consumer is a statically-rendered public
+  page that gives the band **8 seconds** and DROPS the figure rather than block a build, so a read that
+  can ever take minutes is the same as no read. An in-memory SWR cache does NOT solve it: a deploy, a
+  restart or a quiet night empties it and the next reader pays the full build synchronously. So the
+  heavy pass runs OFF the request path (single-flight warm, fired **after `app.listen()`** on boot and
+  whenever a read finds the snapshot older than an hour) and writes `fleet_return_snapshots`; the read
+  is one indexed SELECT plus arithmetic. **The read NEVER awaits the warm.** Do NOT "simplify" this
+  onto `servedPublicCached` — that is the shape that cannot survive a cold process.
+- **UNMEASURABLE IS ITS OWN ANSWER, and the two kinds are distinguishable.** `no_snapshot_yet` (no warm
+  has written one — the honest answer to a request that beat the first warm) vs `not_enough_brands` (a
+  snapshot exists, too few brands are past the floor). `brandCount` is ALWAYS on the wire, including
+  when it is too few. Never a 0, never a mean, and never the same median quietly taken over a wider
+  population to make a number appear. `MIN_RETURN_BRANDS = 5` — below that the "median" is one or two
+  customers and, on a public page, close to naming an individual brand's economics.
+- **A BRAND WITH NO USABLE ECONOMICS CONTRIBUTES NO DATA POINT.** Its pipeline is stored as `null`, not
+  0 — a 0 would say its outreach is expected to return nothing, which is a measurement nobody made, and
+  it would drag the median down. Guarded to the value: the same fixture read with that brand as a 0
+  answers a different median.
+- **NO IDENTITY OF ANY KIND.** No org, no user, no run, no key — the page is public and statically
+  rendered. `/public/*` is not proxied by the api-service gateway, so the consumer reads this service's
+  public host directly, exactly as it already reads `/public/stats/ranked`.
+- **THE MONEY BASIS IS `charged` + COMMITTED**, stated on the wire — what each brand was actually
+  charged (comped spend absent), on the single committed basis every money figure in this service
+  rides. So the fleet median and any one client's dashboard ROI are the same statistic at two grains.
+  Note the band's cost figure beside it is `incurred` (the fleet BENCHMARK basis, `/public/stats/ranked`)
+  — a deliberate difference, because a cost benchmark and a customer's own return answer opposite
+  questions about comped spend (`lib/cost-basis.ts`).
+- **`/public/stats/revenue` WAS FIXED, NOT LEFT BROKEN.** Its 500 was an unbounded `Promise.all` over
+  ~27 pairs, each pulling a brand's whole lead population at once, dying on a downstream socket
+  (`TypeError: terminated / SocketError: other side closed`). It now runs through `mapWithConcurrency`
+  at `PUBLIC_REVENUE_BRAND_CONCURRENCY = 4`, which makes it FINISH — it does not make it fast, and it
+  never will be. That read is not the home for this answer; this one is.
+- **THE WARM IS PER-BRAND RESILIENT AND PER-BRAND TIMED OUT** (the documented off-request-path warm
+  shape): one brand's failed or hung pass is logged loud and contributes no row rather than aborting a
+  warm that had already computed twenty-six others. That is not a swallowed error — the omission is
+  visible on the wire, because `brandCount` says how many brands the median was actually taken over.
+- Guards: `src/lib/fleet-return-on-spend.test.ts` (the median is the middle brand and not the mean; a
+  big spender does not weight it; the floor changes the population and the answer; the floor is
+  inclusive; a null pipeline is not a 0, to the value; both unmeasurable reasons told apart; a
+  zero-spend brand dropped; one row set answered at two floors; the parameter refusals) and
+  `src/routes/fleet-return-on-spend.test.ts` (no identity headers; the cold and stale reads answered
+  WITHOUT awaiting the warm while the warm is still kicked; a fresh snapshot not refreshed; both 400s
+  and the 404). (Set 2026-09-08, features-service#884.)
+
 ## A `/revenue` READ ANSWERS ABOUT MONEY — `?leads=outcomes` is the default, `full` is the digest's, and a row that reached NOTHING is dropped
 
 `GET /brands/:brandId/revenue` answered **10,903,573 bytes** for brand `75d7e3e8-…` (prod, 2026-08-31,
