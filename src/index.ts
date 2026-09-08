@@ -16,7 +16,7 @@ import offerEconomicsRoutes from "./routes/offer-economics.js";
 import offerFunnelEconomicsRoutes from "./routes/offer-funnel-economics.js";
 import brandEconomicsRoutes from "./routes/brand-economics.js";
 import audienceStatsRoutes from "./routes/audience-stats.js";
-import publicRoutes from "./routes/public.js";
+import publicRoutes, { warmFleetReturnSnapshotsOnBoot } from "./routes/public.js";
 import { registerSeedFeatures } from "./seed/register.js";
 
 // ── Required env vars — crash at startup if missing ─────────────────────────
@@ -75,6 +75,9 @@ if (process.env.NODE_ENV !== "test") {
       await registerSeedFeatures();
       app.listen(Number(PORT), "::", () => {
         console.log(`Features service running on port ${PORT}`);
+        // AFTER listen(), fire-and-forget: this is an O(brands) engine fan-out that takes MINUTES, so
+        // awaiting it before the port bind would fail the deploy health check and roll the service back.
+        warmFleetReturnSnapshotsOnBoot();
       });
     })
     .catch((err) => {

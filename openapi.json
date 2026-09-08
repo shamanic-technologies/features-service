@@ -23451,6 +23451,170 @@
         }
       }
     },
+    "/public/stats/return-on-spend": {
+      "get": {
+        "summary": "Fleet MEDIAN return on spend across client brands, over a spend floor (public, no auth)",
+        "description": "Cross-org (fleet-wide) MEDIAN return on spend our clients get on an acquisition channel: per brand, its expected pipeline divided by its committed spend — the exact ratio that brand reads as ROI on its own dashboard — with the median taken across brands. The unit is the BRAND and the statistic is the MEDIAN, never a mean (a handful of brands sit tens of multiples above the rest, so an average describes nobody). POPULATION: only brands past `minSpendUsd` of spend, because a brand three days into its first campaign produces a ratio with no information in it. `brandCount` states how many brands the median was actually taken over. This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics or /funnel-ranking (lifetime revenue over a modelled cost per paying client) — the two answer different questions and differ by an order of magnitude in production. Served from a PERSISTED snapshot refreshed off the request path, so it answers in milliseconds; the underlying per-brand compute is a full engine pass per brand and takes minutes. A read arriving before the first refresh answers `measured: false, reason: \"no_snapshot_yet\"` rather than blocking. Never a 0 and never a wider population when the figure cannot be stated honestly.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Acquisition-channel (feature) slug (required)."
+            },
+            "required": true,
+            "description": "Acquisition-channel (feature) slug (required).",
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Spend floor in USD a brand must be past to enter the population (default 100). Applied at read time over stored per-brand ingredients, so any floor is answerable from one snapshot. A non-numeric or negative value is a 400, never a silent fall back to the default."
+            },
+            "required": false,
+            "description": "Spend floor in USD a brand must be past to enter the population (default 100). Applied at read time over stored per-brand ingredients, so any floor is answerable from one snapshot. A non-numeric or negative value is a 400, never a silent fall back to the default.",
+            "name": "minSpendUsd",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fleet median return on spend across client brands",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "charged"
+                      ],
+                      "description": "ACCOUNTING — the CUSTOMERS' money: what each brand was CHARGED (comped spend absent), on the COMMITTED basis (actual + provisioned holds) every money figure in this service rides. The same basis as the ROI a client reads on their own dashboard, so the fleet median and one client's number are the same statistic at two grains."
+                    },
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": "string",
+                      "enum": [
+                        "brand"
+                      ],
+                      "description": "Each data point is ONE brand's realized return on its own spend."
+                    },
+                    "measured": {
+                      "type": "boolean",
+                      "description": "True only when a median is stated. False ⇒ every figure is null and `reason` says why."
+                    },
+                    "reason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "no_snapshot_yet",
+                        "not_enough_brands"
+                      ],
+                      "description": "Present exactly when `measured` is false. `no_snapshot_yet` = the background compute has not written a snapshot for this channel yet; `not_enough_brands` = a snapshot exists but too few brands are past the spend floor to state a median honestly. Neither is an error, and neither is ever answered with a 0 or with the median over a wider population."
+                    },
+                    "minSpendUsd": {
+                      "type": "number",
+                      "description": "The spend floor the population was restricted to (USD), echoed back so a consumer can state it."
+                    },
+                    "brandCount": {
+                      "type": "integer",
+                      "description": "How many brands the median was taken over. ALWAYS present, including when it is too few to state one."
+                    },
+                    "medianReturnPerDollar": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The MIDDLE brand's realized return on spend — its expected pipeline divided by its committed spend. A median, never a mean: a handful of brands sit tens of multiples above the rest, so an average describes nobody in the population."
+                    },
+                    "p25ReturnPerDollar": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "25th percentile — the lower edge of the bulk."
+                    },
+                    "p75ReturnPerDollar": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "75th percentile — the upper edge of the bulk."
+                    },
+                    "minReturnPerDollar": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The weakest qualifying brand's return."
+                    },
+                    "maxReturnPerDollar": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The strongest qualifying brand's return."
+                    },
+                    "computedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "When the snapshot these figures were taken from was computed (ISO 8601). Null when no snapshot exists yet."
+                    }
+                  },
+                  "required": [
+                    "costBasis",
+                    "featureSlug",
+                    "unit",
+                    "measured",
+                    "reason",
+                    "minSpendUsd",
+                    "brandCount",
+                    "medianReturnPerDollar",
+                    "p25ReturnPerDollar",
+                    "p75ReturnPerDollar",
+                    "minReturnPerDollar",
+                    "maxReturnPerDollar",
+                    "computedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/public/stats/workflow-engagement-latency": {
       "get": {
         "summary": "Average and median time-to-engagement per workflow (public, no auth)",
