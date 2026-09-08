@@ -60,6 +60,18 @@ import { buildActiveUsersByUser, type ActiveUsersByUser } from "../lib/active-us
 import { apiKeyOnly } from "../middleware/auth.js";
 import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
+import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
+import { distinctChannelFunnels } from "./offer-economics.js";
+import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
+import { buildBrandChannels, brandFeatureSlugs } from "../lib/brand-channels.js";
+import {
+  SHOWCASE_BRAND_IDS,
+  brandSoldFunnels,
+  showcaseFunnelOf,
+  type ShowcaseBrandFunnels,
+  type ShowcaseFunnel,
+  type ShowcaseFunnelsPayload,
+} from "../lib/showcase-funnels.js";
 import { servedCached, PLATFORM_SCOPE_ORG_ID } from "../lib/view-cache.js";
 import {
   buildChannelCatalogue,
@@ -75,6 +87,15 @@ import {
   type FleetReturnOnSpend,
 } from "../lib/fleet-return-on-spend.js";
 import { readFleetReturnSnapshotSoft, writeFleetReturnSnapshotSoft } from "../lib/fleet-return-store.js";
+import {
+  buildFunnelReturnOnSpend,
+  type BrandFunnelReturnRow,
+  type FunnelReturnOnSpend,
+} from "../lib/fleet-funnel-return.js";
+import {
+  readFleetFunnelReturnSnapshotsSoft,
+  writeFleetFunnelReturnSnapshotSoft,
+} from "../lib/fleet-funnel-return-store.js";
 import type { SalesFunnelKey } from "../lib/sales-funnels.js";
 
 const router = Router();
@@ -255,6 +276,7 @@ function allPublicCaches(): PublicCache[] {
     revenueHistoryCache,
     channelCatalogueCache,
     channelFunnelEconomicsCache,
+    showcaseFunnelsCache,
   ];
 }
 
@@ -800,15 +822,35 @@ async function computePairRevenue(
   funnel: ReturnType<typeof getFunnel>,
   orgId: string,
   brandId: string,
+  // The SALES FUNNEL to price the pipeline through, when the caller wants one funnel's answer rather
+  // than the brand's whole declared set. Threaded to `computeFeatureRevenue`'s own `?funnel=` parameter,
+  // so a per-funnel row here is the byte-same statement `/revenue?funnel=` makes for that brand — one
+  // implementation, which cannot come to price a funnel two ways. Omitted → today's whole-brand answer.
+  requestedFunnel?: SalesFunnelKey,
 ) {
   const headers: DownstreamHeaders = { orgId, featureSlug };
   try {
-    const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers);
+    const body = await computeFeatureRevenue(
+      featureSlug,
+      brandId,
+      undefined,
+      funnel,
+      headers,
+      undefined,
+      undefined,
+      false,
+      "gross",
+      requestedFunnel,
+    );
     return {
       brandId,
       pipeline: body.headline.totalPipelineUsd,
       committedCostUsd: body.costEconomics.committedCostUsd,
       actualCostUsd: body.costEconomics.actualCostUsd,
+      // Committed spend ÷ expected paying clients — null when the brand states no lifetime revenue per
+      // client. The COUNT of those clients is what composes across orgs (a ratio does not), so the
+      // fleet warm stores the count and divides once, at the brand grain.
+      costPerAcquisitionUsd: body.costEconomics.costPerAcquisitionUsd,
       timeSeries: body.timeSeries,
     };
   } catch (error) {
@@ -981,8 +1023,54 @@ export async function __awaitFleetReturnWarm(): Promise<void> {
   await Promise.allSettled([...fleetReturnWarmInFlight.values()]);
 }
 
+/** What one (org, brand) pass contributes to both snapshots. */
+type PairReturn = NonNullable<Awaited<ReturnType<typeof computePairRevenue>>>;
+
 /**
- * Recompute one channel's per-brand rows and persist them. Runs OFF the request path.
+ * Every pass one (org, brand) owes the warm: the CHANNEL-wide answer, plus one answer per SALES FUNNEL
+ * the brand declared it sells.
+ *
+ * The declared set is read once here and the passes run SEQUENTIALLY, so the peak number of concurrent
+ * engine passes is unchanged from before this pair grew a second question — each pass reads that
+ * brand's whole lead population, and lead-service is the resource that went down under exactly this
+ * kind of burst.
+ *
+ * A brand declaring exactly ONE funnel — every brand in production today — pays NO extra pass at all:
+ * with one declared funnel the channel-wide read already prices on that funnel (`priceOnDeclaredFunnel`
+ * narrows to the whole declared set, which is that one key), so the two reads are byte-identical and
+ * the funnel row REUSES the channel pass rather than repeating it.
+ */
+async function computePairReturns(
+  featureSlug: string,
+  funnel: ReturnType<typeof getFunnel>,
+  orgId: string,
+  brandId: string,
+): Promise<{ channel: PairReturn | null; byFunnel: Array<{ funnelKey: SalesFunnelKey; result: PairReturn }> }> {
+  const channel = await computePairRevenue(featureSlug, funnel, orgId, brandId);
+  if (channel === null) return { channel: null, byFunnel: [] };
+
+  // SOFT: a brand whose declaration cannot be read contributes to the channel median (which needs no
+  // declaration) and to no funnel — never to a funnel we guessed it sells.
+  const declared = await fetchDeclaredFunnelsSoft(brandId, orgId);
+  const keys = [...new Set(declared.map((d) => d.funnelKey))];
+  if (keys.length === 0) return { channel, byFunnel: [] };
+  if (keys.length === 1) return { channel, byFunnel: [{ funnelKey: keys[0], result: channel }] };
+
+  const byFunnel: Array<{ funnelKey: SalesFunnelKey; result: PairReturn }> = [];
+  for (const funnelKey of keys) {
+    const result = await computePairRevenue(featureSlug, funnel, orgId, brandId, funnelKey);
+    if (result !== null) byFunnel.push({ funnelKey, result });
+  }
+  return { channel, byFunnel };
+}
+
+/**
+ * Recompute one channel's per-brand rows — BOTH the channel-wide answer and the per-(brand, funnel)
+ * one — and persist them. Runs OFF the request path.
+ *
+ * ONE WARM, TWO SNAPSHOTS, on purpose: both answers are read off the same per-(org, brand) engine
+ * passes, so a second warm asking the same brands the same question would double the load on
+ * lead-service to learn nothing new.
  *
  * PER-BRAND RESILIENT: one brand's failed or hung pass is logged loud and contributes NO row, rather
  * than aborting a warm that had already computed the other twenty-six. That is the documented shape for
@@ -1005,7 +1093,7 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
     const computed = await mapWithConcurrency(pairs, PUBLIC_REVENUE_PAIR_CONCURRENCY, async ({ orgId, brandId }) => {
       try {
         return await withTimeout(
-          computePairRevenue(featureSlug, funnel, orgId, brandId),
+          computePairReturns(featureSlug, funnel, orgId, brandId),
           FLEET_RETURN_BRAND_TIMEOUT_MS,
           `fleet-return warm ${featureSlug} brand ${brandId}`,
         );
@@ -1023,15 +1111,41 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
     // above aggregates it. A pipeline stays null only when EVERY org's is null — no usable economics
     // anywhere — and null is never coerced to 0.
     const byBrand = new Map<string, { spend: number; pipeline: number; hasPipeline: boolean }>();
+    // The same aggregation one grain finer, keyed (brand, funnel). PAYING CLIENTS rather than a cost
+    // per client, because a COUNT composes across the orgs claiming one brand and a ratio does not:
+    // spend ÷ Σ clients is the brand's cost per client, whereas averaging two orgs' ratios is not.
+    const byBrandFunnel = new Map<
+      string,
+      { brandId: string; funnelKey: SalesFunnelKey; spend: number; pipeline: number; hasPipeline: boolean; clients: number; hasClients: boolean }
+    >();
     for (const c of computed) {
-      if (c === null) continue;
-      const agg = byBrand.get(c.brandId) ?? { spend: 0, pipeline: 0, hasPipeline: false };
-      agg.spend += c.committedCostUsd;
-      if (c.pipeline !== null) {
-        agg.pipeline += c.pipeline;
+      if (c === null || c.channel === null) continue;
+      const agg = byBrand.get(c.channel.brandId) ?? { spend: 0, pipeline: 0, hasPipeline: false };
+      agg.spend += c.channel.committedCostUsd;
+      if (c.channel.pipeline !== null) {
+        agg.pipeline += c.channel.pipeline;
         agg.hasPipeline = true;
       }
-      byBrand.set(c.brandId, agg);
+      byBrand.set(c.channel.brandId, agg);
+
+      for (const { funnelKey, result } of c.byFunnel) {
+        const key = `${result.brandId}::${funnelKey}`;
+        const f =
+          byBrandFunnel.get(key) ??
+          { brandId: result.brandId, funnelKey, spend: 0, pipeline: 0, hasPipeline: false, clients: 0, hasClients: false };
+        f.spend += result.committedCostUsd;
+        if (result.pipeline !== null) {
+          f.pipeline += result.pipeline;
+          f.hasPipeline = true;
+        }
+        // clients = spend ÷ cost-per-client, recovered from the figure the engine already stated. Null
+        // there is "this brand states no lifetime revenue per client", never a zero count.
+        if (result.costPerAcquisitionUsd !== null && result.costPerAcquisitionUsd > 0) {
+          f.clients += result.committedCostUsd / result.costPerAcquisitionUsd;
+          f.hasClients = true;
+        }
+        byBrandFunnel.set(key, f);
+      }
     }
 
     const rows: BrandReturnRow[] = [...byBrand.entries()].map(([brandId, agg]) => ({
@@ -1039,10 +1153,19 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
       committedSpendUsd: agg.spend,
       expectedPipelineUsd: agg.hasPipeline ? agg.pipeline : null,
     }));
+    const funnelRows: BrandFunnelReturnRow[] = [...byBrandFunnel.values()].map((f) => ({
+      brandId: f.brandId,
+      funnelKey: f.funnelKey,
+      committedSpendUsd: f.spend,
+      expectedPipelineUsd: f.hasPipeline ? f.pipeline : null,
+      expectedPaidClients: f.hasClients ? f.clients : null,
+    }));
 
-    await writeFleetReturnSnapshotSoft(featureSlug, rows, new Date());
+    const now = new Date();
+    await writeFleetReturnSnapshotSoft(featureSlug, rows, now);
+    await writeFleetFunnelReturnSnapshotSoft(featureSlug, funnelRows, now);
     console.log(
-      `[features-service] fleet-return warm complete for ${featureSlug}: ${rows.length} brand(s) of ${pairs.length} membership pair(s)`,
+      `[features-service] fleet-return warm complete for ${featureSlug}: ${rows.length} brand(s) and ${funnelRows.length} (brand, funnel) row(s) of ${pairs.length} membership pair(s)`,
     );
   })()
     .catch((err) => {
@@ -1125,6 +1248,121 @@ export async function handleFleetReturnOnSpend(
     unit: "brand",
     computedAt: snapshot?.computedAt.toISOString() ?? null,
     ...buildFleetReturnOnSpend(snapshot?.brands ?? null, minSpendUsd),
+  };
+  res.json(payload);
+}
+
+// ── Public FLEET (channel × sales funnel) RETURN-ON-SPEND handler ────────────
+//
+// WHAT A DOLLAR THROUGH ONE SALES FUNNEL CAME BACK AS FOR OUR OTHER CLIENTS, per acquisition channel.
+// The doctrine and the arithmetic live in `lib/fleet-funnel-return.ts`; what lives here is the
+// enumeration and why the answer is served from the same snapshot the channel-wide figure is.
+//
+// A customer looking at a funnel they have NOT declared asks exactly this, and until now the only
+// per-pair figure was `/public/channel-funnel-economics` — a forward projection off pooled MEANS, which
+// on the conversation-to-meeting funnel reads under 1x while the per-brand medians sit near 2x because
+// one brand carries the average. That read STAYS (its per-step prices have their own consumers) and this
+// one is beside it, answering a different question with a different statistic.
+//
+// EVERY PAIR IN THE CATALOGUE IS LISTED, measured or not — the same enumeration
+// `/public/channel-funnel-economics` prints, so the two reads can never disagree about which pairs
+// exist. A pair we cannot state says which kind of unmeasurable it is; it is never absent (absence
+// would read as "this channel does not sell this funnel") and never a 0.
+//
+// NOTHING IS POOLED ACROSS CHANNELS OR FUNNELS, and no read ever widens its population to make a number
+// appear: a pair below the brand bar answers `not_enough_brands` and the pairs beside it survive.
+
+interface ChannelFunnelReturnRow extends FunnelReturnOnSpend {
+  channelSlug: string;
+  channelName: string;
+  funnelKey: SalesFunnelKey;
+  funnelName: string;
+  /** The funnel's steps in order, so a row renders without the consumer knowing the catalogue. */
+  funnelSteps: readonly string[];
+  /** When the snapshot these figures were taken from was computed. Null when there is none yet. */
+  computedAt: string | null;
+}
+
+interface FleetFunnelReturnPayload {
+  /**
+   * ACCOUNTING — this is the CUSTOMERS' money: what each brand was CHARGED (comped spend absent), on
+   * the COMMITTED basis every money figure in this service rides. Same basis as the ROI each client
+   * reads on their own dashboard, so a pair median and one client's own number are the same statistic
+   * at two grains. See lib/cost-basis.ts.
+   */
+  costBasis: "charged";
+  /** Each data point is one brand's realized return on its own spend, through one funnel. */
+  unit: "brand";
+  /** The channel this read was narrowed to, or null for the whole catalogue. */
+  channelSlug: string | null;
+  /** The spend floor every pair's population was restricted to, echoed once. */
+  minSpendUsd: number;
+  pairs: ChannelFunnelReturnRow[];
+}
+
+export async function handleFleetFunnelReturn(
+  channelSlug: string | undefined,
+  minSpendUsdParam: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  const minSpendUsd = parseMinSpendUsd(minSpendUsdParam);
+  if (minSpendUsd === null) {
+    res.status(400).json({ error: "Query parameter 'minSpendUsd' must be a number >= 0" });
+    return;
+  }
+
+  const allChannels = await loadPublishedChannels();
+  if (channelSlug && !allChannels.some((c) => c.slug === channelSlug)) {
+    // An unknown channel is a 404 naming what was asked for — never an empty pair list, which a
+    // consumer would read as "this channel sells through nothing".
+    res.status(404).json({ error: `Acquisition channel not found: "${channelSlug}"` });
+    return;
+  }
+  const channels = channelSlug ? allChannels.filter((c) => c.slug === channelSlug) : allChannels;
+
+  // ONE query for every channel in scope: the catalogue is roughly forty channels and a SELECT each
+  // would put forty round-trips on a request whose whole job is arithmetic over rows a warm already
+  // computed. The snapshot read is soft — a blip degrades every pair to `no_snapshot_yet`, which is an
+  // answer the consumer already knows how to drop, rather than 500ing the page.
+  const snapshots = await readFleetFunnelReturnSnapshotsSoft(channels.map((c) => c.slug));
+
+  // Kick a warm for the channels whose snapshot is absent or aged out — and ONLY for the channels the
+  // boot warm covers, because a channel nobody runs has no memberships to walk and firing forty
+  // fan-outs off one public read is the burst these snapshots exist to avoid. NEVER awaited: the whole
+  // point of the snapshot is that no caller pays for the compute.
+  const warmable = coldEmailOutreachSlugs(channels.map((c) => c.slug));
+  for (const slug of warmable) {
+    const snap = snapshots.get(slug);
+    if (!snap || Date.now() - snap.computedAt.getTime() > FLEET_RETURN_STALE_MS) {
+      void warmFleetReturnSnapshot(slug);
+    }
+  }
+
+  const pairs: ChannelFunnelReturnRow[] = [];
+  for (const channel of channels) {
+    const snap = snapshots.get(channel.slug);
+    for (const funnel of channel.salesFunnels) {
+      pairs.push({
+        channelSlug: channel.slug,
+        channelName: channel.name,
+        funnelKey: funnel.key,
+        funnelName: funnel.name,
+        funnelSteps: funnel.steps,
+        computedAt: snap?.computedAt.toISOString() ?? null,
+        ...buildFunnelReturnOnSpend(
+          snap ? snap.rows.filter((r) => r.funnelKey === funnel.key) : null,
+          minSpendUsd,
+        ),
+      });
+    }
+  }
+
+  const payload: FleetFunnelReturnPayload = {
+    costBasis: "charged",
+    unit: "brand",
+    channelSlug: channelSlug ?? null,
+    minSpendUsd,
+    pairs,
   };
   res.json(payload);
 }
@@ -2564,6 +2802,161 @@ export async function handleChannelFunnelEconomics(
   res.json(payload);
 }
 
+// ── Showcase funnel counts (public, org-less, allowlisted brands) ────────────
+//
+// The homepage's three named clients, each walked down its own funnel. See lib/showcase-funnels.ts
+// for the whole doctrine: the brands are the SERVICE's decision, the answer is COUNTS only, and a
+// step nobody reached is still a step.
+//
+// ── HOW A BRAND'S ORG IS RESOLVED WITHOUT A CALLER ──────────────────────────────────────────────
+//
+// Every downstream read here is org-scoped (`x-org-id`), and this route has no session. So the org
+// is resolved the way the cross-org revenue read already resolves it: lead-service's feature
+// memberships enumerate which (org, brand) pairs actually have leads, and the OWNING org's identity
+// is what is forwarded to the existing /orgs/* reads. Nothing is guessed, and a brand with no
+// membership says so rather than being read under some plausible stand-in.
+//
+// ── ONE BRAND'S FAILURE IS ONE BRAND'S FAILURE ──────────────────────────────────────────────────
+//
+// A per-brand read that throws nulls THAT brand's chains with `read_failed` and is logged loud; the
+// other two still answer. This is a marketing page — one degraded client must not blank the section
+// — and the degradation is stated on the wire rather than dressed as zeros.
+const showcaseFunnelsCache: PublicCache = new Map();
+
+/** Test seam — reset the showcase funnel-counts cache (entries + in-flight). */
+export function __resetShowcaseFunnelsCache(): void {
+  clearPublicCache(showcaseFunnelsCache);
+}
+
+/** How many showcase brands are read at once. Three today; the bound is about the downstream fan-out
+ *  each one drives (leads, runs, brand, email-gateway), not about the list's length. */
+const SHOWCASE_BRAND_CONCURRENCY = 2;
+
+/** Walk every funnel one showcase brand's campaigns sell, under the org that owns its leads. */
+async function computeShowcaseBrand(
+  brandId: string,
+  orgId: string | undefined,
+  info: { name: string | null; domain: string | null } | undefined,
+): Promise<ShowcaseBrandFunnels> {
+  const brand = { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null };
+  if (!orgId) {
+    return { brand, funnels: [], measured: false, unmeasuredReason: "no_lead_membership" };
+  }
+
+  const headers: DownstreamHeaders = { orgId };
+  // ONE campaign read per brand, reused for BOTH questions it answers: which channels the brand runs
+  // (the feature scope its evidence is read over) and which funnels its campaigns state they sell.
+  const rows = await fetchBrandCampaignRows(brandId, undefined, { orgId });
+  const channels = buildBrandChannels(rows);
+  if (channels.length === 0) {
+    return { brand, funnels: [], measured: false, unmeasuredReason: "brand_has_no_channels" };
+  }
+  const soldFunnels = brandSoldFunnels(rows);
+  if (soldFunnels.length === 0) {
+    return { brand, funnels: [], measured: false, unmeasuredReason: "no_funnel_sold" };
+  }
+
+  const featureSlugs = brandFeatureSlugs(channels);
+  // The funnel DEFINITION the brand's channels price on — the registry's, not the campaign's stated
+  // key. A channel that declares none contributes nothing; several different ones cannot happen today
+  // and would mean the brand's evidence cannot be walked as one chain, so the read says so.
+  const distinct = distinctChannelFunnels(channels);
+  if (distinct.length > 1) {
+    throw new Error(`showcase brand ${brandId} runs channels that price on different funnel definitions`);
+  }
+  const funnel = distinct[0] ?? null;
+
+  // Economics are BRAND-scoped, so they are read ONCE and shared by every chain: N funnels cost one
+  // brand-service call. They do not move a single COUNT — the chain's rungs are people, not money —
+  // but the engine needs them to take the priced path rather than the cold-start short-circuit, which
+  // reads every statement-backed rung as UNMEASURED.
+  const [declaredFunnels, brandEconomics] = funnel
+    ? await Promise.all([fetchDeclaredFunnelsSoft(brandId, orgId), fetchEffectiveEconomics(brandId, headers)])
+    : [[], null];
+
+  const funnels: ShowcaseFunnel[] = [];
+  for (const funnelKey of soldFunnels) {
+    const brandPriced = brandEconomics
+      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, funnelKey)
+      : undefined;
+    // The byte-same call `/brands/:brandId/revenue?funnel=<key>` makes for its own body: the brand's
+    // whole channel set, no campaign narrowing, ONE engine pass, the named funnel walked.
+    //
+    // `includeSpend` is TRUE even though nothing here is money, and that is load-bearing: the per-lead
+    // SIGNUP / FORM-SUBMISSION attribution sets are fetched on that flag alone, so the cheaper read
+    // would leave the middle rung of a website funnel permanently NULL — a gate excluding the very
+    // funnel one of the showcase brands sells. A rung we could have measured must not read as one we
+    // could not. The extra reads it buys are discarded; three brands behind a 15-minute window pay for
+    // them once.
+    const body = await computeFeatureRevenue(
+      featureSlugs,
+      brandId,
+      undefined,
+      funnel,
+      headers,
+      undefined,
+      brandPriced,
+      true,
+      "gross",
+      funnelKey,
+    );
+    if (body.funnelSteps) funnels.push(showcaseFunnelOf(body.funnelSteps));
+  }
+
+  return {
+    brand,
+    funnels,
+    measured: funnels.length > 0,
+    // The chain resolves for every funnel the campaigns state, so an empty list here means the engine
+    // could not walk one — the same "we could not read this" a per-rung null says, one level up.
+    unmeasuredReason: funnels.length > 0 ? null : "read_failed",
+  };
+}
+
+export async function handleShowcaseFunnels(res: import("express").Response): Promise<void> {
+  const payload = await servedPublicCached<ShowcaseFunnelsPayload>({
+    cache: showcaseFunnelsCache,
+    key: "__showcase__",
+    windows: LIFETIME_AGGREGATE_WINDOWS,
+    label: "showcase funnels",
+    compute: async () => {
+      // Every seed slug in one membership read (308 rows fleet-wide, 2026-09-08) rather than a guess
+      // at which channels a showcase brand happens to run — a brand that moves to a new channel keeps
+      // answering with no change here.
+      const allSlugs = (await db.query.features.findMany()).map((f) => f.slug);
+      const memberships = allSlugs.length > 0 ? await fetchFeatureMemberships(allSlugs.join(",")) : [];
+      const orgByBrand = new Map<string, string>();
+      for (const m of memberships) {
+        if (!orgByBrand.has(m.brandId)) orgByBrand.set(m.brandId, m.orgId);
+      }
+
+      const brandInfo = await fetchBrandInfoBatch([...SHOWCASE_BRAND_IDS]);
+
+      const brands = await mapWithConcurrency(
+        [...SHOWCASE_BRAND_IDS],
+        SHOWCASE_BRAND_CONCURRENCY,
+        async (brandId): Promise<ShowcaseBrandFunnels> => {
+          try {
+            return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
+          } catch (error) {
+            console.error(`[features-service] showcase funnel read failed for brand ${brandId}:`, error);
+            const info = brandInfo.get(brandId);
+            return {
+              brand: { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null },
+              funnels: [],
+              measured: false,
+              unmeasuredReason: "read_failed",
+            };
+          }
+        },
+      );
+
+      return { brands };
+    },
+  });
+  res.json(payload);
+}
+
 // ── GET /public/channels ─────────────────────────────────────────────────────
 
 router.get("/public/channels", async (_req, res) => {
@@ -2582,6 +2975,32 @@ router.get("/public/channel-funnel-economics", async (req, res) => {
     await handleChannelFunnelEconomics(req.query.channelSlug as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public channel-funnel economics error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/funnel-return-on-spend ─────────────────────────────────
+
+router.get("/public/stats/funnel-return-on-spend", async (req, res) => {
+  try {
+    await handleFleetFunnelReturn(
+      req.query.channelSlug as string | undefined,
+      req.query.minSpendUsd as string | undefined,
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] Public funnel return-on-spend error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/showcase-funnels ───────────────────────────────────────
+
+router.get("/public/stats/showcase-funnels", async (_req, res) => {
+  try {
+    await handleShowcaseFunnels(res);
+  } catch (error) {
+    console.error("[features-service] Public showcase funnels error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

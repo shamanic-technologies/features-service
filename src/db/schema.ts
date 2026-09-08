@@ -180,3 +180,51 @@ export const fleetReturnSnapshots = pgTable(
 );
 
 export type FleetReturnSnapshot = typeof fleetReturnSnapshots.$inferSelect;
+
+/**
+ * FLEET (CHANNEL × SALES FUNNEL) RETURN-ON-SPEND snapshot store — one row per acquisition channel,
+ * holding that channel's per-(brand, funnel) ingredients.
+ *
+ * The sibling `fleet_return_snapshots` answers "what has a dollar through this CHANNEL come back as".
+ * This one answers the narrower question the offer page asks — what a dollar through one SALES FUNNEL
+ * came back as, for the clients who sell that funnel through that channel — and it is written by the
+ * SAME warm, because both answers are read off the same per-(org, brand) engine passes and running two
+ * fan-outs to ask one brand two questions would double the load on lead-service for nothing.
+ *
+ * WHY IT IS PERSISTED AND NOT MERELY CACHED is the sibling table's reason verbatim: the underlying work
+ * is one `computeFeatureRevenue` pass per (org, brand, declared funnel), each reading that brand's
+ * whole lead population — minutes across the fleet, on a 384 MB heap — and the consumer is a dashboard
+ * page that polls. An in-memory SWR cache does not survive a deploy or a quiet night, and the next
+ * reader would pay the full build synchronously.
+ *
+ * The rows stored are INGREDIENTS (each brand's committed spend, its expected pipeline through the
+ * funnel, and how many paying clients that pipeline is), never a finished median — so the SPEND FLOOR
+ * stays a parameter of the QUESTION (`?minSpendUsd=`), answerable at any value from one snapshot. A
+ * brand appears only under its id; no name, no domain, nothing a public response echoes back.
+ *
+ * DERIVED + REBUILDABLE: every row can be recomputed from the siblings, so dropping the table is safe
+ * (the next warm refills it). Idempotent: upsert on `feature_slug`, overwritten WHOLE by each warm — a
+ * brand that stopped selling a funnel must leave the population, and merging would keep it forever.
+ */
+export const fleetFunnelReturnSnapshots = pgTable(
+  "fleet_funnel_return_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Acquisition-channel slug the snapshot is for, unique — one row per channel. */
+    featureSlug: text("feature_slug").notNull(),
+    /**
+     * The per-(brand, funnel) INGREDIENTS, as an array of
+     * `{ brandId, funnelKey, committedSpendUsd, expectedPipelineUsd | null, expectedPaidClients | null }`.
+     * Both nullable figures are null when the brand has no usable economics — "we could not price
+     * this", never a 0 that would say the outreach returned nothing.
+     */
+    rows: jsonb("rows").notNull(),
+    /** When the warm that wrote this row finished — drives the staleness check on read. */
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("idx_fleet_funnel_return_snapshots_feature").on(table.featureSlug),
+  ]
+);
+
+export type FleetFunnelReturnSnapshot = typeof fleetFunnelReturnSnapshots.$inferSelect;

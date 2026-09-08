@@ -81,6 +81,64 @@ The customer can now say so, per statement. lead-service froze `causedByOutreach
   only checked "a number came back" would pass on an implementation that ignored the parameter.
   (Set 2026-09-04, features-service#882; Wave 2 of 3 behind lead-service#511.)
 
+## OUR OWN HOMEPAGE STATES THREE CLIENTS' FUNNEL COUNTS — `GET /public/stats/showcase-funnels`, and the brands are decided HERE, never by the caller
+
+The apex page (indexable, no session) names three clients and states, under each, how many people we
+contacted and how many reached each subsequent step. Those figures were read out of production BY HAND
+on 2026-09-06 and pasted in as literals. Nothing refreshed them: a client's funnel moves every day, the
+page renders perfectly either way, and it NUDGES the counters in-session for a live feel — so a reader
+watching a number climb was watching an invented increment climb from a frozen base. This is the read
+that makes them true.
+
+- **THE ALLOWLIST IS IN THE SERVICE, AND THE ROUTE TAKES NO PARAMETER NAMING A BRAND**
+  (`lib/showcase-funnels.ts`, `SHOWCASE_BRAND_IDS`). This is an unauthenticated read of NAMED clients'
+  funnel figures, published because we agreed to publish those three; a caller-supplied identifier
+  would turn the same route into a way to read ANY brand's funnel with no session at all. The list is
+  the whole access-control story, which is why it is a frozen constant reviewed like code rather than a
+  row somebody can add to from outside. Adding a brand to it PUBLISHES that brand's funnel to the
+  internet. Guarded: a `?brandId=` on the request produces a BYTE-IDENTICAL body, and a non-allowlisted
+  brand is absent however it is asked for.
+- **COUNTS ONLY, because the page computes nothing.** No money, no rate, nothing to divide — every step
+  carries `peopleReached` and its own name. **`0` is MEASURED** ("nobody got here") and **`null` is "we
+  have no figure"** (the producer behind that rung degraded on this read), exactly as `funnelSteps`
+  states it one layer down. A zero standing in for an unknown is the one answer this must never give:
+  on a marketing page it reads as a fact about the CLIENT rather than as a gap in our own reading.
+- **A STEP NOBODY REACHED IS STILL A STEP.** The chain is served in the funnel's OWN order under the
+  funnel's OWN names, first to last, with the outreach base (`key: "contacted"`) as its FIRST entry —
+  the page draws the funnel in order and hides zero-valued cells itself, so pruning an empty rung here
+  would silently change the shape of somebody's funnel. The base carries the same shape as every other
+  rung rather than a special-cased field a consumer must branch on; `key` is the canonical LEG key, so
+  nobody keys off buyer-facing wording.
+- **ONE CHAIN PER FUNNEL THE BRAND'S OWN CAMPAIGNS STATE THEY SELL** (`brandSoldFunnels`), in catalogue
+  order. Two funnels share legs, so their figures overlap and must never be summed, and picking one
+  would state a funnel nobody asked about. A campaign stating no funnel — or a word the catalogue does
+  not know — contributes NOTHING; it is never parked on a default. Every showcase brand sells exactly
+  one today.
+- **IT IS THE BYTE-SAME COMPUTE `/brands/:brandId/revenue?funnel=<key>` MAKES** — the brand's whole
+  channel set, no campaign narrowing, ONE engine pass. So a showcase figure and the customer's own
+  dashboard can never disagree about how many people reached a rung. **`includeSpend` is TRUE even
+  though nothing here is money, and that is load-bearing**: the per-lead SIGNUP / FORM-SUBMISSION
+  attribution sets are fetched on that flag alone, so the cheaper read would leave the middle rung of a
+  website funnel permanently NULL — a gate excluding the very funnel one of the showcase brands sells.
+  A rung we COULD have measured must never read as one we could not. The extra reads it buys are
+  discarded; three brands behind a 15-minute window pay for them once.
+- **THE ORG IS RESOLVED THE WAY THE CROSS-ORG REVENUE READ RESOLVES IT** — lead-service's feature
+  memberships enumerate which (org, brand) pairs actually have leads, and the OWNING org's identity is
+  forwarded to the existing `/orgs/*` reads. Nothing is guessed: a brand with no membership answers
+  `no_lead_membership` rather than being read under a plausible stand-in.
+- **A BRAND WITH NOTHING TO WALK NAMES ITS REASON** — `brand_has_no_channels` / `no_funnel_sold` /
+  `no_lead_membership` / `read_failed`. Every allowlisted brand is ALWAYS in the body, in the
+  allowlist's order, and **one brand's failed read is logged loud and nulls only that brand** — a
+  marketing section must not blank because one client degraded.
+- Rides `LIFETIME_AGGREGATE_WINDOWS` through `servedPublicCached` (15 min fresh / 6 h stale,
+  single-flighted), like every other cross-org public surface. **The api-service gateway does NOT proxy
+  `/public/*`** (no wildcard there), so a consumer outside the cluster needs its own forward.
+- Guards: `src/routes/showcase-funnels.test.ts` — ONE fixture of three brands selling two different
+  funnels: the no-brand-parameter identity, the allowlist's order, the ordered chain with a MEASURED 0
+  at the rung nobody reached, each brand on its OWN funnel, a degraded producer nulling the rung it
+  alone evidences, all four unmeasured reasons, and one brand's failure leaving the others intact.
+  (Set 2026-09-08.)
+
 ## THE MEDIAN RETURN ON SPEND OUR CLIENTS GET — `GET /public/stats/return-on-spend`, served from a PERSISTED snapshot because the compute takes MINUTES
 
 The public competitor-comparison pages close on a dark band of live figures, next to competitors who
@@ -114,8 +172,9 @@ seconds** in prod (2026-09-08), and the two other candidates carry no return at 
   can ever take minutes is the same as no read. An in-memory SWR cache does NOT solve it: a deploy, a
   restart or a quiet night empties it and the next reader pays the full build synchronously. So the
   heavy pass runs OFF the request path (single-flight warm, fired **after `app.listen()`** on boot and
-  whenever a read finds the snapshot older than an hour) and writes `fleet_return_snapshots`; the read
-  is one indexed SELECT plus arithmetic. **The read NEVER awaits the warm.** Do NOT "simplify" this
+  whenever a read finds the snapshot older than an hour) and writes `fleet_return_snapshots` — and, off
+  the SAME passes, `fleet_funnel_return_snapshots` for the per-(channel x funnel) median beside it (see
+  that section); the read is one indexed SELECT plus arithmetic. **The read NEVER awaits the warm.** Do NOT "simplify" this
   onto `servedPublicCached` — that is the shape that cannot survive a cold process.
 - **UNMEASURABLE IS ITS OWN ANSWER, and the two kinds are distinguishable.** `no_snapshot_yet` (no warm
   has written one — the honest answer to a request that beat the first warm) vs `not_enough_brands` (a
@@ -154,6 +213,77 @@ seconds** in prod (2026-09-08), and the two other candidates carry no return at 
   `src/routes/fleet-return-on-spend.test.ts` (no identity headers; the cold and stale reads answered
   WITHOUT awaiting the warm while the warm is still kicked; a fresh snapshot not refreshed; both 400s
   and the 404). (Set 2026-09-08, features-service#888.)
+## WHAT A DOLLAR THROUGH ONE SALES FUNNEL CAME BACK AS FOR OUR OTHER CLIENTS — `GET /public/stats/funnel-return-on-spend`, the MEDIAN per (channel x funnel), beside the projection and never instead of it
+
+A customer looking at a sales funnel they have NOT declared asks one question: what did our other
+clients get back per dollar through it, and what did a paying client cost them. The only per-pair figure
+that existed answers a different question. `/public/channel-funnel-economics` prices a pooled fleet unit
+cost through the MEAN declared rates and the MEAN declared lifetime revenue — a forward PROJECTION whose
+every ingredient is an average, so one brand far from the rest carries it: it reads **0.7x** for the
+conversation-to-meeting funnel while the per-brand medians sit near **2x**, dragged by a single brand at
+0.02x.
+
+- **THE FIGURE IS THE ONE EVERY CLIENT ALREADY READS ON THEIR OWN DASHBOARD** — `costEconomics.roiMultiple`
+  scoped to the funnel, i.e. the byte-same statistic `GET /features/:slug/revenue?funnel=<key>` states
+  for one brand, taken across brands. Expected pipeline over committed spend, where the pipeline starts
+  each lead at its most-advanced REALIZED step and projects the rest with that brand's OWN rates and
+  LTR. **NEITHER READ MAY BE RELABELLED AS THE OTHER and the projection is NOT replaced** — its per-step
+  prices have their own consumers, and it stays exactly where it is.
+- **THE UNIT IS THE BRAND AND THE STATISTIC IS THE MEDIAN, never a mean, anywhere in the served figures**
+  (`lib/fleet-funnel-return.ts`, whose header follows `fleet-return-on-spend.ts`'s doctrine verbatim).
+  Quartiles, min and max ride beside it so a consumer can show the bulk rather than one scalar.
+- **NOTHING IS POOLED ACROSS CHANNELS OR FUNNELS, AND NO POPULATION IS EVER WIDENED TO MAKE A NUMBER
+  APPEAR.** A pair below the bar answers `not_enough_brands` while the measured pair beside it on the
+  SAME channel still answers — guarded, because borrowing the neighbouring funnel's brands is the one
+  failure that would look right on a screen.
+- **`MIN_FUNNEL_RETURN_BRANDS = 3`, deliberately lower than the channel read's 5.** A pair is a strictly
+  narrower population than the channel it sits in (a brand sells one or two of its channel's funnels), so
+  holding it to the channel's bar would answer "unmeasured" for every pair we have. Prod 2026-09-08, cold
+  email at the $100 floor: conversation-to-meeting **n=4**, form magnet n=3, website purchases n=2,
+  website-to-meeting n=1 — so two of the four read unmeasured, which is the correct answer and not a bug.
+- **THE COST PER PAYING CLIENT IS STATED ON ITS OWN POPULATION AND ITS OWN COUNT**
+  (`costPerPaidClientBrandCount`), because it needs an ingredient the return does not — the brand's
+  lifetime revenue per client. A pair can state a return with a NULL cost per client; that is not a
+  contradiction, it says the brands selling that funnel have not all told us what a client is worth.
+- **THE STORED ROW IS INGREDIENTS, AND ONE OF THEM IS A COUNT ON PURPOSE.**
+  `{brandId, funnelKey, committedSpendUsd, expectedPipelineUsd|null, expectedPaidClients|null}` — the
+  paying-client COUNT composes across the orgs claiming one brand (spend / sum of clients) where a ratio
+  does not. `?minSpendUsd=` (default 100) is applied at READ over those rows, so **one snapshot answers at
+  any floor**; an unreadable or negative value is a 400, never a quiet default. Both nulls are "we could
+  not price this", never a 0 that would drag a median toward a measurement nobody made.
+- **THE SPEND IS THE CHANNEL'S, NOT A PER-FUNNEL SPLIT** — exactly as `/revenue?funnel=` states it. The
+  funnel narrows which LEGS carry value; a dollar spent on the channel bought the outreach whichever
+  funnel it later converted through.
+- **ONE WARM WRITES BOTH SNAPSHOTS.** The channel-wide median and the per-funnel one are read off the
+  SAME per-(org, brand) engine passes, so `warmFleetReturnSnapshot` computes and persists both
+  (`fleet_return_snapshots` + `fleet_funnel_return_snapshots`); a second warm asking the same brands the
+  same question would double the load on lead-service to learn nothing. **A brand declaring exactly ONE
+  funnel pays NO extra pass** — with one declared funnel the channel-wide read already prices on it
+  (`priceOnDeclaredFunnel` narrows to the declared set, which is that key), so the funnel row REUSES the
+  channel pass. Only a brand declaring several pays extra passes, and they run SEQUENTIALLY so the peak
+  number of concurrent engine passes is unchanged from before the pair grew a second question — each
+  pass reads a brand's whole lead population, and that burst is what took lead-service down.
+- **A BRAND WHOSE DECLARATION CANNOT BE READ IS IN THE CHANNEL MEDIAN AND IN NO FUNNEL** (fail-soft, loud
+  log) — never parked on a funnel we guessed it sells.
+- **EVERY PAIR IN THE CATALOGUE IS LISTED, measured or not**, from the same enumeration
+  `/public/channel-funnel-economics` prints, so the two reads can never disagree about which pairs exist.
+  Absence would read as "this channel does not sell this funnel". `?channelSlug=` narrows; an unknown
+  slug is a 404, never an empty list. The snapshots are read in ONE batched query (the catalogue is ~40
+  channels) and a read blip degrades every pair to `no_snapshot_yet` rather than 500ing the page.
+- **THE READ KICKS A WARM ONLY FOR THE CHANNELS THE BOOT WARM COVERS** (`coldEmailOutreachSlugs`) and
+  NEVER awaits it: firing forty fan-outs off one public read is the burst the snapshot exists to avoid.
+- **NO IDENTITY OF ANY KIND** — no org, no user, no run, no key. `/public/*` is not proxied by the
+  api-service gateway's wildcard, so it needs its own forward there.
+- Guards: `src/lib/fleet-funnel-return.test.ts` (the median is the middle brand while the mean is dragged
+  by the 0.02x brand; a big spender does not weight it; a null pipeline is not a 0, to the value; the
+  floor changes the population and the answer; the floor is inclusive; a zero-spend brand dropped; a
+  stated return beside a NULL cost per client; both unmeasurable reasons told apart; the three-brand bar)
+  and `src/routes/fleet-funnel-return.test.ts` (no identity; the prod-shaped fixture answering ~1.9x on
+  n=4 while the n=1 funnel reads `not_enough_brands` with its measured neighbour intact; each funnel on
+  its OWN rows; every pair listed; one snapshot at two floors with no recompute; the cold and stale reads
+  answered WITHOUT awaiting the warm while the warm is still kicked; no warm for a non-cold-email channel;
+  the 400 and the 404). (Set 2026-09-08, features-service#898.)
+
 ## A WHOLE-POPULATION READ IS WALKED AND CAPPED PROCESS-WIDE — abandoning one must COST the downstream one page, not minutes
 
 lead-service was down for **11.5 hours** on 2026-09-07 (18:59 UTC → 06:40 UTC), taking every consumer

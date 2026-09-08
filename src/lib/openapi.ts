@@ -2482,6 +2482,27 @@ const costPerOutcomeLifetimeResponseSchema = z.object({
   brandCount: z.number().int().describe("Number of client brands with usable economics that backed the fleet-mean projection."),
 });
 
+const showcaseFunnelsResponseSchema = z.object({
+  brands: z.array(z.object({
+    brand: z.object({
+      id: z.string().uuid(),
+      name: z.string().nullable(),
+      domain: z.string().nullable(),
+    }),
+    funnels: z.array(z.object({
+      funnelKey: z.string().describe("The sales funnel this chain walks — brand-service's own catalogue key."),
+      funnelName: z.string().describe("The funnel's own name, so a consumer renders the chain without holding the catalogue."),
+      steps: z.array(z.object({
+        key: z.string().describe("Stable machine key of the rung — the canonical LEG key, or 'contacted' for the outreach base. Key off this, not off the buyer-facing label."),
+        label: z.string().describe("The funnel's OWN name for this step, in the words the customer's screen uses."),
+        peopleReached: z.number().int().nullable().describe("DISTINCT people who reached this step. 0 is MEASURED ('nobody got here'); null is 'we have no figure' (the producer behind this rung was unreadable on this read) — NEVER a 0 standing in for an unknown."),
+      })).describe("The rungs in the funnel's OWN order, first to last, with the outreach base first. Never pruned: a step nobody reached is still a step, and a consumer hides empty cells itself."),
+    })).describe("One chain per funnel the brand's OWN campaigns state they sell, in catalogue order. Two funnels share legs, so their figures overlap and must NEVER be summed."),
+    measured: z.boolean().describe("True iff at least one chain was walked. False always names its reason."),
+    unmeasuredReason: z.enum(["brand_has_no_channels", "no_funnel_sold", "no_lead_membership", "read_failed"]).nullable(),
+  })).describe("One entry per allowlisted showcase brand, in the allowlist's own order — always all of them, degraded ones included."),
+});
+
 const costPerOutcomeDistributionResponseSchema = z.object({
   costBasis: z.literal("incurred").describe("PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."),
   featureSlug: z.string(),
@@ -2761,6 +2782,20 @@ registry.registerPath({
   },
 });
 
+// ── GET /public/stats/showcase-funnels ───────────────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/showcase-funnels",
+  summary: "Ordered funnel counts for the SHOWCASE brands named on our homepage (public, no auth)",
+  description:
+    "The current funnel counts of the named client brands our public homepage states — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. TAKES NO PARAMETER NAMING A BRAND, and never will: the brands are a FROZEN SERVER-SIDE ALLOWLIST (src/lib/showcase-funnels.ts), because a caller-supplied identifier would turn this unauthenticated read of clients we agreed to publish into a way to read ANY brand's funnel with no session. COUNTS ONLY — no money, no rate, nothing to divide. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
+  tags: ["Public"],
+  responses: {
+    200: { description: "Ordered funnel counts for every allowlisted showcase brand", content: { "application/json": { schema: showcaseFunnelsResponseSchema } } },
+  },
+});
+
 // ── GET /public/stats/cost-per-outcome-distribution ──────────────────────
 
 registry.registerPath({
@@ -2824,6 +2859,62 @@ registry.registerPath({
     200: { description: "Fleet median return on spend across client brands", content: { "application/json": { schema: fleetReturnOnSpendResponseSchema } } },
     400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/funnel-return-on-spend ─────────────────────────────
+
+const funnelReturnPairSchema = z.object({
+  channelSlug: z.string().describe("The acquisition channel (feature slug) the funnel is bought through."),
+  channelName: z.string(),
+  funnelKey: z.enum(["sales_meetings_from_conversation", "sales_meetings_from_website", "website_purchases", "form_magnet"]).describe("The sales funnel, in brand-service's own canonical vocabulary."),
+  funnelName: z.string(),
+  funnelSteps: z.array(z.string()).describe("The funnel's steps in order, so a row renders without the consumer knowing the catalogue."),
+  measured: z.boolean().describe("True only when a median RETURN is stated for this pair. False ⇒ every figure is null and `reason` says why."),
+  reason: z.enum(["no_snapshot_yet", "not_enough_brands"]).nullable().describe("Present exactly when `measured` is false. `no_snapshot_yet` = no background compute has written a snapshot for this CHANNEL yet; `not_enough_brands` = a snapshot exists but too few brands sell this funnel through this channel past the spend floor. Neither is an error, and neither is ever answered with a 0 or with a median quietly taken over a wider population (a neighbouring funnel, the whole channel)."),
+  minSpendUsd: z.number().describe("The spend floor this pair's population was restricted to (USD)."),
+  brandCount: z.number().int().describe("How many brands the RETURN median was taken over. ALWAYS present, including when it is too few to state one."),
+  medianReturnPerDollar: z.number().nullable().describe("The MIDDLE brand's realized return on spend through THIS funnel — its expected pipeline (scoped to the funnel) divided by its committed spend on the channel. Byte-same statistic as `costEconomics.roiMultiple` on GET /features/{slug}/revenue?funnel={key} for one brand. A median, never a mean."),
+  p25ReturnPerDollar: z.number().nullable().describe("25th percentile — the lower edge of the bulk."),
+  p75ReturnPerDollar: z.number().nullable().describe("75th percentile — the upper edge of the bulk."),
+  minReturnPerDollar: z.number().nullable().describe("The weakest qualifying brand's return."),
+  maxReturnPerDollar: z.number().nullable().describe("The strongest qualifying brand's return."),
+  medianCostPerPaidClientUsd: z.number().nullable().describe("The MIDDLE brand's cost per PAYING CLIENT (its committed spend divided by the paying clients its pipeline is). Stated on its OWN population, because it needs one ingredient the return does not — the brand's lifetime revenue per client — so a pair can state a return and no cost per client. Null, never 0."),
+  costPerPaidClientBrandCount: z.number().int().describe("How many brands the cost-per-paid-client median was taken over. Never inferred from `brandCount`."),
+  computedAt: z.string().nullable().describe("When the snapshot these figures were taken from was computed (ISO 8601). Null when the channel has no snapshot yet."),
+});
+
+const fleetFunnelReturnResponseSchema = z.object({
+  costBasis: z.literal("charged").describe("ACCOUNTING — the CUSTOMERS' money: what each brand was CHARGED (comped spend absent), on the COMMITTED basis (actual + provisioned holds) every money figure in this service rides."),
+  unit: z.literal("brand").describe("Each data point is ONE brand's realized return on its own spend, through one funnel."),
+  channelSlug: z.string().nullable().describe("The channel this read was narrowed to, or null for the whole catalogue."),
+  minSpendUsd: z.number().describe("The spend floor every pair's population was restricted to (USD), echoed once."),
+  pairs: z.array(funnelReturnPairSchema).describe("Every (acquisition channel x sales funnel) pair in the catalogue, measured or not. A pair is never absent — absence would read as 'this channel does not sell this funnel'."),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/funnel-return-on-spend",
+  summary: "Fleet MEDIAN return on spend per (acquisition channel x sales funnel) pair (public, no auth)",
+  description:
+    "Cross-org (fleet-wide) MEDIAN return on spend our clients get through ONE SALES FUNNEL on one acquisition channel, plus the median cost per paying client on the same population. " +
+    "Per brand the figure is its expected pipeline scoped to that funnel divided by its committed spend on the channel - the byte-same ratio that brand reads as ROI on its own dashboard (GET /features/{slug}/revenue?funnel={key}) - with the median taken across brands. " +
+    "The unit is the BRAND and the statistic is the MEDIAN, never a mean. " +
+    "POPULATION: brands that declared the funnel and are past `minSpendUsd` of spend on the channel. A pair below the minimum brand count answers `measured: false, reason: \"not_enough_brands\"` with `brandCount` stated, and no figure is ever computed over a wider population to make a number appear. " +
+    "This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics (a pooled unit price through MEAN declared rates and a MEAN lifetime revenue) - the two answer different questions and differ by an order of magnitude in production. Both reads exist; neither may be relabelled as the other. " +
+    "Served from a PERSISTED snapshot refreshed off the request path, so it answers in milliseconds; the underlying per-brand compute is a full engine pass per (brand, funnel) and takes minutes. A read arriving before the first refresh answers `no_snapshot_yet` rather than blocking. " +
+    "No identity of any kind: no org, no user, no run, no key.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      channelSlug: z.string().optional().describe("Narrow to one acquisition channel (feature slug). Omitted returns every published channel's pairs. An unknown slug is a 404, never an empty pair list."),
+      minSpendUsd: z.string().optional().describe("Spend floor in USD a brand must be past to enter a pair's population (default 100). Applied at read time over stored per-brand ingredients, so any floor is answerable from one snapshot. A non-numeric or negative value is a 400, never a silent fall back to the default."),
+    }),
+  },
+  responses: {
+    200: { description: "Fleet median return on spend per (channel x funnel) pair", content: { "application/json": { schema: fleetFunnelReturnResponseSchema } } },
+    400: { description: "Invalid parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Acquisition channel not found", content: { "application/json": { schema: errorResponse } } },
   },
 });
 
