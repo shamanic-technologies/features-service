@@ -2655,9 +2655,14 @@ async function computeShowcaseBrand(
       ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, funnelKey)
       : undefined;
     // The byte-same call `/brands/:brandId/revenue?funnel=<key>` makes for its own body: the brand's
-    // whole channel set, no campaign narrowing, ONE engine pass, the named funnel walked. `includeSpend`
-    // is false because nothing here is money — a spend breakdown would be fetched for a block this
-    // payload does not carry.
+    // whole channel set, no campaign narrowing, ONE engine pass, the named funnel walked.
+    //
+    // `includeSpend` is TRUE even though nothing here is money, and that is load-bearing: the per-lead
+    // SIGNUP / FORM-SUBMISSION attribution sets are fetched on that flag alone, so the cheaper read
+    // would leave the middle rung of a website funnel permanently NULL — a gate excluding the very
+    // funnel one of the showcase brands sells. A rung we could have measured must not read as one we
+    // could not. The extra reads it buys are discarded; three brands behind a 15-minute window pay for
+    // them once.
     const body = await computeFeatureRevenue(
       featureSlugs,
       brandId,
@@ -2666,7 +2671,7 @@ async function computeShowcaseBrand(
       headers,
       undefined,
       brandPriced,
-      false,
+      true,
       "gross",
       funnelKey,
     );
