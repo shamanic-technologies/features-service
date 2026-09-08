@@ -136,11 +136,13 @@ seconds** in prod (2026-09-08), and the two other candidates carry no return at 
   Note the band's cost figure beside it is `incurred` (the fleet BENCHMARK basis, `/public/stats/ranked`)
   — a deliberate difference, because a cost benchmark and a customer's own return answer opposite
   questions about comped spend (`lib/cost-basis.ts`).
-- **`/public/stats/revenue` WAS FIXED, NOT LEFT BROKEN.** Its 500 was an unbounded `Promise.all` over
-  ~27 pairs, each pulling a brand's whole lead population at once, dying on a downstream socket
-  (`TypeError: terminated / SocketError: other side closed`). It now runs through `mapWithConcurrency`
-  at `PUBLIC_REVENUE_BRAND_CONCURRENCY = 4`, which makes it FINISH — it does not make it fast, and it
-  never will be. That read is not the home for this answer; this one is.
+- **`/public/stats/revenue` IS NOT LEFT BROKEN.** Its 500 was an unbounded `Promise.all` over ~27
+  pairs, each pulling a brand's whole lead population at once, dying on a downstream socket
+  (`TypeError: terminated / SocketError: other side closed`) — the same shape that took lead-service
+  down the day before. `PUBLIC_REVENUE_PAIR_CONCURRENCY = 4` (features-service#886, landed first)
+  makes it FINISH; it does not make it fast, and it never will. That read is not the home for this
+  answer; this one is, and its per-brand pass is the SAME extracted `computePairRevenue` so the two
+  can never come to compute a brand's return two ways.
 - **THE WARM IS PER-BRAND RESILIENT AND PER-BRAND TIMED OUT** (the documented off-request-path warm
   shape): one brand's failed or hung pass is logged loud and contributes no row rather than aborting a
   warm that had already computed twenty-six others. That is not a swallowed error — the omission is
@@ -151,7 +153,65 @@ seconds** in prod (2026-09-08), and the two other candidates carry no return at 
   zero-spend brand dropped; one row set answered at two floors; the parameter refusals) and
   `src/routes/fleet-return-on-spend.test.ts` (no identity headers; the cold and stale reads answered
   WITHOUT awaiting the warm while the warm is still kicked; a fresh snapshot not refreshed; both 400s
-  and the 404). (Set 2026-09-08, features-service#884.)
+  and the 404). (Set 2026-09-08, features-service#888.)
+## A WHOLE-POPULATION READ IS WALKED AND CAPPED PROCESS-WIDE — abandoning one must COST the downstream one page, not minutes
+
+lead-service was down for **11.5 hours** on 2026-09-07 (18:59 UTC → 06:40 UTC), taking every consumer
+with it — including this service's own `/internal/stats/send-forecast`, which 500'd for the whole
+window with `TypeError: fetch failed … HeadersTimeoutError` every few minutes. The burst came from
+here.
+
+`leads_campaigns` holds **364,783 rows** and the six largest brands are **50k-66k each**. This service
+asked for a brand's whole population in ONE body (no `limit`), and fanned several brands out
+CONCURRENTLY as part of the cross-org roll-up. At 18:59:06 **ten of those landed together**;
+lead-service could not drain them, undici gave up at its 300s headers timeout, and the abandoned
+sockets left ten Postgres backends pinned writing to a client nobody was reading — pool gone, and it
+never came back on its own.
+
+- **THE PRODUCER ALREADY PAGED, AND ITS WALK IS COMPLETE BY CONTRACT.** `GET /orgs/leads` orders on
+  `(created_at, id)` — a TOTAL order — and states that a `limit` + `cursor` walk visits every row
+  **exactly once, no gaps, no repeats**, `nextCursor: null` at the end. So `walkLeadPages`
+  (`leads-client.ts`) returns the SAME rows in the SAME order the unbounded read returned. **Nothing
+  about what the aggregation computes moved** — only the shape of the asking. `LEAD_PAGE_SIZE`
+  (default 5,000) is the only lever; the biggest brand is 14 pages.
+- **THE POINT IS NOT A SMALLER BODY, IT IS A CHEAP ABANDONMENT.** A page is short-lived, so giving up
+  costs the downstream ONE page's work instead of minutes of it, and a walk holds ONE connection at a
+  time rather than one for its whole duration.
+- **AND ABANDONING ACTUALLY CANCELS — `fetchWithRetry(url, init, { timeoutMs })`.** undici's 300s
+  headers timeout makes the CLIENT stop waiting; it does not tell the server to stop working, which
+  is precisely how a slow read over here became an exhausted pool over there. An `AbortSignal`
+  destroys the socket, so lead-service's write fails at once and it releases the backend behind it.
+  `LEAD_PAGE_TIMEOUT_MS` (default 60s) is a CEILING on a normally sub-second page, not a budget. The
+  signal is minted **fresh per attempt** — one pre-made signal would arrive at the retry already
+  aborted, turning one slow attempt into an instant failure of every remaining one — and an abort is
+  NOT a transient connect-phase error, so it propagates loudly instead of being retried.
+- **THE CAP LIVES AT THE BOUNDARY, NOT AT THE CALL SITES — `LEAD_READ_CONCURRENCY` (default 4).**
+  `mapWithConcurrency` bounds ONE fan-out; it cannot bound the SUM of several running at the same
+  moment, and the cross-org revenue roll-up, the customer-health board and a dashboard read are three
+  independent fan-outs that all read leads. lead-service's connection pool is a SHARED resource, so
+  the cap belongs where that resource is consumed: a process-wide `createSlotLimiter`
+  (`concurrency.ts`) that every page read passes through, which **no call site can opt out of and a
+  new one inherits for free**. Sized below what the downstream can absorb so its own live traffic
+  still has room — the incident took ten. The slot is HANDED OVER on release rather than
+  released-then-reacquired, or a caller arriving in the same tick would steal the woken waiter's slot
+  and the cap would be exceeded by one under exactly the burst it exists to bound.
+- **THE CROSS-ORG ROLL-UP IS BOUNDED TOO** (`handlePublicRevenue`, `PUBLIC_REVENUE_PAIR_CONCURRENCY`
+  4): the lead read carries its own cap now, but each pair's compute ALSO fans out to runs,
+  brand-service and email-gateway, and an unbounded `Promise.all` over the pairs fanned those just as
+  wide.
+- **NO PARTIAL DATA, EVER.** A page failure fails the whole walk; a producer that returns a REPEATING
+  cursor, or a walk past `MAX_LEAD_PAGES` (500), THROWS. A truncated population would silently
+  under-report every figure derived from it, which is worse than a 502 saying the read did not
+  complete. The slot is released on the failure path too, so one failure cannot wedge the cap shut.
+- **This does NOT replace the lead-service hotfix** that stops an abandoned client pinning a
+  connection forever. That one makes the outage survivable; this one stops generating the burst.
+- Guards: `src/lib/bounded-lead-fanout.test.ts` — the walk returning the complete population in order
+  with `limit` on every request and the producer's cursor threaded through; a non-advancing producer
+  failing loud; a mid-walk page failure failing the whole read; a response with no cursor being one
+  page; **ten simultaneous whole-population reads of TEN DIFFERENT brands** (so the in-flight dedup
+  does not apply) peaking at the cap while all ten are still served; the slot released on failure;
+  the hand-over race on `createSlotLimiter`; and the abort signal being present, fresh per attempt,
+  and never invented for a caller that asked for no timeout. (Set 2026-09-08.)
 
 ## A `/revenue` READ ANSWERS ABOUT MONEY — `?leads=outcomes` is the default, `full` is the digest's, and a row that reached NOTHING is dropped
 
@@ -1672,8 +1732,9 @@ IDENTITY — campaign-service's own key (its `uniq_campaigns_org_brand_funnel_ch
   page and a failure fails every waiting reader loudly. **Do NOT turn this into a TTL cache** — the
   freshness rules live in the Gold snapshot layer, and a second cache under them would serve a
   number nobody can reason about. Guards: the four `one page, one parse` cases in
-  `leads-client.test.ts`. If a brand ever outgrows a single 384 MB parse, the answer is the heap
-  setting or a producer-side page, not a silently narrower read.
+  `leads-client.test.ts`. The page is now WALKED rather than asked for in one body (see the section
+  below), so "one page, one parse" means one WALK, one parse — the dedup and the read-only sharing
+  are unchanged.
 - **The cache key carries the IDENTITY, not the campaign**, so the dashboard's one call per rendered
   row lands on ONE cell instead of paying for N identical fan-outs.
 - **Fail-SOFT with a loud log.** With campaign-service unreachable every campaign is its own family —
@@ -4395,6 +4456,8 @@ unobservable, since the dashboard renders `feature.outputs` only. `requiredStats
 derived keys to their numerator+denominator sources and flags `needsRunFilter` for the pipeline
 (runFilter) family; unknown keys (chart ids like `funnel`) are ignored, so deep-collecting every
 nested `key` from outputs+charts and passing the lot is safe.
+
+**A test that asserts two reads are BYTE-IDENTICAL must freeze every wall-clock-derived fixture value.** A `daysAgo(n)` helper computes off `Date.now()` at CALL time, so a mock re-armed between the two requests hands out timestamps a few milliseconds apart and the `toEqual` fails on `events[].eventDate` — which reads as the parameter under test having changed the body when it changed nothing. Compute the dates ONCE at module load (`const CLOSED_AT = daysAgo(2)`) and reference the constants. Observed 2026-09-04 (`outcome-cause-grain.test.ts`, the omitted-vs-explicit `?cause=` identity case).
 
 **Test gotcha:** a feature mock fed to this handler MUST carry realistic `outputs`/`charts` — a mock
 without them yields an EMPTY required-source set and every source-fetcher is skipped, silently

@@ -771,6 +771,9 @@ interface PublicRevenuePayload {
   results: PublicRevenueResult[];
 }
 
+/** How many (org, brand) revenue computes the cross-org roll-up runs at once. See the fan-out below. */
+const PUBLIC_REVENUE_PAIR_CONCURRENCY = 4;
+
 const revenueCache: PublicCache = new Map();
 
 /** Test seam — reset the in-memory public-revenue cache. */
@@ -790,13 +793,6 @@ function revenueRollup(payload: PublicRevenuePayload): { featureSlug: string; to
     totalPipelineUsd: vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : null,
   };
 }
-
-/**
- * How many (org, brand) engine passes may be in flight at once. Each one reads a brand's whole lead
- * population, so this is a memory AND a socket bound, not a politeness knob (this process runs with
- * `--max-old-space-size=384`).
- */
-const PUBLIC_REVENUE_BRAND_CONCURRENCY = 4;
 
 /** One (org, brand) engine pass, or null when the membership is stale (the brand moved orgs). */
 async function computePairRevenue(
@@ -865,14 +861,19 @@ export async function handlePublicRevenue(
       ...new Map(memberships.map((m) => [pairKey(m.orgId, m.brandId), { orgId: m.orgId, brandId: m.brandId }])).values(),
     ];
 
-    // BOUNDED, not `Promise.all`. Each pair is a full engine pass that reads that brand's WHOLE lead
-    // population, so firing all ~27 at once put ~27 simultaneous multi-megabyte reads on the siblings
-    // and the request died on a downstream socket rather than on any logic — measured in production
-    // 2026-09-08: `TypeError: terminated / SocketError: other side closed` at 161s, a 500 on a public
-    // read. Capping does not make this read FAST (it cannot be: the work is minutes of engine passes),
-    // it makes it FINISH. The answer a landing needs off this data lives on
-    // /public/stats/return-on-spend, which is served from a persisted snapshot instead.
-    const computed = await mapWithConcurrency(pairs, PUBLIC_REVENUE_BRAND_CONCURRENCY, ({ orgId, brandId }) =>
+    // BOUNDED, not `Promise.all`. Each pair is a full revenue compute, and every one of them reads
+    // that brand's WHOLE lead population — so an unbounded fan-out puts one heavy downstream read per
+    // (org, brand) on lead-service simultaneously. Ten of those landing together is what exhausted its
+    // connection pool on 2026-09-07, and the same shape killed this read outright on 2026-09-08
+    // (`TypeError: terminated / SocketError: other side closed`, a 500 at 161s). The lead read carries
+    // its own process-wide cap (leads-client), so this bound is about the OTHER legs of each compute
+    // (runs, brand, email-gateway) fanning out just as wide. Same numbers, same failure-loudness: a
+    // rejection still propagates.
+    //
+    // Capping makes this read FINISH; it does not make it fast, and it cannot be — the work is minutes
+    // of engine passes. The answer a landing needs off this data therefore lives on
+    // /public/stats/return-on-spend, served from a persisted snapshot instead.
+    const computed = await mapWithConcurrency(pairs, PUBLIC_REVENUE_PAIR_CONCURRENCY, ({ orgId, brandId }) =>
       computePairRevenue(featureSlug, funnel, orgId, brandId),
     );
 
@@ -1001,7 +1002,7 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
       ).values(),
     ];
 
-    const computed = await mapWithConcurrency(pairs, PUBLIC_REVENUE_BRAND_CONCURRENCY, async ({ orgId, brandId }) => {
+    const computed = await mapWithConcurrency(pairs, PUBLIC_REVENUE_PAIR_CONCURRENCY, async ({ orgId, brandId }) => {
       try {
         return await withTimeout(
           computePairRevenue(featureSlug, funnel, orgId, brandId),
