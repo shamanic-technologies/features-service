@@ -2819,6 +2819,49 @@ registry.registerPath({
   },
 });
 
+// ── GET /public/stats/return-on-spend ────────────────────────────────────
+
+const fleetReturnOnSpendResponseSchema = z.object({
+  costBasis: z.literal("charged").describe("ACCOUNTING — the CUSTOMERS' money: what each brand was CHARGED (comped spend absent), on the COMMITTED basis (actual + provisioned holds) every money figure in this service rides. The same basis as the ROI a client reads on their own dashboard, so the fleet median and one client's number are the same statistic at two grains."),
+  featureSlug: z.string(),
+  unit: z.literal("brand").describe("Each data point is ONE brand's realized return on its own spend."),
+  measured: z.boolean().describe("True only when a median is stated. False ⇒ every figure is null and `reason` says why."),
+  reason: z.enum(["no_snapshot_yet", "not_enough_brands"]).nullable().describe("Present exactly when `measured` is false. `no_snapshot_yet` = the background compute has not written a snapshot for this channel yet; `not_enough_brands` = a snapshot exists but too few brands are past the spend floor to state a median honestly. Neither is an error, and neither is ever answered with a 0 or with the median over a wider population."),
+  minSpendUsd: z.number().describe("The spend floor the population was restricted to (USD), echoed back so a consumer can state it."),
+  brandCount: z.number().int().describe("How many brands the median was taken over. ALWAYS present, including when it is too few to state one."),
+  medianReturnPerDollar: z.number().nullable().describe("The MIDDLE brand's realized return on spend — its expected pipeline divided by its committed spend. A median, never a mean: a handful of brands sit tens of multiples above the rest, so an average describes nobody in the population."),
+  p25ReturnPerDollar: z.number().nullable().describe("25th percentile — the lower edge of the bulk."),
+  p75ReturnPerDollar: z.number().nullable().describe("75th percentile — the upper edge of the bulk."),
+  minReturnPerDollar: z.number().nullable().describe("The weakest qualifying brand's return."),
+  maxReturnPerDollar: z.number().nullable().describe("The strongest qualifying brand's return."),
+  computedAt: z.string().nullable().describe("When the snapshot these figures were taken from was computed (ISO 8601). Null when no snapshot exists yet."),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/return-on-spend",
+  summary: "Fleet MEDIAN return on spend across client brands, over a spend floor (public, no auth)",
+  description:
+    "Cross-org (fleet-wide) MEDIAN return on spend our clients get on an acquisition channel: per brand, its expected pipeline divided by its committed spend — the exact ratio that brand reads as ROI on its own dashboard — with the median taken across brands. " +
+    "The unit is the BRAND and the statistic is the MEDIAN, never a mean (a handful of brands sit tens of multiples above the rest, so an average describes nobody). " +
+    "POPULATION: only brands past `minSpendUsd` of spend, because a brand three days into its first campaign produces a ratio with no information in it. `brandCount` states how many brands the median was actually taken over. " +
+    "This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics or /funnel-ranking (lifetime revenue over a modelled cost per paying client) — the two answer different questions and differ by an order of magnitude in production. " +
+    "Served from a PERSISTED snapshot refreshed off the request path, so it answers in milliseconds; the underlying per-brand compute is a full engine pass per brand and takes minutes. A read arriving before the first refresh answers `measured: false, reason: \"no_snapshot_yet\"` rather than blocking. " +
+    "Never a 0 and never a wider population when the figure cannot be stated honestly.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string().describe("Acquisition-channel (feature) slug (required)."),
+      minSpendUsd: z.string().optional().describe("Spend floor in USD a brand must be past to enter the population (default 100). Applied at read time over stored per-brand ingredients, so any floor is answerable from one snapshot. A non-numeric or negative value is a 400, never a silent fall back to the default."),
+    }),
+  },
+  responses: {
+    200: { description: "Fleet median return on spend across client brands", content: { "application/json": { schema: fleetReturnOnSpendResponseSchema } } },
+    400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /public/stats/workflow-engagement-latency ────────────────────────
 
 registry.registerPath({
