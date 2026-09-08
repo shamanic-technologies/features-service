@@ -1,5 +1,6 @@
 import type { EnginePerson } from "./revenue-engine.js";
 import { fetchWithRetry } from "./fetch-retry.js";
+import { createSlotLimiter } from "./concurrency.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 
 /**
@@ -74,33 +75,132 @@ interface LeadRow {
 }
 
 /**
- * IN-FLIGHT reads of the SAME lead page, keyed by its exact request. NOT a cache — the entry is
- * dropped the moment the fetch settles, so nobody is ever served a stale page and the next read
+ * HOW MUCH OF A BRAND'S POPULATION ONE REQUEST ASKS FOR.
+ *
+ * lead-service serves the whole set in ONE body when no `limit` is named, and a brand's set is
+ * 50k-66k rows for the six largest — a multi-second, multi-megabyte read. Several of those in
+ * flight at once is what took lead-service down on 2026-09-07: ten landed together, this service's
+ * client gave up at its 300s headers timeout, and the backends behind those abandoned sockets stayed
+ * pinned writing to nobody until the pool was gone.
+ *
+ * The producer states a total order over `(created_at, id)` and guarantees a `limit` + `cursor` walk
+ * visits every row EXACTLY ONCE — no gaps, no repeats — so the walk below reads the SAME population
+ * the unbounded read returned, in the same order. Nothing about what the aggregation computes moves;
+ * only the shape of the asking does. What it buys: a page is short-lived, so ABANDONING one costs the
+ * downstream one page's work rather than minutes of it, and a walk holds ONE connection at a time
+ * instead of one for its whole duration.
+ */
+const LEAD_PAGE_SIZE = positiveIntEnv("LEAD_PAGE_SIZE", 5000);
+
+/**
+ * HOW MANY WHOLE-POPULATION READS THIS PROCESS WILL HAVE IN FLIGHT AT ONCE, ACROSS EVERY CALL SITE.
+ *
+ * `mapWithConcurrency` bounds ONE fan-out; it cannot bound the SUM of several running at the same
+ * moment (the cross-org revenue roll-up, the customer-health board and a dashboard read are three
+ * independent fan-outs that all read leads). lead-service's connection pool is a shared resource, so
+ * the cap belongs at the boundary that consumes it — here — where no call site can opt out of it and
+ * a new one inherits it for free. Sized BELOW what the downstream can absorb so its own live traffic
+ * still has room; the incident took ten simultaneous reads.
+ */
+const LEAD_READ_CONCURRENCY = positiveIntEnv("LEAD_READ_CONCURRENCY", 4);
+
+/**
+ * How long one PAGE may take before the request is ABORTED. Aborting destroys the socket, so
+ * lead-service learns immediately that nobody is reading and releases the backend behind it —
+ * unlike undici's 300s headers timeout, which only makes us stop waiting. A page of
+ * `LEAD_PAGE_SIZE` slim rows is normally sub-second, so this is a ceiling, not a budget.
+ */
+const LEAD_PAGE_TIMEOUT_MS = positiveIntEnv("LEAD_PAGE_TIMEOUT_MS", 60_000);
+
+/**
+ * A walk longer than this means the producer is not advancing and we would loop forever. Fail LOUD:
+ * a truncated population would silently under-report every figure derived from it, which is worse
+ * than a 502 that says the read did not complete.
+ */
+const MAX_LEAD_PAGES = 500;
+
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}`);
+  }
+  return parsed;
+}
+
+const leadReadSlots = createSlotLimiter(LEAD_READ_CONCURRENCY);
+
+/** Test seam — how many lead-service page reads hold a slot right now. */
+export function __leadReadsInFlight(): number {
+  return leadReadSlots.inFlight;
+}
+
+interface LeadPage {
+  leads: LeadRow[];
+  nextCursor?: string | null;
+}
+
+/**
+ * Walk the whole population one bounded page at a time, then hand back the complete set. Every page
+ * goes through the process-wide slot limiter, so N concurrent walks still put at most
+ * `LEAD_READ_CONCURRENCY` requests on lead-service at any instant.
+ */
+async function walkLeadPages(baseUrl: string, reqHeaders: Record<string, string>): Promise<LeadRow[]> {
+  const rows: LeadRow[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+
+  for (let page = 0; ; page += 1) {
+    if (page >= MAX_LEAD_PAGES) {
+      throw new Error(
+        `lead-service /orgs/leads walk exceeded ${MAX_LEAD_PAGES} pages for ${baseUrl} — refusing to report a truncated population`,
+      );
+    }
+
+    const url = cursor === null ? baseUrl : `${baseUrl}&cursor=${encodeURIComponent(cursor)}`;
+    const data = await leadReadSlots.run(async () => {
+      const response = await fetchWithRetry(url, { headers: reqHeaders }, { timeoutMs: LEAD_PAGE_TIMEOUT_MS });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`lead-service /orgs/leads failed (${response.status}): ${text}`);
+      }
+      return (await response.json()) as LeadPage;
+    });
+
+    rows.push(...data.leads);
+
+    const next = data.nextCursor ?? null;
+    if (next === null) return rows;
+    if (seenCursors.has(next)) {
+      throw new Error(`lead-service /orgs/leads returned a repeating cursor for ${baseUrl} — refusing to loop`);
+    }
+    seenCursors.add(next);
+    cursor = next;
+  }
+}
+
+/**
+ * IN-FLIGHT walks of the SAME lead population, keyed by its exact request. NOT a cache — the entry is
+ * dropped the moment the walk settles, so nobody is ever served a stale page and the next read
  * goes to lead-service as before.
  *
- * It exists because this process runs with a 384 MB heap and a big brand's page is the largest
- * body it parses. Two surfaces legitimately want that same page at the same moment (the brand stat
- * card and the campaign breakdown both refresh in the background when the dashboard opens), and
- * two simultaneous parses of one page do not fit — the process was OOM-killed and restarted. One
- * fetch, one parse, both callers served: identical inputs cannot have different answers, so this
+ * It exists because this process runs with a 384 MB heap and a big brand's population is the largest
+ * thing it parses. Two surfaces legitimately want that same population at the same moment (the brand
+ * stat card and the campaign breakdown both refresh in the background when the dashboard opens), and
+ * two simultaneous walks of one brand do not fit — the process was OOM-killed and restarted. One
+ * walk, one parse, both callers served: identical inputs cannot have different answers, so this
  * changes no number. Callers only READ these rows (each maps its own persons), so sharing is safe.
  */
-const inFlightLeadPages = new Map<string, Promise<{ leads: LeadRow[] }>>();
+const inFlightLeadPages = new Map<string, Promise<LeadRow[]>>();
 
-async function sharedLeadPage(url: string, reqHeaders: Record<string, string>): Promise<{ leads: LeadRow[] }> {
+async function sharedLeadPage(baseUrl: string, reqHeaders: Record<string, string>): Promise<LeadRow[]> {
   // The org is what scopes the answer; the rest of the identity headers are context, not filters.
-  const key = `${reqHeaders["x-org-id"]}|${url}`;
+  const key = `${reqHeaders["x-org-id"]}|${baseUrl}`;
   const existing = inFlightLeadPages.get(key);
   if (existing) return existing;
 
-  const pending = (async () => {
-    const response = await fetchWithRetry(url, { headers: reqHeaders });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`lead-service /orgs/leads failed (${response.status}): ${text}`);
-    }
-    return (await response.json()) as { leads: LeadRow[] };
-  })();
+  const pending = walkLeadPages(baseUrl, reqHeaders);
 
   inFlightLeadPages.set(key, pending);
   try {
@@ -142,7 +242,7 @@ export async function fetchLeadsForRevenue(
   // and delivery-status overlay, but each row's nested `lead` is trimmed to the handful of
   // thin fields the revenue engine reads. Cuts a ~150 MB body ~10x for big brands, removing
   // the `await response.json()` heap-OOM behind "Failed to compute feature revenue".
-  const params = new URLSearchParams({ brandId, view: "basic" });
+  const params = new URLSearchParams({ brandId, view: "basic", limit: String(LEAD_PAGE_SIZE) });
   if (campaignId) params.set("campaignId", campaignId);
 
   const reqHeaders: Record<string, string> = {
@@ -155,8 +255,8 @@ export async function fetchLeadsForRevenue(
   if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const data = await sharedLeadPage(`${url}/orgs/leads?${params}`, reqHeaders);
-  const rows = family ? data.leads.filter((row) => row.campaignId && family.has(row.campaignId)) : data.leads;
+  const allRows = await sharedLeadPage(`${url}/orgs/leads?${params}`, reqHeaders);
+  const rows = family ? allRows.filter((row) => row.campaignId && family.has(row.campaignId)) : allRows;
   return rows.map((row) => {
     const org = row.lead?.organization ?? null;
     // A lead whose email BOUNCED, or who UNSUBSCRIBED, can never convert — no forward expected revenue

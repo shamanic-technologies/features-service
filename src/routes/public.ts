@@ -764,6 +764,9 @@ interface PublicRevenuePayload {
   results: PublicRevenueResult[];
 }
 
+/** How many (org, brand) revenue computes the cross-org roll-up runs at once. See the fan-out below. */
+const PUBLIC_REVENUE_PAIR_CONCURRENCY = 4;
+
 const revenueCache: PublicCache = new Map();
 
 /** Test seam — reset the in-memory public-revenue cache. */
@@ -823,8 +826,16 @@ export async function handlePublicRevenue(
       ...new Map(memberships.map((m) => [pairKey(m.orgId, m.brandId), { orgId: m.orgId, brandId: m.brandId }])).values(),
     ];
 
-    const computed = await Promise.all(
-      pairs.map(async ({ orgId, brandId }) => {
+    // BOUNDED, not `Promise.all`. Each pair is a full revenue compute, and every one of them reads
+    // that brand's WHOLE lead population — so an unbounded fan-out puts one heavy downstream read per
+    // (org, brand) on lead-service simultaneously. Ten of those landing together is what exhausted its
+    // connection pool on 2026-09-07. The lead read carries its own process-wide cap (leads-client), so
+    // this bound is about the OTHER legs of each compute (runs, brand, email-gateway) fanning out just
+    // as wide. Same numbers, same failure-loudness: a rejection still propagates.
+    const computed = await mapWithConcurrency(
+      pairs,
+      PUBLIC_REVENUE_PAIR_CONCURRENCY,
+      async ({ orgId, brandId }) => {
         const headers: DownstreamHeaders = { orgId, featureSlug };
         try {
           const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers);
@@ -844,7 +855,7 @@ export async function handlePublicRevenue(
           }
           throw error;
         }
-      }),
+      },
     );
 
     // Aggregate per brand: pipeline = sum of the orgs' non-null pipelines (null iff EVERY org's is

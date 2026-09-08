@@ -59,14 +59,36 @@ const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * `timeoutMs` — ABORT the request after that long instead of merely giving up on it.
+ *
+ * undici's default 300s headers timeout makes the CLIENT stop waiting; it does not tell the server
+ * to stop working. A downstream that is still building a large response then keeps a connection —
+ * and, behind it, a database backend — busy writing to a client nobody is reading, which is how one
+ * slow read turns into an exhausted pool over there. An `AbortSignal` destroys the socket, so the
+ * downstream's write fails immediately and it releases what it was holding.
+ *
+ * The signal is minted FRESH PER ATTEMPT: a single pre-made signal would already be aborted on the
+ * retry, turning one slow attempt into an instant failure of every remaining one. An abort is NOT a
+ * transient connect-phase error, so it propagates loudly rather than being retried.
+ */
+export interface FetchRetryOptions {
+  timeoutMs?: number;
+}
+
+/**
  * `fetch` with a connect-phase retry on transient network rejections.
  * Drop-in replacement for `fetch(input, init)` — same signature, same return.
  * A non-transient rejection (or exhausted retries) propagates unchanged.
  */
-export async function fetchWithRetry(input: string, init?: RequestInit): Promise<Response> {
+export async function fetchWithRetry(
+  input: string,
+  init?: RequestInit,
+  opts?: FetchRetryOptions,
+): Promise<Response> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await fetch(input, init);
+      const signal = opts?.timeoutMs === undefined ? init?.signal : AbortSignal.timeout(opts.timeoutMs);
+      return await fetch(input, signal === undefined ? init : { ...init, signal });
     } catch (err) {
       if (attempt >= BACKOFF_MS.length || !isTransient(err)) throw err;
       await delay(BACKOFF_MS[attempt]);
