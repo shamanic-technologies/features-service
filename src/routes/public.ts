@@ -2900,7 +2900,10 @@ async function computeShowcaseBrand(
       "gross",
       funnelKey,
     );
-    if (body.funnelSteps) funnels.push(showcaseFunnelOf(body.funnelSteps));
+    // The money half rides the SAME body: the funnel-narrowed read's own `costEconomics.roiMultiple`
+    // is the return this client reads on their own dashboard, and each rung already carries what it
+    // cost. Nothing extra is fetched for either.
+    if (body.funnelSteps) funnels.push(showcaseFunnelOf(body.funnelSteps, body.costEconomics));
   }
 
   return {
@@ -2913,46 +2916,72 @@ async function computeShowcaseBrand(
   };
 }
 
+/**
+ * Fill the showcase cell OFF the request path, at boot.
+ *
+ * The consumer is a statically-rendered marketing page that gives this read EIGHT SECONDS and drops
+ * the section rather than block a build. A COLD cell costs three brands' worth of engine passes —
+ * minutes — so the first reader after a deploy or a quiet night would get nothing at all, and the
+ * page would fall back to the frozen literals this read exists to replace. Warming at boot means the
+ * cell is never cold in practice, and every later read is served from it while it refreshes behind
+ * the response (`LIFETIME_AGGREGATE_WINDOWS`, single-flighted).
+ *
+ * Fired AFTER `app.listen()` and never awaited: awaiting an O(brands) fan-out before the port binds
+ * fails the deploy health check and rolls the service back.
+ */
+export function warmShowcaseFunnelsOnBoot(): void {
+  void computeShowcaseFunnelsPayload()
+    .then((payload) => {
+      setPublicCache(showcaseFunnelsCache, "__showcase__", payload, LIFETIME_AGGREGATE_WINDOWS);
+    })
+    .catch((err) => {
+      console.error("[features-service] showcase funnels boot warm failed:", err);
+    });
+}
+
+/** The whole payload: every allowlisted brand, in the allowlist's order, one brand's failure isolated. */
+async function computeShowcaseFunnelsPayload(): Promise<ShowcaseFunnelsPayload> {
+  // Every seed slug in one membership read (308 rows fleet-wide, 2026-09-08) rather than a guess
+  // at which channels a showcase brand happens to run — a brand that moves to a new channel keeps
+  // answering with no change here.
+  const allSlugs = (await db.query.features.findMany()).map((f) => f.slug);
+  const memberships = allSlugs.length > 0 ? await fetchFeatureMemberships(allSlugs.join(",")) : [];
+  const orgByBrand = new Map<string, string>();
+  for (const m of memberships) {
+    if (!orgByBrand.has(m.brandId)) orgByBrand.set(m.brandId, m.orgId);
+  }
+
+  const brandInfo = await fetchBrandInfoBatch([...SHOWCASE_BRAND_IDS]);
+
+  const brands = await mapWithConcurrency(
+    [...SHOWCASE_BRAND_IDS],
+    SHOWCASE_BRAND_CONCURRENCY,
+    async (brandId): Promise<ShowcaseBrandFunnels> => {
+      try {
+        return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
+      } catch (error) {
+        console.error(`[features-service] showcase funnel read failed for brand ${brandId}:`, error);
+        const info = brandInfo.get(brandId);
+        return {
+          brand: { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null },
+          funnels: [],
+          measured: false,
+          unmeasuredReason: "read_failed",
+        };
+      }
+    },
+  );
+
+  return { brands };
+}
+
 export async function handleShowcaseFunnels(res: import("express").Response): Promise<void> {
   const payload = await servedPublicCached<ShowcaseFunnelsPayload>({
     cache: showcaseFunnelsCache,
     key: "__showcase__",
     windows: LIFETIME_AGGREGATE_WINDOWS,
     label: "showcase funnels",
-    compute: async () => {
-      // Every seed slug in one membership read (308 rows fleet-wide, 2026-09-08) rather than a guess
-      // at which channels a showcase brand happens to run — a brand that moves to a new channel keeps
-      // answering with no change here.
-      const allSlugs = (await db.query.features.findMany()).map((f) => f.slug);
-      const memberships = allSlugs.length > 0 ? await fetchFeatureMemberships(allSlugs.join(",")) : [];
-      const orgByBrand = new Map<string, string>();
-      for (const m of memberships) {
-        if (!orgByBrand.has(m.brandId)) orgByBrand.set(m.brandId, m.orgId);
-      }
-
-      const brandInfo = await fetchBrandInfoBatch([...SHOWCASE_BRAND_IDS]);
-
-      const brands = await mapWithConcurrency(
-        [...SHOWCASE_BRAND_IDS],
-        SHOWCASE_BRAND_CONCURRENCY,
-        async (brandId): Promise<ShowcaseBrandFunnels> => {
-          try {
-            return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
-          } catch (error) {
-            console.error(`[features-service] showcase funnel read failed for brand ${brandId}:`, error);
-            const info = brandInfo.get(brandId);
-            return {
-              brand: { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null },
-              funnels: [],
-              measured: false,
-              unmeasuredReason: "read_failed",
-            };
-          }
-        },
-      );
-
-      return { brands };
-    },
+    compute: computeShowcaseFunnelsPayload,
   });
   res.json(payload);
 }
