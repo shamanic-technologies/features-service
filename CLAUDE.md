@@ -176,7 +176,7 @@ that makes them true.
   cost per reach** — the divergence a forward projection would not show, and which a suite asserting
   only "a number came back" would miss — the zero-spend client keeping its counts and losing its money,
   an unmeasured rung carrying no cost, and the total spend absent from the body.
-  (Set 2026-09-08; money half 2026-09-09.)
+  (Set 2026-09-08; money half 2026-09-09, features-service#902.)
 
 ## THE MEDIAN RETURN ON SPEND OUR CLIENTS GET — `GET /public/stats/return-on-spend`, served from a PERSISTED snapshot because the compute takes MINUTES
 
