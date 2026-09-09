@@ -98,11 +98,44 @@ that makes them true.
   row somebody can add to from outside. Adding a brand to it PUBLISHES that brand's funnel to the
   internet. Guarded: a `?brandId=` on the request produces a BYTE-IDENTICAL body, and a non-allowlisted
   brand is absent however it is asked for.
-- **COUNTS ONLY, because the page computes nothing.** No money, no rate, nothing to divide — every step
-  carries `peopleReached` and its own name. **`0` is MEASURED** ("nobody got here") and **`null` is "we
+- **THE PAGE DIVIDES NOTHING, and every figure it prints is stated on the wire, in DOLLARS.** Each step
+  carries `peopleReached` and its own name; **`0` is MEASURED** ("nobody got here") and **`null` is "we
   have no figure"** (the producer behind that rung degraded on this read), exactly as `funnelSteps`
   states it one layer down. A zero standing in for an unknown is the one answer this must never give:
   on a marketing page it reads as a fact about the CLIENT rather than as a gap in our own reading.
+- **THE MONEY HALF RIDES THE SAME ENGINE PASS, AT ZERO EXTRA IO (supersedes the COUNTS-ONLY rule of
+  #895).** The page also states, under each client, what they got back on the budget they paid and what
+  one outcome of their funnel cost them — both HARDCODED literals read out of prod by hand, ageing in
+  public exactly as the counts were. Both fall out of the body the counts already cost:
+  - **`returnPerDollar` per funnel is `costEconomics.roiMultiple`** for the funnel-narrowed read —
+    expected pipeline over COMMITTED spend, the byte-same statistic
+    `GET /features/:slug/revenue?funnel=<key>` states on the client's OWN dashboard, so a showcase
+    figure and the customer's own screen can never disagree. It is emphatically **NOT** the forward
+    `returnPerDollar` PROJECTION `/public/channel-funnel-economics` publishes under the identical word
+    (an order apart in production — see the fleet-funnel-return section). **Neither may be relabelled
+    as the other**, and the cheap projection must never be substituted here.
+  - **`costPerReachUsd` per rung is that rung's COMMITTED spend over the people who reached it** —
+    OBSERVED accounting, never floored to a benchmark, which is what `FunnelStep.costPerReachCents`
+    already means. It rides **EVERY rung including the outreach base**, on the identical formula, so a
+    consumer renders "cost per meeting booked" for one client and "cost per website visit" for another
+    **without knowing which rung to ask for and without a branch for the base**.
+  - **Served in DOLLARS, not cents**, because the consumer divides nothing: a figure it has to scale is
+    one it can scale wrongly, and the two surfaces would then state one number two ways.
+  - **`null` is the gap and `0` is a measurement, on both.** A rung nobody reached has no denominator,
+    so its cost is `null` beside a measured `0` count — the two sit side by side saying different
+    things, which is what lets the page leave one blank and print the other. A `$0` there would read as
+    the client's paying customers having been free. A client whose spend reads 0 has NO return and NO
+    cost anywhere, while its counts still answer.
+  - **THE CLIENT'S TOTAL SPEND IS DELIBERATELY NOT PUBLISHED.** The page does not ask for it, and the
+    narrower answer is the safer one on an unauthenticated read of NAMED clients. Guarded.
+- **THE CELL IS WARMED AT BOOT (`warmShowcaseFunnelsOnBoot`, fired AFTER `app.listen()`), and that is
+  what makes the read usable at all.** The consumer is a statically-rendered marketing page that gives
+  this read **8 SECONDS** and drops the section rather than block a build; a COLD cell is three brands'
+  worth of engine passes, i.e. MINUTES, so the first reader after a deploy or a quiet night would get
+  nothing and the page would fall back to the frozen literals this read exists to replace. Same shape
+  as `warmFleetReturnSnapshotsOnBoot`: never awaited before the port binds (that fails the deploy
+  health check and rolls the service back), and every later read is served from the cell while it
+  refreshes behind the response.
 - **A STEP NOBODY REACHED IS STILL A STEP.** The chain is served in the funnel's OWN order under the
   funnel's OWN names, first to last, with the outreach base (`key: "contacted"`) as its FIRST entry —
   the page draws the funnel in order and hides zero-valued cells itself, so pruning an empty rung here
@@ -137,7 +170,13 @@ that makes them true.
   funnels: the no-brand-parameter identity, the allowlist's order, the ordered chain with a MEASURED 0
   at the rung nobody reached, each brand on its OWN funnel, a degraded producer nulling the rung it
   alone evidences, all four unmeasured reasons, and one brand's failure leaving the others intact.
-  (Set 2026-09-08.)
+  Plus the money half on the SAME fixture ($100 committed over 4 contacted / 2 replies / 1 booked /
+  1 attended / 0 closed, so every figure is hand-checkable): every rung priced including the base, the
+  null cost beside the measured 0, **DOUBLING the committed spend HALVING the return and DOUBLING every
+  cost per reach** — the divergence a forward projection would not show, and which a suite asserting
+  only "a number came back" would miss — the zero-spend client keeping its counts and losing its money,
+  an unmeasured rung carrying no cost, and the total spend absent from the body.
+  (Set 2026-09-08; money half 2026-09-09, features-service#902.)
 
 ## THE MEDIAN RETURN ON SPEND OUR CLIENTS GET — `GET /public/stats/return-on-spend`, served from a PERSISTED snapshot because the compute takes MINUTES
 

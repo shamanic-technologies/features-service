@@ -16,7 +16,7 @@ import offerEconomicsRoutes from "./routes/offer-economics.js";
 import offerFunnelEconomicsRoutes from "./routes/offer-funnel-economics.js";
 import brandEconomicsRoutes from "./routes/brand-economics.js";
 import audienceStatsRoutes from "./routes/audience-stats.js";
-import publicRoutes, { warmFleetReturnSnapshotsOnBoot } from "./routes/public.js";
+import publicRoutes, { warmFleetReturnSnapshotsOnBoot, warmShowcaseFunnelsOnBoot } from "./routes/public.js";
 import { registerSeedFeatures } from "./seed/register.js";
 
 // ── Required env vars — crash at startup if missing ─────────────────────────
@@ -78,6 +78,9 @@ if (process.env.NODE_ENV !== "test") {
         // AFTER listen(), fire-and-forget: this is an O(brands) engine fan-out that takes MINUTES, so
         // awaiting it before the port bind would fail the deploy health check and roll the service back.
         warmFleetReturnSnapshotsOnBoot();
+        // Same reason, same shape: the homepage gives its showcase read 8 seconds and drops the
+        // section rather than block a build, so the cell must never be cold when it asks.
+        warmShowcaseFunnelsOnBoot();
       });
     })
     .catch((err) => {

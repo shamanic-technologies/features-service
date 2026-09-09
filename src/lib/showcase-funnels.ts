@@ -17,13 +17,39 @@
  * with no session at all. The allowlist below is the whole access-control story, which is why it is a
  * frozen constant in code rather than a row somebody can add to from outside.
  *
- * ── COUNTS ONLY, AND "WE HAVE NO FIGURE" IS SAID OUT LOUD ───────────────────────────────────────
+ * ── THE PAGE DIVIDES NOTHING, AND "WE HAVE NO FIGURE" IS SAID OUT LOUD ──────────────────────────
  *
- * The page renders what is served and computes nothing — no rate, no division, no money. A step's
- * `peopleReached` is DISTINCT people, `0` is MEASURED ("nobody got there"), and `null` is "we could
- * not measure this": the producer behind that rung degraded, exactly as {@link FunnelStep} states it.
- * A zero standing in for an unknown is the one answer this must never give, because on a marketing
- * page it reads as a fact about the client rather than as a gap in our own reading.
+ * The page renders what is served and computes nothing — no rate, no division, no cents-to-dollars.
+ * A step's `peopleReached` is DISTINCT people, `0` is MEASURED ("nobody got there"), and `null` is
+ * "we could not measure this": the producer behind that rung degraded, exactly as {@link FunnelStep}
+ * states it. A zero standing in for an unknown is the one answer this must never give, because on a
+ * marketing page it reads as a fact about the client rather than as a gap in our own reading. The
+ * same rule governs every money figure below: `null` is the gap, `0` is a measurement.
+ *
+ * ── THE MONEY HALF IS THE SAME PASS, AND IT IS THE CLIENT'S OWN NUMBER ──────────────────────────
+ *
+ * The page also states, under each client, what they got back on the budget they paid and what one
+ * outcome of their funnel cost them. Those two were read out of production by hand and pasted in as
+ * literals exactly as the counts were, so they age in public the same way.
+ *
+ * Both fall out of the engine pass the counts already cost, with no extra read of anything:
+ *
+ *   - `returnPerDollar` is `costEconomics.roiMultiple` for the funnel-narrowed read — expected
+ *     pipeline over COMMITTED spend, the byte-same statistic `GET /features/:slug/revenue?funnel=`
+ *     states on the client's OWN dashboard. So a showcase figure and the customer's own screen can
+ *     never disagree, and it is emphatically NOT the forward `returnPerDollar` projection the
+ *     channel-funnel economics publishes (an order apart in production — see `fleet-funnel-return.ts`).
+ *   - `costPerReachUsd` is that rung's COMMITTED spend over the people who reached it — OBSERVED
+ *     accounting, never floored to a benchmark, which is what `FunnelStep.costPerReachCents` already
+ *     means. It rides EVERY rung including the outreach base, on the identical formula, so a consumer
+ *     renders "cost per meeting booked" for one client and "cost per website visit" for another
+ *     without knowing which rung to ask for and without a branch for the base.
+ *
+ * Served in DOLLARS, not cents, because the consumer divides nothing: a figure it has to scale is a
+ * figure it can scale wrongly, and the two surfaces would then state one number two ways.
+ *
+ * What is deliberately NOT published is the client's total spend. It is not asked for by the page,
+ * and the narrower answer is the safer one on an unauthenticated read of named clients.
  *
  * ── A STEP NOBODY REACHED IS STILL A STEP ───────────────────────────────────────────────────────
  *
@@ -43,6 +69,7 @@
 import { matchSalesFunnelKey, salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 import type { CampaignIdentityRow } from "./campaign-identity.js";
 import type { FunnelStepBreakdown } from "./funnel-steps.js";
+import type { CostEconomics } from "./cost-economics.js";
 
 /**
  * THE ALLOWLIST — the clients whose funnel figures we publish, in the order the page states them.
@@ -80,6 +107,16 @@ export interface ShowcaseFunnelStep {
    * unknown.
    */
   peopleReached: number | null;
+  /**
+   * WHAT REACHING THIS RUNG COST THE CLIENT — the funnel's COMMITTED spend divided by the people who
+   * reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark: it is what they paid
+   * over what they got, which is the only honest answer to "what did a booked meeting cost me".
+   *
+   * `null` is "we have no figure" — nobody reached the rung (no denominator), nothing was spent, or
+   * the count itself is unmeasured. NEVER 0, which on a marketing page would read as a client's
+   * outcome having been free. It is served in dollars because the page divides nothing.
+   */
+  costPerReachUsd: number | null;
 }
 
 /** One funnel of one showcase brand, walked in the funnel's own order. */
@@ -87,6 +124,17 @@ export interface ShowcaseFunnel {
   funnelKey: SalesFunnelKey;
   /** The funnel's own name, so a consumer renders the chain without holding the catalogue. */
   funnelName: string;
+  /**
+   * WHAT A DOLLAR THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over COMMITTED
+   * spend, i.e. `costEconomics.roiMultiple` for the funnel-narrowed read. The byte-same statistic the
+   * client reads as ROI on their own dashboard, so the two surfaces cannot state two numbers.
+   *
+   * `null` is "we could not measure this": nothing was spent on the funnel, or the brand states no
+   * economics to price its pipeline with. A measured `0` — real spend, no pipeline yet — is a
+   * different answer and stays a `0`, so a consumer can leave the unmeasurable one blank rather than
+   * print a number nobody stands behind.
+   */
+  returnPerDollar: number | null;
   /** The rungs, first to last, the outreach base first. Never pruned — an empty rung is still a rung. */
   steps: ShowcaseFunnelStep[];
 }
@@ -139,21 +187,46 @@ export function brandSoldFunnels(rows: CampaignIdentityRow[]): SalesFunnelKey[] 
  * page states first ("12,307 contacted"). It is REACH — bounced and unsubscribed people included —
  * which is what `contactedRecipients` already means: they were emailed and they were paid for.
  */
-export function showcaseFunnelOf(breakdown: FunnelStepBreakdown): ShowcaseFunnel {
+export function showcaseFunnelOf(
+  breakdown: FunnelStepBreakdown,
+  /**
+   * The funnel-narrowed read's OWN economics block, whose `roiMultiple` is the return. Absent on a
+   * path that produced none — the return is then `null`, never a substituted figure.
+   */
+  costEconomics?: Pick<CostEconomics, "roiMultiple"> | null,
+): ShowcaseFunnel {
   return {
     funnelKey: breakdown.funnelKey,
     funnelName: breakdown.name,
+    returnPerDollar: costEconomics?.roiMultiple ?? null,
     steps: [
       {
         key: SHOWCASE_CONTACTED_KEY,
         label: SHOWCASE_CONTACTED_LABEL,
         peopleReached: breakdown.contactedRecipients,
+        // The base is priced on the IDENTICAL formula every rung above it is — this scope's committed
+        // spend over the people who reached it — so the chain carries one statement of cost from top
+        // to bottom and the consumer needs no branch for its first entry.
+        costPerReachUsd: costPerReachUsd(breakdown.committedSpentCents, breakdown.contactedRecipients),
       },
       ...breakdown.steps.map((step) => ({
         key: step.legKey,
         label: step.step,
         peopleReached: step.recipientsReached,
+        costPerReachUsd: step.costPerReachCents === null ? null : step.costPerReachCents / 100,
       })),
     ],
   };
+}
+
+/**
+ * PURE: committed cents over people reached, in dollars — `null` on every shape with no answer.
+ *
+ * A 0 count is no denominator and a 0 spend is nothing to divide; both are "we have no figure", not
+ * "it was free". Mirrors `observedCostPerOutcome` (`lib/cost-engine.ts`), which is what every rung
+ * above the base is already built with.
+ */
+function costPerReachUsd(committedSpentCents: number, peopleReached: number | null): number | null {
+  if (peopleReached === null || peopleReached <= 0 || committedSpentCents <= 0) return null;
+  return committedSpentCents / 100 / peopleReached;
 }
