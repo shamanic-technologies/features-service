@@ -15,7 +15,13 @@
  *   - each brand walks the funnel its OWN campaigns state they sell, not the other brand's;
  *   - every allowlisted brand is always in the body, in the allowlist's order, and a brand with
  *     nothing to walk carries `funnels: []` with a NAMED reason rather than an empty shrug;
- *   - one brand's failed read never blanks the others.
+ *   - one brand's failed read never blanks the others;
+ *   - the MONEY half rides the same pass: every rung states what reaching it cost (the base priced on
+ *     the identical formula, so the consumer never branches), each chain states the client's own
+ *     realized return, and both HALVE/DOUBLE with committed spend — which a forward projection would
+ *     not, and which is why the divergence is asserted rather than "a number came back";
+ *   - a figure we could not measure is NULL beside a measured 0, both for a rung nobody reached and
+ *     for a client whose spend we cannot read — and the total spend is never published.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
@@ -151,6 +157,8 @@ interface Fixture {
   memberships?: string[];
   /** `false` = the human statements read fails, fail-soft. */
   statedReadable?: boolean;
+  /** COMMITTED cents runs-service reports for every brand. `0` = nothing was ever spent. */
+  spendCents?: number;
 }
 
 function mockFetch(fixture: Fixture): void {
@@ -214,12 +222,13 @@ function mockFetch(fixture: Fixture): void {
     if (path.includes("/public/costs")) return json({ groups: [] });
     if (path.includes("/public/stats")) return json({});
     if (path.includes("/stats/costs")) {
+      const cents = String(fixture.spendCents ?? 10000);
       return json({
         groups: [
           {
             dimensions: { campaignId: `camp-${brandOf(q, headers)}`, workflowSlug: "dawn-v1" },
-            totalCostInUsdCents: "10000",
-            actualCostInUsdCents: "10000",
+            totalCostInUsdCents: cents,
+            actualCostInUsdCents: cents,
             runCount: 1,
             minStartedAt: null,
             maxStartedAt: null,
@@ -300,7 +309,12 @@ const withFeatures = () => {
 type Body = {
   brands: Array<{
     brand: { id: string; name: string | null; domain: string | null };
-    funnels: Array<{ funnelKey: string; funnelName: string; steps: Array<{ key: string; label: string; peopleReached: number | null }> }>;
+    funnels: Array<{
+      funnelKey: string;
+      funnelName: string;
+      returnPerDollar: number | null;
+      steps: Array<{ key: string; label: string; peopleReached: number | null; costPerReachUsd: number | null }>;
+    }>;
     measured: boolean;
     unmeasuredReason: string | null;
   }>;
@@ -436,6 +450,98 @@ describe("GET /public/stats/showcase-funnels", () => {
     expect(brandOf(body, SHOCK).funnels).toEqual([]);
     expect(brandOf(body, DOC).measured).toBe(true);
     expect(brandOf(body, OPS).measured).toBe(true);
+  });
+
+  // ── THE MONEY HALF ────────────────────────────────────────────────────────────────────────────
+  //
+  // Same fixture, same engine pass. $100 committed for docdinners against 4 contacted / 2 replies /
+  // 1 booked / 1 attended / 0 closed, so every figure below is hand-checkable — which is the point:
+  // a suite that only asserted "a number came back" would pass on an implementation that divided by
+  // the wrong count, or that published a projection under the word the client's dashboard uses.
+
+  it("prices EVERY rung, the outreach base included, on ONE formula the consumer never re-divides", async () => {
+    mockFetch(BASE);
+    const chain = brandOf(await get(), DOC).funnels[0];
+
+    // $100 committed ÷ the people who reached each rung. The base is priced identically to the rungs
+    // above it, so a consumer renders "cost per contact" and "cost per meeting booked" with no branch.
+    expect(chain.steps.map((s) => [s.label, s.costPerReachUsd])).toEqual([
+      ["Contacted", 25],
+      ["Positive reply", 50],
+      ["Meeting booked", 100],
+      ["Meeting attended", 100],
+      // Nobody closed: no denominator, so we have NO FIGURE. Never a $0, which on a marketing page
+      // would read as this client's paying customers having been free.
+      ["Paid client", null],
+    ]);
+    // And the rung it is null on is a MEASURED zero — the two statements sit side by side and say
+    // different things, which is exactly what lets the page leave one blank and print the other.
+    expect(chain.steps[4].peopleReached).toBe(0);
+    // Dollars on the wire. A figure the page would have to scale is one it can scale wrongly.
+    expect(chain.steps[0].costPerReachUsd).toBe(25);
+  });
+
+  it("states the client's OWN return, and both halves ride the SAME committed spend", async () => {
+    mockFetch(BASE);
+    const cheap = brandOf(await get(), DOC).funnels[0];
+    expect(cheap.returnPerDollar).toBeGreaterThan(0);
+    expect(Number.isFinite(cheap.returnPerDollar!)).toBe(true);
+
+    // DOUBLE what the client paid, change nothing else. A realized return over committed spend HALVES
+    // and every cost per reach DOUBLES. A forward projection — the figure /public/channel-funnel-
+    // economics publishes under the same words, an order apart in production — would not move at all.
+    __resetShowcaseFunnelsCache();
+    mockFetch({ ...BASE, spendCents: 20000 });
+    const dear = brandOf(await get(), DOC).funnels[0];
+
+    expect(dear.returnPerDollar).toBeCloseTo(cheap.returnPerDollar! / 2, 10);
+    expect(dear.steps.map((s) => s.costPerReachUsd)).toEqual([50, 100, 200, 200, null]);
+    // The counts are a fact about people and did not move with the money.
+    expect(dear.steps.map((s) => s.peopleReached)).toEqual(cheap.steps.map((s) => s.peopleReached));
+  });
+
+  it("a client whose spend we cannot read has NO money figure, while its counts still answer", async () => {
+    mockFetch({ ...BASE, spendCents: 0 });
+    const chain = brandOf(await get(), DOC).funnels[0];
+
+    // Nothing to divide, so there is no return and no cost — null everywhere, never 0.
+    expect(chain.returnPerDollar).toBeNull();
+    expect(chain.steps.map((s) => s.costPerReachUsd)).toEqual([null, null, null, null, null]);
+    // The volume half is untouched: what we measured about people does not wait on what we know
+    // about money, and the page can still state the funnel.
+    expect(chain.steps.map((s) => s.peopleReached)).toEqual([4, 2, 1, 1, 0]);
+  });
+
+  it("a rung we could not COUNT carries no cost either — an unmeasured base is never priced", async () => {
+    mockFetch({ ...BASE, statedReadable: false });
+    const chain = brandOf(await get(), DOC).funnels[0];
+    const attended = chain.steps.find((s) => s.label === "Meeting attended")!;
+
+    expect(attended.peopleReached).toBeNull();
+    expect(attended.costPerReachUsd).toBeNull();
+    // The rungs the core lead read alone evidences keep both halves.
+    expect(chain.steps[1].peopleReached).toBe(2);
+    expect(chain.steps[1].costPerReachUsd).toBe(50);
+  });
+
+  it("each client's money is its OWN, and the total spend is never published", async () => {
+    mockFetch(BASE);
+    const body = await get();
+    const ops = brandOf(body, OPS).funnels[0];
+
+    // opsfolio: $100 over 2 contacted / 1 visit / 0 form fills — its own chain, its own denominators.
+    expect(ops.steps.map((s) => [s.label, s.costPerReachUsd])).toEqual([
+      ["Contacted", 50],
+      ["Website visit", 100],
+      ["Form filled", null],
+      ["Paid client", null],
+    ]);
+
+    // A named client's total spend is not something this page asks for, so an unauthenticated read of
+    // named clients does not state it. The keys are exactly the four the page renders.
+    expect(Object.keys(ops.steps[0]).sort()).toEqual(["costPerReachUsd", "key", "label", "peopleReached"]);
+    expect(JSON.stringify(body)).not.toContain("committedSpent");
+    expect(JSON.stringify(body)).not.toContain("SpendUsd");
   });
 });
 

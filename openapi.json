@@ -23256,14 +23256,14 @@
     },
     "/public/stats/showcase-funnels": {
       "get": {
-        "summary": "Ordered funnel counts for the SHOWCASE brands named on our homepage (public, no auth)",
-        "description": "The current funnel counts of the named client brands our public homepage states — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. TAKES NO PARAMETER NAMING A BRAND, and never will: the brands are a FROZEN SERVER-SIDE ALLOWLIST (src/lib/showcase-funnels.ts), because a caller-supplied identifier would turn this unauthenticated read of clients we agreed to publish into a way to read ANY brand's funnel with no session. COUNTS ONLY — no money, no rate, nothing to divide. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
+        "summary": "Ordered funnel counts AND money for the SHOWCASE brands named on our homepage (public, no auth)",
+        "description": "The current funnel counts of the named client brands our public homepage states — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. TAKES NO PARAMETER NAMING A BRAND, and never will: the brands are a FROZEN SERVER-SIDE ALLOWLIST (src/lib/showcase-funnels.ts), because a caller-supplied identifier would turn this unauthenticated read of clients we agreed to publish into a way to read ANY brand's funnel with no session. Each rung carries both what it MEASURED and what it COST: peopleReached, plus costPerReachUsd (that rung's COMMITTED spend over the people who reached it, OBSERVED, in dollars), and each chain carries returnPerDollar — expected pipeline over committed spend, the byte-same ROI the client reads on their own dashboard. THE CONSUMER DIVIDES NOTHING: every figure it prints is stated on the wire, in dollars. The client's total spend is deliberately NOT published. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
         "tags": [
           "Public"
         ],
         "responses": {
           "200": {
-            "description": "Ordered funnel counts for every allowlisted showcase brand",
+            "description": "Ordered funnel counts, per-rung cost and per-funnel return for every allowlisted showcase brand",
             "content": {
               "application/json": {
                 "schema": {
@@ -23309,6 +23309,11 @@
                                   "type": "string",
                                   "description": "The funnel's own name, so a consumer renders the chain without holding the catalogue."
                                 },
+                                "returnPerDollar": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "WHAT A DOLLAR THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over COMMITTED spend, i.e. the byte-same roiMultiple the client reads as ROI on their own dashboard for GET /features/:slug/revenue?funnel=<key>. NOT the forward returnPerDollar projection /public/channel-funnel-economics publishes — those are an order apart in production. null is 'we could not measure this' (nothing spent, or the brand states no economics); a measured 0 (real spend, no pipeline yet) stays 0."
+                                },
                                 "steps": {
                                   "type": "array",
                                   "items": {
@@ -23326,12 +23331,18 @@
                                         "type": "integer",
                                         "nullable": true,
                                         "description": "DISTINCT people who reached this step. 0 is MEASURED ('nobody got here'); null is 'we have no figure' (the producer behind this rung was unreadable on this read) — NEVER a 0 standing in for an unknown."
+                                      },
+                                      "costPerReachUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "WHAT REACHING THIS RUNG COST THE CLIENT — the funnel's COMMITTED spend over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."
                                       }
                                     },
                                     "required": [
                                       "key",
                                       "label",
-                                      "peopleReached"
+                                      "peopleReached",
+                                      "costPerReachUsd"
                                     ]
                                   },
                                   "description": "The rungs in the funnel's OWN order, first to last, with the outreach base first. Never pruned: a step nobody reached is still a step, and a consumer hides empty cells itself."
@@ -23340,6 +23351,7 @@
                               "required": [
                                 "funnelKey",
                                 "funnelName",
+                                "returnPerDollar",
                                 "steps"
                               ]
                             },
