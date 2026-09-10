@@ -54,7 +54,7 @@ not, so it answered about the NEWEST slice of a campaign that had been running s
   came back" would pass on an implementation that never resolved the family: the per-audience
   reconciliation to the cent, a stopped ancestor answering byte-identically, the identity echo, the
   single-row identity's unchanged request shape, the multi-member fan-out shape, the untouched brand and
-  offer reads, and the fail-soft degrade. (Set 2026-09-10, features-service#PRNUM.)
+  offer reads, and the fail-soft degrade. (Set 2026-09-10, features-service#905.)
 
 ## A RETURN ON OUR OUTREACH LEAVES OUT A DEAL THE CUSTOMER SAYS WE DID NOT CAUSE — `?cause=`, three states, and the third is NOT a missing answer
 
