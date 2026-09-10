@@ -119,6 +119,18 @@ that makes them true.
     already means. It rides **EVERY rung including the outreach base**, on the identical formula, so a
     consumer renders "cost per meeting booked" for one client and "cost per website visit" for another
     **without knowing which rung to ask for and without a branch for the base**.
+  - **BOTH ARE ON THE `net` PRICING BASIS — what the client ACTUALLY PAID after their per-org usage
+    discount — and that is what makes the byte-same-as-their-dashboard claim TRUE rather than
+    aspirational.** Every consumer-facing dashboard surface in the fleet reads `pricing=net`, so a
+    GROSS figure here publishes a number no client has ever seen on a screen they own. Measured in
+    prod 2026-09-10 before the fix: Opsfolio read **9.386x gross against 18.324x net** and
+    Shockwavecenters **1.828x against 3.481x**, with the same factor on every `costPerReachUsd` rung;
+    Doc Dinners (no discount) was identical either way, which is the regression check. NET is runs'
+    FROZEN net twin off the SAME cost read — **zero extra IO**, no discount fetch, no multiply — and
+    it FAILS LOUD when the twin is absent: there is deliberately no fall back to gross, because a
+    silent basis swap is the two-numbers-under-one-word bug this closes. There is **no `?pricing=`
+    parameter** on this read and there must not be: it is unauthenticated and names specific clients,
+    so the basis is this service's decision, not a caller's.
   - **Served in DOLLARS, not cents**, because the consumer divides nothing: a figure it has to scale is
     one it can scale wrongly, and the two surfaces would then state one number two ways.
   - **`null` is the gap and `0` is a measurement, on both.** A rung nobody reached has no denominator,
@@ -195,6 +207,17 @@ seconds** in prod (2026-09-08), and the two other candidates carry no return at 
   questions and in production they are an order apart — the fleet projection on cold email reads
   **0.71x** while the measured median reads several multiples. **Neither may be relabelled as the
   other**, and the projected figure must not be substituted here because it is cheap.
+- **IT IS READ ON THE `net` PRICING BASIS** — what each brand actually paid after its per-org usage
+  discount — which is what makes "the exact ratio that brand reads as ROI on its own dashboard" true:
+  every dashboard surface reads net. A brand with no discount has a frozen net equal to its gross per
+  cost row and is byte-unchanged, so the basis moves only the discounted brands, onto their own
+  screen's figure. Zero extra IO (runs' frozen net twin off the same read), fail-loud if the twin is
+  absent, and NO `?pricing=` parameter on a public identity-free read. Same for the per-funnel median
+  and for the cross-org `/public/stats/revenue`, which share `computePairRevenue`. Expect every median
+  to RISE the day it ships (a discounted brand's return is larger on the money it actually paid); the
+  prod baseline the morning of 2026-09-10 was a cold-email channel median of **3.603x over 9 brands**,
+  with the per-pair medians at 2.045x (conversation, n=3) and 41.342x (form magnet, n=3). That step is
+  a basis correction, not growth — anyone reading the curve must be told so.
 - **THE UNIT IS THE BRAND AND THE STATISTIC IS THE MEDIAN, never a mean.** A handful of brands sit tens
   of multiples above the rest, so an average describes nobody in the population. The quartiles, the min
   and the max ride beside it so a consumer can show the bulk instead of one scalar.
@@ -268,6 +291,9 @@ conversation-to-meeting funnel while the per-brand medians sit near **2x**, drag
   each lead at its most-advanced REALIZED step and projects the rest with that brand's OWN rates and
   LTR. **NEITHER READ MAY BE RELABELLED AS THE OTHER and the projection is NOT replaced** — its per-step
   prices have their own consumers, and it stays exactly where it is.
+- **IT IS READ ON THE `net` PRICING BASIS**, like the channel-wide median beside it and for the same
+  reason: a client's own dashboard reads net, so a gross figure would be a statistic about money
+  nobody was billed. One warm computes both, so neither can drift onto the other basis.
 - **THE UNIT IS THE BRAND AND THE STATISTIC IS THE MEDIAN, never a mean, anywhere in the served figures**
   (`lib/fleet-funnel-return.ts`, whose header follows `fleet-return-on-spend.ts`'s doctrine verbatim).
   Quartiles, min and max ride beside it so a consumer can show the bulk rather than one scalar.
