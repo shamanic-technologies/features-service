@@ -84,7 +84,11 @@ import { ALL_OUTCOME_CAUSES, type OutcomeCause } from "./outcome-cause.js";
 import { fetchQualifications } from "./qualifications-client.js";
 import { applySignalOverlays } from "./signal-overlays.js";
 import { fetchPublicWorkflows, type WorkflowMetadata } from "./public-stats-clients.js";
+// ONE implementation of "which dynasty is this slug", shared with the `?workflow=` drill-down —
+// so the key this grain EMITS and the key that read RESOLVES can never disagree about a version.
+import { dynastyOfSlug } from "./workflow-scope.js";
 import type { Pricing } from "./pricing.js";
+import { singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 
 /**
  * The volume half of a workflow's answer — this brand's OWN outreach through this dynasty, and what
@@ -132,12 +136,6 @@ async function fetchWorkflowMetadataSoft(featureSlug: string): Promise<WorkflowM
     );
     return [];
   }
-}
-
-/** PURE: slug → its dynasty. A slug nobody describes is its own dynasty, never folded on a guess. */
-export function dynastyOfSlug(workflows: WorkflowMetadata[]): (slug: string) => string {
-  const map = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
-  return (slug: string) => map.get(slug) ?? slug;
 }
 
 /** PURE: dynasty slug → its human name, when workflow-service describes any version of it. */
@@ -267,19 +265,35 @@ export async function computeWorkflowRevenueGroups(input: {
   pricing: Pricing;
   priced: { economics: EffectiveEconomics; pricedFunnelKeys: SalesFunnelKey[] } | null;
   /**
+   * ONE CAMPAIGN — its whole IDENTITY, the family of rows sharing (org, brand, sales funnel,
+   * acquisition channel) — when the caller named one. Every group then states what THAT campaign did
+   * and spent through each workflow: the customer opens a campaign's Workflows page, and a brand
+   * figure under a campaign's name is the wrong-grain bug this fleet has already paid for once.
+   *
+   * It narrows the SCOPE and nothing else — same partition, same engine, same brand-priced economics
+   * — so a brand whose whole spend sits on one campaign identity reads the byte-same groups either
+   * way. `undefined` → the brand's whole spend → byte-identical to today.
+   */
+  campaignScope?: CampaignFilter;
+  /**
    * WHOSE WINS THIS GRAIN COUNTS (`lib/outcome-cause.ts`). Threaded so a workflow row and the brand
    * read above it can never be built on two different bases — a grain left behind reproduces the
    * overstatement one click away. Defaults to every state: byte-identical to today.
    */
   causes?: readonly OutcomeCause[];
 }): Promise<WorkflowRevenueGroup[]> {
-  const { featureSlug, brandId, funnel, headers, pricing, priced } = input;
+  const { featureSlug, brandId, funnel, headers, pricing, priced, campaignScope } = input;
   const causes = input.causes ?? ALL_OUTCOME_CAUSES;
+  // The single campaign id the campaign-SCOPED per-email overlays still take: the requested campaign
+  // for a single scope, `undefined` for a family (no producer accepts a campaign list). The two legs
+  // that must be family-EXACT — cost and leads — take the scope itself.
+  const campaignId = singleCampaignId(campaignScope);
 
   const [costCentsBySlug, persons, workflows] = await Promise.all([
-    fetchRunsCostCentsByWorkflowSlug(brandId, featureSlug, headers, pricing),
-    // Brand-wide: the workflow grain partitions the brand's own leads, it never narrows the read.
-    fetchLeadsForRevenue(brandId, undefined, headers),
+    fetchRunsCostCentsByWorkflowSlug(brandId, featureSlug, headers, pricing, campaignScope),
+    // The workflow grain PARTITIONS the leads of its scope: brand-wide by default, the campaign's own
+    // rows when one is named. Never narrower than the scope, never wider.
+    fetchLeadsForRevenue(brandId, campaignScope, headers),
     fetchWorkflowMetadataSoft(featureSlug),
   ]);
 
@@ -288,7 +302,7 @@ export async function computeWorkflowRevenueGroups(input: {
   // identical lead the brand read prices.
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
   const [timestamps, observed, quals] = await Promise.all([
-    fetchEventTimestamps(brandId, undefined, emails, headers).catch((err) => {
+    fetchEventTimestamps(brandId, campaignId, emails, headers).catch((err) => {
       console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
       return null;
     }),
@@ -297,7 +311,7 @@ export async function computeWorkflowRevenueGroups(input: {
       return null;
     }),
     // The LEGACY half, still carrying real booked/closed outcomes for brands nobody has restated yet.
-    fetchQualifications(brandId, undefined, emails, headers).catch((err) => {
+    fetchQualifications(brandId, campaignId, emails, headers).catch((err) => {
       console.warn(`[features-service] qualification enrichment failed (degrading to no legacy meeting/close dates): ${(err as Error).message}`);
       return null;
     }),

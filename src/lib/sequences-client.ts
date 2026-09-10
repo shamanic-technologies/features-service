@@ -54,18 +54,22 @@ export async function fetchSequencesByDay(
   // exact for the same reason the family path adds: a send carries exactly one feature slug.
   featureScope: FeatureScope,
   headers: { orgId: string; userId?: string; runId?: string },
+  // ONE WORKFLOW DYNASTY, when the read is drilled into one (`?workflow=`, lib/workflow-scope.ts).
+  // email-gateway resolves it to its versioned slugs itself, so the outreach series is narrowed by
+  // the SAME catalogue the leads and the spend are. Omitted → the whole scope → today's series.
+  workflowDynastySlug?: string,
 ): Promise<SignalSeries> {
   const slugs = featureSlugList(featureScope);
   if (slugs.length > 1) {
     return sumSeries(
-      await mapWithConcurrency(slugs, 4, (slug) => fetchSequencesByDay(brandId, campaignScope, slug, headers)),
+      await mapWithConcurrency(slugs, 4, (slug) => fetchSequencesByDay(brandId, campaignScope, slug, headers, workflowDynastySlug)),
     );
   }
   const featureSlug = slugs[0];
   const family = campaignFamilySet(campaignScope);
   if (family) {
     return sumSeries(
-      await mapWithConcurrency([...family], 6, (id) => fetchSequencesByDay(brandId, id, featureSlug, headers)),
+      await mapWithConcurrency([...family], 6, (id) => fetchSequencesByDay(brandId, id, featureSlug, headers, workflowDynastySlug)),
     );
   }
   const campaignId = singleCampaignId(campaignScope);
@@ -85,6 +89,7 @@ export async function fetchSequencesByDay(
   });
   // campaignId narrows the same brand-scoped day series to one campaign (mirrors the other overview reads).
   if (campaignId) params.set("campaignId", campaignId);
+  if (workflowDynastySlug) params.set("workflowDynastySlug", workflowDynastySlug);
 
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,

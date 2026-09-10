@@ -56,6 +56,11 @@ export async function fetchRunsCostCents(
   // byte-identical. Every downstream metric (CAC, ROI, CPC) derives from this, so it comes out net +
   // coherent by construction. A NET read never falls back to gross: `selectCostCents` throws.
   pricing: Pricing = "gross",
+  // ONE WORKFLOW DYNASTY, when the read is drilled into one (`?workflow=`, lib/workflow-scope.ts).
+  // A FILTER, never a grouping: runs resolves the dynasty to its versioned slugs through
+  // workflow-service, so the spend leg and the lead leg are narrowed by the same catalogue. Omitted
+  // → the whole scope's spend → byte-identical to today.
+  workflowDynastySlug?: string,
 ): Promise<RunsCostCents> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -74,6 +79,7 @@ export async function fetchRunsCostCents(
     featureSlugs: featureSlugsParam(featureScope),
   });
   if (campaignId) params.set("campaignId", campaignId);
+  if (workflowDynastySlug) params.set("workflowDynastySlug", workflowDynastySlug);
 
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
@@ -122,8 +128,11 @@ export async function fetchRunsCostCents(
  * whose spend all sits on one workflow reads the same figure at both grains by construction rather
  * than by a correction.
  *
- * Brand-wide only (no campaign scope): the workflow grain answers "of everything we ran for this
- * brand, which workflows made money", which is the brand's whole spend.
+ * Brand-wide by default: the workflow grain answers "of everything we ran for this brand, which
+ * workflows made money", which is the brand's whole spend. A CAMPAIGN scope narrows it to what one
+ * campaign spent through each workflow — the same narrowing `fetchRunsCostCents` applies, by the
+ * same two mechanisms: a single campaign is a `campaignId=` filter, and a FAMILY co-groups
+ * `campaignId` and keeps its members here, because runs-service takes no campaign list.
  *
  * Fail-loud, for the same reason as its sibling: a swallowed error would fake $0 cost and print an
  * infinite ROI for a workflow that burned money.
@@ -133,6 +142,9 @@ export async function fetchRunsCostCentsByWorkflowSlug(
   featureSlug: string,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
   pricing: Pricing = "gross",
+  // One campaign, or the family sharing one identity. `undefined` → the brand's whole spend →
+  // byte-identical to the request this made before a campaign could be named.
+  campaignScope: CampaignFilter = undefined,
 ): Promise<Map<string, RunsCostCents>> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -140,7 +152,15 @@ export async function fetchRunsCostCentsByWorkflowSlug(
     throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   }
 
-  const params = new URLSearchParams({ groupBy: "workflowSlug", brandId, featureSlugs: featureSlug });
+  const campaignId = singleCampaignId(campaignScope);
+  const family = campaignFamilySet(campaignScope);
+
+  const params = new URLSearchParams({
+    groupBy: family ? "workflowSlug,campaignId" : "workflowSlug",
+    brandId,
+    featureSlugs: featureSlug,
+  });
+  if (campaignId) params.set("campaignId", campaignId);
 
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
@@ -149,6 +169,7 @@ export async function fetchRunsCostCentsByWorkflowSlug(
   };
   if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
   if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+  if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
   const response = await fetchWithRetry(`${url}/v1/stats/costs?${params}`, { headers: reqHeaders });
@@ -170,6 +191,13 @@ export async function fetchRunsCostCentsByWorkflowSlug(
   // that can make the groups sum to less than the brand total.
   let unattributedCommittedCents = 0;
   for (const group of data.groups) {
+    // A family arrives split per (workflowSlug, campaignId): keep only its members, then fold the
+    // split back onto the slug below, so a family's per-workflow row reads exactly as a single
+    // campaign's does.
+    if (family) {
+      const cid = group.dimensions?.campaignId;
+      if (!cid || !family.has(cid)) continue;
+    }
     const committedCents = Math.round(selectCostCents(group, "totalCostInUsdCents", pricing));
     const actualCents = Math.round(selectCostCents(group, "actualCostInUsdCents", pricing));
     const slug = group.dimensions?.workflowSlug;
@@ -185,7 +213,7 @@ export async function fetchRunsCostCentsByWorkflowSlug(
   }
   if (unattributedCommittedCents !== 0) {
     console.warn(
-      `[features-service] ${unattributedCommittedCents} committed cents of ${brandId}'s ${featureSlug} spend carry no workflow and are in no per-workflow group`,
+      `[features-service] ${unattributedCommittedCents} committed cents of ${brandId}'s ${featureSlug} spend${campaignScope ? " (campaign-scoped)" : ""} carry no workflow and are in no per-workflow group`,
     );
   }
   return bySlug;

@@ -2032,6 +2032,33 @@
             ],
             "description": "WHOSE WIN EACH OUTCOME WAS. A brand contacts people through us AND through everything else it already does — referrals, conferences, an existing pipeline, another agency — so some of the people we email buy for reasons that have nothing to do with our outreach. lead-service records the answer per statement (`causedByOutreach`); this block states what this read counted and what exists. Deliberately NOT the tracker's `attributed / needs_review / unmatched` vocabulary, which answers whether we managed to identify who somebody was."
           },
+          "workflow": {
+            "type": "object",
+            "properties": {
+              "workflowDynastySlug": {
+                "type": "string",
+                "description": "The dynasty every figure on this body was computed over — byte the same key ?groupBy=workflow emits, so the row a consumer clicked opens the workflow it named."
+              },
+              "workflowDynastyName": {
+                "type": "string",
+                "nullable": true,
+                "description": "Human name of the dynasty. Null when workflow-service describes no version of it."
+              },
+              "workflowSlugs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Every versioned slug the catalogue folds into it, ascending — nothing is hidden. EMPTY when workflow-service describes none, which is the dynasty-of-one case: the read still answers, over the leads and the spend frozen on that single slug."
+              }
+            },
+            "required": [
+              "workflowDynastySlug",
+              "workflowDynastyName",
+              "workflowSlugs"
+            ],
+            "description": "WHAT THIS BODY ANSWERED FOR, present ONLY on a ?workflow= read. The drill-down narrows every block above to ONE workflow of the scope: the leads are the ones lead-service FROZE on that workflow at serve time, the spend is the runs / email-gateway spend frozen on the dynasty's versioned slugs, and each leg is resolved through the SAME workflow-service catalogue — neither is ever inferred from the campaign row's CURRENT workflow, which mis-attributes everything spent before a switch. Absent on an un-narrowed read."
+          },
           "funnelSteps": {
             "type": "object",
             "nullable": true,
@@ -2442,6 +2469,52 @@
             "enum": [
               "workflow"
             ]
+          },
+          "campaignIdentity": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "Stable identity key. Opaque — compare it, do not parse it."
+              },
+              "funnelKey": {
+                "type": "string",
+                "nullable": true,
+                "description": "The sales funnel the campaign states, or null when it states none."
+              },
+              "acquisitionChannel": {
+                "type": "string",
+                "nullable": true,
+                "description": "The channel it acquires through, e.g. cold_email."
+              },
+              "campaignIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Every campaign id answering to this identity, this one included."
+              },
+              "liveCampaignIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The members still ongoing — at most one."
+              },
+              "representativeId": {
+                "type": "string",
+                "description": "The member to render the identity's line on: the live campaign when there is one, else the most recently created member."
+              }
+            },
+            "required": [
+              "key",
+              "funnelKey",
+              "acquisitionChannel",
+              "campaignIds",
+              "liveCampaignIds",
+              "representativeId"
+            ],
+            "description": "Present ONLY on a ?campaignId= read: the campaign IDENTITY every group was totalled over — the family of rows sharing (org, brand, sales funnel, acquisition channel), its stopped ancestors included. A consumer must be able to SEE that the subject is one campaign rather than the whole brand, instead of inferring it from a number that moved. Absent on the brand-wide read."
           },
           "groups": {
             "type": "array",
@@ -6245,6 +6318,33 @@
             ],
             "description": "WHOSE WIN EACH OUTCOME WAS. A brand contacts people through us AND through everything else it already does — referrals, conferences, an existing pipeline, another agency — so some of the people we email buy for reasons that have nothing to do with our outreach. lead-service records the answer per statement (`causedByOutreach`); this block states what this read counted and what exists. Deliberately NOT the tracker's `attributed / needs_review / unmatched` vocabulary, which answers whether we managed to identify who somebody was."
           },
+          "workflow": {
+            "type": "object",
+            "properties": {
+              "workflowDynastySlug": {
+                "type": "string",
+                "description": "The dynasty every figure on this body was computed over — byte the same key ?groupBy=workflow emits, so the row a consumer clicked opens the workflow it named."
+              },
+              "workflowDynastyName": {
+                "type": "string",
+                "nullable": true,
+                "description": "Human name of the dynasty. Null when workflow-service describes no version of it."
+              },
+              "workflowSlugs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Every versioned slug the catalogue folds into it, ascending — nothing is hidden. EMPTY when workflow-service describes none, which is the dynasty-of-one case: the read still answers, over the leads and the spend frozen on that single slug."
+              }
+            },
+            "required": [
+              "workflowDynastySlug",
+              "workflowDynastyName",
+              "workflowSlugs"
+            ],
+            "description": "WHAT THIS BODY ANSWERED FOR, present ONLY on a ?workflow= read. The drill-down narrows every block above to ONE workflow of the scope: the leads are the ones lead-service FROZE on that workflow at serve time, the spend is the runs / email-gateway spend frozen on the dynasty's versioned slugs, and each leg is resolved through the SAME workflow-service catalogue — neither is ever inferred from the campaign row's CURRENT workflow, which mis-attributes everything spent before a switch. Absent on an un-narrowed read."
+          },
           "funnelSteps": {
             "type": "object",
             "nullable": true,
@@ -8907,6 +9007,33 @@
             ],
             "description": "WHOSE WIN EACH OUTCOME WAS. A brand contacts people through us AND through everything else it already does — referrals, conferences, an existing pipeline, another agency — so some of the people we email buy for reasons that have nothing to do with our outreach. lead-service records the answer per statement (`causedByOutreach`); this block states what this read counted and what exists. Deliberately NOT the tracker's `attributed / needs_review / unmatched` vocabulary, which answers whether we managed to identify who somebody was."
           },
+          "workflow": {
+            "type": "object",
+            "properties": {
+              "workflowDynastySlug": {
+                "type": "string",
+                "description": "The dynasty every figure on this body was computed over — byte the same key ?groupBy=workflow emits, so the row a consumer clicked opens the workflow it named."
+              },
+              "workflowDynastyName": {
+                "type": "string",
+                "nullable": true,
+                "description": "Human name of the dynasty. Null when workflow-service describes no version of it."
+              },
+              "workflowSlugs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Every versioned slug the catalogue folds into it, ascending — nothing is hidden. EMPTY when workflow-service describes none, which is the dynasty-of-one case: the read still answers, over the leads and the spend frozen on that single slug."
+              }
+            },
+            "required": [
+              "workflowDynastySlug",
+              "workflowDynastyName",
+              "workflowSlugs"
+            ],
+            "description": "WHAT THIS BODY ANSWERED FOR, present ONLY on a ?workflow= read. The drill-down narrows every block above to ONE workflow of the scope: the leads are the ones lead-service FROZE on that workflow at serve time, the spend is the runs / email-gateway spend frozen on the dynasty's versioned slugs, and each leg is resolved through the SAME workflow-service catalogue — neither is ever inferred from the campaign row's CURRENT workflow, which mis-attributes everything spent before a switch. Absent on an un-narrowed read."
+          },
           "funnelSteps": {
             "type": "object",
             "nullable": true,
@@ -11358,6 +11485,33 @@
               "counts"
             ],
             "description": "WHOSE WIN EACH OUTCOME WAS. A brand contacts people through us AND through everything else it already does — referrals, conferences, an existing pipeline, another agency — so some of the people we email buy for reasons that have nothing to do with our outreach. lead-service records the answer per statement (`causedByOutreach`); this block states what this read counted and what exists. Deliberately NOT the tracker's `attributed / needs_review / unmatched` vocabulary, which answers whether we managed to identify who somebody was."
+          },
+          "workflow": {
+            "type": "object",
+            "properties": {
+              "workflowDynastySlug": {
+                "type": "string",
+                "description": "The dynasty every figure on this body was computed over — byte the same key ?groupBy=workflow emits, so the row a consumer clicked opens the workflow it named."
+              },
+              "workflowDynastyName": {
+                "type": "string",
+                "nullable": true,
+                "description": "Human name of the dynasty. Null when workflow-service describes no version of it."
+              },
+              "workflowSlugs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Every versioned slug the catalogue folds into it, ascending — nothing is hidden. EMPTY when workflow-service describes none, which is the dynasty-of-one case: the read still answers, over the leads and the spend frozen on that single slug."
+              }
+            },
+            "required": [
+              "workflowDynastySlug",
+              "workflowDynastyName",
+              "workflowSlugs"
+            ],
+            "description": "WHAT THIS BODY ANSWERED FOR, present ONLY on a ?workflow= read. The drill-down narrows every block above to ONE workflow of the scope: the leads are the ones lead-service FROZE on that workflow at serve time, the spend is the runs / email-gateway spend frozen on the dynasty's versioned slugs, and each leg is resolved through the SAME workflow-service catalogue — neither is ever inferred from the campaign row's CURRENT workflow, which mis-attributes everything spent before a switch. Absent on an un-narrowed read."
           },
           "funnelSteps": {
             "type": "object",
@@ -15883,7 +16037,7 @@
     "/features/{featureSlug}/revenue": {
       "get": {
         "summary": "Expected pipeline revenue for a feature",
-        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events and the date columns are dated from the per-lead event timestamps (email-gateway + instantly manual qualifications); an outcome with no timestamp is counted in the headline but placed on no day. roiHistory charts return on spend across the brand's whole life (cumulative on both legs, measured on both legs, spend on the same COMMITTED basis, terminating on costEconomics.roiMultiple). totalPipelineUsd is null when no funnel is wired for the feature, or the brand has no saved economics AND no cross-brand average exists (cold start). When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition %, ROI multiple, and costPerAcquisitionUsd — the dollar cost of winning one customer, now answered on this default un-lensed brand read and equal to the lensed costPerConversionUsd for the same scope. With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature (campaignId + campaignIdentity + headline.totalPipelineUsd + costEconomics + outcomes); each group is byte-equal to the standalone ?campaignId= call. `outcomes` is the VOLUME half — how much real outcome evidence that row's ROI, %CAC and pipeline rest on (outreach volume, website visits, positive replies, committed spend, cost per visit, cost per reply), totalled over the campaign's identity exactly as the money is. With ?groupBy=workflow it is one LEAN group per WORKFLOW DYNASTY the brand has run (workflowDynastySlug + workflowDynastyName + workflowSlugs + headline.totalPipelineUsd + costEconomics + outcomes), answering which of the workflows we ran for this brand made money and which burned it — and, in `outcomes`, what that money was made of: this brand's own outreach volume, website visits, positive replies, committed spend and the cost of a visit and of a reply, per workflow.",
+        "description": "Computes expected pipeline revenue for a feature, scoped to a brand (optionally one campaign). Expected value uses MAX inside each entity (person, org) and SUM between distinct orgs. Rates + terminal LTR come from the brand's sales economics. timeSeries, events and the date columns are dated from the per-lead event timestamps (email-gateway + instantly manual qualifications); an outcome with no timestamp is counted in the headline but placed on no day. roiHistory charts return on spend across the brand's whole life (cumulative on both legs, measured on both legs, spend on the same COMMITTED basis, terminating on costEconomics.roiMultiple). totalPipelineUsd is null when no funnel is wired for the feature, or the brand has no saved economics AND no cross-brand average exists (cold start). When a brand has no saved economics but a cross-brand average exists, revenue is computed on that average and headline.economicsSource is 'cross-brand-average' (an estimate); otherwise 'sales-economics' (the brand's own saved set), or null for a null pipeline. costEconomics carries the total run cost (same source as /stats systemStats) plus derived cost-of-acquisition %, ROI multiple, and costPerAcquisitionUsd — the dollar cost of winning one customer, now answered on this default un-lensed brand read and equal to the lensed costPerConversionUsd for the same scope. With ?groupBy=campaignId the response is instead one LEAN group per campaign that has runs for the brand+feature (campaignId + campaignIdentity + headline.totalPipelineUsd + costEconomics + outcomes); each group is byte-equal to the standalone ?campaignId= call. `outcomes` is the VOLUME half — how much real outcome evidence that row's ROI, %CAC and pipeline rest on (outreach volume, website visits, positive replies, committed spend, cost per visit, cost per reply), totalled over the campaign's identity exactly as the money is. With ?groupBy=workflow it is one LEAN group per WORKFLOW DYNASTY the brand has run (workflowDynastySlug + workflowDynastyName + workflowSlugs + headline.totalPipelineUsd + costEconomics + outcomes), answering which of the workflows we ran for this brand made money and which burned it — and, in `outcomes`, what that money was made of: this brand's own outreach volume, website visits, positive replies, committed spend and the cost of a visit and of a reply, per workflow. A ?campaignId= on that grouped read narrows every group to what THAT campaign (its whole identity) did and spent through each workflow, so a campaign's Workflows page states the campaign's own numbers rather than the brand's. ?workflow=<workflowDynastySlug> drills the UN-grouped read into ONE of those workflows — the same body, narrowed on both legs by the producers that froze them — so a workflow sub-page draws the same charts a campaign Overview draws, for that workflow alone. It combines with ?campaignId= and ?pricing=; a workflow the scope never ran answers empty (zero counts, null return), never a 404.",
         "tags": [
           "Stats"
         ],
@@ -15909,11 +16063,21 @@
           {
             "schema": {
               "type": "string",
-              "description": "Optional campaign drill-down (ignored when groupBy=campaignId). Mutually exclusive with offerId — a campaign already sells exactly one offer (400)."
+              "description": "Optional campaign drill-down (ignored when groupBy=campaignId). HONOURED by groupBy=workflow: each workflow group then states what THAT campaign did and spent through that workflow, over the campaign's whole IDENTITY (the family of rows sharing org+brand+funnel+channel), so a campaign's Workflows page never renders a brand figure under a campaign's name. Combines with ?workflow= on the un-grouped read (one campaign, one workflow). Mutually exclusive with offerId — a campaign already sells exactly one offer (400)."
             },
             "required": false,
-            "description": "Optional campaign drill-down (ignored when groupBy=campaignId). Mutually exclusive with offerId — a campaign already sells exactly one offer (400).",
+            "description": "Optional campaign drill-down (ignored when groupBy=campaignId). HONOURED by groupBy=workflow: each workflow group then states what THAT campaign did and spent through that workflow, over the campaign's whole IDENTITY (the family of rows sharing org+brand+funnel+channel), so a campaign's Workflows page never renders a brand figure under a campaign's name. Combines with ?workflow= on the un-grouped read (one campaign, one workflow). Mutually exclusive with offerId — a campaign already sells exactly one offer (400).",
             "name": "campaignId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "ONE WORKFLOW DRILL-DOWN — the workflow DYNASTY slug ?groupBy=workflow emits as `workflowDynastySlug`, so the row a consumer clicked opens the workflow it named. Every block this body serves is then computed over that workflow alone: funnelSteps, roiHistory, outcomes, costEconomics, spend, the per-signal daily series and the leads. Both legs are attributed by the producer that FROZE them — the workflowSlug lead-service stored on each served lead, and the runs / email-gateway spend filtered by the dynasty (each producer resolving it to the same versioned slugs through workflow-service) — never inferred from the campaign row's CURRENT workflow, which mis-attributes every lead and dollar from before a workflow switch. COMBINES with ?campaignId= (the campaign's Workflows page drills into one of its own rows) and with ?pricing=. The unit is the DYNASTY because that is what every workflow-keyed surface in this service means by 'a workflow'; a slug workflow-service does not describe is its own dynasty of one, so every key the grouped read can emit resolves here. A workflow the scope never ran is a legitimate EMPTY answer — zero counts, zero spend, a null return — never a 404 and never a fabricated fleet estimate. Mutually exclusive with groupBy (400, reason 'workflow_and_group_by'): one drills into a workflow, the other lists many. The echo rides the response as `workflow`. Omitted → the whole scope → byte-identical to today."
+            },
+            "required": false,
+            "description": "ONE WORKFLOW DRILL-DOWN — the workflow DYNASTY slug ?groupBy=workflow emits as `workflowDynastySlug`, so the row a consumer clicked opens the workflow it named. Every block this body serves is then computed over that workflow alone: funnelSteps, roiHistory, outcomes, costEconomics, spend, the per-signal daily series and the leads. Both legs are attributed by the producer that FROZE them — the workflowSlug lead-service stored on each served lead, and the runs / email-gateway spend filtered by the dynasty (each producer resolving it to the same versioned slugs through workflow-service) — never inferred from the campaign row's CURRENT workflow, which mis-attributes every lead and dollar from before a workflow switch. COMBINES with ?campaignId= (the campaign's Workflows page drills into one of its own rows) and with ?pricing=. The unit is the DYNASTY because that is what every workflow-keyed surface in this service means by 'a workflow'; a slug workflow-service does not describe is its own dynasty of one, so every key the grouped read can emit resolves here. A workflow the scope never ran is a legitimate EMPTY answer — zero counts, zero spend, a null return — never a 404 and never a fabricated fleet estimate. Mutually exclusive with groupBy (400, reason 'workflow_and_group_by'): one drills into a workflow, the other lists many. The echo rides the response as `workflow`. Omitted → the whole scope → byte-identical to today.",
+            "name": "workflow",
             "in": "query"
           },
           {
@@ -16076,7 +16240,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId, invalid lens, invalid funnel, invalid pricing value, or offerId sent beside campaignId",
+            "description": "Missing brandId, invalid lens, invalid funnel, invalid pricing value, offerId sent beside campaignId, or workflow sent beside groupBy (reason: workflow_and_group_by)",
             "content": {
               "application/json": {
                 "schema": {
