@@ -1836,6 +1836,67 @@ either stated, or absent — and absent is a producer gap we surface, never fill
 - **NO ranking was re-scored.** This is a vocabulary + contract change: `rankDeclaredFunnels` and the
   return-per-dollar basis are untouched. (Set 2026-08-12.)
 
+## A CAMPAIGN HAS WORKFLOWS TOO, AND ONE OF THEM OPENS ON ITS OWN — `?groupBy=workflow&campaignId=`, and `?workflow=` on the un-grouped read
+
+A customer opens ONE campaign's Workflows page and asks of each row what they ask of the campaign: how
+many sales interests, what one cost, what it invested, how many people it reached. Then they click a
+row and expect the charts the campaign Overview draws, for that workflow alone. Neither was answerable.
+`?groupBy=workflow` deliberately ignored `campaignId` and answered at BRAND grain, and the un-grouped
+read had no way to name a workflow at all — so the only shippable consumer-side options were summing
+groups in the browser (banned, and wrong: a lead served under two workflows breaks additivity) or
+printing the brand's figure under the campaign's name, which is the wrong-grain bug this fleet has
+already paid for once ($2,625 against $2,668).
+
+- **A CAMPAIGN SCOPE ON THE GROUPED READ IS A SCOPE, NOT A RE-ATTRIBUTION.** Same partition, same
+  engine, same brand-priced economics — only WHICH campaigns the rows are computed over moves. It
+  answers for the campaign's whole **IDENTITY** (the family sharing org + brand + funnel + channel, the
+  byte-same one the un-grouped campaign read and `/audience-stats` resolve), so a campaign whose
+  workflow switched mid-life still states what it did through the workflow it has since left — and
+  either member id reads the same answer. `campaignIdentity` rides the payload so a consumer can SEE
+  the subject rather than infer it from a number that moved. Absent brand-wide, where the read is
+  byte-unchanged.
+- **BOTH LEGS NARROW THROUGH THE PRODUCERS THAT FROZE THEM**, exactly as the brand grain's do. Cost:
+  the same `groupBy=workflowSlug` request, with a `campaignId=` filter for a single campaign and a
+  co-grouped `workflowSlug,campaignId` for a FAMILY whose members are kept locally (runs-service takes
+  no campaign list — the same shape `fetchRunsCostCents` and `fetchSpendBreakdown` already use).
+  Leads: the campaign-scoped lead read, partitioned on the `workflowSlug` lead-service froze at serve
+  time. The per-email overlays take the family's single campaign id where one exists, as everywhere.
+- **A CAMPAIGN THAT SPENT THROUGH NO WORKFLOW IS AN EMPTY LIST**, never the brand's figures.
+- **`?workflow=<workflowDynastySlug>` DRILLS THE UN-GROUPED READ INTO ONE OF THOSE ROWS** — the same
+  body, narrowed: `funnelSteps`, `roiHistory`, `outcomes`, `costEconomics`, `spend`, every per-signal
+  daily series and `leads[]`. It COMBINES with `?campaignId=` and `?pricing=`, and a campaign-scoped
+  drill-down is the SAME four figures that campaign's group states in the grouped read (guarded).
+- **THE UNIT IS THE DYNASTY, because the row the consumer clicked is one.** The grouped read emits a
+  dynasty key, so the drill-down takes that key or the two surfaces speak two vocabularies about one
+  workflow. `lib/workflow-scope.ts` owns it and shares its `dynastyOfSlug` with the grouped grain, so
+  the key one EMITS and the key the other RESOLVES can never disagree about a version. The leads leg
+  resolves the dynasty from the catalogue HERE; every runs / email-gateway leg passes
+  `workflowDynastySlug` as a FILTER and the producer resolves it through the same workflow-service.
+- **THE CATALOGUE READ IS FAIL-LOUD ON THE DRILL-DOWN AND FAIL-SOFT ON THE GROUPED GRAIN, and that is
+  one rule applied to two questions.** Grouped, it decides how versions are GROUPED, so losing it
+  degrades to the version grain — a poorer grouping of the same, correct numbers. Drilled, it decides
+  WHICH LEADS ARE THIS WORKFLOW'S, so losing it would answer about the single version whose slug
+  happens to equal the dynasty and print that subset under the whole workflow's name. So it 502s.
+- **A WORKFLOW THE SCOPE NEVER RAN IS A REAL, EMPTY ANSWER** — zero counts, zero cents, a null return —
+  never a 404 and never a fabricated fleet estimate. Nothing to 404 on: a slug the catalogue does not
+  describe is ITS OWN dynasty of one (the grouped grain's own rule), so every key that read can emit
+  resolves, and a key nobody ever ran simply matches no lead and no cost row.
+- **NAMING BOTH `?workflow=` AND `?groupBy=` IS A 400** (`workflow_and_group_by`): one drills into a
+  workflow, the other lists many — two questions at once, either answer contradicting the other
+  parameter. Never a quiet pick.
+- **BOTH ADDITIONS ARE BYTE-IDENTICAL WHEN THE PARAMETER IS OMITTED**, and the scope keys carry them
+  (the grouped cell keys on the IDENTITY, so a family lands on ONE cell instead of paying a fan-out per
+  stopped ancestor; the un-grouped cell carries `workflow`). Absent → dropped by `buildScopeKey` →
+  today's keys are unmoved.
+- Guards: `src/routes/workflow-campaign-grain.test.ts` — ONE fixture where the brand's numbers and the
+  campaign's DIVERGE by construction (a second campaign on another channel carries most of the brand's
+  spend and replies through the SAME dynasty), so every case asserts the divergence: a suite that only
+  checked "a number came back" would pass on the implementation that ignored the parameter, which is
+  what shipped before. Plus the identity equality across members, the per-workflow split, the empty
+  campaign, the drill-down narrowing every block, its equality with the campaign's own group, the
+  empty workflow, `pricing=net` on both, the fail-loud catalogue and the 400.
+  `src/lib/workflow-scope.test.ts` pins the membership rule itself. (Set 2026-09-10.)
+
 ## `GET /revenue?groupBy=workflow` — WHICH OF THE WORKFLOWS WE RAN FOR THIS BRAND MADE MONEY; a workflow is a DYNASTY, and BOTH legs are attributed by the producer that froze them
 
 The same REALIZED-money answer `/revenue` already gives for a brand and for its campaigns, at the grain
@@ -1867,6 +1928,8 @@ the day either side changes.
   `fetchRunsCostCents` already makes, kept SPLIT instead of summed, same rounding, so Σ slugs IS the
   brand's number to the cent); leads come from the `workflowSlug` lead-service froze on each
   `leads_campaigns` row at serve time, carried onto `EnginePerson` exactly as `campaignId` is.
+- **A CAMPAIGN SCOPE IS SUPPORTED AND IS A SCOPE, NOT A RE-ATTRIBUTION** — see the section above; the
+  brand-wide read (no `campaignId`) is byte-unchanged.
 - **ONE brand-wide lead read, ONE cost read, ONE overlay pair, then N pure engine passes** — the shape
   `/funnel-ranking` uses to rank N funnels off one fetch. Do NOT reuse the per-campaign machinery (one
   `computeFeatureRevenue` per group): that re-reads the brand's lead page once per workflow, under a

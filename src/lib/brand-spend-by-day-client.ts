@@ -42,6 +42,10 @@ export async function fetchBrandCommittedSpendByDay(
   featureScope: FeatureScope,
   headers: { orgId: string },
   pricing: Pricing = "gross",
+  // ONE WORKFLOW DYNASTY, when the read is drilled into one (`?workflow=`, lib/workflow-scope.ts).
+  // The timeseries route resolves it to its versioned slugs through workflow-service, so the curve's
+  // spend leg is narrowed by the SAME catalogue the untimed total is. Omitted → today's curve.
+  workflowDynastySlug?: string,
 ): Promise<Map<string, number>> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -59,6 +63,7 @@ export async function fetchBrandCommittedSpendByDay(
   // curve (its own superset) rather than a partial one. `?campaignId=` narrows as it does everywhere.
   const campaignId = singleCampaignId(campaignScope);
   if (campaignId) params.set("campaignId", campaignId);
+  if (workflowDynastySlug) params.set("workflowDynastySlug", workflowDynastySlug);
 
   const response = await fetchWithRetry(`${url}/v1/stats/public/costs/timeseries?${params}`, {
     headers: { "x-api-key": apiKey },
