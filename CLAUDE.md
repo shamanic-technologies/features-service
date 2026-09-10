@@ -1869,9 +1869,19 @@ already paid for once ($2,625 against $2,668).
 - **THE UNIT IS THE DYNASTY, because the row the consumer clicked is one.** The grouped read emits a
   dynasty key, so the drill-down takes that key or the two surfaces speak two vocabularies about one
   workflow. `lib/workflow-scope.ts` owns it and shares its `dynastyOfSlug` with the grouped grain, so
-  the key one EMITS and the key the other RESOLVES can never disagree about a version. The leads leg
-  resolves the dynasty from the catalogue HERE; every runs / email-gateway leg passes
-  `workflowDynastySlug` as a FILTER and the producer resolves it through the same workflow-service.
+  the key one EMITS and the key the other RESOLVES can never disagree about a version.
+- **THE DYNASTY IS RESOLVED HERE, ONCE, AND THE PRODUCERS ARE ASKED FOR ITS VERSIONED SLUGS —
+  `WorkflowScope.producerSlugs`, never their own `workflowDynastySlug` lever.** Both runs and
+  email-gateway offer one, and both resolve it by asking workflow-service, which **404s for a
+  dynasty it does not describe** — so runs answers 500, email-gateway 502, and the read 502s. A
+  RETIRED lineage is exactly such a dynasty, and it is exactly the workflow a "which of these burned
+  money" question is about, so routing through the producer's resolution makes the one case that
+  matters most unanswerable. Measured in prod on the first ship (2026-09-10): a drill-down on an
+  undescribed dynasty returned `502 Failed to compute feature revenue`, with
+  `dynasty-client GET /workflows/dynasty/slugs?workflowDynastySlug=…: 404` underneath it. ONE
+  exception, and it is forced: runs' cost TIMESERIES offers no slug filter at all, so the dated
+  spend leg keeps the dynasty lever and FAILS SOFT — a retired lineage nulls its return curve
+  beside correct money, rather than 502-ing a page whose every other figure is right.
 - **THE CATALOGUE READ IS FAIL-LOUD ON THE DRILL-DOWN AND FAIL-SOFT ON THE GROUPED GRAIN, and that is
   one rule applied to two questions.** Grouped, it decides how versions are GROUPED, so losing it
   degrades to the version grain — a poorer grouping of the same, correct numbers. Drilled, it decides
@@ -1879,8 +1889,9 @@ already paid for once ($2,625 against $2,668).
   happens to equal the dynasty and print that subset under the whole workflow's name. So it 502s.
 - **A WORKFLOW THE SCOPE NEVER RAN IS A REAL, EMPTY ANSWER** — zero counts, zero cents, a null return —
   never a 404 and never a fabricated fleet estimate. Nothing to 404 on: a slug the catalogue does not
-  describe is ITS OWN dynasty of one (the grouped grain's own rule), so every key that read can emit
-  resolves, and a key nobody ever ran simply matches no lead and no cost row.
+  describe is ITS OWN dynasty of one (the grouped grain's own rule) and is asked for under that exact
+  slug, so every key that read can emit resolves, a retired lineage answers with its real money, and a
+  key nobody ever ran simply matches no lead and no cost row.
 - **NAMING BOTH `?workflow=` AND `?groupBy=` IS A 400** (`workflow_and_group_by`): one drills into a
   workflow, the other lists many — two questions at once, either answer contradicting the other
   parameter. Never a quiet pick.
@@ -1894,7 +1905,9 @@ already paid for once ($2,625 against $2,668).
   checked "a number came back" would pass on the implementation that ignored the parameter, which is
   what shipped before. Plus the identity equality across members, the per-workflow split, the empty
   campaign, the drill-down narrowing every block, its equality with the campaign's own group, the
-  empty workflow, `pricing=net` on both, the fail-loud catalogue and the 400.
+  empty workflow, `pricing=net` on both, the fail-loud catalogue and the 400 — plus the REQUEST SHAPE
+  the producers actually see (`workflowSlugs=`, never `workflowDynastySlug=`) and a retired lineage
+  answering with its real money beside a null curve, which is the case prod broke on.
   `src/lib/workflow-scope.test.ts` pins the membership rule itself. (Set 2026-09-10.)
 
 ## `GET /revenue?groupBy=workflow` — WHICH OF THE WORKFLOWS WE RAN FOR THIS BRAND MADE MONEY; a workflow is a DYNASTY, and BOTH legs are attributed by the producer that froze them

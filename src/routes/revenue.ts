@@ -711,9 +711,9 @@ function fetchSequencesSoft(
   campaignScope: CampaignFilter,
   featureScope: FeatureScope,
   headers: DownstreamHeaders,
-  workflowDynastySlug?: string,
+  workflowSlugs?: string,
 ): Promise<SignalSeries | null> {
-  return fetchSequencesByDay(brandId, campaignScope, featureScope, headers, workflowDynastySlug).catch((err) => {
+  return fetchSequencesByDay(brandId, campaignScope, featureScope, headers, workflowSlugs).catch((err) => {
     console.warn(
       `[features-service] sequences enrichment failed (degrading to null): ${(err as Error).message}`,
     );
@@ -1095,8 +1095,8 @@ export async function computeFeatureRevenue(
       // Overview: fetch spend (fail-loud) + sequences (fail-soft) in parallel. Outreach activity
       // is independent of the funnel — a no-funnel feature still launches campaigns worth graphing.
       const [breakdown, sequences, counts, parents] = await Promise.all([
-        fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.workflowDynastySlug),
-        fetchSequencesSoft(brandId, campaignScope, featureScope, headers, workflowScope?.workflowDynastySlug),
+        fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs),
+        fetchSequencesSoft(brandId, campaignScope, featureScope, headers, workflowScope?.producerSlugs),
         fetchConversionCountsSoft(brandId),
         fetchSpendCostParentsSoft(brandId, offerId, featureScope, headers, campaignId, pricing, requestedFunnel),
       ]);
@@ -1113,7 +1113,7 @@ export async function computeFeatureRevenue(
         causes,
       );
     }
-    const cost = await fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.workflowDynastySlug);
+    const cost = await fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.producerSlugs);
     return emptyBody(null, cost, null, null, null, null, null, [], causes);
   }
 
@@ -1128,8 +1128,8 @@ export async function computeFeatureRevenue(
   // economics===null cold-start path below over-fetches leads — accepted for the common-path win.
   const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay] = await Promise.all([
     includeSpend
-      ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.workflowDynastySlug)
-      : fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.workflowDynastySlug),
+      ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs)
+      : fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.producerSlugs),
     // Priced on the brand's DECLARED funnel, falling through to the brand-wide record for every term
     // the funnel does not state (the route resolves this once and passes it as the override).
     economicsOverride ??
@@ -1146,7 +1146,7 @@ export async function computeFeatureRevenue(
     // Overview-only sequences day series (email-gateway groupBy=day). Pre-caught → resolves to
     // null on failure, so it never rejects fail-loud Wave A. Off-overview it's null (not fetched).
     includeSpend
-      ? fetchSequencesSoft(brandId, campaignScope, featureScope, headers, workflowScope?.workflowDynastySlug)
+      ? fetchSequencesSoft(brandId, campaignScope, featureScope, headers, workflowScope?.producerSlugs)
       : Promise.resolve<SignalSeries | null>(null),
     // Overview-only REAL conversion counts (lead-service) for the Signups / Sales Meetings tiles +
     // cost-per-conversion. Pre-caught → null on failure (never rejects fail-loud Wave A). Off-overview null.
@@ -1164,6 +1164,10 @@ export async function computeFeatureRevenue(
     // Overview-only DATED spend (runs-service cost timeseries) — the spend leg of the return-on-spend
     // curve. Pre-caught → null on failure (never rejects fail-loud Wave A; roiHistory then degrades to
     // null). Off-overview null: the lens and the per-campaign groups do not carry the curve.
+    // The ONE leg that still asks the producer to resolve the dynasty: runs' cost TIMESERIES offers no
+    // slug filter at all. It is already fail-SOFT, so a dynasty workflow-service does not describe
+    // (a retired lineage) nulls the return curve instead of 502-ing a page whose every other figure
+    // is right. See lib/workflow-scope.ts.
     includeSpend
       ? fetchSpendByDaySoft(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.workflowDynastySlug)
       : Promise.resolve<Map<string, number> | null>(null),

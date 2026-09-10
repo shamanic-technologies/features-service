@@ -116,6 +116,10 @@ const COSTS: CostRow[] = [
   // The OTHER campaign, on the SAME dynasty: the brand grain is dominated by it, so a per-workflow
   // group that ignored the campaign scope reads 13000¢ where this campaign spent 5000¢.
   { campaignId: "other", workflowSlug: "dawn-v2", committed: 8000, actual: 8000 },
+  // A RETIRED lineage — real spend and a real lead under a slug workflow-service no longer
+  // describes. It is its own dynasty of one, and it is exactly the workflow a "which of these
+  // burned money" question is about.
+  { campaignId: "live", workflowSlug: "retired-v1", committed: 700, actual: 700 },
 ];
 
 const LEADS = [
@@ -126,6 +130,7 @@ const LEADS = [
   lead("other", "dawn-v2", "o1", { positive: true }),
   lead("other", "dawn-v2", "o2", { positive: true }),
   lead("other", "dawn-v2", "o3", { positive: true }),
+  lead("live", "retired-v1", "r1", { positive: true }),
 ];
 
 interface Options {
@@ -140,9 +145,11 @@ interface Options {
  * than about a fixture that hands back whatever is convenient: runs applies `campaignId` /
  * `workflowDynastySlug` / `groupBy`, lead-service applies `campaignId`, email-gateway applies both.
  */
-function mockFetch(options: Options = {}): void {
+type FetchImpl = (input: unknown, init?: unknown) => Promise<Response>;
+
+function mockFetch(options: Options = {}): FetchImpl {
   const catalogue = options.catalogue !== false;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  const impl: FetchImpl = async (input) => {
     const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as { url: string }).url;
     const url = new URL(raw);
     const q = url.searchParams;
@@ -161,17 +168,28 @@ function mockFetch(options: Options = {}): void {
     }
     if (url.pathname.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
 
+    // The producers filter on the VERSIONED slugs the caller resolved — `workflowSlugs`. The dynasty
+    // lever exists on both, and this service deliberately does not use it (see workflow-scope.ts).
     const rowsFor = () => {
       const campaignId = q.get("campaignId");
-      const dynasty = q.get("workflowDynastySlug");
+      const slugs = q.get("workflowSlugs")?.split(",");
       return COSTS.filter(
-        (c) => (!campaignId || c.campaignId === campaignId) && (!dynasty || dynastyOf(c.workflowSlug) === dynasty),
+        (c) => (!campaignId || c.campaignId === campaignId) && (!slugs || slugs.includes(c.workflowSlug)),
       );
     };
     const cents = (n: number) => String(options.net ? n / 2 : n);
 
     if (url.pathname.includes("/stats/public/costs/timeseries")) {
-      const total = rowsFor().reduce((sum, c) => sum + c.committed, 0);
+      // The ONE leg with no slug filter. It resolves the dynasty through workflow-service, which 404s
+      // for one it does not describe — reproduced here so the fail-soft degrade is exercised.
+      const dynasty = q.get("workflowDynastySlug");
+      if (dynasty && !WORKFLOWS.some((w) => w.workflowDynastySlug === dynasty)) {
+        return new Response(JSON.stringify({ error: `No workflows found for workflowDynastySlug: ${dynasty}` }), { status: 500 });
+      }
+      const campaignId = q.get("campaignId");
+      const total = COSTS.filter(
+        (c) => (!campaignId || c.campaignId === campaignId) && (!dynasty || dynastyOf(c.workflowSlug) === dynasty),
+      ).reduce((sum, c) => sum + c.committed, 0);
       return json({
         interval: "day",
         timezone: "UTC",
@@ -208,16 +226,29 @@ function mockFetch(options: Options = {}): void {
     }
     if (url.pathname.includes("/orgs/stats")) {
       const campaignId = q.get("campaignId");
-      const dynasty = q.get("workflowDynastySlug");
+      const slugs = q.get("workflowSlugs")?.split(",");
       const contacted = LEADS.filter(
-        (l) => (!campaignId || l.campaignId === campaignId) && (!dynasty || dynastyOf(String(l.workflowSlug)) === dynasty),
+        (l) => (!campaignId || l.campaignId === campaignId) && (!slugs || slugs.includes(String(l.workflowSlug))),
       ).length;
       return json({ groups: [{ key: "2026-02-01", broadcast: { recipientStats: { contacted } } }] });
     }
     if (url.pathname.includes("/manual-qualifications")) return json({ qualifications: [] });
     if (url.pathname.includes("/orgs/status")) return json({ results: [] });
     return json({});
-  });
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(impl as never);
+  return impl;
+}
+
+/** The same fixture, with every request URL recorded — for asserting what the PRODUCERS were asked. */
+function recordingFetch(options: Options = {}): string[] {
+  const impl = mockFetch(options);
+  const seen: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation((async (input: unknown, init?: unknown) => {
+    seen.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as { url: string }).url);
+    return impl(input, init);
+  }) as never);
+  return seen;
 }
 
 interface Group {
@@ -288,7 +319,7 @@ describe("?groupBy=workflow&campaignId= — a campaign's workflows, at the campa
     mockFetch();
     const { byWorkflow } = await grouped("&campaignId=live");
 
-    expect(Object.keys(byWorkflow).sort()).toEqual(["dawn", "osprey"]);
+    expect(Object.keys(byWorkflow).sort()).toEqual(["dawn", "osprey", "retired-v1"]);
     expect(byWorkflow.osprey.costEconomics.committedCostUsd).toBe(20);
     expect(byWorkflow.osprey.outcomes.recipientsContacted).toBe(1);
     // It reached one person who visited the site and nobody who replied: a MEASURED count of 0 beside
@@ -330,8 +361,8 @@ describe("?workflow= — one workflow of the scope, on the un-grouped body", () 
     const whole = await revenue("");
     const drilled = await revenue("&workflow=dawn");
 
-    expect(whole.body.outcomes.recipientsContacted).toBe(7);
-    expect(whole.body.costEconomics.committedCostUsd).toBe(150);
+    expect(whole.body.outcomes.recipientsContacted).toBe(8);
+    expect(whole.body.costEconomics.committedCostUsd).toBe(157);
 
     // dawn across the brand: 4000 + 1000 + 8000 = 13000¢, six people, five replies.
     expect(drilled.status).toBe(200);
@@ -402,13 +433,54 @@ describe("?workflow= — one workflow of the scope, on the un-grouped body", () 
     mockFetch();
     const { body } = await revenue("");
     expect(body.workflow).toBeUndefined();
-    expect(body.outcomes.recipientsContacted).toBe(7);
+    expect(body.outcomes.recipientsContacted).toBe(8);
   });
 
   it("is FAIL-LOUD when the catalogue is unreachable — never one version under the whole workflow's name", async () => {
     mockFetch({ catalogue: false });
     const { status } = await revenue("&workflow=dawn");
     expect(status).toBe(502);
+  });
+
+  it("a RETIRED lineage answers with its real numbers — the producers are asked for the SLUG, never the dynasty", async () => {
+    const seen = recordingFetch();
+
+    const { status, body } = await revenue("&campaignId=live&workflow=retired-v1");
+
+    // Prod, 2026-09-10: routing this through the producers' own dynasty lever made runs answer 500
+    // and email-gateway 502, so the read 502'd for exactly the workflow the question is about.
+    expect(status).toBe(200);
+    expect(body.costEconomics.committedCostUsd).toBe(7);
+    expect(body.outcomes.recipientsContacted).toBe(1);
+    expect(body.outcomes.recipientsRepliesPositive).toBe(1);
+    // It is its own dynasty of one: no name, no versions, and still a real answer.
+    expect(body.workflow).toEqual({ workflowDynastySlug: "retired-v1", workflowDynastyName: null, workflowSlugs: [] });
+    // The dated-spend leg is the ONE that must ask the producer to resolve the dynasty, so it is the
+    // one that degrades — a null curve beside correct money, never a 502.
+    expect(body.roiHistory).toBeNull();
+
+    const spendCalls = seen.filter((u) => u.includes("/stats/costs") && u.includes("groupBy=costName"));
+    expect(spendCalls.length).toBeGreaterThan(0);
+    expect(spendCalls.every((u) => u.includes("workflowSlugs=retired-v1"))).toBe(true);
+    expect(spendCalls.some((u) => u.includes("workflowDynastySlug="))).toBe(false);
+    const dayCalls = seen.filter((u) => u.includes("/orgs/stats") && u.includes("groupBy=day"));
+    expect(dayCalls.length).toBeGreaterThan(0);
+    expect(dayCalls.every((u) => u.includes("workflowSlugs=retired-v1"))).toBe(true);
+  });
+
+  it("asks the spend producers for the dynasty's VERSIONED slugs, both of them", async () => {
+    const seen = recordingFetch();
+
+    await revenue("&campaignId=live&workflow=dawn");
+
+    // The SPEND block's own reads (groupBy=costName). Other /stats/costs calls on this path are the
+    // brand-level cost-per-outcome BENCHMARK, which is deliberately not narrowed to one workflow.
+    const spendCalls = seen.filter((u) => u.includes("/stats/costs") && u.includes("groupBy=costName"));
+    expect(spendCalls.length).toBeGreaterThan(0);
+    expect(spendCalls.every((u) => decodeURIComponent(u).includes("workflowSlugs=dawn-v1,dawn-v2"))).toBe(true);
+    expect(spendCalls.some((u) => u.includes("workflowDynastySlug="))).toBe(false);
+    // The timeseries has no slug filter at all, so it is the one leg that keeps the dynasty lever.
+    expect(seen.filter((u) => u.includes("timeseries")).every((u) => u.includes("workflowDynastySlug=dawn"))).toBe(true);
   });
 
   it("naming both a workflow and a groupBy is a 400", async () => {
