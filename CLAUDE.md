@@ -1,5 +1,61 @@
 # Features Service — CLAUDE.md
 
+## A CAMPAIGN-SCOPED `/audience-stats` READ ANSWERS FOR THE CAMPAIGN'S IDENTITY — the same subject `/revenue?campaignId=` answers for, so one screen cannot state two numbers about one campaign
+
+A customer opened one campaign's Audiences page and read **0 sales interests on every audience** while
+the stat card at the top of the same screen read **20**. Both figures came from this service, about the
+same campaign id, minutes apart.
+
+A campaign as a customer knows it is **(org, brand, sales funnel, acquisition channel)** —
+campaign-service's own key. It mints a NEW row every time the campaign's workflow switches and keeps the
+ancestors, so ONE campaign arrives here as many ids: on brand `75d7e3e8…`, offer `d5ecba00…`, funnel
+`sales_meetings_from_conversation`, channel `sales-cold-email-outreach` — **47 stored rows, one
+`ongoing`**. `/revenue` has totalled the whole family since features-service#749; `/audience-stats` had
+not, so it answered about the NEWEST slice of a campaign that had been running since early September.
+
+- **THE IDENTITY IS A CAMPAIGN SCOPE OF SEVERAL MEMBERS, AND IT TAKES THE MACHINERY THE OFFER GRAIN
+  ALREADY USES.** The route resolves the family (`fetchCampaignFamiliesSoft(...).identityOf(campaignId)`)
+  and hands its members to `computeAudienceStats` on the SAME parameter an offer's campaigns ride
+  (`scopeCampaignIdsOverride`). Nothing about how a figure is computed moved — only which campaigns it is
+  computed over. Runs co-groups the campaign (`groupBy=audienceId,campaignId`, no `campaignId` filter,
+  members kept locally, because runs-service takes no campaign LIST); email-gateway is read ONCE PER
+  MEMBER and summed, since its `groupBy` is single-dimension — a send carries ONE campaign, so the sum
+  counts nobody twice, exactly the property that lets the offer grain do it.
+- **A CAMPAIGN WHOSE IDENTITY IS ONE STORED ROW IS BYTE-UNCHANGED**, by construction: a one-member scope
+  takes the original single-`campaignId` filter and the single engagement read. Guarded on the request
+  SHAPE, not only on the numbers.
+- **THE CACHE KEY CARRIES THE IDENTITY, NOT THE CAMPAIGN** (`identity?.key ?? campaignId`), so the
+  dashboard's one call per rendered row lands on ONE cell instead of paying a full fan-out per stopped
+  ancestor — the same reasoning `/revenue` states for its own key.
+- **THE READ NAMES WHAT IT ANSWERED FOR — `campaignIdentity` on the body**, the byte-same block
+  `/revenue?campaignId=` already carries, so the two reads speak ONE vocabulary about one campaign. A
+  consumer must be able to SEE that the subject is the family rather than infer it from a number that
+  moved. Absent on a brand-wide or offer-scoped read.
+- **FAIL-SOFT, and the degrade is NARROWER, never wider.** With campaign-service unreachable the campaign
+  falls back to its own family of one — TODAY's answer, a real answer about a real subset. It must never
+  substitute the brand-wide numbers under this campaign's name; guarded explicitly.
+- **BRAND-SCOPED AND OFFER-SCOPED READS ARE UNTOUCHED**, and a brand-wide read asks campaign-service
+  nothing at all (guarded) — the identity read fires only on `?campaignId=`.
+- **WHAT STILL DOES NOT ADD UP, MEASURED RATHER THAN GUESSED (prod, 2026-09-10, the campaign above).**
+  `/revenue?campaignId=` reports **13,111 contacted / 20 positive replies**; email-gateway's
+  `groupBy=audienceId` for the same brand+channel returns **16 buckets totalling 11,668 / 17**, of which
+  the **12 ACTIVE** audiences this read lists carry **10,914 / 17**. So the gap splits in two, and neither
+  half is this service inventing or losing anything: **754 contacted sit on audiences that are not
+  `active`** (the default `statuses=active` filter — send `statuses=active,paused,archived` to see them),
+  and **1,443 contacted / 3 replies carry NO `audienceId` at all** — sends made before audience tagging,
+  for which email-gateway emits no bucket. An untagged send belongs to no audience; stating a remainder
+  we cannot attribute needs email-gateway to emit an untagged bucket, and synthesizing it here from a
+  second brand-wide total would be this fleet's forbidden work-around for missing producer data. Filed as
+  a producer request; do NOT close it consumer-side.
+- Guards: `src/routes/audience-campaign-identity.test.ts` — ONE fixture shaped like the campaign that
+  reported it (a live row that reached one audience and produced NO reply, two stopped ancestors carrying
+  the replies, and a fourth campaign on a DIFFERENT funnel that must never fold in). Every case asserts
+  the DIVERGENCE between the identity's answer and the live row's, so a suite that only checked "a number
+  came back" would pass on an implementation that never resolved the family: the per-audience
+  reconciliation to the cent, a stopped ancestor answering byte-identically, the identity echo, the
+  single-row identity's unchanged request shape, the multi-member fan-out shape, the untouched brand and
+  offer reads, and the fail-soft degrade. (Set 2026-09-10, features-service#905.)
+
 ## A RETURN ON OUR OUTREACH LEAVES OUT A DEAL THE CUSTOMER SAYS WE DID NOT CAUSE — `?cause=`, three states, and the third is NOT a missing answer
 
 A brand contacts people through us and also through everything else it already does: referrals,

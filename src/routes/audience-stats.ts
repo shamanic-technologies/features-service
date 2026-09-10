@@ -6,6 +6,8 @@ import { parsePricing } from "../lib/pricing.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
 import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
 import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
+import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
+import { describeIdentity } from "../lib/campaign-identity.js";
 
 const router = Router();
 
@@ -51,6 +53,32 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     const offerCampaignIds = offerId
       ? await resolveOfferCampaignIds(offerId, validated.brandId, featureSlug, { orgId, userId, runId })
       : undefined;
+
+    // ── Campaign scope: the campaign's IDENTITY, not the one stored row ──────────────────────
+    //
+    // A campaign as a customer knows it is (org, brand, sales funnel, acquisition channel) —
+    // campaign-service's own key. It mints a NEW row every time the campaign's workflow changes and
+    // keeps the ancestors, so one campaign arrives here as many ids: on the brand this was reported
+    // for, 47 rows with one `ongoing`. Its `/revenue` sibling has answered for the whole family since
+    // features-service#749; this read did not, so it answered about the NEWEST slice alone while the
+    // stat card above it on the same screen answered for the campaign — one screen, two numbers, and
+    // the narrow one read as "none of my audiences produced anything".
+    //
+    // Nothing about how a figure is computed changes: the family is a campaign scope with more than
+    // one member, exactly like an offer, and takes the machinery the offer grain already uses (runs
+    // co-groups the campaign, email-gateway is read once per member and summed — a send carries one
+    // campaign, so the sum counts nobody twice).
+    //
+    // FAIL-SOFT, like every other identity read here: with campaign-service unreachable the campaign
+    // falls back to its own family of one, which is TODAY's answer — narrower than the truth, never
+    // the brand's numbers under this campaign's name.
+    const requestedCampaignId = ((req.query.campaignId as string | undefined) ?? "").trim() || undefined;
+    const identity = requestedCampaignId
+      ? (await fetchCampaignFamiliesSoft(validated.brandId, featureSlug, { orgId, userId, runId })).identityOf(
+          requestedCampaignId,
+        )
+      : null;
+    const campaignScopeIds = offerCampaignIds ?? identity?.campaignIds ?? (requestedCampaignId ? [requestedCampaignId] : undefined);
 
     // A funnel the brand never declared has no cost to serve — "we could not estimate this" and "it
     // costs zero" are different statements, and only the first is true. 404 with the reason rather than
@@ -138,7 +166,9 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
       decl,
       // Campaign scope is part of the cache key so campaign-scoped and brand-wide snapshots never
       // collide. Absent → dropped by buildScopeKey → key byte-identical to the brand-wide request.
-      campaignId: req.query.campaignId,
+      // Keyed on the IDENTITY when one resolved, so every member of one campaign lands on ONE cell
+      // instead of the dashboard paying a full fan-out per stopped ancestor it renders.
+      campaignId: identity?.key ?? requestedCampaignId,
       // Same rule one grain up: an offer-scoped body and the brand-wide one must never share a cell.
       offerId,
     });
@@ -146,12 +176,19 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
       view: "audience-stats",
       scopeKey,
       orgId,
-      compute: () => computeAudienceStats(req, pricing, offerCampaignIds),
+      compute: () => computeAudienceStats(req, pricing, campaignScopeIds),
     });
     if (!result.ok) {
       return res.status(result.status).json({ error: result.error });
     }
-    res.json(result.envelope);
+    // A consumer must be able to SEE that a campaign-scoped read answered for the whole identity
+    // rather than infer it from a number that moved. Same block, same vocabulary, as the one
+    // `/revenue?campaignId=` already carries — one word for one concept across the two reads.
+    res.json(
+      requestedCampaignId
+        ? { ...result.envelope, campaignIdentity: describeIdentity(identity, requestedCampaignId) }
+        : result.envelope,
+    );
   } catch (error) {
     // An offer no campaign of this brand sells has no spend to rank audiences on — named, never
     // answered with the brand's own numbers and never with a fabricated zero.

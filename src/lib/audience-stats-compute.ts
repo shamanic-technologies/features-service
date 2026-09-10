@@ -24,6 +24,7 @@ import { selectCostCents, type Pricing } from "./pricing.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 import { pickBestChannel } from "./offer-parents.js";
+import type { CampaignIdentityView } from "./campaign-identity.js";
 /**
  * One acquisition channel a multi-channel read spans, and the campaigns of it the caller resolved.
  * Structurally the offer grain's `OfferChannel` and the brand grain's `BrandChannel` — both are "a
@@ -254,6 +255,16 @@ export interface AudienceStatsEnvelope {
     /** 100 / returnPerDollar — the brand-level twin of a row's `costOfAcquisitionPct`. */
     costOfAcquisitionPct: number | null;
   };
+  /**
+   * Present ONLY on a `?campaignId=` read: the campaign IDENTITY these figures were totalled over.
+   *
+   * A campaign as a customer knows it is many stored rows — campaign-service mints one per workflow
+   * switch and keeps the ancestors — so asking about any member returns the same, complete campaign.
+   * Named on the wire because a consumer must be able to SEE which subject it is reading rather than
+   * infer it from a number, and because it is the byte-same block `/revenue?campaignId=` carries, so
+   * the two reads speak one vocabulary about one campaign.
+   */
+  campaignIdentity?: CampaignIdentityView;
 }
 
 export type ComputeResult =
@@ -945,10 +956,13 @@ export function validateAudienceStatsQuery(req: Request):
 export async function computeAudienceStats(
   req: Request,
   pricing: Pricing = "gross",
-  // The campaigns ONE OFFER is sold through, resolved by the route (it needs them for the cache key
-  // too, so they are passed in rather than read twice). Present → every cost and engagement numerator
-  // narrows to those campaigns. Absent → the single `?campaignId=` scope, or brand-wide, unchanged.
-  offerCampaignIds?: string[],
+  // The CAMPAIGNS this read is scoped to, resolved by the route (it needs them for the cache key too,
+  // so they are passed in rather than read twice). Two callers, one shape: the campaigns ONE OFFER is
+  // sold through, and the members of ONE campaign's IDENTITY (campaign-service mints a new row per
+  // workflow switch and keeps the ancestors, so one customer-visible campaign is many ids — see
+  // lib/campaign-identity.ts). Present → every cost and engagement numerator narrows to those
+  // campaigns. Absent → brand-wide, unchanged.
+  scopeCampaignIdsOverride?: string[],
   // The CHANNELS the read spans, when it is at a grain that spans several — an OFFER (sold through
   // several at once) or a BRAND (running several at once). Absent → the ONE channel the route path
   // names, which is every existing caller. A one-channel scope therefore produces the identical
@@ -968,9 +982,10 @@ export async function computeAudienceStats(
   // brand-wide numbers, byte-identical to today. Present → cost + outcome numerators narrow to this
   // campaign (runs campaignId filter + email-gateway campaign scope).
   const scopeCampaignId = (req.query.campaignId as string | undefined)?.trim() || undefined;
-  // An OFFER is a campaign scope of one or more members; a single `?campaignId=` is the one-member
-  // case, and it takes the identical downstream path it always did.
-  const scopeCampaignIds = offerCampaignIds ?? (scopeCampaignId ? [scopeCampaignId] : undefined);
+  // An OFFER, and a campaign's IDENTITY, are both a campaign scope of one or more members; a campaign
+  // whose identity is a single stored row is the one-member case and takes the identical downstream
+  // path it always did. The override is absent only for callers that pass no campaign scope at all.
+  const scopeCampaignIds = scopeCampaignIdsOverride ?? (scopeCampaignId ? [scopeCampaignId] : undefined);
 
   const validated = validateAudienceStatsQuery(req);
   if (!validated.ok) return validated;
