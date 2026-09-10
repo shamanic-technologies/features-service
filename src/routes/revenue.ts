@@ -67,6 +67,7 @@ import { fetchBrandCommittedSpendByDay } from "../lib/brand-spend-by-day-client.
 import { buildCostEconomics, type CostEconomics } from "../lib/cost-economics.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
+import { resolveWorkflowScope, type WorkflowScope } from "../lib/workflow-scope.js";
 import { buildRevenueOutcomes, type RevenueOutcomes } from "../lib/revenue-outcomes.js";
 import {
   buildFunnelSteps,
@@ -710,8 +711,9 @@ function fetchSequencesSoft(
   campaignScope: CampaignFilter,
   featureScope: FeatureScope,
   headers: DownstreamHeaders,
+  workflowDynastySlug?: string,
 ): Promise<SignalSeries | null> {
-  return fetchSequencesByDay(brandId, campaignScope, featureScope, headers).catch((err) => {
+  return fetchSequencesByDay(brandId, campaignScope, featureScope, headers, workflowDynastySlug).catch((err) => {
     console.warn(
       `[features-service] sequences enrichment failed (degrading to null): ${(err as Error).message}`,
     );
@@ -740,8 +742,9 @@ function fetchSpendByDaySoft(
   featureScope: FeatureScope,
   headers: DownstreamHeaders,
   pricing: Pricing,
+  workflowDynastySlug?: string,
 ): Promise<Map<string, number> | null> {
-  return fetchBrandCommittedSpendByDay(brandId, campaignScope, featureScope, headers, pricing).catch((err) => {
+  return fetchBrandCommittedSpendByDay(brandId, campaignScope, featureScope, headers, pricing, workflowDynastySlug).catch((err) => {
     console.warn(
       `[features-service] dated-spend enrichment failed (degrading roiHistory to null): ${(err as Error).message}`,
     );
@@ -1062,6 +1065,11 @@ export async function computeFeatureRevenue(
   // state left out drops its outcomes' RUNGS and their STATED VALUES from the pipeline, the return and
   // the cost of acquisition; it never removes them from the brand's own ledger, which lead-service owns.
   causes: readonly OutcomeCause[] = ALL_OUTCOME_CAUSES,
+  // ONE WORKFLOW of this scope, when the caller drilled into one (`?workflow=`). Every block this
+  // body serves is then computed over that workflow's leads and that workflow's spend — the two legs
+  // narrowed by the SAME workflow-service catalogue, each through the producer that froze it (see
+  // lib/workflow-scope.ts). Omitted → the whole scope → byte-identical to today.
+  workflowScope?: WorkflowScope,
 ): Promise<RevenueBody> {
   // The single campaign id the campaign-SCOPED downstream reads still take: the requested campaign
   // for a single scope, `undefined` for a family (no producer accepts a campaign list). The reads
@@ -1087,8 +1095,8 @@ export async function computeFeatureRevenue(
       // Overview: fetch spend (fail-loud) + sequences (fail-soft) in parallel. Outreach activity
       // is independent of the funnel — a no-funnel feature still launches campaigns worth graphing.
       const [breakdown, sequences, counts, parents] = await Promise.all([
-        fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing),
-        fetchSequencesSoft(brandId, campaignScope, featureScope, headers),
+        fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.workflowDynastySlug),
+        fetchSequencesSoft(brandId, campaignScope, featureScope, headers, workflowScope?.workflowDynastySlug),
         fetchConversionCountsSoft(brandId),
         fetchSpendCostParentsSoft(brandId, offerId, featureScope, headers, campaignId, pricing, requestedFunnel),
       ]);
@@ -1105,7 +1113,7 @@ export async function computeFeatureRevenue(
         causes,
       );
     }
-    const cost = await fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing);
+    const cost = await fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.workflowDynastySlug);
     return emptyBody(null, cost, null, null, null, null, null, [], causes);
   }
 
@@ -1120,19 +1128,25 @@ export async function computeFeatureRevenue(
   // economics===null cold-start path below over-fetches leads — accepted for the common-path win.
   const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay] = await Promise.all([
     includeSpend
-      ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing)
-      : fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing),
+      ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.workflowDynastySlug)
+      : fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.workflowDynastySlug),
     // Priced on the brand's DECLARED funnel, falling through to the brand-wide record for every term
     // the funnel does not state (the route resolves this once and passes it as the override).
     economicsOverride ??
       fetchEffectiveEconomics(brandId, { ...headers, campaignId }).then((effective) =>
         fetchFunnelPricedEconomics(brandId, headers, requestedFunnel, effective),
       ),
-    fetchLeadsForRevenue(brandId, campaignScope, headers),
+    // The lead read stays brand + campaign scoped — a workflow is a PARTITION of those leads, not a
+    // narrower producer question — and the workflow filter is applied to the rows it returns, on the
+    // `workflowSlug` lead-service FROZE at serve time. Filtering here rather than asking for less is
+    // also what lets `sharedLeadPage` serve this read and the un-narrowed one from ONE parse.
+    fetchLeadsForRevenue(brandId, campaignScope, headers).then((rows) =>
+      workflowScope ? rows.filter((p) => workflowScope.includes(p.workflowSlug)) : rows,
+    ),
     // Overview-only sequences day series (email-gateway groupBy=day). Pre-caught → resolves to
     // null on failure, so it never rejects fail-loud Wave A. Off-overview it's null (not fetched).
     includeSpend
-      ? fetchSequencesSoft(brandId, campaignScope, featureScope, headers)
+      ? fetchSequencesSoft(brandId, campaignScope, featureScope, headers, workflowScope?.workflowDynastySlug)
       : Promise.resolve<SignalSeries | null>(null),
     // Overview-only REAL conversion counts (lead-service) for the Signups / Sales Meetings tiles +
     // cost-per-conversion. Pre-caught → null on failure (never rejects fail-loud Wave A). Off-overview null.
@@ -1151,7 +1165,7 @@ export async function computeFeatureRevenue(
     // curve. Pre-caught → null on failure (never rejects fail-loud Wave A; roiHistory then degrades to
     // null). Off-overview null: the lens and the per-campaign groups do not carry the curve.
     includeSpend
-      ? fetchSpendByDaySoft(brandId, campaignScope, featureScope, headers, pricing)
+      ? fetchSpendByDaySoft(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.workflowDynastySlug)
       : Promise.resolve<Map<string, number> | null>(null),
   ]);
   const { economics, source } = priced.economics;
@@ -1374,6 +1388,11 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
   // Absent → dropped everywhere → byte-identical to today.
   const offerId = ((req.query.offerId as string | undefined) ?? "").trim() || undefined;
   const groupBy = req.query.groupBy as string | undefined;
+  // `?workflow=` narrows every block this body serves to ONE workflow DYNASTY of the scope — the key
+  // `?groupBy=workflow` emits, so the row a consumer clicked opens the same workflow it named. It
+  // COMBINES with `?campaignId=` (the campaign's Workflows page drills into one of its own rows) and
+  // with `?pricing=`. Absent → dropped everywhere → byte-identical to today. See lib/workflow-scope.ts.
+  const workflowParam = ((req.query.workflow as string | undefined) ?? "").trim() || undefined;
   const lensParam = req.query.lens as string | undefined;
   const funnelParam = req.query.funnel as string | undefined;
 
@@ -1385,6 +1404,15 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
   // honest way to pick between them — 400 rather than silently letting one win.
   if (offerId && campaignId) {
     return res.status(400).json({ error: "offerId and campaignId are mutually exclusive: a campaign already sells exactly one offer" });
+  }
+
+  // `?workflow=` DRILLS INTO one workflow; `?groupBy=` asks for a table of many. Naming both is two
+  // questions at once and either answer contradicts the other parameter — 400, never a quiet pick.
+  if (workflowParam && groupBy) {
+    return res.status(400).json({
+      error: "workflow and groupBy are mutually exclusive: workflow drills into ONE workflow, groupBy lists many",
+      reason: "workflow_and_group_by",
+    });
   }
 
   // `?funnel=` names the SALES FUNNEL the spend block's cost-per-outcome columns are priced on — the
@@ -1499,12 +1527,31 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     // producer that froze them — see `lib/workflow-revenue.ts` for why neither may be inferred from
     // the campaign row. Realized on both legs; nothing here is projected.
     if (groupBy === "workflow") {
+      // A CAMPAIGN-scoped read answers for the campaign's whole IDENTITY — every row sharing (org,
+      // brand, sales funnel, acquisition channel), the same family the un-grouped read and
+      // `/audience-stats` resolve — so a campaign whose workflow switched mid-life still states what
+      // it did through the workflow it has since left. Absent → the brand's whole spend, unchanged.
+      const workflowIdentity = campaignId
+        ? (await fetchCampaignFamiliesSoft(brandId, featureSlug, headers)).identityOf(campaignId)
+        : null;
+      const workflowCampaignScope: CampaignFilter = campaignId ? (workflowIdentity?.campaignIds ?? campaignId) : undefined;
+
       const payload = await servedCached({
         view: "revenue-by-workflow",
-        // No `campaignId` and no `funnel`: the grain is the brand's whole spend, priced on the
-        // brand's own declared funnels (a workflow states none of its own). `econ` + `decl` carry the
-        // economics + declaration the pipeline is priced on, exactly as the sibling grains do.
-        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "workflow", pricing, econ, decl, cause: causeKey }),
+        // The IDENTITY, not the campaign row, keys the cell — so every member of a family lands on
+        // ONE cell instead of paying a full fan-out per stopped ancestor, exactly as the sibling
+        // campaign-scoped reads key theirs. Absent → dropped → today's brand-grain keys are unmoved.
+        // `econ` + `decl` carry the economics + declaration the pipeline is priced on.
+        scopeKey: buildScopeKey(featureSlug, {
+          orgId,
+          brandId,
+          campaignId: workflowIdentity?.key ?? campaignId,
+          groupBy: "workflow",
+          pricing,
+          econ,
+          decl,
+          cause: causeKey,
+        }),
         orgId,
         compute: async () => {
           const groups = await computeWorkflowRevenueGroups({
@@ -1513,13 +1560,25 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
             funnel,
             headers,
             pricing,
-            priced: brandPriced ?? null,
+            // A campaign states the funnel it sells, so a campaign-scoped read is priced on THAT
+            // funnel — the same rule the per-campaign groups apply. Brand-wide keeps the brand pick.
+            priced: (campaignId ? pricingForIdentity(workflowIdentity?.funnelKey) : brandPriced) ?? null,
             causes,
+            campaignScope: workflowCampaignScope,
           });
 
-          traceEvent(runId, { service: "features-service", event: "feature-revenue-by-workflow", detail: `featureSlug=${featureSlug}, brandId=${brandId}, workflows=${groups.length}` }, req.headers).catch(() => {});
+          traceEvent(runId, { service: "features-service", event: "feature-revenue-by-workflow", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}, workflows=${groups.length}` }, req.headers).catch(() => {});
 
-          return { featureSlug, costBasis: "charged" as const, groupBy: "workflow", groups };
+          return {
+            featureSlug,
+            costBasis: "charged" as const,
+            groupBy: "workflow",
+            // WHAT THE GROUPS ANSWERED FOR. A consumer must be able to SEE that the subject is one
+            // campaign's family rather than infer it from a number that moved — the byte-same block
+            // the un-grouped campaign read and `/audience-stats` already carry. Absent brand-wide.
+            campaignIdentity: campaignId ? describeIdentity(workflowIdentity, campaignId) : undefined,
+            groups,
+          };
         },
       });
 
@@ -1654,6 +1713,12 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     const offerCampaignIds = offerId ? await resolveOfferCampaignIds(offerId, brandId, featureSlug, headers) : null;
     const campaignScope: CampaignFilter = offerCampaignIds ?? identity?.campaignIds ?? campaignId;
 
+    // ONE WORKFLOW of that scope. FAIL-LOUD: the catalogue decides which of the scope's leads are
+    // this workflow's, so a degraded read would answer about one VERSION under the whole workflow's
+    // name. A dynasty the scope never ran is not an error — it is an empty answer, zero counts and a
+    // null return, which is what the consumer's "this workflow has not run here" state renders.
+    const workflowScope = workflowParam ? await resolveWorkflowScope(featureSlug, workflowParam) : undefined;
+
     const payload = await servedCached({
       view: lens ? "revenue-lens" : "revenue",
       scopeKey: buildScopeKey(featureSlug, {
@@ -1668,6 +1733,9 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         // MUST be in the key — keyed on the CANONICAL value the validator resolved, so a legacy spelling
         // shares one cell instead of fragmenting it. Absent → dropped → byte-identical to today's key.
         funnel: requestedFunnel,
+        // The workflow narrows every figure, so it MUST be in the key or a workflow-scoped body and
+        // the whole scope's would share a cell. Absent → dropped → today's keys are unmoved.
+        workflow: workflowParam,
         // WHICH legs carry value comes from the brand's declared SET, which no other key part encodes
         // (the identity key above carries the CAMPAIGN's funnel, and `econ` only the priced one's rates).
         decl,
@@ -1685,7 +1753,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
 
         // Overview (no lens) emits the canonical spend block; the lens path omits it (brand-total concept).
-        const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, lens, pricingForIdentity(campaignId ? identity?.funnelKey : null), !lens, pricing, requestedFunnel, undefined, undefined, causes);
+        const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, lens, pricingForIdentity(campaignId ? identity?.funnelKey : null), !lens, pricing, requestedFunnel, undefined, undefined, causes, workflowScope);
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 
@@ -1693,7 +1761,22 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         // platform comped is absent from it (they did not pay it), which is the opposite of the
         // cross-org benchmark on /workflow-projection's crossOrg grain and /public/stats/*, where
         // the same words mean what the workflow COST to produce an outcome. See lib/cost-basis.ts.
-        return { featureSlug, costBasis: "charged" as const, ...applyLeadDetail(body, leadDetail), campaignIdentity: campaignId ? describeIdentity(identity, campaignId) : undefined };
+        return {
+          featureSlug,
+          costBasis: "charged" as const,
+          ...applyLeadDetail(body, leadDetail),
+          campaignIdentity: campaignId ? describeIdentity(identity, campaignId) : undefined,
+          // WHAT THIS BODY ANSWERED FOR, when it was drilled into one workflow — the dynasty, its
+          // name and the versions folded into it, so a consumer can SEE the subject rather than
+          // infer it from a number that moved. Absent on an un-narrowed read.
+          workflow: workflowScope
+            ? {
+                workflowDynastySlug: workflowScope.workflowDynastySlug,
+                workflowDynastyName: workflowScope.workflowDynastyName,
+                workflowSlugs: workflowScope.workflowSlugs,
+              }
+            : undefined,
+        };
       },
     });
 
