@@ -159,6 +159,13 @@ interface Fixture {
   statedReadable?: boolean;
   /** COMMITTED cents runs-service reports for every brand. `0` = nothing was ever spent. */
   spendCents?: number;
+  /**
+   * The FROZEN NET committed cents runs-service reports beside the gross — what the brand actually
+   * paid after its per-org usage discount. Defaults to the gross, which is what a brand carrying NO
+   * discount genuinely reports. Set it lower to drive a DISCOUNTED brand: the showcase read is on the
+   * NET basis, so the money half must move with THIS number and not with `spendCents`.
+   */
+  netSpendCents?: number;
 }
 
 function mockFetch(fixture: Fixture): void {
@@ -223,12 +230,15 @@ function mockFetch(fixture: Fixture): void {
     if (path.includes("/public/stats")) return json({});
     if (path.includes("/stats/costs")) {
       const cents = String(fixture.spendCents ?? 10000);
+      const netCents = String(fixture.netSpendCents ?? fixture.spendCents ?? 10000);
       return json({
         groups: [
           {
             dimensions: { campaignId: `camp-${brandOf(q, headers)}`, workflowSlug: "dawn-v1" },
             totalCostInUsdCents: cents,
             actualCostInUsdCents: cents,
+            netTotalCostInUsdCents: netCents,
+            netActualCostInUsdCents: netCents,
             runCount: 1,
             minStartedAt: null,
             maxStartedAt: null,
@@ -498,6 +508,40 @@ describe("GET /public/stats/showcase-funnels", () => {
     expect(dear.steps.map((s) => s.costPerReachUsd)).toEqual([50, 100, 200, 200, null]);
     // The counts are a fact about people and did not move with the money.
     expect(dear.steps.map((s) => s.peopleReached)).toEqual(cheap.steps.map((s) => s.peopleReached));
+  });
+
+  it("prices a DISCOUNTED client on what they PAID, not on our list price", async () => {
+    // The money half is READ ON THE NET BASIS — what the client actually paid after their per-org
+    // usage discount — because the page claims each figure is the one the client reads on their own
+    // dashboard, and every dashboard surface in the fleet reads net. Same gross as BASE, net HALVED:
+    // a gross-basis implementation answers BASE's numbers here and this case is the only thing that
+    // catches it.
+    mockFetch(BASE);
+    const listPrice = brandOf(await get(), DOC).funnels[0];
+
+    __resetShowcaseFunnelsCache();
+    mockFetch({ ...BASE, spendCents: 10000, netSpendCents: 5000 });
+    const paid = brandOf(await get(), DOC).funnels[0];
+
+    // They paid half, so their dollar came back as twice as much and every rung cost them half.
+    expect(paid.returnPerDollar).toBeCloseTo(listPrice.returnPerDollar! * 2, 10);
+    expect(paid.steps.map((s) => s.costPerReachUsd)).toEqual([12.5, 25, 50, 50, null]);
+    // Counts are a fact about people and never move with a discount.
+    expect(paid.steps.map((s) => s.peopleReached)).toEqual(listPrice.steps.map((s) => s.peopleReached));
+  });
+
+  it("a client carrying NO discount is byte-identical — the regression check that nothing else moved", async () => {
+    // A brand with no discount has a frozen net EQUAL to its gross on every cost row, so the net basis
+    // must leave it exactly where it was. That is what makes this a value correction for the
+    // discounted clients rather than a change of statistic for everybody.
+    mockFetch(BASE);
+    const implicit = brandOf(await get(), DOC).funnels[0];
+
+    __resetShowcaseFunnelsCache();
+    mockFetch({ ...BASE, spendCents: 10000, netSpendCents: 10000 });
+    const explicit = brandOf(await get(), DOC).funnels[0];
+
+    expect(explicit).toEqual(implicit);
   });
 
   it("a client whose spend we cannot read has NO money figure, while its counts still answer", async () => {

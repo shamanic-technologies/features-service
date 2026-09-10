@@ -18,6 +18,15 @@
  * measured medians sit well above it), so they are NOT interchangeable and neither may be relabelled as
  * the other.
  *
+ * IT IS READ ON THE **NET** PRICING BASIS — what each brand ACTUALLY PAID after whatever per-org usage
+ * discount it carries — and that is what makes "the ratio every client reads on their own dashboard"
+ * true rather than aspirational: every consumer-facing dashboard surface reads `pricing=net`, so a
+ * GROSS median would be a median of numbers no client has seen. A brand carrying no discount has a
+ * frozen net equal to its gross per cost row and is byte-unchanged, so the basis moves only the
+ * discounted brands, and moves them onto their own screen's figure. NET comes off runs-service's
+ * FROZEN net twin on the same cost read (zero extra IO here — no discount fetch, no multiply) and
+ * FAILS LOUD when the twin is absent; there is deliberately no fall back to gross.
+ *
  * THE UNIT IS THE BRAND, AND THE STATISTIC IS THE MEDIAN — never a mean. A handful of brands sit tens of
  * multiples above the rest, so an average describes nobody in the population; the median is the brand in
  * the middle. The quartiles ride beside it so a consumer can show the bulk rather than one scalar.

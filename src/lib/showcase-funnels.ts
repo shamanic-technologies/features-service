@@ -45,6 +45,18 @@
  *     renders "cost per meeting booked" for one client and "cost per website visit" for another
  *     without knowing which rung to ask for and without a branch for the base.
  *
+ * BOTH ARE READ ON THE **NET** PRICING BASIS — what the client ACTUALLY PAID after whatever per-org
+ * usage discount they carry — and that is what makes the "byte-same as their own dashboard" claim
+ * above TRUE rather than aspirational. Every consumer-facing dashboard surface in the fleet reads
+ * `pricing=net`, so a GROSS figure here would publish a number no client has ever seen on a screen
+ * they own: measured in prod 2026-09-10, one showcase client read 9.386x gross against 18.324x net
+ * and another 1.828x against 3.481x, with the same factor on every `costPerReachUsd` rung. A client
+ * carrying no discount has a frozen net equal to its gross per cost row, so it is byte-unchanged —
+ * which is also the regression check that nothing else moved. NET is read off runs-service's FROZEN
+ * net twin on the same cost read (zero extra IO, no discount fetch, no multiply here) and FAILS LOUD
+ * when the twin is absent: there is deliberately no fall back to gross, because a silent basis swap
+ * is exactly the two-numbers-under-one-word bug this basis exists to close.
+ *
  * Served in DOLLARS, not cents, because the consumer divides nothing: a figure it has to scale is a
  * figure it can scale wrongly, and the two surfaces would then state one number two ways.
  *
@@ -109,8 +121,10 @@ export interface ShowcaseFunnelStep {
   peopleReached: number | null;
   /**
    * WHAT REACHING THIS RUNG COST THE CLIENT — the funnel's COMMITTED spend divided by the people who
-   * reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark: it is what they paid
-   * over what they got, which is the only honest answer to "what did a booked meeting cost me".
+   * reached it, in DOLLARS, on the **NET** pricing basis. OBSERVED accounting, never floored to a
+   * benchmark: it is what they PAID over what they got, which is the only honest answer to "what did a
+   * booked meeting cost me" — and "what they paid" means after their usage discount, not our list
+   * price, exactly as their own dashboard states it.
    *
    * `null` is "we have no figure" — nobody reached the rung (no denominator), nothing was spent, or
    * the count itself is unmeasured. NEVER 0, which on a marketing page would read as a client's
@@ -126,8 +140,10 @@ export interface ShowcaseFunnel {
   funnelName: string;
   /**
    * WHAT A DOLLAR THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over COMMITTED
-   * spend, i.e. `costEconomics.roiMultiple` for the funnel-narrowed read. The byte-same statistic the
-   * client reads as ROI on their own dashboard, so the two surfaces cannot state two numbers.
+   * spend, i.e. `costEconomics.roiMultiple` for the funnel-narrowed read, on the **NET** pricing basis
+   * (what the client actually paid after their usage discount). The byte-same statistic the client
+   * reads as ROI on their own dashboard — which reads net too — so the two surfaces cannot state two
+   * numbers.
    *
    * `null` is "we could not measure this": nothing was spent on the funnel, or the brand states no
    * economics to price its pipeline with. A measured `0` — real spend, no pipeline yet — is a
