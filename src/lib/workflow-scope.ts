@@ -16,11 +16,21 @@
  *
  * ── ONE RESOLUTION, TWO LEGS, BOTH FROZEN BY THEIR PRODUCER ─────────────────────────────────────
  *
- *   - SPEND: the runs / email-gateway reads carry `workflowDynastySlug` as a FILTER — the producers
- *     resolve the dynasty to its versioned slugs through workflow-service themselves, exactly as the
- *     grouped grain's `groupBy` does.
+ *   - SPEND: the runs / email-gateway reads carry `workflowSlugs` — the VERSIONED slugs resolved
+ *     HERE, never the dynasty for the producer to resolve again. Both producers offer a
+ *     `workflowDynastySlug` filter and it is deliberately NOT used: each resolves it by asking
+ *     workflow-service, which **404s for a dynasty it does not describe** and turns into a 500 on
+ *     runs and a 502 on email-gateway. A RETIRED lineage is exactly such a dynasty — and it is
+ *     exactly the workflow a "which of these burned money" question is about — so routing through
+ *     the producer's resolution makes the one case that matters most unanswerable.
  *   - LEADS: the `workflowSlug` lead-service froze on each `leads_campaigns` row at serve time,
  *     mapped to its dynasty HERE through the same workflow-service catalogue.
+ *
+ * So ONE resolution serves both legs, which is what the claim above actually requires. (The dated
+ * spend leg behind `roiHistory` is the single exception: runs' cost TIMESERIES offers no slug
+ * filter at all, only `workflowDynastySlug`, so it keeps that lever and fails SOFT — a dynasty
+ * nobody describes nulls the return curve rather than 502-ing a page whose every other figure is
+ * right.)
  *
  * Neither may be inferred from the campaign row's CURRENT workflow: campaign-service switches the
  * workflow of a campaign already alive on an identity instead of opening a new row, so that field
@@ -60,6 +70,13 @@ export interface WorkflowScope {
   workflowSlugs: string[];
   /** PURE: does a lead's FROZEN workflow slug belong to this dynasty? A lead served under no workflow never does. */
   includes(slug: string | null | undefined): boolean;
+  /**
+   * WHAT THE SPEND PRODUCERS ARE ASKED FOR — the comma-separated versioned slugs, resolved HERE.
+   * A dynasty the catalogue does not describe is its own dynasty of one, so it asks for the dynasty
+   * slug itself: a retired lineage still has cost rows and served leads under that exact slug, and
+   * the producer's own dynasty resolution would 404 on it (see the module header).
+   */
+  producerSlugs: string;
 }
 
 /**
@@ -75,6 +92,7 @@ export function buildWorkflowScope(dynastySlug: string, workflows: WorkflowMetad
     workflowDynastyName: named?.workflowDynastyName ?? null,
     workflowSlugs: [...new Set(slugs)].sort(),
     includes: (slug) => Boolean(slug) && dynastyOf(slug as string) === dynastySlug,
+    producerSlugs: (slugs.length > 0 ? [...new Set(slugs)].sort() : [dynastySlug]).join(","),
   };
 }
 
