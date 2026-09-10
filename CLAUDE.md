@@ -269,11 +269,15 @@ seconds** in prod (2026-09-08), and the two other candidates carry no return at 
   cost row and is byte-unchanged, so the basis moves only the discounted brands, onto their own
   screen's figure. Zero extra IO (runs' frozen net twin off the same read), fail-loud if the twin is
   absent, and NO `?pricing=` parameter on a public identity-free read. Same for the per-funnel median
-  and for the cross-org `/public/stats/revenue`, which share `computePairRevenue`. Expect every median
-  to RISE the day it ships (a discounted brand's return is larger on the money it actually paid); the
-  prod baseline the morning of 2026-09-10 was a cold-email channel median of **3.603x over 9 brands**,
-  with the per-pair medians at 2.045x (conversation, n=3) and 41.342x (form magnet, n=3). That step is
-  a basis correction, not growth — anyone reading the curve must be told so.
+  and for the cross-org `/public/stats/revenue`, which share `computePairRevenue`.
+  **A MEDIAN CAN SIT PERFECTLY STILL WHILE THE POPULATION UNDER IT MOVES, so never read an unmoved
+  median as an unshipped change** — measured in prod across the 2026-09-10 cutover, the cold-email
+  channel median stayed at **3.6029x over the same 9 brands** because the brand in the middle carries
+  no discount, while the p75 went **9.336x -> 18.324x**, the max **50.359x -> 57.145x** and the
+  conversation pair's median **2.045x -> 3.482x** (the form-magnet pair also held, at 41.342x, its own
+  middle brand being undiscounted). So when asking whether a snapshot has been rebuilt on the new
+  basis, read `computedAt` and a QUANTILE, never the median alone. Every figure that DID move is a
+  basis correction, not growth — anyone reading the curve must be told so.
 - **THE UNIT IS THE BRAND AND THE STATISTIC IS THE MEDIAN, never a mean.** A handful of brands sit tens
   of multiples above the rest, so an average describes nobody in the population. The quartiles, the min
   and the max ride beside it so a consumer can show the bulk instead of one scalar.
