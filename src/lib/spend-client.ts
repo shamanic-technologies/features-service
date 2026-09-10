@@ -180,10 +180,11 @@ export async function fetchSpendBreakdown(
   // (sharePct) are unchanged — a share is discount-invariant since numerator + denominator use the same
   // basis. provisioned is derived (net total − net actual == runs' netProvisioned by construction).
   pricing: Pricing = "gross",
-  // ONE WORKFLOW DYNASTY, when the read is drilled into one (`?workflow=`, lib/workflow-scope.ts). A
+  // ONE WORKFLOW DYNASTY, when the read is drilled into one — as its VERSIONED slugs, comma-separated
+  // (`WorkflowScope.producerSlugs`, never runs' own dynasty lever: see lib/workflow-scope.ts). A
   // FILTER on both calls, so the per-source rows, the totals and today's spend all narrow together
   // and Σ sources still equals "Total spent" for the workflow. Omitted → byte-identical to today.
-  workflowDynastySlug?: string,
+  workflowSlugs?: string,
 ): Promise<SpendBreakdown> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -203,12 +204,12 @@ export async function fetchSpendBreakdown(
   const featureSlugs = featureSlugsParam(featureScope);
   const sourceParams = new URLSearchParams({ groupBy, brandId, featureSlugs });
   if (campaignId) sourceParams.set("campaignId", campaignId);
-  if (workflowDynastySlug) sourceParams.set("workflowDynastySlug", workflowDynastySlug);
+  if (workflowSlugs) sourceParams.set("workflowSlugs", workflowSlugs);
 
   // Today: the same feature-scoped population restricted to runs started since 00:00 UTC.
   const todayParams = new URLSearchParams({ groupBy, brandId, featureSlugs, startedAfter: startOfUtcDay(now) });
   if (campaignId) todayParams.set("campaignId", campaignId);
-  if (workflowDynastySlug) todayParams.set("workflowDynastySlug", workflowDynastySlug);
+  if (workflowSlugs) todayParams.set("workflowSlugs", workflowSlugs);
 
   const [rawSourceGroups, rawTodayGroups] = await Promise.all([
     fetchCostGroups(baseUrl, apiKey, sourceParams, reqHeaders),

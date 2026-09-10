@@ -15,6 +15,18 @@ const wf = (slug: string, dynasty: string, name: string): WorkflowMetadata => ({
 const CATALOGUE = [wf("dawn-v1", "dawn", "Dawn"), wf("dawn-v2", "dawn", "Dawn"), wf("osprey-v1", "osprey", "Osprey")];
 
 describe("buildWorkflowScope", () => {
+  // WHAT THE SPEND PRODUCERS ARE ASKED FOR. Prod, 2026-09-10: routing this through the producers'
+  // OWN `workflowDynastySlug` lever made runs answer 500 and email-gateway 502 for any dynasty
+  // workflow-service does not describe — a RETIRED lineage, i.e. the workflow a "which of these
+  // burned money" question is most often about — so the read 502'd instead of answering.
+  it("asks the producers for the VERSIONED slugs it resolved itself, never for the dynasty", () => {
+    expect(buildWorkflowScope("dawn", CATALOGUE).producerSlugs).toBe("dawn-v1,dawn-v2");
+  });
+
+  it("a dynasty the catalogue does not describe asks for ITS OWN slug — a retired lineage still has rows under it", () => {
+    expect(buildWorkflowScope("retired-wf", CATALOGUE).producerSlugs).toBe("retired-wf");
+  });
+
   it("folds every VERSION of the dynasty in, and nothing else", () => {
     const scope = buildWorkflowScope("dawn", CATALOGUE);
     expect(scope.workflowSlugs).toEqual(["dawn-v1", "dawn-v2"]);

@@ -56,11 +56,12 @@ export async function fetchRunsCostCents(
   // byte-identical. Every downstream metric (CAC, ROI, CPC) derives from this, so it comes out net +
   // coherent by construction. A NET read never falls back to gross: `selectCostCents` throws.
   pricing: Pricing = "gross",
-  // ONE WORKFLOW DYNASTY, when the read is drilled into one (`?workflow=`, lib/workflow-scope.ts).
-  // A FILTER, never a grouping: runs resolves the dynasty to its versioned slugs through
-  // workflow-service, so the spend leg and the lead leg are narrowed by the same catalogue. Omitted
-  // → the whole scope's spend → byte-identical to today.
-  workflowDynastySlug?: string,
+  // ONE WORKFLOW DYNASTY, when the read is drilled into one — as its VERSIONED slugs, comma-separated,
+  // resolved by the caller (`WorkflowScope.producerSlugs`). A FILTER, never a grouping. Deliberately
+  // NOT runs' `workflowDynastySlug` lever, which it resolves by asking workflow-service and which
+  // 500s for a dynasty workflow-service does not describe — i.e. for a RETIRED lineage, the one this
+  // question is most often about. Omitted → the whole scope's spend → byte-identical to today.
+  workflowSlugs?: string,
 ): Promise<RunsCostCents> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -79,7 +80,7 @@ export async function fetchRunsCostCents(
     featureSlugs: featureSlugsParam(featureScope),
   });
   if (campaignId) params.set("campaignId", campaignId);
-  if (workflowDynastySlug) params.set("workflowDynastySlug", workflowDynastySlug);
+  if (workflowSlugs) params.set("workflowSlugs", workflowSlugs);
 
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
