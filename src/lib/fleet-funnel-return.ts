@@ -16,7 +16,10 @@
  * its most-advanced REALIZED step and projects the rest with the brand's OWN rates and LTR. It is the
  * byte-same statistic `GET /features/:slug/revenue?funnel=<key>` states for one brand, taken across
  * brands. So a fleet figure and any one client's own number are one statistic at two grains, and
- * neither is a pure projection.
+ * neither is a pure projection. It is read on the **NET** pricing basis (what the brand actually paid
+ * after its usage discount), which is what makes that identity hold: the client's own dashboard reads
+ * net, so a gross figure here would be a statistic about money nobody was billed. A brand with no
+ * discount is byte-unchanged. See `fleet-return-on-spend.ts`, whose header states the basis in full.
  *
  * THE UNIT IS THE BRAND AND THE STATISTIC IS THE MEDIAN, never a mean — the same doctrine as
  * `fleet-return-on-spend.ts`, whose header is the spec this module follows. An average over a

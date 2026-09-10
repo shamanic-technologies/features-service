@@ -839,7 +839,17 @@ async function computePairRevenue(
       undefined,
       undefined,
       false,
-      "gross",
+      // NET — what the brand ACTUALLY PAID, after whatever per-org usage discount it carries. This is
+      // a statement about a CLIENT'S OWN RETURN, so it must be the money that left the client's
+      // account, not the list price we would have charged without their discount. Every consumer-facing
+      // dashboard surface reads `pricing=net`, so GROSS here published a number no client ever saw:
+      // measured in prod 2026-09-10, one brand read 9.386x gross against 18.324x net, another 1.828x
+      // against 3.481x. A brand with no discount has a frozen net equal to its gross per cost row, so
+      // it is byte-unchanged — the change moves only the discounted brands, and moves them ONTO their
+      // own dashboard's figure. Reading runs' FROZEN net twin costs ZERO extra IO (same cost read, a
+      // different field) and fails LOUD if the twin is absent — never a silent fall back to gross,
+      // which would put two numbers under one word again.
+      "net",
       requestedFunnel,
     );
     return {
@@ -1201,9 +1211,11 @@ export function warmFleetReturnSnapshotsOnBoot(): void {
 interface FleetReturnPayload extends FleetReturnOnSpend {
   /**
    * ACCOUNTING — this is the CUSTOMERS' money: what each brand was CHARGED (comped spend is absent),
-   * on the COMMITTED basis every money figure in this service rides. Same basis as the ROI the client
-   * reads on their own dashboard, so the fleet median and any one client's number are the same
-   * statistic at two grains. See lib/cost-basis.ts.
+   * on the COMMITTED basis every money figure in this service rides. ORTHOGONAL to gross-vs-net
+   * pricing, which is the OTHER axis and is also settled here: the figures are read NET (what each
+   * brand actually paid after its per-org usage discount), the same basis the client's own dashboard
+   * reads — so the fleet median and any one client's number are the same statistic at two grains.
+   * See lib/cost-basis.ts and lib/pricing.ts.
    */
   costBasis: "charged";
   featureSlug: string;
@@ -1286,9 +1298,10 @@ interface ChannelFunnelReturnRow extends FunnelReturnOnSpend {
 interface FleetFunnelReturnPayload {
   /**
    * ACCOUNTING — this is the CUSTOMERS' money: what each brand was CHARGED (comped spend absent), on
-   * the COMMITTED basis every money figure in this service rides. Same basis as the ROI each client
-   * reads on their own dashboard, so a pair median and one client's own number are the same statistic
-   * at two grains. See lib/cost-basis.ts.
+   * the COMMITTED basis every money figure in this service rides. ORTHOGONAL to gross-vs-net pricing:
+   * the figures are read NET (what each brand actually paid after its per-org usage discount), the
+   * same basis the ROI each client reads on their own dashboard rides — so a pair median and one
+   * client's own number are the same statistic at two grains. See lib/cost-basis.ts and lib/pricing.ts.
    */
   costBasis: "charged";
   /** Each data point is one brand's realized return on its own spend, through one funnel. */
@@ -2897,7 +2910,14 @@ async function computeShowcaseBrand(
       undefined,
       brandPriced,
       true,
-      "gross",
+      // NET, for the reason `computePairRevenue` states: the page names three clients and prints what
+      // THEY got back, so the basis has to be the money they actually paid. Every dashboard surface a
+      // client reads is `pricing=net`, so a GROSS figure here is one that appears on no screen the
+      // client owns — and the OpenAPI below promises this IS the figure on their dashboard. That
+      // promise is what makes the basis load-bearing rather than a preference. Zero extra IO (runs'
+      // frozen net twin off the same read), fail-loud if the twin is absent, byte-unchanged for a
+      // client carrying no discount.
+      "net",
       funnelKey,
     );
     // The money half rides the SAME body: the funnel-narrowed read's own `costEconomics.roiMultiple`
