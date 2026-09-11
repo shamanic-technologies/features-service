@@ -213,7 +213,10 @@ export function buildWorkflowRevenueGroups(input: {
   // brand's funnels — which is also why a single-workflow brand lands on the brand's own figure.
   const paths =
     funnel && economics
-      ? restrictPathsToDeclaredLegs(funnel.resolvePaths({ economics }), priced!.pricedFunnelKeys)
+      ? restrictPathsToDeclaredLegs(
+          funnel.resolvePaths({ economics, pricedFunnelKeys: priced!.pricedFunnelKeys }),
+          priced!.pricedFunnelKeys,
+        )
       : null;
 
   return [...slugsByDynasty.keys()]

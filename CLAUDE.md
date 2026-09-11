@@ -1,5 +1,57 @@
 # Features Service — CLAUDE.md
 
+## A FUNNEL IS PRICED ON THE RATES IT DECLARES — each funnel states its OWN ladder, and the rung in the MIDDLE of one is worth more than the rung below it
+
+A brand selling FORM MAGNET (`Website visit → Form filled → Paid client`) read its funnel Overview and
+was told it loses money on a funnel that makes money. Prod 2026-09-11, brand `c992c378…` / offer
+`622cb535…` / org `f74660b1…`: brand-service serves that funnel a **$30 lifetime revenue, 25%
+visit→form and 20% form→paid**, both `stated_arrow` — so a website visit is worth **5% × $30 = $1.50**.
+The funnel-grain read answered **$17.198 of pipeline on 47 visits**, i.e. **$0.373** a visit, and a
+**0.30x** return against $57.34 of committed spend where the brand's own rates say **1.23x**.
+
+$0.373 is 1.24625% of $30, and that number reconciles exactly against the brand's BRAND-WIDE effective
+record — `orP(visitToClosePct 0.5%, visitToMeetingPct 3% × meetingToClosePct 25%)`. A website visit on a
+form funnel was being valued **through a booked meeting**, and a form magnet has no meeting step at all.
+The funnel's two stated arrows never entered the number.
+
+- **EACH FUNNEL STATES ITS OWN LADDER — `FUNNEL_LADDERS` (`lib/funnel-registry.ts`), `P(paid client |
+  the lead reached this step)` per leg.** `resolvePaths` takes the `pricedFunnelKeys` the read is
+  priced on and merges their ladders **by MAX per signal**: a lead converts through whichever of its
+  brand's funnels pays best, the same doctrine the brand-level `max` over declared funnels' returns
+  already states. With ONE funnel that is that funnel's ladder verbatim.
+- **THE THREE OTHER FUNNELS ARE WRITTEN OUT ON TODAY'S EXPRESSIONS, NOT CHANGED — and that is
+  deliberate, not an oversight.** brand-service's brand-wide `visitToClosePct` ALREADY composes the
+  signup chain for essentially every brand (prod: 0.5% = 5% × 10%), so re-deriving the
+  website-purchase visit from `visitToSignupPct × signupToPaidClientPct` would double-express a rate
+  that is already folded in **and** would drop the meeting route those brands genuinely sell through.
+  126 rows / 100 brands ride that expression and none of them moves. Guarded to the cent.
+- **THE MIDDLE RUNG IS PRICED NOW.** `formSubmission` was a leg of `FUNNEL_LEG_SIGNALS` with no path,
+  so a lead that had actually FILLED THE FORM was worth exactly as much as one that only clicked. It
+  is an OBSERVED POSITION, so it is worth the funnel's own form→paid rate ($6.00 here) and it
+  EXTINGUISHES the click that was forecasting it — never `orP(click, form)`. Strictly above the visit,
+  strictly below a paid client. `signup` remains unpriced (a per-lead display outcome).
+  Both signals are attributed on the OVERVIEW read alone, so a lean `?groupBy=` group reports the rung
+  as unreached rather than as worth nothing.
+- **A RATE THE BRAND NEVER DECLARED STAYS ABSENT.** A rung whose ladder needs a rate that is not on
+  the wire is DROPPED — no default, no fleet average, no substituted value, and never the meeting
+  route standing in. A declared `0` is a real answer and passes through as 0. A chain whose LAST arrow
+  is unstated is unpriceable: half a chain is not a rate (`legPathRate`).
+- **NO DECLARATION ⇒ BYTE-UNCHANGED.** A brand whose declaration we cannot read keeps every
+  conversion leg on the expression it has always had (`undeclaredLadder`) — inventing a funnel to
+  price against would be the fiction the defaulted goal produced.
+- **THE TERMS A READ IS PRICED ON ARE STILL RESOLVED ONCE, from the funnel it NAMED else the first
+  declared in catalogue order (`priceOnDeclaredFunnel`) — unchanged.** So a brand declaring several
+  funnels prices every ladder off that one merged record; `?funnel=` (and the funnel-grain read, which
+  names it) is how a customer asks for one funnel's own terms. Moving to per-funnel terms would shift
+  multi-funnel legacy brands, which is exactly what this ship must not do.
+- Guards: `src/routes/funnel-own-ladder.test.ts` — ONE fixture carrying the reported brand's real
+  economics (47 visits, $57.34 committed, the 0.5% / 3% / 25% brand-wide record whose 0.5% IS 5% × 10%).
+  Every case asserts the DIVERGENCE: $70.50 / 1.229x / $24.40 against the $17.57 the same fixture reads
+  with no declaration, the form rung above the visit and below the close, the absent rate pricing at
+  nothing, and the three other funnel keys answering their identical old numbers to the cent — a suite
+  that only checked "a number came back" would pass on the implementation this replaces.
+  (Set 2026-09-11, features-service#919.)
+
 ## A CAMPAIGN-SCOPED `/audience-stats` READ ANSWERS FOR THE CAMPAIGN'S IDENTITY — the same subject `/revenue?campaignId=` answers for, so one screen cannot state two numbers about one campaign
 
 A customer opened one campaign's Audiences page and read **0 sales interests on every audience** while
