@@ -1907,6 +1907,21 @@ already paid for once ($2,625 against $2,668).
   either member id reads the same answer. `campaignIdentity` rides the payload so a consumer can SEE
   the subject rather than infer it from a number that moved. Absent brand-wide, where the read is
   byte-unchanged.
+- **AN OFFER SCOPE NARROWS IT THE SAME WAY, ONE GRAIN COARSER — `?groupBy=workflow&offerId=`.** The
+  customer's Workflows page has granularity tabs (Campaign · Offer · Brand · Global); campaign and
+  brand were answered and an `offerId` was IGNORED, so an offer tab would have printed the brand's
+  figures under an offer's name — the wrong-grain bug one click from the one above. An offer is a SET
+  OF CAMPAIGN IDENTITIES, so it takes the machinery that is already here: `resolveOfferCampaignIds`
+  (`lib/offer-scope.ts`, the byte-same resolution the un-grouped `?offerId=` read and `?groupBy=offerId`
+  use) hands the offer's campaign ids to the partition as its scope, and nothing about how a figure is
+  computed moves. A brand selling ONE offer through every campaign with runs reads the byte-same groups
+  at both grains (guarded). **The offer is priced on the BRAND's pick, deliberately** — an offer states
+  no funnel to this service and its campaigns may state several, so pricing on one member's funnel would
+  answer for the offer with one campaign's vocabulary, the byte-same reasoning `?groupBy=offerId` states.
+  `offerId` rides the `scope_key`, and `offerId` beside `campaignId` is the 400 it already is everywhere
+  (a campaign sells exactly one offer). An offer whose campaigns never spent through a workflow is an
+  EMPTY groups list; an offer NO campaign of this brand sells is the named 404 (`offer_has_no_campaigns`)
+  — never the brand's numbers under the offer's label, and never a fabricated zero.
 - **BOTH LEGS NARROW THROUGH THE PRODUCERS THAT FROZE THEM**, exactly as the brand grain's do. Cost:
   the same `groupBy=workflowSlug` request, with a `campaignId=` filter for a single campaign and a
   co-grouped `workflowSlug,campaignId` for a FAMILY whose members are kept locally (runs-service takes
@@ -1960,7 +1975,13 @@ already paid for once ($2,625 against $2,668).
   empty workflow, `pricing=net` on both, the fail-loud catalogue and the 400 — plus the REQUEST SHAPE
   the producers actually see (`workflowSlugs=`, never `workflowDynastySlug=`) and a retired lineage
   answering with its real money beside a null curve, which is the case prod broke on.
-  `src/lib/workflow-scope.test.ts` pins the membership rule itself. (Set 2026-09-10.)
+  `src/lib/workflow-scope.test.ts` pins the membership rule itself. Plus
+  `src/routes/workflow-offer-grain.test.ts` for the OFFER scope — ONE fixture where two offers run the
+  SAME dynasty with different spend and different people beside a campaign stating no offer, so every
+  case asserts the divergence (the brand's $135 against offer A's $50 and offer B's $80): the two offers
+  apart, a workflow one offer never ran absent rather than zeroed, the one-offer brand byte-equal to the
+  brand grain, the empty offer, the named 404, the 400, the request shape, and `pricing=net`.
+  (Set 2026-09-10; offer scope 2026-09-11.)
 
 ## `GET /revenue?groupBy=workflow` — WHICH OF THE WORKFLOWS WE RAN FOR THIS BRAND MADE MONEY; a workflow is a DYNASTY, and BOTH legs are attributed by the producer that froze them
 

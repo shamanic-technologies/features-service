@@ -1540,10 +1540,18 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
       // brand, sales funnel, acquisition channel), the same family the un-grouped read and
       // `/audience-stats` resolve — so a campaign whose workflow switched mid-life still states what
       // it did through the workflow it has since left. Absent → the brand's whole spend, unchanged.
+      // An OFFER-scoped read narrows the SAME way, one grain coarser: every group then states only
+      // what the campaigns selling THAT offer did and spent through each workflow. It is the byte-same
+      // offer semantics the un-grouped `?offerId=` read and `?groupBy=offerId` already use — an offer
+      // is a set of campaign identities, resolved through `lib/offer-scope.ts` and handed to the
+      // partition as its scope, so nothing about how a figure is computed moves. `offerId` beside
+      // `campaignId` already 400'd above, so exactly one of the two can narrow this read.
+      const workflowOfferCampaignIds = offerId ? await resolveOfferCampaignIds(offerId, brandId, featureSlug, headers) : null;
       const workflowIdentity = campaignId
         ? (await fetchCampaignFamiliesSoft(brandId, featureSlug, headers)).identityOf(campaignId)
         : null;
-      const workflowCampaignScope: CampaignFilter = campaignId ? (workflowIdentity?.campaignIds ?? campaignId) : undefined;
+      const workflowCampaignScope: CampaignFilter =
+        workflowOfferCampaignIds ?? (campaignId ? (workflowIdentity?.campaignIds ?? campaignId) : undefined);
 
       const payload = await servedCached({
         view: "revenue-by-workflow",
@@ -1555,6 +1563,9 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
           orgId,
           brandId,
           campaignId: workflowIdentity?.key ?? campaignId,
+          // The offer narrows every group, so it MUST be in the key or an offer-scoped table and the
+          // brand-wide one would share a cell. Absent → dropped → today's keys are unmoved.
+          offerId,
           groupBy: "workflow",
           pricing,
           econ,
@@ -1570,7 +1581,10 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
             headers,
             pricing,
             // A campaign states the funnel it sells, so a campaign-scoped read is priced on THAT
-            // funnel — the same rule the per-campaign groups apply. Brand-wide keeps the brand pick.
+            // funnel — the same rule the per-campaign groups apply. Brand-wide keeps the brand pick,
+            // and so does an OFFER scope: an offer states no funnel to this service and its campaigns
+            // may state several, so pricing on one member's funnel would answer for the offer with one
+            // campaign's vocabulary — the byte-same reasoning `?groupBy=offerId` states one grain up.
             priced: (campaignId ? pricingForIdentity(workflowIdentity?.funnelKey) : brandPriced) ?? null,
             causes,
             campaignScope: workflowCampaignScope,
