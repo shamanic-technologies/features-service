@@ -76,6 +76,15 @@ export interface SalesEconomics {
 
 export interface FunnelInputs {
   economics: SalesEconomics;
+  /**
+   * The funnels this read is being priced on — the brand's whole declared set, or the ONE funnel a
+   * `?funnel=` / a campaign's own statement narrowed it to. Each funnel is priced on its OWN ladder
+   * (see `FUNNEL_LADDERS`), so a leg is never valued through a route the funnel does not contain.
+   *
+   * `[]` / absent ⇒ the brand declared nothing we could read: it keeps today's behaviour on every
+   * conversion leg, because inventing a funnel to price against would be a fiction.
+   */
+  pricedFunnelKeys?: readonly SalesFunnelKey[];
 }
 
 export type EconomicsSource = "sales-economics" | "cross-brand-average";
@@ -373,18 +382,132 @@ const SALES_MILESTONES: readonly FunnelMilestone[] = [
 /**
  * Sales funnel — expected pipeline revenue from the funnel legs a lead reached.
  *
- *   pClose_click   = orP(visitToClose, visitToMeeting × meetingToClose)   (two independent click routes)
- *   pClose_reply   = replyToMeeting × meetingToClose                       (sales-economics)
- *   pClose_meeting = meetingToClose
+ * ── A FUNNEL IS PRICED ON ITS OWN LADDER, not on a route it does not contain ──────────────────────
+ *
+ * Every leg used to be priced from ONE brand-wide expression, and that expression was built out of the
+ * meeting route: a website visit was worth `orP(visitToClose, visitToMeeting × meetingToClose)`
+ * whatever funnel the brand sells. For the two meeting funnels and the website-purchase funnel that is
+ * the right number, and it stays byte-identical below. For FORM MAGNET — `Website visit → Form filled
+ * → Paid client` — it was an answer about a funnel with no meeting step in it: prod 2026-09-11, a brand
+ * declaring 25% visit→form and 20% form→paid (so a visit is worth 5% of its $30 lifetime revenue,
+ * $1.50) was priced at 1.24375% = $0.373 per visit, off a brand-wide 0.5% self-serve + 3% × 25%
+ * meeting route it does not sell. Its funnel read 0.30x return where its own declared rates say 1.23x.
+ * And the rung in the MIDDLE of that funnel carried no path at all, so a lead that had actually FILLED
+ * THE FORM was worth exactly as much as one that only clicked.
+ *
+ * So each funnel states its OWN ladder — `P(paid client | the lead reached this step)` per leg — and a
+ * read is priced on the ladders of the funnels it is priced on (`pricedFunnelKeys`), merged by MAX per
+ * signal: a lead converts through whichever of its brand's funnels pays best, the same doctrine the
+ * brand-level `max` over declared funnels' returns already states.
+ *
+ *   sales_meetings_from_conversation  reply = r2m·m2c   meeting = m2c   attended = m_att   closeWin = 1
+ *   sales_meetings_from_website       visit = orP(v2c, v2m·m2c)   meeting = m2c   attended = m_att
+ *   website_purchases                 visit = orP(v2c, v2m·m2c)
+ *   form_magnet                       visit = v2fs·fs2pc          formFilled = fs2pc
+ *
+ * The first three are TODAY'S expressions, written out per funnel rather than changed — deliberately.
+ * brand-service's brand-wide `visitToClosePct` ALREADY composes the signup chain for essentially every
+ * brand (prod: 0.5% = 5% × 10%), so re-deriving the website-purchase visit from `visitToSignupPct ×
+ * signupToPaidClientPct` would double-express a rate that is already folded in AND would drop the
+ * meeting route those brands genuinely sell through. 126 rows / 100 brands ride that expression and
+ * none of them moves here. Changing them is a separate, measured decision.
  *
  * orP(a,b) = 1−(1−a)(1−b): independent-probability combine. A click can close self-serve AND via a
  * booked meeting. These routes are non-exclusive, so we combine them (never max — which silently
  * drops the weaker route, undercounting the pipeline).
  *
- * Each path EV = LTR × pClose_leg, and every path is itemised in the events ledger. The four legs
- * below are the union of what the catalogue's funnels buy; which of them actually prices a given brand
- * is decided by `restrictPathsToDeclaredLegs` from that brand's OWN declaration.
+ * A RATE THE BRAND NEVER DECLARED STAYS ABSENT. A rung whose ladder needs a rate that is not on the
+ * wire is DROPPED — no default, no fleet average, no substituted value. A declared `0` is a real
+ * answer and passes through as 0.
+ *
+ * Each path EV = LTR × pClose_leg, and every path is itemised in the events ledger.
  */
+
+/** One rung of a funnel's own ladder. `pClose === null` ⇒ the brand declared no rate for it. */
+interface LadderRung {
+  tag: string;
+  signal: string;
+  pClose: number | null;
+  engagementRoute?: boolean;
+  terminal?: boolean;
+}
+
+/** A rate the producer may not carry at all, as a decimal. Absent ⇒ null ("nobody declared this"). */
+const declaredRate = (value: number | undefined): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? pct(value) : null;
+
+/** The product of a chain of rates. Any missing link ⇒ the whole chain is unpriceable. */
+const chainRate = (...rates: Array<number | null>): number | null =>
+  rates.reduce<number | null>((acc, rate) => (acc === null || rate === null ? null : acc * rate), 1);
+
+// The three expressions the deployed funnels are priced on today, named once so the ladders below can
+// share them and nobody can drift one copy against another.
+const clickCloseViaMeeting = (e: SalesEconomics): number =>
+  orP(pct(e.visitToClosePct), pct(e.visitToMeetingPct) * pct(e.meetingToClosePct));
+const bookedClose = (e: SalesEconomics): number => pct(e.meetingToClosePct);
+// A meeting somebody ATTENDED is a rung of its own, and it is worth more than one they booked and
+// missed. `meetingToClosePct` is booked→paid — on a declared funnel it already carries the show-up rate
+// folded in (`meetingFunnelCloseRate`) — so the attended rung is priced on the rate that does NOT carry
+// it. A brand that declared no show-up rate has said nothing that tells the two apart, so the composed
+// rate stands in and both rungs are worth the same: honest, not a free 100%.
+const attendedClose = (e: SalesEconomics): number =>
+  pct(e.meetingAttendedToPaidClientPct ?? e.meetingToClosePct);
+
+/** The terminal every funnel ends at: realized revenue, the full lifetime value. */
+const CLOSE_WIN: LadderRung = { tag: "closeWin", signal: "closeWin", pClose: 1, terminal: true };
+
+/**
+ * Each funnel's OWN ladder. A leg listed here is a leg of that funnel in `SALES_FUNNELS[key].steps`,
+ * and `FUNNEL_LEG_SIGNALS` names the same set — the two are read together.
+ */
+const FUNNEL_LADDERS: Record<SalesFunnelKey, (e: SalesEconomics) => LadderRung[]> = {
+  sales_meetings_from_conversation: (e) => [
+    { tag: "reply", signal: "positiveReply", pClose: pct(e.replyToMeetingPct) * bookedClose(e), engagementRoute: true },
+    { tag: "meeting", signal: "meeting", pClose: bookedClose(e) },
+    { tag: "meetingAttended", signal: "meetingAttended", pClose: attendedClose(e) },
+    CLOSE_WIN,
+  ],
+  sales_meetings_from_website: (e) => [
+    { tag: "visit", signal: "clicked", pClose: clickCloseViaMeeting(e), engagementRoute: true },
+    { tag: "meeting", signal: "meeting", pClose: bookedClose(e) },
+    { tag: "meetingAttended", signal: "meetingAttended", pClose: attendedClose(e) },
+    CLOSE_WIN,
+  ],
+  website_purchases: (e) => [
+    { tag: "visit", signal: "clicked", pClose: clickCloseViaMeeting(e), engagementRoute: true },
+    CLOSE_WIN,
+  ],
+  form_magnet: (e) => {
+    // The funnel's own two arrows, and nothing else: a form magnet has no meeting step, so the meeting
+    // route must not price its visit. `formFilled` is a rung a lead actually STANDS on — an OBSERVED
+    // POSITION, so it EXTINGUISHES the click route rather than combining with it (the click was
+    // forecasting exactly the form that has now been filled).
+    const v2fs = declaredRate(e.visitToFormSubmissionPct);
+    const fs2pc = declaredRate(e.formSubmissionToPaidClientPct);
+    return [
+      { tag: "visit", signal: "clicked", pClose: chainRate(v2fs, fs2pc), engagementRoute: true },
+      { tag: "formFilled", signal: "formSubmission", pClose: fs2pc },
+      CLOSE_WIN,
+    ];
+  },
+};
+
+/**
+ * The ladder a brand with NO readable declaration is priced on — today's behaviour, unchanged.
+ *
+ * We do not know which funnel such a brand sells, and inventing one to price against would be the same
+ * fiction the defaulted goal produced. So it keeps every conversion leg it has always had, on the
+ * expression it has always had. It simply earns nothing from a delivery, which is a step of no funnel
+ * for anybody.
+ */
+const undeclaredLadder = (e: SalesEconomics): LadderRung[] => [
+  { tag: "visit", signal: "clicked", pClose: clickCloseViaMeeting(e), engagementRoute: true },
+  { tag: "reply", signal: "positiveReply", pClose: pct(e.replyToMeetingPct) * bookedClose(e), engagementRoute: true },
+  { tag: "meeting", signal: "meeting", pClose: bookedClose(e) },
+  { tag: "meetingAttended", signal: "meetingAttended", pClose: attendedClose(e) },
+  CLOSE_WIN,
+];
+
 const salesFunnel: FunnelDefinition = {
   economicsSource: "sales-economics",
   signals: [
@@ -394,43 +517,43 @@ const salesFunnel: FunnelDefinition = {
     "open",
     "clicked",
     "positiveReply",
+    "formSubmission",
     "meeting",
     "meetingAttended",
     "closeWin",
   ],
   milestones: SALES_MILESTONES,
-  resolvePaths: ({ economics: e }) => {
+  resolvePaths: ({ economics: e, pricedFunnelKeys }) => {
     const ltr = e.lifetimeRevenueUsd;
-    // A click closes via TWO independent (non-exclusive) routes: direct self-serve (visitToClose =
-    // "buy without a meeting") OR via a booked meeting (visitToMeeting · meetingToClose). A lead can
-    // do both → combine as independent probabilities (orP), bounded by 1. NOT max (drops the weaker
-    // route) and NOT a naive sum (can exceed 1).
-    const pCloseClick = orP(pct(e.visitToClosePct), pct(e.visitToMeetingPct) * pct(e.meetingToClosePct));
-    const pCloseReply = pct(e.replyToMeetingPct) * pct(e.meetingToClosePct);
-    const pCloseMeeting = pct(e.meetingToClosePct); // a BOOKED meeting closes at the booked→paid rate
-    // A meeting somebody ATTENDED is a rung of its own, and it is worth more than one they booked and
-    // missed. `meetingToClosePct` is booked→paid — on a declared funnel it already carries the show-up
-    // rate folded in (`meetingFunnelCloseRate`) — so the attended rung is priced on the rate that does
-    // NOT carry it. A brand that declared no show-up rate has said nothing that tells the two apart, so
-    // the composed rate stands in and both rungs are worth the same: honest, not a free 100%.
-    const pCloseAttended = pct(e.meetingAttendedToPaidClientPct ?? e.meetingToClosePct);
-    // Post-engagement legs, each fired by what a human OBSERVED for the lead:
-    //   meeting         EV = LTR × P(paid | meeting booked).
-    //   meetingAttended EV = LTR × P(paid | meeting attended).
-    //   closeWin        = realized revenue (full LTR) — the terminal every funnel ends at.
-    // Monotonic EV up the funnel: reply ≤ meeting ≤ meetingAttended ≤ closeWin.
-    return [
-      // click + reply are INDEPENDENT engagement routes to the same close (a lead can do both, and
-      // we don't yet know which fires) → `engagementRoute` so the engine COMBINES them as independent
-      // probabilities bounded by 1 LTR, instead of MAX'ing. The three below are OBSERVED POSITIONS
-      // (mutually exclusive, and each one a fact rather than a forecast) → left to MAX, and they
-      // EXTINGUISH the routes: those routes were forecasting exactly the thing that has now happened.
-      { tag: "visit", signal: "clicked", expectedRevenueUsd: ltr * pCloseClick, engagementRoute: true },
-      { tag: "reply", signal: "positiveReply", expectedRevenueUsd: ltr * pCloseReply, engagementRoute: true },
-      { tag: "meeting", signal: "meeting", expectedRevenueUsd: ltr * pCloseMeeting },
-      { tag: "meetingAttended", signal: "meetingAttended", expectedRevenueUsd: ltr * pCloseAttended },
-      { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: ltr, terminal: true },
-    ];
+    const keys = pricedFunnelKeys ?? [];
+    const ladders = keys.length > 0 ? keys.map((key) => FUNNEL_LADDERS[key](e)) : [undeclaredLadder(e)];
+
+    // MAX per signal across the funnels being priced: a lead converts through whichever of them pays
+    // best. With one funnel this is that funnel's ladder verbatim; with several it can never read below
+    // any single funnel's honest answer. Emitted in first-seen order, so a one-funnel read's ledger is
+    // that funnel's own chain in its own order.
+    const bySignal = new Map<string, LadderRung>();
+    for (const ladder of ladders) {
+      for (const rung of ladder) {
+        if (rung.pClose === null) continue; // nobody declared the rate — the rung is absent, never 0
+        const existing = bySignal.get(rung.signal);
+        if (!existing || rung.pClose > existing.pClose!) bySignal.set(rung.signal, rung);
+      }
+    }
+
+    // click + reply are INDEPENDENT engagement routes to the same close (a lead can do both, and we
+    // don't yet know which fires) → `engagementRoute` so the engine COMBINES them as independent
+    // probabilities bounded by 1 LTR, instead of MAX'ing. Everything else is an OBSERVED POSITION
+    // (mutually exclusive, and each one a fact rather than a forecast) → left to MAX, and they
+    // EXTINGUISH the routes: those routes were forecasting exactly the thing that has now happened.
+    // Monotonic EV up the funnel: the rung below is always worth less than the rung above it.
+    return [...bySignal.values()].map((rung) => ({
+      tag: rung.tag,
+      signal: rung.signal,
+      expectedRevenueUsd: ltr * rung.pClose!,
+      ...(rung.engagementRoute ? { engagementRoute: true as const } : {}),
+      ...(rung.terminal ? { terminal: true as const } : {}),
+    }));
   },
 };
 
@@ -447,9 +570,14 @@ const salesFunnel: FunnelDefinition = {
  * "Meeting attended" USED to have no signal of its own — nothing in the fleet could observe somebody
  * showing up, so it survived only folded into the booked→paid rate. A human states it now, so it is a
  * leg like any other: a rung a lead can stand on, and a step a lead can be declared DEAD at.
- * `signup` / `formSubmission` are listed because they ARE legs of their funnels; no path scores them
- * today (they are per-lead display outcomes), and if one is ever added it prices exactly the brands
- * whose funnel contains it, with no further change here.
+ * `formSubmission` is the MIDDLE rung of the form-magnet funnel and is priced by that funnel's own
+ * ladder (`FUNNEL_LADDERS`), off the brand's declared form→paid rate. `signup` is a leg of the
+ * website-purchase funnel and no path scores it today (it stays a per-lead display outcome); if one is
+ * ever added it prices exactly the brands whose funnel contains it, with no further change here.
+ *
+ * Both signals are attributed on the OVERVIEW read alone (lead-service's conversion tracker is fetched
+ * there), so a lean `?groupBy=` group reports the rung as unreached rather than as worth nothing —
+ * the same honesty every other fail-soft overlay on this path already carries.
  */
 export const FUNNEL_LEG_SIGNALS: Record<SalesFunnelKey, readonly string[]> = {
   sales_meetings_from_conversation: ["positiveReply", "meeting", "meetingAttended", "closeWin"],
