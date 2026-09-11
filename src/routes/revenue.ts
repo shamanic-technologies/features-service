@@ -1231,7 +1231,10 @@ export async function computeFeatureRevenue(
   // declared funnels contributes nothing — it is not decayed and not discounted, it is simply not a
   // priced path. The delivery milestones never enter here at all (they are a step of no funnel, for
   // anybody) and reach the engine as `funnel.milestones`, which carry no revenue field to price.
-  const paths = restrictPathsToDeclaredLegs(funnel.resolvePaths({ economics }), priced.pricedFunnelKeys);
+  const paths = restrictPathsToDeclaredLegs(
+    funnel.resolvePaths({ economics, pricedFunnelKeys: priced.pricedFunnelKeys }),
+    priced.pricedFunnelKeys,
+  );
 
   // ── Wave B: the two SECONDARY enrichment reads, in parallel — both need persons' emails
   // (from Wave A) but are independent of each other. Each is best-effort PER CALL (own catch →
@@ -1281,8 +1284,10 @@ export async function computeFeatureRevenue(
   // producer matches each website conversion back to a lead we emailed and exposes the DISTINCT
   // matched-lead email set per event; a person whose (lowercased) email is in that set reached the
   // outcome — the SAME email-membership join audience-stats uses (real producer attribution, not a
-  // split of the brand total). These signals do NOT feed the EV funnel (no funnel path triggers on
-  // them) — pure per-lead display outcomes, like meetingBooked/purchased. NO date is set: lead-service
+  // split of the brand total). `formSubmission` IS a priced rung on the FORM MAGNET funnel — its
+  // ladder values it at the brand's own form→paid rate, and it EXTINGUISHES the click that was
+  // forecasting it. On every other funnel neither signal is a leg, so neither feeds the EV funnel:
+  // they stay pure per-lead display outcomes, like meetingBooked/purchased. NO date is set: lead-service
   // exposes the matched lead but not the conversion timestamp, so signalDates.signup/formSubmission
   // stay null (borrowing the outreach date would be the wrong signal) → the daily series reports these
   // leads as undated. Set BEFORE computeRevenue so the engine maps them onto leads[] (features-service#476).
