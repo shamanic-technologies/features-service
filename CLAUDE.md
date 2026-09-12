@@ -158,7 +158,7 @@ goal, never a leg — verified on its `origin/main`).
   grain answering on its own evidence, the total order with the never-run workflow last, the campaign
   identity's two members totalled against the brand's own number, the fail-soft degrade being NARROWER,
   and a funnel- and goal-keyed read carrying none of it while still pricing the booked meeting.
-  (Set 2026-09-12.)
+  (Set 2026-09-12, features-service#932.)
 
 ## A FUNNEL IS PRICED ON THE RATES IT DECLARES — each funnel states its OWN ladder, and the rung in the MIDDLE of one is worth more than the rung below it
 
