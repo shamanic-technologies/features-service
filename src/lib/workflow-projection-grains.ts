@@ -368,3 +368,170 @@ export async function fetchAudienceGrainEvidence(
   }
   return result;
 }
+
+// ── CAMPAIGN grain (one campaign IDENTITY's own evidence, per dynasty) ───────────────────────────
+//
+// A campaign screen compares grains — THIS campaign, this brand, every client we run the channel for —
+// and until this existed the ladder answered for the brand, the fleet and an audience, so the campaign
+// half had to be stitched on from a second endpoint by whoever was rendering it. One read answers for
+// every grain it compares, or the two halves can come to describe different moments.
+//
+// It answers for the campaign's whole IDENTITY (org × brand × sales funnel × acquisition channel — the
+// same family `/revenue?campaignId=` and `/audience-stats` total over), because campaign-service mints a
+// new row every time a campaign's workflow switches and keeps the ancestors: a figure scoped to the
+// newest row would describe the last few days of a campaign that has been running for weeks.
+//
+// Both legs narrow through the producer that froze the attribution, exactly as the brand grain does:
+//   cost    = runs `groupBy=workflowSlug` with `campaignId=` for a single-member identity, and a
+//             co-grouped `workflowSlug,campaignId` for a FAMILY (runs-service takes no campaign LIST),
+//             whose members are kept locally and summed per workflow slug.
+//   outcome = email-gateway `/orgs/stats?groupBy=workflowSlug&campaignId=` ONCE PER MEMBER and summed —
+//             its `groupBy` is single-dimension, and a send carries ONE campaign, so the sum counts
+//             nobody twice. The identical property that lets the offer grain do it.
+
+/** Merge co-grouped `(workflowSlug, campaignId)` cost rows down to one row per workflow slug. */
+function mergeCostGroupsByWorkflowSlug(
+  groups: CostGroup[],
+  members: Set<string> | null,
+  pricing: Pricing,
+  basis: CostBasis,
+): Array<{ dimensions: Record<string, string | null>; totalCostInUsdCents: string; runCount: number }> {
+  const bySlug = new Map<string, { cents: number; runs: number }>();
+  for (const group of groups) {
+    const slug = group.dimensions.workflowSlug;
+    if (!slug) continue;
+    if (members) {
+      const campaignId = group.dimensions.campaignId;
+      if (!campaignId || !members.has(campaignId)) continue;
+    }
+    const cents = selectCostCents(group, "totalCostInUsdCents", pricing, basis);
+    const existing = bySlug.get(slug);
+    if (existing) {
+      existing.cents += cents;
+      existing.runs += group.runCount;
+    } else {
+      bySlug.set(slug, { cents, runs: group.runCount });
+    }
+  }
+  return [...bySlug.entries()].map(([slug, v]) => ({
+    dimensions: { workflowSlug: slug },
+    totalCostInUsdCents: String(v.cents),
+    runCount: v.runs,
+  }));
+}
+
+/** Campaign-scoped runs cost groups. A one-member identity uses the producer's own `campaignId` filter
+ *  (the byte-same request shape the brand grain makes, one filter narrower); a FAMILY co-groups and is
+ *  narrowed locally, because runs-service takes no campaign list. */
+async function fetchCampaignCostGroups(
+  brandId: string,
+  featureSlug: string,
+  campaignIds: string[],
+  identity: Identity,
+): Promise<{ groups: CostGroup[]; filteredLocally: boolean }> {
+  const baseUrl = process.env.RUNS_SERVICE_URL;
+  if (!baseUrl) throw new Error("RUNS_SERVICE_URL not configured");
+  const single = campaignIds.length === 1 ? campaignIds[0] : undefined;
+  const params = new URLSearchParams({
+    groupBy: single ? "workflowSlug" : "workflowSlug,campaignId",
+    brandId,
+    featureSlugs: featureSlug,
+  });
+  if (single) params.set("campaignId", single);
+  const response = await fetchWithRetry(`${baseUrl}/v1/stats/costs?${params}`, {
+    headers: runsHeaders(brandId, identity),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`runs-service /v1/stats/costs (campaign grain) failed (${response.status}): ${text}`);
+  }
+  const data = (await response.json()) as { groups?: CostGroup[] };
+  if (!Array.isArray(data.groups)) {
+    throw new Error("runs-service /v1/stats/costs (campaign grain) returned no groups array");
+  }
+  return { groups: data.groups, filteredLocally: !single };
+}
+
+/** Campaign-scoped broadcast email stats, read once per identity member and summed. */
+async function fetchCampaignEmailStats(
+  brandId: string,
+  featureSlug: string,
+  campaignIds: string[],
+  identity: Identity,
+): Promise<Map<string, Record<string, number>>> {
+  const baseUrl = process.env.EMAIL_GATEWAY_SERVICE_URL;
+  if (!baseUrl) throw new Error("EMAIL_GATEWAY_SERVICE_URL not configured");
+  const perMember = await mapWithConcurrency(campaignIds, 6, async (campaignId) => {
+    const params = new URLSearchParams({
+      type: "broadcast",
+      groupBy: "workflowSlug",
+      brandId,
+      featureSlugs: featureSlug,
+      campaignId,
+    });
+    const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, {
+      headers: emailHeaders(brandId, identity),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`email-gateway /orgs/stats (campaign grain) failed (${response.status}): ${text}`);
+    }
+    const data = (await response.json()) as { groups?: Array<Record<string, unknown>> };
+    return Array.isArray(data.groups) ? data.groups : [];
+  });
+
+  const result = new Map<string, Record<string, number>>();
+  for (const groups of perMember) {
+    for (const group of groups) {
+      const key = String(group.key ?? "__total__");
+      const stats = extractBroadcastRecipientStats(group);
+      const existing = result.get(key);
+      if (!existing) {
+        result.set(key, { ...stats });
+        continue;
+      }
+      for (const [k, v] of Object.entries(stats)) existing[k] = (existing[k] ?? 0) + (v ?? 0);
+    }
+  }
+  return result;
+}
+
+/**
+ * CAMPAIGN-grain evidence per active workflow dynasty, for ONE campaign identity. Same shape and same
+ * dynasty rollup as the brand grain — only the narrowing moved. A dynasty this campaign never ran is
+ * absent from the map, so the handler omits the campaign grain for it (the spentUsd = 0 rule).
+ */
+export async function fetchCampaignWorkflowEvidence(
+  brandId: string,
+  featureSlug: string,
+  campaignIds: string[],
+  workflows: WorkflowMetadata[],
+  identity: Identity,
+  pricing: Pricing = "gross",
+  basis: CostBasis = "charged",
+): Promise<Map<string, WorkflowGrainEvidence>> {
+  const [{ groups, filteredLocally }, emailStats] = await Promise.all([
+    fetchCampaignCostGroups(brandId, featureSlug, campaignIds, identity),
+    fetchCampaignEmailStats(brandId, featureSlug, campaignIds, identity),
+  ]);
+  const dynasties = buildWorkflowDynasties(workflows);
+  const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(
+    dynasties,
+    mergeCostGroupsByWorkflowSlug(groups, filteredLocally ? new Set(campaignIds) : null, pricing, basis),
+    emailStats,
+    "workflowSlug",
+  );
+
+  const result = new Map<string, WorkflowGrainEvidence>();
+  for (const [activeSlug, cost] of costMap) {
+    const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
+    result.set(activeSlug, {
+      totalCostInUsdCents: cost.totalCostInUsdCents,
+      completedRuns: cost.completedRuns,
+      contacted: outcomes.recipientsContacted ?? 0,
+      clicks: outcomes.recipientsClicked ?? 0,
+      replies: outcomes.recipientsRepliesPositive ?? 0,
+    });
+  }
+  return result;
+}

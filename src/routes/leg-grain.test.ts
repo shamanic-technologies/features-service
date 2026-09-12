@@ -192,8 +192,26 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
 
     const { leg, ...withoutLeg } = byLeg.body;
     expect(leg.basisFunnelKey).toBe("sales_meetings_from_website");
-    // Byte-identical apart from the leg block that states which funnel answered.
-    expect(withoutLeg).toEqual(byFunnel.body);
+    // Identical apart from what ONLY a leg-keyed answer carries: the leg block that states which
+    // funnel answered, the per-workflow `rank`, and the per-grain statement of the leg's OWN step.
+    // Every figure a funnel-keyed request has ever served is unmoved — including, on this leg, the
+    // cost per outcome, because the leg's step and this funnel's priced step happen to coincide.
+    const stripLegOnly = (body: any) => ({
+      ...body,
+      rows: body.rows.map(({ rank, ...row }: any) => ({
+        ...row,
+        estimatesByGrain: Object.fromEntries(
+          Object.entries(row.estimatesByGrain).map(([g, block]: [string, any]) => {
+            const { legOutcome, ...rest } = block;
+            return [g, rest];
+          }),
+        ),
+      })),
+    });
+    expect(stripLegOnly(withoutLeg)).toEqual(stripLegOnly(byFunnel.body));
+    // …and the rank IS on the leg-keyed body, where the funnel-keyed one carries none.
+    expect(byLeg.body.rows.every((r: any) => typeof r.rank === "number")).toBe(true);
+    expect(byFunnel.body.rows.every((r: any) => r.rank === undefined)).toBe(true);
   });
 
   it("a leg only ONE declared funnel contains says so, rather than claiming a comparison it never made", async () => {

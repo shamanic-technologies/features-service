@@ -2955,6 +2955,7 @@
                     "nullable": true,
                     "enum": [
                       "audience",
+                      "campaign",
                       "brand",
                       "crossOrg"
                     ],
@@ -2990,6 +2991,48 @@
               "evidence"
             ],
             "description": "Present ⟺ the request named a LEG (`?leg=`), and it states which of the brand's declared funnels the leg was priced through and what that answer rests on. Absent on every funnel- or goal-keyed request, so those bodies are byte-identical to what they have always been."
+          },
+          "campaignIdentity": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "funnelKey": {
+                "type": "string",
+                "nullable": true
+              },
+              "acquisitionChannel": {
+                "type": "string",
+                "nullable": true
+              },
+              "campaignIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Every member of the identity, the stopped ancestors included."
+              },
+              "liveCampaignIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "representativeId": {
+                "type": "string",
+                "description": "The member a consumer renders the identity's line on — the live campaign when there is one."
+              }
+            },
+            "required": [
+              "key",
+              "funnelKey",
+              "acquisitionChannel",
+              "campaignIds",
+              "liveCampaignIds",
+              "representativeId"
+            ],
+            "description": "Present ⟺ the request named a `?campaignId=`. WHAT THE CAMPAIGN GRAIN ANSWERED FOR — the byte-same block /revenue?campaignId= and /audience-stats carry, so the fleet speaks ONE vocabulary about one campaign. The figures are totalled over the whole IDENTITY, never over the newest stored row of a campaign that has been running for weeks."
           },
           "economics": {
             "type": "object",
@@ -3166,6 +3209,36 @@
                             "cacPct"
                           ],
                           "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        },
+                        "legOutcome": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                            },
+                            "outcomeCount": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                            },
+                            "outcomeObserved": {
+                              "type": "boolean",
+                              "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                            },
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "outcomeCount",
+                            "outcomeObserved",
+                            "spentUsd"
+                          ],
+                          "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
                         }
                       },
                       "required": [
@@ -3273,6 +3346,36 @@
                             "cacPct"
                           ],
                           "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        },
+                        "legOutcome": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                            },
+                            "outcomeCount": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                            },
+                            "outcomeObserved": {
+                              "type": "boolean",
+                              "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                            },
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "outcomeCount",
+                            "outcomeObserved",
+                            "spentUsd"
+                          ],
+                          "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
                         }
                       },
                       "required": [
@@ -3282,6 +3385,143 @@
                         "projected"
                       ],
                       "description": "The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow."
+                    },
+                    "campaign": {
+                      "type": "object",
+                      "properties": {
+                        "costBasis": {
+                          "type": "string",
+                          "enum": [
+                            "charged",
+                            "incurred"
+                          ],
+                          "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                        },
+                        "evidence": {
+                          "type": "object",
+                          "properties": {
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                            },
+                            "observedContacted": {
+                              "type": "number"
+                            },
+                            "observedClicks": {
+                              "type": "number"
+                            },
+                            "observedPositiveReplies": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "spentUsd",
+                            "observedContacted",
+                            "observedClicks",
+                            "observedPositiveReplies"
+                          ]
+                        },
+                        "unitCosts": {
+                          "type": "object",
+                          "properties": {
+                            "costPerClickUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                            },
+                            "costPerPositiveReplyUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                            },
+                            "costPerContactedUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                            }
+                          },
+                          "required": [
+                            "costPerClickUsd",
+                            "costPerPositiveReplyUsd",
+                            "costPerContactedUsd"
+                          ]
+                        },
+                        "resolvedOutcomeCount": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                        },
+                        "projected": {
+                          "type": "object",
+                          "properties": {
+                            "costPerSignupUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "costPerPaidClientUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
+                            },
+                            "costPerMeetingBookedUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "roiMultiple": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                            },
+                            "cacPct": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                            }
+                          },
+                          "required": [
+                            "costPerSignupUsd",
+                            "costPerPaidClientUsd",
+                            "costPerMeetingBookedUsd",
+                            "roiMultiple",
+                            "cacPct"
+                          ],
+                          "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        },
+                        "legOutcome": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                            },
+                            "outcomeCount": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                            },
+                            "outcomeObserved": {
+                              "type": "boolean",
+                              "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                            },
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "outcomeCount",
+                            "outcomeObserved",
+                            "spentUsd"
+                          ],
+                          "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                        }
+                      },
+                      "required": [
+                        "evidence",
+                        "unitCosts",
+                        "resolvedOutcomeCount",
+                        "projected"
+                      ],
+                      "description": "The same path narrowed to ONE CAMPAIGN IDENTITY (org × brand × sales funnel × acquisition channel — every member, not the newest stored row). Present ONLY when the request named a `?campaignId=`, and omitted when that campaign spent 0 on the workflow. Floored against the brand grain, so a campaign that has barely spent reads its brand's price rather than looking free."
                     },
                     "audience": {
                       "type": "object",
@@ -3380,6 +3620,36 @@
                             "cacPct"
                           ],
                           "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        },
+                        "legOutcome": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                            },
+                            "outcomeCount": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                            },
+                            "outcomeObserved": {
+                              "type": "boolean",
+                              "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                            },
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "outcomeCount",
+                            "outcomeObserved",
+                            "spentUsd"
+                          ],
+                          "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
                         }
                       },
                       "required": [
@@ -3410,6 +3680,7 @@
                       "nullable": true,
                       "enum": [
                         "audience",
+                        "campaign",
                         "brand",
                         "crossOrg"
                       ],
@@ -3458,6 +3729,10 @@
                     "cacPct",
                     "conversionRatePct"
                   ]
+                },
+                "rank": {
+                  "type": "number",
+                  "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence."
                 },
                 "measured": {
                   "type": "boolean",
@@ -4059,6 +4334,36 @@
                             "cacPct"
                           ],
                           "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        },
+                        "legOutcome": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                            },
+                            "outcomeCount": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                            },
+                            "outcomeObserved": {
+                              "type": "boolean",
+                              "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                            },
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "outcomeCount",
+                            "outcomeObserved",
+                            "spentUsd"
+                          ],
+                          "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
                         }
                       },
                       "required": [
@@ -4166,6 +4471,36 @@
                             "cacPct"
                           ],
                           "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        },
+                        "legOutcome": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                            },
+                            "outcomeCount": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                            },
+                            "outcomeObserved": {
+                              "type": "boolean",
+                              "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                            },
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "outcomeCount",
+                            "outcomeObserved",
+                            "spentUsd"
+                          ],
+                          "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
                         }
                       },
                       "required": [
@@ -4175,6 +4510,143 @@
                         "projected"
                       ],
                       "description": "The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow."
+                    },
+                    "campaign": {
+                      "type": "object",
+                      "properties": {
+                        "costBasis": {
+                          "type": "string",
+                          "enum": [
+                            "charged",
+                            "incurred"
+                          ],
+                          "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                        },
+                        "evidence": {
+                          "type": "object",
+                          "properties": {
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                            },
+                            "observedContacted": {
+                              "type": "number"
+                            },
+                            "observedClicks": {
+                              "type": "number"
+                            },
+                            "observedPositiveReplies": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "spentUsd",
+                            "observedContacted",
+                            "observedClicks",
+                            "observedPositiveReplies"
+                          ]
+                        },
+                        "unitCosts": {
+                          "type": "object",
+                          "properties": {
+                            "costPerClickUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                            },
+                            "costPerPositiveReplyUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                            },
+                            "costPerContactedUsd": {
+                              "type": "number",
+                              "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                            }
+                          },
+                          "required": [
+                            "costPerClickUsd",
+                            "costPerPositiveReplyUsd",
+                            "costPerContactedUsd"
+                          ]
+                        },
+                        "resolvedOutcomeCount": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                        },
+                        "projected": {
+                          "type": "object",
+                          "properties": {
+                            "costPerSignupUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "costPerPaidClientUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
+                            },
+                            "costPerMeetingBookedUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "roiMultiple": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                            },
+                            "cacPct": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                            }
+                          },
+                          "required": [
+                            "costPerSignupUsd",
+                            "costPerPaidClientUsd",
+                            "costPerMeetingBookedUsd",
+                            "roiMultiple",
+                            "cacPct"
+                          ],
+                          "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        },
+                        "legOutcome": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                            },
+                            "outcomeCount": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                            },
+                            "outcomeObserved": {
+                              "type": "boolean",
+                              "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                            },
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "outcomeCount",
+                            "outcomeObserved",
+                            "spentUsd"
+                          ],
+                          "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                        }
+                      },
+                      "required": [
+                        "evidence",
+                        "unitCosts",
+                        "resolvedOutcomeCount",
+                        "projected"
+                      ],
+                      "description": "The same path narrowed to ONE CAMPAIGN IDENTITY (org × brand × sales funnel × acquisition channel — every member, not the newest stored row). Present ONLY when the request named a `?campaignId=`, and omitted when that campaign spent 0 on the workflow. Floored against the brand grain, so a campaign that has barely spent reads its brand's price rather than looking free."
                     },
                     "audience": {
                       "type": "object",
@@ -4273,6 +4745,36 @@
                             "cacPct"
                           ],
                           "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                        },
+                        "legOutcome": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                            },
+                            "outcomeCount": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                            },
+                            "outcomeObserved": {
+                              "type": "boolean",
+                              "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                            },
+                            "spentUsd": {
+                              "type": "number",
+                              "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "outcomeCount",
+                            "outcomeObserved",
+                            "spentUsd"
+                          ],
+                          "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
                         }
                       },
                       "required": [
@@ -4303,6 +4805,7 @@
                       "nullable": true,
                       "enum": [
                         "audience",
+                        "campaign",
                         "brand",
                         "crossOrg"
                       ],
@@ -4351,6 +4854,10 @@
                     "cacPct",
                     "conversionRatePct"
                   ]
+                },
+                "rank": {
+                  "type": "number",
+                  "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence."
                 },
                 "measured": {
                   "type": "boolean",
@@ -16663,6 +17170,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "ONE CAMPAIGN to narrow the ladder to, so a screen comparing grains — this campaign, this brand, every client we run the channel for — reads them all from ONE answer instead of stitching the campaign half on from a second endpoint. Answered for the campaign's whole IDENTITY. Only answerable BESIDE a `?leg=` (a campaign is bought for exactly one leg); sent without one it is a 400 `campaign_requires_leg`, never silently ignored."
+            },
+            "required": false,
+            "description": "ONE CAMPAIGN to narrow the ladder to, so a screen comparing grains — this campaign, this brand, every client we run the channel for — reads them all from ONE answer instead of stitching the campaign half on from a second endpoint. Answered for the campaign's whole IDENTITY. Only answerable BESIDE a `?leg=` (a campaign is bought for exactly one leg); sent without one it is a 400 `campaign_requires_leg`, never silently ignored.",
+            "name": "campaignId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "WHAT TO MAXIMISE. `return` (DEFAULT, and byte-identical to every answer given before this existed) ranks on the most outcome per DOLLAR — the right question while the pool of people to reach is effectively unbounded and the binding constraint is the customer's budget. `conversionRate` ranks on the most outcome per PERSON REACHED — the right question when the pool is small and finite, because the list is what runs out and burning fewer people per outcome matters more than what each outcome costs. Snake/kebab spellings accepted; the key may also be spelled `maximise`. A present-but-unrecognised word is a 400 (reason='maximize_unrecognised'), never a silent fall back to `return`. NOT the same question as `goal`/`objective`, which name the kind of OUTCOME being bought. On this endpoint it shapes the RECOMMENDATION (which workflow) and, on a `?leg=` request, which of the brand's declared funnels the leg is priced through — nothing else: every row carries both figures either way."
             },
             "required": false,
@@ -16906,6 +17423,7 @@
                               "nullable": true,
                               "enum": [
                                 "audience",
+                                "campaign",
                                 "brand",
                                 "crossOrg"
                               ],
@@ -16941,6 +17459,48 @@
                         "evidence"
                       ],
                       "description": "Present ⟺ the request named a LEG (`?leg=`), and it states which of the brand's declared funnels the leg was priced through and what that answer rests on. Absent on every funnel- or goal-keyed request, so those bodies are byte-identical to what they have always been."
+                    },
+                    "campaignIdentity": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "funnelKey": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "acquisitionChannel": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "campaignIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Every member of the identity, the stopped ancestors included."
+                        },
+                        "liveCampaignIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "representativeId": {
+                          "type": "string",
+                          "description": "The member a consumer renders the identity's line on — the live campaign when there is one."
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "funnelKey",
+                        "acquisitionChannel",
+                        "campaignIds",
+                        "liveCampaignIds",
+                        "representativeId"
+                      ],
+                      "description": "Present ⟺ the request named a `?campaignId=`. WHAT THE CAMPAIGN GRAIN ANSWERED FOR — the byte-same block /revenue?campaignId= and /audience-stats carry, so the fleet speaks ONE vocabulary about one campaign. The figures are totalled over the whole IDENTITY, never over the newest stored row of a campaign that has been running for weeks."
                     },
                     "economics": {
                       "type": "object",
@@ -17117,6 +17677,36 @@
                                       "cacPct"
                                     ],
                                     "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  },
+                                  "legOutcome": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                      },
+                                      "outcomeCount": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                                      },
+                                      "outcomeObserved": {
+                                        "type": "boolean",
+                                        "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                                      },
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "outcomeCount",
+                                      "outcomeObserved",
+                                      "spentUsd"
+                                    ],
+                                    "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
                                   }
                                 },
                                 "required": [
@@ -17224,6 +17814,36 @@
                                       "cacPct"
                                     ],
                                     "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  },
+                                  "legOutcome": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                      },
+                                      "outcomeCount": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                                      },
+                                      "outcomeObserved": {
+                                        "type": "boolean",
+                                        "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                                      },
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "outcomeCount",
+                                      "outcomeObserved",
+                                      "spentUsd"
+                                    ],
+                                    "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
                                   }
                                 },
                                 "required": [
@@ -17233,6 +17853,143 @@
                                   "projected"
                                 ],
                                 "description": "The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow."
+                              },
+                              "campaign": {
+                                "type": "object",
+                                "properties": {
+                                  "costBasis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "charged",
+                                      "incurred"
+                                    ],
+                                    "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                                  },
+                                  "evidence": {
+                                    "type": "object",
+                                    "properties": {
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                                      },
+                                      "observedContacted": {
+                                        "type": "number"
+                                      },
+                                      "observedClicks": {
+                                        "type": "number"
+                                      },
+                                      "observedPositiveReplies": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "spentUsd",
+                                      "observedContacted",
+                                      "observedClicks",
+                                      "observedPositiveReplies"
+                                    ]
+                                  },
+                                  "unitCosts": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerClickUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                                      },
+                                      "costPerPositiveReplyUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                                      },
+                                      "costPerContactedUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerClickUsd",
+                                      "costPerPositiveReplyUsd",
+                                      "costPerContactedUsd"
+                                    ]
+                                  },
+                                  "resolvedOutcomeCount": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                                  },
+                                  "projected": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerSignupUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "costPerPaidClientUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
+                                      },
+                                      "costPerMeetingBookedUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "roiMultiple": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                                      },
+                                      "cacPct": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerSignupUsd",
+                                      "costPerPaidClientUsd",
+                                      "costPerMeetingBookedUsd",
+                                      "roiMultiple",
+                                      "cacPct"
+                                    ],
+                                    "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  },
+                                  "legOutcome": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                      },
+                                      "outcomeCount": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                                      },
+                                      "outcomeObserved": {
+                                        "type": "boolean",
+                                        "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                                      },
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "outcomeCount",
+                                      "outcomeObserved",
+                                      "spentUsd"
+                                    ],
+                                    "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                                  }
+                                },
+                                "required": [
+                                  "evidence",
+                                  "unitCosts",
+                                  "resolvedOutcomeCount",
+                                  "projected"
+                                ],
+                                "description": "The same path narrowed to ONE CAMPAIGN IDENTITY (org × brand × sales funnel × acquisition channel — every member, not the newest stored row). Present ONLY when the request named a `?campaignId=`, and omitted when that campaign spent 0 on the workflow. Floored against the brand grain, so a campaign that has barely spent reads its brand's price rather than looking free."
                               },
                               "audience": {
                                 "type": "object",
@@ -17331,6 +18088,36 @@
                                       "cacPct"
                                     ],
                                     "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  },
+                                  "legOutcome": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                      },
+                                      "outcomeCount": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                                      },
+                                      "outcomeObserved": {
+                                        "type": "boolean",
+                                        "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                                      },
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "outcomeCount",
+                                      "outcomeObserved",
+                                      "spentUsd"
+                                    ],
+                                    "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
                                   }
                                 },
                                 "required": [
@@ -17361,6 +18148,7 @@
                                 "nullable": true,
                                 "enum": [
                                   "audience",
+                                  "campaign",
                                   "brand",
                                   "crossOrg"
                                 ],
@@ -17409,6 +18197,10 @@
                               "cacPct",
                               "conversionRatePct"
                             ]
+                          },
+                          "rank": {
+                            "type": "number",
+                            "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence."
                           },
                           "measured": {
                             "type": "boolean",
@@ -18179,6 +18971,36 @@
                                       "cacPct"
                                     ],
                                     "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  },
+                                  "legOutcome": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                      },
+                                      "outcomeCount": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                                      },
+                                      "outcomeObserved": {
+                                        "type": "boolean",
+                                        "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                                      },
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "outcomeCount",
+                                      "outcomeObserved",
+                                      "spentUsd"
+                                    ],
+                                    "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
                                   }
                                 },
                                 "required": [
@@ -18286,6 +19108,36 @@
                                       "cacPct"
                                     ],
                                     "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  },
+                                  "legOutcome": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                      },
+                                      "outcomeCount": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                                      },
+                                      "outcomeObserved": {
+                                        "type": "boolean",
+                                        "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                                      },
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "outcomeCount",
+                                      "outcomeObserved",
+                                      "spentUsd"
+                                    ],
+                                    "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
                                   }
                                 },
                                 "required": [
@@ -18295,6 +19147,143 @@
                                   "projected"
                                 ],
                                 "description": "The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow."
+                              },
+                              "campaign": {
+                                "type": "object",
+                                "properties": {
+                                  "costBasis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "charged",
+                                      "incurred"
+                                    ],
+                                    "description": "Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."
+                                  },
+                                  "evidence": {
+                                    "type": "object",
+                                    "properties": {
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."
+                                      },
+                                      "observedContacted": {
+                                        "type": "number"
+                                      },
+                                      "observedClicks": {
+                                        "type": "number"
+                                      },
+                                      "observedPositiveReplies": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "spentUsd",
+                                      "observedContacted",
+                                      "observedClicks",
+                                      "observedPositiveReplies"
+                                    ]
+                                  },
+                                  "unitCosts": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerClickUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedClicks, 1). Never null: when observedClicks = 0 the value floors to spentUsd."
+                                      },
+                                      "costPerPositiveReplyUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedPositiveReplies, 1). Never null (floors to spentUsd at 0 replies)."
+                                      },
+                                      "costPerContactedUsd": {
+                                        "type": "number",
+                                        "description": "spentUsd / max(observedContacted, 1). Never null (floors to spentUsd at 0 contacted)."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerClickUsd",
+                                      "costPerPositiveReplyUsd",
+                                      "costPerContactedUsd"
+                                    ]
+                                  },
+                                  "resolvedOutcomeCount": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The GOAL-RESOLVED (expected) outcome COUNT for THIS grain — the numerator this grain's cost-per-outcome is derived from, projected from the grain's OWN observed clicks/replies through the queried goal's funnel (websiteVisit/whatsapp → clicks; positiveReply → replies; signup → clicks·v2s; form_submissions → clicks·v2fs; meeting-booked → clicks·v2m + replies·r2m; website_purchase → clicks·orP(v2c,v2m·m2c) + replies·(r2m·m2c); combined sales → max(clicks·v2pc, replies·r2pc), best channel). Coherent with cost-per-outcome by construction: spentUsd / resolvedOutcomeCount == this grain's cost-per-outcome when > 0. Uses ONLY observed evidence (no cascade floor) → 0 when the grain observed 0 of the driving outcome; null ONLY at cold start (no economics). Lets a consumer Thompson-sample on (contacted = trials, this = successes, spentUsd/contacted = cost) without re-deciding the funnel metric; an absent audience grain (never-run couple) carries no block = a cold arm."
+                                  },
+                                  "projected": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerSignupUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "costPerPaidClientUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."
+                                      },
+                                      "costPerMeetingBookedUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "roiMultiple": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."
+                                      },
+                                      "cacPct": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerSignupUsd",
+                                      "costPerPaidClientUsd",
+                                      "costPerMeetingBookedUsd",
+                                      "roiMultiple",
+                                      "cacPct"
+                                    ],
+                                    "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  },
+                                  "legOutcome": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                      },
+                                      "outcomeCount": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                                      },
+                                      "outcomeObserved": {
+                                        "type": "boolean",
+                                        "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                                      },
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "outcomeCount",
+                                      "outcomeObserved",
+                                      "spentUsd"
+                                    ],
+                                    "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                                  }
+                                },
+                                "required": [
+                                  "evidence",
+                                  "unitCosts",
+                                  "resolvedOutcomeCount",
+                                  "projected"
+                                ],
+                                "description": "The same path narrowed to ONE CAMPAIGN IDENTITY (org × brand × sales funnel × acquisition channel — every member, not the newest stored row). Present ONLY when the request named a `?campaignId=`, and omitted when that campaign spent 0 on the workflow. Floored against the brand grain, so a campaign that has barely spent reads its brand's price rather than looking free."
                               },
                               "audience": {
                                 "type": "object",
@@ -18393,6 +19382,36 @@
                                       "cacPct"
                                     ],
                                     "description": "All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."
+                                  },
+                                  "legOutcome": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                      },
+                                      "outcomeCount": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."
+                                      },
+                                      "outcomeObserved": {
+                                        "type": "boolean",
+                                        "description": "TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."
+                                      },
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "description": "The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "outcomeCount",
+                                      "outcomeObserved",
+                                      "spentUsd"
+                                    ],
+                                    "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
                                   }
                                 },
                                 "required": [
@@ -18423,6 +19442,7 @@
                                 "nullable": true,
                                 "enum": [
                                   "audience",
+                                  "campaign",
                                   "brand",
                                   "crossOrg"
                                 ],
@@ -18471,6 +19491,10 @@
                               "cacPct",
                               "conversionRatePct"
                             ]
+                          },
+                          "rank": {
+                            "type": "number",
+                            "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence."
                           },
                           "measured": {
                             "type": "boolean",

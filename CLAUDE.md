@@ -84,6 +84,82 @@ what the agency is actually worth.
   nothing and moving nothing, the fail-soft null, the committed series byte-identical either way).
   (Set 2026-09-12, features-service#927.)
 
+## A LEG-KEYED READ PRICES THE LEG'S OWN STEP, SERVES ITS OWN ORDER, AND ANSWERS FOR THE CAMPAIGN — `?leg=` on `workflow-projection`, and the dashboard displays what it is served
+
+The customer-facing beta page listing every workflow a campaign's channel can run did three things
+this service should have been doing for it: it derived the ranking, it stitched the campaign's own
+figures on from a second endpoint, and it picked a per-grain unit cost according to the leg. All three
+are served now, and all three ride `?leg=` ONLY — every funnel- and goal-keyed body is byte-unchanged,
+which is what keeps campaign-service's production workflow selection untouched (it sends a funnel or a
+goal, never a leg — verified on its `origin/main`).
+
+- **THE OUTCOME OF A LEG IS ITS `toStep`, AND NOTHING ELSE** (`lib/leg-outcome.ts`). The basis funnel
+  still decides WHICH rates walk the observed signal forward to that step; it no longer decides which
+  step is being bought. Measured in prod 2026-09-12, brand `75d7e3e8…` / leg `start_to_conversation`:
+  the `lithium` workflow had **13 observed conversations on $2,141.76 of brand spend — $164.75 each**,
+  and the read served **$823.75**, the price of a BOOKED MEETING, because the leg was resolved to
+  `sales_meetings_from_conversation` and then priced through that funnel's goal. On a brand converting
+  20% of its conversations the substitution is exactly 5x, and nothing on the body said so: the number
+  was real, it simply answered a question nobody asked.
+- **`costPerOutcomeUsd`, the outcome COUNT and the conversion RATE all move together, at every grain.**
+  A count of one step beside the cost of another is the two-numbers-under-one-word bug one field over.
+  `costPerPaidClientUsd`, `costPerMeetingBookedUsd`, `roiMultiple` and `cacPct` keep their own names and
+  their own meanings — a paid-client cost is a paid-client cost whatever leg was named.
+- **A GRAIN'S EVIDENCE IS SPEND PLUS TWO COUNTED SIGNALS**, and each funnel is entered through exactly
+  ONE of them (`FUNNEL_DRIVER`). So the leg's count is that driver's observed count walked forward
+  through the funnel's declared rates and its cost is the driver's unit cost walked the same way. For
+  an ENTRY leg the walk is EMPTY — the driver signal IS the outcome — so the count is a raw
+  OBSERVATION and the cost the driver's own. That is the case that was wrong, and the one this makes
+  exact rather than merely closer. `legOutcome.outcomeObserved` says which of the two a consumer is
+  reading.
+- **A RATE THE BRAND NEVER DECLARED LEAVES THE LEG UNPRICEABLE — `null`, never 0, never averaged and
+  never borrowed from a neighbouring funnel.** A declared `0` is a real answer and passes through as 0.
+  The SHOW-UP rate is the one rung brand-service states no field for, so it is derived as
+  `meetingToClosePct / meetingAttendedToPaidClientPct` (booked→paid over attended→paid) and stands in
+  at **1** when nobody stated the second — the SAME documented fallback `meetingAttendedToPaidClientPct`
+  carries, never a fabricated discount. Clamped at 1: a probability above certainty is not servable.
+- **THE EXPLORE ALLOWANCE IS DENOMINATED IN THE LEG'S STEP TOO**, or it would not be comparable to the
+  rows it is ranked beside. The cascade floor itself is UNTOUCHED — `max(own spend, parent grain)`, per
+  workflow, crossOrg → brand → campaign → audience. Only the denomination moved.
+- **`rank` IS SERVED PER WORKFLOW SO NO CONSUMER RE-DERIVES ONE.** A page ranking the subset it displays
+  produces a second order, and the two disagree: in prod the workflow this service recommends sat
+  **18th of 24** on a page that said the list was ranked the way we pick, because the page ranked one
+  row per workflow while the recommendation was chosen over EVERY row. The rank is a property of the
+  WORKFLOW — every row of one dynasty carries the same number — and `recommendedWorkflowDynastySlug` is
+  **rank 1 BY CONSTRUCTION**, read off the head of the same order rather than argmin'd separately. A
+  TOTAL order: three groups (rankable, then measured-but-unrankable, then never-run), ties broken on
+  the dynasty slug, so no ties and no gaps, and **a workflow that has never run can never outrank one
+  with measured evidence**.
+- **THE CAMPAIGN GRAIN, so a screen comparing grains reads them all from ONE answer.** `?campaignId=`
+  adds a `campaign` block to `estimatesByGrain`, between brand and audience in the cascade, floored
+  against the brand so a campaign that has barely spent reads its brand's price rather than looking
+  free. It answers for the campaign's whole **IDENTITY** (org × brand × sales funnel × acquisition
+  channel — the byte-same family `/revenue?campaignId=` and `/audience-stats` total over), because
+  campaign-service mints a new row on every workflow switch and keeps the ancestors. Both legs narrow
+  through the producer that froze the attribution: runs takes `campaignId=` for a one-member identity
+  and a co-grouped `workflowSlug,campaignId` for a FAMILY (it takes no campaign LIST) whose members are
+  kept locally; email-gateway is read ONCE PER MEMBER and summed, since a send carries ONE campaign so
+  the sum counts nobody twice. `campaignIdentity` rides the body — the byte-same block the two sibling
+  reads carry — and the IDENTITY (not the campaign) keys the Gold `scope_key`, so a family lands on ONE
+  cell. FAIL-SOFT: with campaign-service unreachable the campaign falls back to its own family of one,
+  a real answer about a real subset, and NEVER the brand's numbers under this campaign's name.
+- **`?campaignId=` WITHOUT A LEG IS A 400 `campaign_requires_leg`, never silently ignored.** A campaign
+  is bought for exactly one leg, and adding a grain to a funnel- or goal-keyed body would move an
+  answer campaign-service's production workflow selection reads.
+- **NOTE THE ORDER DOES NOT MOVE ON A SINGLE-CHANNEL FUNNEL**, and that is worth stating so nobody
+  reads this as a ranking change: the leg's cost and the funnel objective's cost differ by ONE
+  brand-level rate applied to every workflow alike. Only the number's honesty changed.
+- Guards: `src/lib/leg-outcome.test.ts` (each rung strictly rarer than the one below it, the two
+  meeting funnels entered through different signals, each funnel on its own route, the unpriceable
+  rate, the derived show-up rate and its clamp) + `src/routes/leg-outcome-grain.test.ts` — ONE fixture
+  carrying the reported brand's real economics (13 conversations on $2,141.76, 20% reply→meeting).
+  Every case asserts the DIVERGENCE: $164.75 against the $823.75 booked-meeting figure to the cent,
+  a deeper leg five times dearer than the entry leg on the same spend, the per-grain block, the fleet
+  grain answering on its own evidence, the total order with the never-run workflow last, the campaign
+  identity's two members totalled against the brand's own number, the fail-soft degrade being NARROWER,
+  and a funnel- and goal-keyed read carrying none of it while still pricing the booked meeting.
+  (Set 2026-09-12.)
+
 ## A FUNNEL IS PRICED ON THE RATES IT DECLARES — each funnel states its OWN ladder, and the rung in the MIDDLE of one is worth more than the rung below it
 
 A brand selling FORM MAGNET (`Website visit → Form filled → Paid client`) read its funnel Overview and
