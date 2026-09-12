@@ -58,6 +58,13 @@ import { buildActiveUsersHistory, type ActiveUsersHistory } from "../lib/active-
 import { buildRevenueHistory, type RevenueHistory } from "../lib/revenue-history-compute.js";
 import { buildActiveUsersByUser, type ActiveUsersByUser } from "../lib/active-users-by-user-compute.js";
 import { apiKeyOnly } from "../middleware/auth.js";
+import {
+  createStatedAmount,
+  deleteStatedAmount,
+  listStatedAmounts,
+  updateStatedAmount,
+  StatedAmountConflictError,
+} from "../lib/stated-monthly-amounts-store.js";
 import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
@@ -3178,6 +3185,94 @@ router.get("/internal/stats/revenue", apiKeyOnly, async (req, res) => {
   } catch (error) {
     console.error("[features-service] Internal stats revenue error:", error);
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── /internal/stated-monthly-amounts (api-key only; staff-gated upstream at api-service) ──────────
+//
+// Full CRUD over the staff-writable record of what a HUMAN says a brand is worth per month, over a
+// date range. It is what lets the fleet run-rate be split into an AGENCY half (worth what somebody
+// stated) and a SELF-SERVE half (worth its daily budget × 30) — see agency-self-serve-compute.ts.
+//
+// Every write goes through the store's two rules: a coherent range, and NO OVERLAP with another range
+// for the same (org, brand). An overlap is refused with a 409 whose message names the row it collided
+// with, because two stated amounts in force on one day is two answers to one question. A write also
+// drops the cached revenue payload, so a staff member who states an amount sees the split move on the
+// next read instead of waiting out a cache window.
+
+function statedAmountFailure(error: unknown, res: import("express").Response): void {
+  if (error instanceof StatedAmountConflictError) {
+    res.status(409).json({ error: "stated_amount_conflict", reason: error.message });
+    return;
+  }
+  console.error("[features-service] stated-monthly-amounts error:", error);
+  res.status(500).json({ error: "Internal server error" });
+}
+
+router.get("/internal/stated-monthly-amounts", apiKeyOnly, async (req, res) => {
+  try {
+    const orgId = typeof req.query.orgId === "string" ? req.query.orgId : undefined;
+    const brandId = typeof req.query.brandId === "string" ? req.query.brandId : undefined;
+    res.json({ statedAmounts: await listStatedAmounts({ orgId, brandId }) });
+  } catch (error) {
+    statedAmountFailure(error, res);
+  }
+});
+
+router.post("/internal/stated-monthly-amounts", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  if (typeof body.orgId !== "string" || typeof body.brandId !== "string") {
+    res.status(400).json({ error: "orgId and brandId are required — a stated amount is keyed on the (org, brand) pair" });
+    return;
+  }
+  try {
+    const created = await createStatedAmount({
+      orgId: body.orgId,
+      brandId: body.brandId,
+      amountUsd: body.amountUsd as number,
+      startDate: (body.startDate as string | null | undefined) ?? null,
+      endDate: (body.endDate as string | null | undefined) ?? null,
+      note: (body.note as string | null | undefined) ?? null,
+    });
+    __resetRevenueHistoryCache();
+    res.status(201).json({ statedAmount: created });
+  } catch (error) {
+    statedAmountFailure(error, res);
+  }
+});
+
+router.patch("/internal/stated-monthly-amounts/:id", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  // An omitted key keeps its stored value; an explicit null on a bound OPENS that end, which is a real
+  // edit — so the patch is built from which keys are PRESENT, never from which are non-null.
+  const patch: Parameters<typeof updateStatedAmount>[1] = {};
+  if ("amountUsd" in body) patch.amountUsd = body.amountUsd as number;
+  if ("startDate" in body) patch.startDate = (body.startDate as string | null) ?? null;
+  if ("endDate" in body) patch.endDate = (body.endDate as string | null) ?? null;
+  if ("note" in body) patch.note = (body.note as string | null) ?? null;
+  try {
+    const updated = await updateStatedAmount(req.params.id, patch);
+    if (!updated) {
+      res.status(404).json({ error: "stated_amount_not_found" });
+      return;
+    }
+    __resetRevenueHistoryCache();
+    res.json({ statedAmount: updated });
+  } catch (error) {
+    statedAmountFailure(error, res);
+  }
+});
+
+router.delete("/internal/stated-monthly-amounts/:id", apiKeyOnly, async (req, res) => {
+  try {
+    if (!(await deleteStatedAmount(req.params.id))) {
+      res.status(404).json({ error: "stated_amount_not_found" });
+      return;
+    }
+    __resetRevenueHistoryCache();
+    res.status(204).send();
+  } catch (error) {
+    statedAmountFailure(error, res);
   }
 });
 

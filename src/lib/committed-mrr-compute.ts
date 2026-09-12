@@ -48,13 +48,33 @@ export interface CommittedMrrHistory {
  * period's point = the live `currentMrrUsd` (reconciles with the accounts audit). Periods with no real
  * snapshot are OMITTED (no fabrication). Growth is vs the previous emitted bucket. Pure.
  */
-export function bucketizeCommitted(
+export interface CommittedPoint {
+  /** Committed MRR in force for the period, USD. */
+  mrrUsd: number;
+  /**
+   * The UTC day this point was READ AS OF — the date of the last snapshot in the period, or today for
+   * the current (in-progress) period. Anything computed ALONGSIDE a committed point (the agency /
+   * self-serve split) must use this SAME date, or the two series would describe two different moments
+   * and stop reconciling.
+   */
+  referenceDate: string;
+}
+
+/**
+ * The committed point per emitted period, keyed on `periodStart`: the LAST snapshot in the period (its
+ * end-of-period run-rate), except the CURRENT period which takes the live `currentMrrUsd` so the newest
+ * point reconciles exactly with the accounts audit. A period with NO real snapshot is ABSENT from the
+ * map — never a fabricated or carried-forward point. Shared by the committed series and the
+ * agency/self-serve split so the two emit the SAME periods against the SAME dates. Pure.
+ */
+export function committedPointsByPeriod(
   snapshots: Array<{ date: string; mrrUsd: number }>,
   buckets: Array<{ period: string; periodStart: string }>,
   g: "week" | "month",
   currentPeriodStart: string,
   currentMrrUsd: number,
-): CommittedMrrBucket[] {
+  todayIso: string,
+): Map<string, CommittedPoint> {
   // Last snapshot (by date) per period → its end-of-period run-rate.
   const lastByPeriod = new Map<string, { date: string; mrrUsd: number }>();
   for (const s of snapshots) {
@@ -63,17 +83,38 @@ export function bucketizeCommitted(
     if (!prev || s.date > prev.date) lastByPeriod.set(ps, s);
   }
 
+  const points = new Map<string, CommittedPoint>();
+  for (const b of buckets) {
+    if (b.periodStart === currentPeriodStart) {
+      points.set(b.periodStart, { mrrUsd: currentMrrUsd, referenceDate: todayIso }); // live run-rate — the reconciling point
+      continue;
+    }
+    const hit = lastByPeriod.get(b.periodStart);
+    if (hit) points.set(b.periodStart, { mrrUsd: hit.mrrUsd, referenceDate: hit.date });
+  }
+  return points;
+}
+
+/**
+ * Bucketize snapshots at a granularity: each period's point = the LAST snapshot in that period; the CURRENT
+ * period's point = the live `currentMrrUsd` (reconciles with the accounts audit). Periods with no real
+ * snapshot are OMITTED (no fabrication). Growth is vs the previous emitted bucket. Pure.
+ */
+export function bucketizeCommitted(
+  snapshots: Array<{ date: string; mrrUsd: number }>,
+  buckets: Array<{ period: string; periodStart: string }>,
+  g: "week" | "month",
+  currentPeriodStart: string,
+  currentMrrUsd: number,
+  todayIso: string = currentPeriodStart,
+): CommittedMrrBucket[] {
+  const points = committedPointsByPeriod(snapshots, buckets, g, currentPeriodStart, currentMrrUsd, todayIso);
+
   const emitted: CommittedMrrBucket[] = [];
   for (const b of buckets) {
-    let mrr: number | undefined;
-    if (b.periodStart === currentPeriodStart) {
-      mrr = currentMrrUsd; // live run-rate — the reconciling point
-    } else {
-      const hit = lastByPeriod.get(b.periodStart);
-      if (hit) mrr = hit.mrrUsd;
-    }
-    if (mrr === undefined) continue; // no real snapshot in this period → omit (only real recorded points)
-
+    const point = points.get(b.periodStart);
+    if (!point) continue; // no real snapshot in this period → omit (only real recorded points)
+    const mrr = point.mrrUsd;
     const prevMrr = emitted.length ? emitted[emitted.length - 1].mrrUsd : null;
     const growthPct = prevMrr !== null && prevMrr > 0 ? Math.round(((mrr - prevMrr) / prevMrr) * 1000) / 10 : null;
     emitted.push({ period: b.period, periodStart: b.periodStart, mrrUsd: usd2(mrr), arrUsd: usd2(mrr * ARR_MONTH_MULTIPLE), growthPct });
@@ -99,7 +140,7 @@ export function buildCommittedMrrHistory(
   return {
     currentMrrUsd: usd2(currentMrrUsd),
     currentArrUsd: usd2(currentMrrUsd * ARR_MONTH_MULTIPLE),
-    monthly: bucketizeCommitted(snapshots, monthlyBuckets, "month", bucketOf(todayIso, "month").periodStart, currentMrrUsd),
-    weekly: bucketizeCommitted(snapshots, weeklyBuckets, "week", bucketOf(todayIso, "week").periodStart, currentMrrUsd),
+    monthly: bucketizeCommitted(snapshots, monthlyBuckets, "month", bucketOf(todayIso, "month").periodStart, currentMrrUsd, todayIso),
+    weekly: bucketizeCommitted(snapshots, weeklyBuckets, "week", bucketOf(todayIso, "week").periodStart, currentMrrUsd, todayIso),
   };
 }
