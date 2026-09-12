@@ -14216,19 +14216,31 @@
                     },
                     "selfServeMrrUsd": {
                       "type": "number",
-                      "description": "The fleet's recorded committed run-rate for this period MINUS the agency side's committed contribution on referenceDate, USD."
+                      "nullable": true,
+                      "description": "The fleet's recorded committed run-rate for this period MINUS the agency side's committed contribution on referenceDate, USD. null = WE COULD NOT MEASURE THIS (see selfServeUnmeasurableReason) — never a 0 and never clamped."
                     },
                     "selfServeArrUsd": {
                       "type": "number",
-                      "description": "Self-serve ARR = selfServeMrrUsd × 12, USD."
+                      "nullable": true,
+                      "description": "Self-serve ARR = selfServeMrrUsd × 12, USD. null whenever the MRR is."
                     },
                     "totalMrrUsd": {
                       "type": "number",
-                      "description": "agencyMrrUsd + selfServeMrrUsd. The two halves are disjoint by construction, so they always add to this."
+                      "nullable": true,
+                      "description": "agencyMrrUsd + selfServeMrrUsd. The two halves are disjoint by construction, so they always add to this. null whenever the self-serve half is."
                     },
                     "totalArrUsd": {
                       "type": "number",
-                      "description": "Total ARR = totalMrrUsd × 12, USD."
+                      "nullable": true,
+                      "description": "Total ARR = totalMrrUsd × 12, USD. null whenever the MRR is."
+                    },
+                    "selfServeUnmeasurableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "agency_contribution_exceeds_recorded_total"
+                      ],
+                      "description": "Why the self-serve half could not be measured for this period, or null when it was. The only case — agency_contribution_exceeds_recorded_total — is the replayed agency budget coming out LARGER than the committed figure it is subtracted from, because the two were recorded on different bases: since 2026-08-27 the snapshot records the RUNNING daily budget while billing's timeline records the CONFIGURED one, so for a brand with money posted against a stopped campaign the replay is an UPPER BOUND on its contribution rather than the contribution. The remainder is then negative, and a negative monthly run-rate is not a slightly-low figure, it is an incoherent one — so it is reported as unmeasurable beside the two real numbers (agencyBudgetMrrUsd, committedMrrUsd) that say exactly why. The LIVE figures cannot fall into this case: they subtract a SUBSET of the very sum the live committed MRR is built from."
                     },
                     "agencyBudgetMrrUsd": {
                       "type": "number",
@@ -14241,7 +14253,7 @@
                     "growthPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Point-over-point growth of totalMrrUsd vs the previous EMITTED bucket, percent (1-decimal). null on the first bucket or a 0 base."
+                      "description": "Point-over-point growth of totalMrrUsd vs the previous MEASURED bucket, percent (1-decimal). null on the first bucket, a 0 base, or an unmeasurable period — growth is never compared across a gap."
                     }
                   },
                   "required": [
@@ -14254,12 +14266,13 @@
                     "selfServeArrUsd",
                     "totalMrrUsd",
                     "totalArrUsd",
+                    "selfServeUnmeasurableReason",
                     "agencyBudgetMrrUsd",
                     "committedMrrUsd",
                     "growthPct"
                   ]
                 },
-                "description": "The split by calendar month (oldest→newest), over exactly the periods the committed series emits — a month with no recorded snapshot is omitted, never fabricated."
+                "description": "The split by calendar month (oldest→newest), over exactly the periods the committed series emits — a month with no recorded snapshot is omitted, never fabricated; a month whose two sides were recorded on different bases reports a null self-serve half with its reason."
               },
               "weekly": {
                 "type": "array",
@@ -14288,19 +14301,31 @@
                     },
                     "selfServeMrrUsd": {
                       "type": "number",
-                      "description": "The fleet's recorded committed run-rate for this period MINUS the agency side's committed contribution on referenceDate, USD."
+                      "nullable": true,
+                      "description": "The fleet's recorded committed run-rate for this period MINUS the agency side's committed contribution on referenceDate, USD. null = WE COULD NOT MEASURE THIS (see selfServeUnmeasurableReason) — never a 0 and never clamped."
                     },
                     "selfServeArrUsd": {
                       "type": "number",
-                      "description": "Self-serve ARR = selfServeMrrUsd × 12, USD."
+                      "nullable": true,
+                      "description": "Self-serve ARR = selfServeMrrUsd × 12, USD. null whenever the MRR is."
                     },
                     "totalMrrUsd": {
                       "type": "number",
-                      "description": "agencyMrrUsd + selfServeMrrUsd. The two halves are disjoint by construction, so they always add to this."
+                      "nullable": true,
+                      "description": "agencyMrrUsd + selfServeMrrUsd. The two halves are disjoint by construction, so they always add to this. null whenever the self-serve half is."
                     },
                     "totalArrUsd": {
                       "type": "number",
-                      "description": "Total ARR = totalMrrUsd × 12, USD."
+                      "nullable": true,
+                      "description": "Total ARR = totalMrrUsd × 12, USD. null whenever the MRR is."
+                    },
+                    "selfServeUnmeasurableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "agency_contribution_exceeds_recorded_total"
+                      ],
+                      "description": "Why the self-serve half could not be measured for this period, or null when it was. The only case — agency_contribution_exceeds_recorded_total — is the replayed agency budget coming out LARGER than the committed figure it is subtracted from, because the two were recorded on different bases: since 2026-08-27 the snapshot records the RUNNING daily budget while billing's timeline records the CONFIGURED one, so for a brand with money posted against a stopped campaign the replay is an UPPER BOUND on its contribution rather than the contribution. The remainder is then negative, and a negative monthly run-rate is not a slightly-low figure, it is an incoherent one — so it is reported as unmeasurable beside the two real numbers (agencyBudgetMrrUsd, committedMrrUsd) that say exactly why. The LIVE figures cannot fall into this case: they subtract a SUBSET of the very sum the live committed MRR is built from."
                     },
                     "agencyBudgetMrrUsd": {
                       "type": "number",
@@ -14313,7 +14338,7 @@
                     "growthPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Point-over-point growth of totalMrrUsd vs the previous EMITTED bucket, percent (1-decimal). null on the first bucket or a 0 base."
+                      "description": "Point-over-point growth of totalMrrUsd vs the previous MEASURED bucket, percent (1-decimal). null on the first bucket, a 0 base, or an unmeasurable period — growth is never compared across a gap."
                     }
                   },
                   "required": [
@@ -14326,6 +14351,7 @@
                     "selfServeArrUsd",
                     "totalMrrUsd",
                     "totalArrUsd",
+                    "selfServeUnmeasurableReason",
                     "agencyBudgetMrrUsd",
                     "committedMrrUsd",
                     "growthPct"
