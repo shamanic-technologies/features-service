@@ -113,3 +113,55 @@ export async function fetchOrgDailySpendCents(
   }
   return dailyCents;
 }
+
+/**
+ * The FIRST UTC day one (org, brand) ever billed cold-email spend, or null when it never has.
+ *
+ * The floor for a stated monthly amount that carries NO start date: "in force since that brand's first
+ * day of billed spend" needs that day, and only the billed-spend ledger holds it. Same producer read as
+ * the per-org series above, narrowed to one brand — runs matches `brandId` against the run's brand set,
+ * so this is ONE brand per call (never a comma-separated list). The GROSS field is enough here: we want
+ * the DAY a brand started being billed, and whether the amount was discounted cannot move that day.
+ *
+ * Fails loud on any transport / non-OK / malformed error; the caller decides whether to degrade.
+ */
+export async function fetchBrandFirstBilledDay(
+  orgId: string,
+  brandId: string,
+  coldEmailSlugsCsv: string,
+  startedAfterIso: string,
+): Promise<string | null> {
+  const { url, apiKey } = runsConfig();
+  const params = new URLSearchParams({
+    interval: "day",
+    featureSlugs: coldEmailSlugsCsv,
+    orgId,
+    brandId,
+    startedAfter: startedAfterIso,
+    tz: "UTC",
+  });
+
+  const response = await fetchWithRetry(`${url}/v1/stats/public/costs/timeseries?${params}`, {
+    headers: { "x-api-key": apiKey },
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`[features-service] runs-service costs/timeseries (first billed day) failed (${response.status}): ${body}`);
+  }
+  const data = (await response.json()) as { buckets?: RunsTimeseriesBucket[] };
+  if (!Array.isArray(data.buckets)) {
+    throw new Error("[features-service] runs-service costs/timeseries returned no buckets array");
+  }
+
+  let earliest: string | null = null;
+  for (const b of data.buckets) {
+    if (typeof b.period !== "string") {
+      throw new Error("[features-service] runs-service costs/timeseries bucket missing period");
+    }
+    const { cents } = selectBucketActualCents(b);
+    if (cents <= 0) continue;
+    const day = b.period.slice(0, 10);
+    if (earliest === null || day < earliest) earliest = day;
+  }
+  return earliest;
+}

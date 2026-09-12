@@ -92,6 +92,13 @@
       "when": 1787356800000,
       "tag": "0012_fleet_funnel_return_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1787443200000,
+      "tag": "0013_stated_monthly_amounts",
+      "breakpoints": true
     }
   ]
 }

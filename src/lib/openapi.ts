@@ -2285,6 +2285,49 @@ const nrrHistorySchema = z.object({
   weekly: z.array(nrrBucketSchema).describe("Net revenue retention by ISO week (oldest→newest), one point per bucket of the weekly revenue series."),
 });
 
+const mrrSplitBucketSchema = z.object({
+  period: z.string().describe("Bucket label — `YYYY-MM` (monthly) or `YYYY-Www` ISO week (weekly)."),
+  periodStart: z.string().describe("UTC start date of the bucket (`YYYY-MM-DD`): the month's 1st or the ISO week's Monday. For charting."),
+  referenceDate: z.string().describe("The UTC day this point was read AS OF — the last recorded snapshot in the period, or today for the current (in-progress) period. Every figure on the row is measured on this same date."),
+  agencyMrrUsd: z.number().describe("Σ of the STATED monthly amounts in force on referenceDate, USD. NEVER those brands' daily budget × 30 — that substitution is the whole reason this split exists."),
+  agencyArrUsd: z.number().describe("Agency ARR = agencyMrrUsd × 12, USD."),
+  selfServeMrrUsd: z.number().describe("The fleet's recorded committed run-rate for this period MINUS the agency side's committed contribution on referenceDate, USD."),
+  selfServeArrUsd: z.number().describe("Self-serve ARR = selfServeMrrUsd × 12, USD."),
+  totalMrrUsd: z.number().describe("agencyMrrUsd + selfServeMrrUsd. The two halves are disjoint by construction, so they always add to this."),
+  totalArrUsd: z.number().describe("Total ARR = totalMrrUsd × 12, USD."),
+  agencyBudgetMrrUsd: z.number().describe("What the agency side's daily budget × 30 came to on referenceDate — exactly how much left the self-serve half. Served so an agency brand nobody has stated an amount for is VISIBLE: when this exceeds agencyMrrUsd, that difference is in neither half and totalMrrUsd sits below committedMrrUsd."),
+  committedMrrUsd: z.number().describe("The fleet committed run-rate this period was split from (= selfServeMrrUsd + agencyBudgetMrrUsd), USD."),
+  growthPct: z.number().nullable().describe("Point-over-point growth of totalMrrUsd vs the previous EMITTED bucket, percent (1-decimal). null on the first bucket or a 0 base."),
+});
+
+const mrrSplitSchema = z.object({
+  currentAgencyMrrUsd: z.number().describe("LIVE agency MRR — Σ of the stated amounts in force today, USD."),
+  currentAgencyArrUsd: z.number().describe("LIVE agency ARR = currentAgencyMrrUsd × 12, USD."),
+  currentSelfServeMrrUsd: z.number().describe("LIVE self-serve MRR — the accounts-audit fleet MRR minus the agency side's ACTIVE running budget × 30, USD. With no stated amounts on record this equals currentMrrUsd exactly."),
+  currentSelfServeArrUsd: z.number().describe("LIVE self-serve ARR = currentSelfServeMrrUsd × 12, USD."),
+  currentTotalMrrUsd: z.number().describe("LIVE total = currentAgencyMrrUsd + currentSelfServeMrrUsd, USD."),
+  currentTotalArrUsd: z.number().describe("LIVE total ARR = currentTotalMrrUsd × 12, USD."),
+  currentAgencyBudgetMrrUsd: z.number().describe("What the agency side contributed to the live committed MRR (its ACTIVE pairs' running daily budget × 30), USD — the figure subtracted from currentMrrUsd to get the self-serve half."),
+  agencyOrgIds: z.array(z.string()).describe("The orgs the stated rows identify as agency, sorted. DERIVED — an org carrying at least one stated amount, whatever its date range. No org id lives in code, so a second agency needs no change."),
+  agencyPairKeys: z.array(z.string()).describe("Every (org, brand) pair excluded from the self-serve half, as `orgId::brandId`, sorted. Taken over the agency orgs' WHOLE brand set, not only their stated brands: a brand funded under an agency org is agency money whether or not anyone has stated an amount for it."),
+  monthly: z.array(mrrSplitBucketSchema).describe("The split by calendar month (oldest→newest), over exactly the periods the committed series emits — a month with no recorded snapshot is omitted, never fabricated."),
+  weekly: z.array(mrrSplitBucketSchema).describe("The split by ISO week (oldest→newest). Same period sourcing as monthly."),
+});
+
+const statedAmountSchema = z.object({
+  id: z.string().uuid(),
+  orgId: z.string().uuid().describe("The org that funds this brand — the pair's first half. An org with any stated amount is on the AGENCY side of the MRR split."),
+  brandId: z.string().uuid().describe("The brand the stated amount is about — the pair's second half."),
+  amountUsd: z.number().describe("What a person says this brand is worth PER MONTH, USD (2-decimal). A stated 0 is a real answer."),
+  startDate: z.string().nullable().describe("First UTC day in force (`YYYY-MM-DD`, INCLUSIVE), or null = in force since that brand's FIRST DAY OF BILLED SPEND (never 'since the beginning of time')."),
+  endDate: z.string().nullable().describe("Last UTC day in force (`YYYY-MM-DD`, INCLUSIVE), or null = still running."),
+  note: z.string().nullable().describe("Free-text note from whoever stated it (why this figure). Never read by any computation."),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const statedAmountRef = registry.register("StatedMonthlyAmount", statedAmountSchema);
+
 const revenueHistoryResponseSchema = z.object({
   totalRevenueUsd: z.number().describe("Cumulative NET realized revenue since inception (all orgs, all time; post per-org usage discount), in USD (2-decimal)."),
   currentMrrUsd: z.number().describe("LIVE committed MRR — fleet active daily budget × 30 (UNDISCOUNTED budget projection). Matches the mrrUsd the admin page renders from GET /internal/stats/accounts."),
@@ -2299,6 +2342,17 @@ const revenueHistoryResponseSchema = z.object({
       "period (the cohort is fixed at the start of the period; including new logos would turn this into a growth rate). Same NET realized cold-email revenue basis " +
       "as the series above, so the two reconcile. Aggregate method (all existing customers pooled), not a per-acquisition-cohort curve. Benchmarks: >100% the base " +
       "grows on its own, >120% is where public SaaS trades at a premium, <100% the base is shrinking. No TTM figure — the first billed day is March 2026.",
+  ),
+  mrrSplit: mrrSplitSchema.nullable().describe(
+    "THE SAME MONTHLY RUN-RATE, SPLIT INTO ITS TWO HONEST HALVES — an AGENCY half worth what a human STATED it is worth per month " +
+      "(POST /internal/stated-monthly-amounts), and a SELF-SERVE (SaaS) half worth its daily budget × 30 — plus their total, live and over the same " +
+      "monthly / weekly history the committed series covers. An agency hands over cash at its own discretion and somebody then DECIDES how it is split " +
+      "into daily budgets across its brands, so budget × 30 answers how the money was spread, not what the customer is worth; the self-serve half is " +
+      "the recorded committed run-rate MINUS the agency side's committed contribution on the same date (their budget still belongs to the fleet's spend, " +
+      "it simply is not their MRR). WHICH ORGS ARE AGENCY IS DERIVED from the stated rows — an org carrying at least one stated amount — never hardcoded. " +
+      "ADDITIVE: committedMrr above is unchanged and still carries the undivided fleet figure, and with NO stated amounts on record the split is the whole " +
+      "fleet on the self-serve side with zero agency, byte-for-byte the numbers served today. null = we could not read this (the stated-amount store or " +
+      "billing's budget timeline was unreachable), never a zero that would say the agency is worth nothing.",
   ),
   asOf: z.string().describe("ISO timestamp the series was computed."),
 });
@@ -2342,6 +2396,118 @@ registry.registerPath({
 });
 
 // ── GET /internal/stats/active-users-by-user ───────────────────────────────────
+
+// ── /internal/stated-monthly-amounts (CRUD) ────────────────────────────────────
+
+const STATED_AMOUNT_DESCRIPTION =
+  "A staff-writable record of what a HUMAN says a brand is worth PER MONTH, over a date range. It exists because " +
+  "budget × 30 is only the right answer for a SELF-SERVE customer, who pays through the product: an AGENCY hands " +
+  "over cash at its own discretion and somebody then DECIDES how it is split into daily budgets across its brands, " +
+  "so for those brands a daily budget is an ALLOCATION decision and the only true monthly figure is the stated one. " +
+  "Rows are keyed on the (org, brand) PAIR, never the brand alone — budgets are keyed that way and one brand can be " +
+  "mapped under two orgs. BOTH ENDS ARE OPTIONAL and each absence means something specific: no startDate = in force " +
+  "since that brand's FIRST DAY OF BILLED SPEND; no endDate = still running; both bounds INCLUSIVE. A brand may carry " +
+  "SEVERAL rows over time as the amount changes, but two rows that overlap on a single day for one pair are REFUSED " +
+  "(409 stated_amount_conflict, with a message naming the row it collided with) — two answers for one brand on one day " +
+  "is exactly the bug this store exists to avoid. WHICH ORGS ARE 'AGENCY' IS DERIVED from these rows (an org carrying at " +
+  "least one), so no org id lives in code and a second agency needs no change. Consumed by GET /internal/stats/revenue's " +
+  "mrrSplit. api-key only; staff-gated at api-service.";
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/stated-monthly-amounts",
+  summary: "List stated monthly amounts (internal, api-key; staff-gated at api-service)",
+  description: `Every stated monthly amount on record, oldest range first, optionally narrowed to one org and/or one brand. ${STATED_AMOUNT_DESCRIPTION}`,
+  tags: ["Internal"],
+  request: {
+    query: z.object({
+      orgId: z.string().uuid().optional().describe("Narrow to one org."),
+      brandId: z.string().uuid().optional().describe("Narrow to one brand."),
+    }),
+  },
+  responses: {
+    200: {
+      description: "The stated monthly amounts.",
+      content: { "application/json": { schema: z.object({ statedAmounts: z.array(statedAmountRef) }) } },
+    },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/stated-monthly-amounts",
+  summary: "State what a brand is worth per month (internal, api-key; staff-gated at api-service)",
+  description: STATED_AMOUNT_DESCRIPTION,
+  tags: ["Internal"],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            orgId: z.string().uuid().describe("The org that funds this brand. Required — the row is keyed on the pair."),
+            brandId: z.string().uuid().describe("The brand the amount is about. Required — the row is keyed on the pair."),
+            amountUsd: z.number().describe("What this brand is worth per month, USD. Zero or more; a stated 0 is a real answer."),
+            startDate: z.string().nullable().optional().describe("First UTC day in force (`YYYY-MM-DD`, inclusive). Omit or null = since the brand's first billed day."),
+            endDate: z.string().nullable().optional().describe("Last UTC day in force (`YYYY-MM-DD`, inclusive). Omit or null = still running."),
+            note: z.string().nullable().optional().describe("Why this figure. Never read by any computation."),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: { description: "Created.", content: { "application/json": { schema: z.object({ statedAmount: statedAmountRef }) } } },
+    400: { description: "orgId and brandId are required." },
+    409: {
+      description:
+        "stated_amount_conflict — the range is incoherent (start after end, or a day not formatted YYYY-MM-DD), or it overlaps a range already " +
+        "recorded for this (org, brand). The `reason` names the colliding row and its range so the person can move it.",
+    },
+  },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/internal/stated-monthly-amounts/{id}",
+  summary: "Edit a stated monthly amount (internal, api-key; staff-gated at api-service)",
+  description:
+    "Update one stated amount in place. An OMITTED field keeps its stored value; an explicit null on startDate or endDate OPENS that end, which is a " +
+    `real edit rather than an omission. The resulting range is re-checked against every sibling row of the same pair, excluding itself. ${STATED_AMOUNT_DESCRIPTION}`,
+  tags: ["Internal"],
+  request: {
+    params: z.object({ id: z.string().uuid() }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            amountUsd: z.number().optional(),
+            startDate: z.string().nullable().optional(),
+            endDate: z.string().nullable().optional(),
+            note: z.string().nullable().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: { description: "Updated.", content: { "application/json": { schema: z.object({ statedAmount: statedAmountRef }) } } },
+    404: { description: "stated_amount_not_found." },
+    409: { description: "stated_amount_conflict — incoherent or overlapping range; `reason` names the collision." },
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/internal/stated-monthly-amounts/{id}",
+  summary: "Delete a stated monthly amount (internal, api-key; staff-gated at api-service)",
+  description: `Remove one stated amount. The brand's worth reverts to whatever other row covers the day, or to the self-serve treatment if none does. ${STATED_AMOUNT_DESCRIPTION}`,
+  tags: ["Internal"],
+  request: { params: z.object({ id: z.string().uuid() }) },
+  responses: {
+    204: { description: "Deleted." },
+    404: { description: "stated_amount_not_found." },
+  },
+});
 
 const activeUserBrandSchema = z.object({
   brandId: z.string().describe("Brand UUID."),
