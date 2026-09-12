@@ -51,12 +51,24 @@ what the agency is actually worth.
 - **BOTH SERIES EMIT THE SAME PERIODS AGAINST THE SAME DATES, from ONE shared
   `committedPointsByPeriod`** — a period with no recorded snapshot is OMITTED by both, never fabricated,
   and the split can never come to describe a different moment than the committed figure beside it.
-- **THE MEASUREMENT CAVEAT IS STATED, not hidden.** Since 2026-08-27 the snapshot records the RUNNING
-  daily budget while billing's timeline records the CONFIGURED one; for a brand whose campaign is ongoing
-  the two agree (every funded agency brand today), and for money posted against a stopped campaign the
-  replayed contribution is the larger, so the self-serve half reads slightly LOW rather than high. The
-  LIVE figures have no such gap: they subtract the accounts audit's own RUNNING budget for the same
-  ACTIVE pairs, so today's self-serve cancels against today's committed MRR to the cent.
+- **A PERIOD WHOSE TWO SIDES WERE RECORDED ON DIFFERENT BASES ANSWERS `null`, NEVER A NUMBER AND NEVER A
+  CLAMP.** Since 2026-08-27 the snapshot records the RUNNING daily budget while billing's timeline
+  records the CONFIGURED one, so for a brand with money posted against a stopped campaign the replay is
+  an UPPER BOUND on its contribution rather than the contribution. Usually the gap is small and the
+  subtraction still describes the SaaS business; when the replayed agency contribution EXCEEDS the
+  committed figure it comes out of, the remainder is NEGATIVE, and a negative monthly run-rate is not a
+  slightly-low number but an incoherent one. Measured in prod the day this shipped: August's snapshot is
+  **$87/day RUNNING** (the 2026-08-27 cutover) against **$132/day of agency CONFIGURED** budget, i.e. a
+  self-serve half of **−$720/month**. That period now reports `selfServeMrrUsd: null` +
+  `selfServeUnmeasurableReason: "agency_contribution_exceeds_recorded_total"`, beside the two real
+  figures (`agencyBudgetMrrUsd`, `committedMrrUsd`) that say exactly why, and growth skips it rather than
+  comparing across the gap. **Do NOT "fix" this by clamping at 0** — that prints a self-serve business
+  the evidence does not support, which is the same fabrication the whole file refuses everywhere else.
+- **THE LIVE FIGURES CANNOT FALL INTO THAT CASE**, so they are never null: they subtract the accounts
+  audit's own RUNNING budget for the same ACTIVE pairs — a SUBSET of the very sum the live committed MRR
+  is built from — so the agency share can never exceed the total and today's self-serve cancels to the
+  cent. Verified in prod 2026-09-12: $5,820 committed, $3,960 agency budget, $1,860 self-serve, $5,500
+  stated agency, $7,360 total; deleting the stated rows restored $5,820 / $0 / $5,820 exactly.
 - **ADDITIVE, AND THE REGRESSION GATE IS THAT NOTHING MOVES UNTIL SOMEBODY STATES SOMETHING.** The
   existing `committedMrr`, the realized-revenue series, the NRR series and every cash figure are
   untouched. With ZERO stated rows the split issues **zero extra requests**, the self-serve figure equals

@@ -2291,13 +2291,24 @@ const mrrSplitBucketSchema = z.object({
   referenceDate: z.string().describe("The UTC day this point was read AS OF — the last recorded snapshot in the period, or today for the current (in-progress) period. Every figure on the row is measured on this same date."),
   agencyMrrUsd: z.number().describe("Σ of the STATED monthly amounts in force on referenceDate, USD. NEVER those brands' daily budget × 30 — that substitution is the whole reason this split exists."),
   agencyArrUsd: z.number().describe("Agency ARR = agencyMrrUsd × 12, USD."),
-  selfServeMrrUsd: z.number().describe("The fleet's recorded committed run-rate for this period MINUS the agency side's committed contribution on referenceDate, USD."),
-  selfServeArrUsd: z.number().describe("Self-serve ARR = selfServeMrrUsd × 12, USD."),
-  totalMrrUsd: z.number().describe("agencyMrrUsd + selfServeMrrUsd. The two halves are disjoint by construction, so they always add to this."),
-  totalArrUsd: z.number().describe("Total ARR = totalMrrUsd × 12, USD."),
+  selfServeMrrUsd: z.number().nullable().describe("The fleet's recorded committed run-rate for this period MINUS the agency side's committed contribution on referenceDate, USD. null = WE COULD NOT MEASURE THIS (see selfServeUnmeasurableReason) — never a 0 and never clamped."),
+  selfServeArrUsd: z.number().nullable().describe("Self-serve ARR = selfServeMrrUsd × 12, USD. null whenever the MRR is."),
+  totalMrrUsd: z.number().nullable().describe("agencyMrrUsd + selfServeMrrUsd. The two halves are disjoint by construction, so they always add to this. null whenever the self-serve half is."),
+  totalArrUsd: z.number().nullable().describe("Total ARR = totalMrrUsd × 12, USD. null whenever the MRR is."),
+  selfServeUnmeasurableReason: z
+    .enum(["agency_contribution_exceeds_recorded_total"])
+    .nullable()
+    .describe(
+      "Why the self-serve half could not be measured for this period, or null when it was. The only case — agency_contribution_exceeds_recorded_total — is the replayed agency " +
+        "budget coming out LARGER than the committed figure it is subtracted from, because the two were recorded on different bases: since 2026-08-27 the snapshot records the " +
+        "RUNNING daily budget while billing's timeline records the CONFIGURED one, so for a brand with money posted against a stopped campaign the replay is an UPPER BOUND on " +
+        "its contribution rather than the contribution. The remainder is then negative, and a negative monthly run-rate is not a slightly-low figure, it is an incoherent one — " +
+        "so it is reported as unmeasurable beside the two real numbers (agencyBudgetMrrUsd, committedMrrUsd) that say exactly why. The LIVE figures cannot fall into this case: " +
+        "they subtract a SUBSET of the very sum the live committed MRR is built from.",
+    ),
   agencyBudgetMrrUsd: z.number().describe("What the agency side's daily budget × 30 came to on referenceDate — exactly how much left the self-serve half. Served so an agency brand nobody has stated an amount for is VISIBLE: when this exceeds agencyMrrUsd, that difference is in neither half and totalMrrUsd sits below committedMrrUsd."),
   committedMrrUsd: z.number().describe("The fleet committed run-rate this period was split from (= selfServeMrrUsd + agencyBudgetMrrUsd), USD."),
-  growthPct: z.number().nullable().describe("Point-over-point growth of totalMrrUsd vs the previous EMITTED bucket, percent (1-decimal). null on the first bucket or a 0 base."),
+  growthPct: z.number().nullable().describe("Point-over-point growth of totalMrrUsd vs the previous MEASURED bucket, percent (1-decimal). null on the first bucket, a 0 base, or an unmeasurable period — growth is never compared across a gap."),
 });
 
 const mrrSplitSchema = z.object({
@@ -2310,7 +2321,7 @@ const mrrSplitSchema = z.object({
   currentAgencyBudgetMrrUsd: z.number().describe("What the agency side contributed to the live committed MRR (its ACTIVE pairs' running daily budget × 30), USD — the figure subtracted from currentMrrUsd to get the self-serve half."),
   agencyOrgIds: z.array(z.string()).describe("The orgs the stated rows identify as agency, sorted. DERIVED — an org carrying at least one stated amount, whatever its date range. No org id lives in code, so a second agency needs no change."),
   agencyPairKeys: z.array(z.string()).describe("Every (org, brand) pair excluded from the self-serve half, as `orgId::brandId`, sorted. Taken over the agency orgs' WHOLE brand set, not only their stated brands: a brand funded under an agency org is agency money whether or not anyone has stated an amount for it."),
-  monthly: z.array(mrrSplitBucketSchema).describe("The split by calendar month (oldest→newest), over exactly the periods the committed series emits — a month with no recorded snapshot is omitted, never fabricated."),
+  monthly: z.array(mrrSplitBucketSchema).describe("The split by calendar month (oldest→newest), over exactly the periods the committed series emits — a month with no recorded snapshot is omitted, never fabricated; a month whose two sides were recorded on different bases reports a null self-serve half with its reason."),
   weekly: z.array(mrrSplitBucketSchema).describe("The split by ISO week (oldest→newest). Same period sourcing as monthly."),
 });
 

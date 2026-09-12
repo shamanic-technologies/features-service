@@ -32,14 +32,24 @@
  * agency side's budget on any recorded day is readable. A day BEFORE that pair's first timeline entry
  * contributes 0 — we have no record of a budget then, and asserting one would be fabrication.
  *
- * THE ONE MEASUREMENT CAVEAT, stated rather than hidden: since 2026-08-27 the fleet snapshot records
- * the RUNNING daily budget (money behind an ongoing campaign) while billing's timeline records the
- * CONFIGURED one. For a brand whose campaign is ongoing the two agree, which is the case for every
- * funded agency brand today; for a brand with money posted against a stopped campaign the replayed
- * contribution is the larger of the two, so the self-serve half reads slightly low rather than
- * slightly high. The LIVE figures have no such gap — they subtract the accounts audit's own RUNNING
- * budget for the same active pairs, so today's self-serve cancels against today's committed MRR to
- * the cent.
+ * A PERIOD WHOSE TWO SIDES WERE MEASURED ON DIFFERENT BASES REPORTS `null`, NEVER A NUMBER. Since
+ * 2026-08-27 the fleet snapshot records the RUNNING daily budget (money behind an ongoing campaign)
+ * while billing's timeline records the CONFIGURED one, so for a brand with money posted against a
+ * stopped campaign the replay is an UPPER BOUND on what that brand contributed rather than the
+ * contribution itself. Usually the gap is small and the subtraction still describes the SaaS business.
+ * When it is not — when the replayed agency contribution EXCEEDS the committed figure it is being
+ * subtracted from — the difference is not a quantity at all: it comes out NEGATIVE, and a negative
+ * monthly run-rate on a staff page is an internally-incoherent output, not a slightly-low one.
+ * Measured in prod on the day this shipped: August's recorded snapshot is $87/day RUNNING (the
+ * 2026-08-27 cutover) against $132/day of agency CONFIGURED budget. So that period answers
+ * `selfServeMrrUsd: null` with `selfServeUnmeasurableReason: "agency_contribution_exceeds_recorded_total"`,
+ * beside the two real figures (`agencyBudgetMrrUsd`, `committedMrrUsd`) that say exactly why — the same
+ * "we could not measure this" doctrine every other figure in this service follows, never a clamp at 0
+ * that would print a self-serve business the evidence does not support.
+ *
+ * THE LIVE FIGURES CANNOT FALL INTO THAT CASE. They subtract the accounts audit's own RUNNING budget
+ * for the same ACTIVE pairs — a subset of the very sum the live committed MRR is built from — so the
+ * agency share can never exceed the total and today's self-serve cancels to the cent.
  */
 import { bucketOf, enumerateBuckets } from "./active-users-compute.js";
 import { committedPointsByPeriod } from "./committed-mrr-compute.js";
@@ -69,14 +79,24 @@ export interface MrrSplitBucket {
   agencyMrrUsd: number;
   /** Agency ARR = agencyMrrUsd × 12, USD. */
   agencyArrUsd: number;
-  /** The fleet's committed run-rate for the period MINUS the agency side's committed contribution, USD. */
-  selfServeMrrUsd: number;
-  /** Self-serve ARR = selfServeMrrUsd × 12, USD. */
-  selfServeArrUsd: number;
-  /** agencyMrrUsd + selfServeMrrUsd — the two halves are disjoint, so this is the honest fleet total. */
-  totalMrrUsd: number;
-  /** Total ARR = totalMrrUsd × 12, USD. */
-  totalArrUsd: number;
+  /**
+   * The fleet's committed run-rate for the period MINUS the agency side's committed contribution, USD.
+   * `null` = WE COULD NOT MEASURE THIS (see `selfServeUnmeasurableReason`), never a 0 or a clamp.
+   */
+  selfServeMrrUsd: number | null;
+  /** Self-serve ARR = selfServeMrrUsd × 12, USD. null whenever the MRR is. */
+  selfServeArrUsd: number | null;
+  /** agencyMrrUsd + selfServeMrrUsd — the two halves are disjoint, so this is the honest fleet total. null whenever the self-serve half is. */
+  totalMrrUsd: number | null;
+  /** Total ARR = totalMrrUsd × 12, USD. null whenever the MRR is. */
+  totalArrUsd: number | null;
+  /**
+   * Why the self-serve half could not be measured, or null when it was. The only case:
+   * `agency_contribution_exceeds_recorded_total` — the replayed agency budget is larger than the
+   * committed figure it is subtracted from, because the two were recorded on different bases (see the
+   * module header). The difference is not a quantity, so it is not served as one.
+   */
+  selfServeUnmeasurableReason: "agency_contribution_exceeds_recorded_total" | null;
   /**
    * What the agency side's BUDGET × 30 came to on `referenceDate` — i.e. exactly how much left the
    * self-serve half. Served so an unstated agency brand is visible: when this exceeds `agencyMrrUsd`,
@@ -85,7 +105,7 @@ export interface MrrSplitBucket {
   agencyBudgetMrrUsd: number;
   /** The fleet committed run-rate this period was split from (`selfServeMrrUsd + agencyBudgetMrrUsd`), USD. */
   committedMrrUsd: number;
-  /** Point-over-point growth of `totalMrrUsd` vs the previous EMITTED bucket, percent (1-decimal). null on the first or a 0 base. */
+  /** Point-over-point growth of `totalMrrUsd` vs the previous MEASURED bucket, percent (1-decimal). null on the first, a 0 base, or an unmeasurable period. */
   growthPct: number | null;
 }
 
@@ -233,11 +253,20 @@ function buildSeries(
       day === todayIso
         ? inputs.currentAgencyBudgetMrrUsd
         : agencyBudgetMrrOn(agencyPairKeys, inputs.budgetTimelines, day);
-    const selfServeMrr = point.mrrUsd - agencyBudgetMrr;
-    const totalMrr = agencyMrr + selfServeMrr;
+    // The two sides of this subtraction were recorded on different bases, so an agency contribution
+    // LARGER than the total it comes out of is not a small error — the remainder is negative, which is
+    // not a run-rate. Say we could not measure it rather than printing a number nothing supports.
+    const unmeasurable = agencyBudgetMrr > point.mrrUsd;
+    const selfServeMrr = unmeasurable ? null : point.mrrUsd - agencyBudgetMrr;
+    const totalMrr = selfServeMrr === null ? null : agencyMrr + selfServeMrr;
 
-    const prev = emitted.length ? emitted[emitted.length - 1].totalMrrUsd : null;
-    const growthPct = prev !== null && prev > 0 ? Math.round(((totalMrr - prev) / prev) * 1000) / 10 : null;
+    // Growth is measured against the previous MEASURED point — an unmeasurable period breaks the
+    // comparison rather than silently comparing across a gap.
+    const prevMeasured = [...emitted].reverse().find((e) => e.totalMrrUsd !== null)?.totalMrrUsd ?? null;
+    const growthPct =
+      totalMrr !== null && prevMeasured !== null && prevMeasured > 0
+        ? Math.round(((totalMrr - prevMeasured) / prevMeasured) * 1000) / 10
+        : null;
 
     emitted.push({
       period: b.period,
@@ -245,10 +274,11 @@ function buildSeries(
       referenceDate: day,
       agencyMrrUsd: usd2(agencyMrr),
       agencyArrUsd: usd2(agencyMrr * ARR_MONTH_MULTIPLE),
-      selfServeMrrUsd: usd2(selfServeMrr),
-      selfServeArrUsd: usd2(selfServeMrr * ARR_MONTH_MULTIPLE),
-      totalMrrUsd: usd2(totalMrr),
-      totalArrUsd: usd2(totalMrr * ARR_MONTH_MULTIPLE),
+      selfServeMrrUsd: selfServeMrr === null ? null : usd2(selfServeMrr),
+      selfServeArrUsd: selfServeMrr === null ? null : usd2(selfServeMrr * ARR_MONTH_MULTIPLE),
+      totalMrrUsd: totalMrr === null ? null : usd2(totalMrr),
+      totalArrUsd: totalMrr === null ? null : usd2(totalMrr * ARR_MONTH_MULTIPLE),
+      selfServeUnmeasurableReason: unmeasurable ? "agency_contribution_exceeds_recorded_total" : null,
       agencyBudgetMrrUsd: usd2(agencyBudgetMrr),
       committedMrrUsd: usd2(point.mrrUsd),
       growthPct,
