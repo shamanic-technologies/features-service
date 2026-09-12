@@ -20,6 +20,15 @@ import {
   matchFunnelLegKey,
   type FunnelLegDef,
 } from "../lib/funnel-legs.js";
+import {
+  bookedToAttendedRate,
+  grainLegOutcome,
+  legOutcomeTerms,
+  type GrainLegOutcome,
+  type LegOutcomeTerms,
+} from "../lib/leg-outcome.js";
+import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
+import { describeIdentity, type CampaignIdentityView } from "../lib/campaign-identity.js";
 import { DEFAULT_MAXIMIZE, MAXIMIZE_ERROR, parseMaximize, type Maximize } from "../lib/maximize.js";
 import { rankDeclaredFunnels } from "../lib/funnel-ranking.js";
 import {
@@ -33,6 +42,7 @@ import { buildWorkflowDynasties, aggregateAcrossDynasties } from "./public.js";
 import {
   fetchBrandWorkflowEvidence,
   fetchAudienceGrainEvidence,
+  fetchCampaignWorkflowEvidence,
   type WorkflowGrainEvidence,
   type AudienceGrainEvidence,
   type Identity,
@@ -59,7 +69,7 @@ export type GoalEcho = "meetingBooked" | "signup" | "websitePurchase" | "sales" 
 
 // ── Response shape (3-grain ladder + resolved pick) ──────────────────────────
 
-export type GrainName = "crossOrg" | "brand" | "audience";
+export type GrainName = "crossOrg" | "brand" | "campaign" | "audience";
 
 /** The three per-outcome unit costs of a grain — also the shape passed as the PARENT floor for the
  * next finer grain (crossOrg → brand → audience) via the projected cost-engine. */
@@ -84,6 +94,8 @@ interface GrainUnitCosts {
 const GRAIN_COST_BASIS: Record<GrainName, CostBasis> = {
   crossOrg: "incurred",
   brand: "charged",
+  // A campaign's money is the same customer's own billed money, one narrowing finer than the brand's.
+  campaign: "charged",
   audience: "charged",
 };
 
@@ -112,6 +124,17 @@ interface GrainBlock {
    * (a never-run couple) carries no block, i.e. a cold arm.
    */
   resolvedOutcomeCount: number | null;
+  /**
+   * WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP — present ⟺ the caller named a `?leg=`,
+   * absent on every funnel- or goal-keyed request so those bodies are byte-identical.
+   *
+   * Three figures, because a panel comparing grains needs all three and may derive none of them: what
+   * ONE outcome OF THE LEG costs here, how many of those outcomes this grain accounts for, and the
+   * spend behind them. `outcomeObserved` says whether that count was COUNTED (an entry leg, whose step
+   * IS the observed signal) or walked forward through the basis funnel's declared rates. A grain with
+   * no evidence carries no block at all; a rate the brand never declared reads null, never 0.
+   */
+  legOutcome?: GrainLegOutcome;
   projected: {
     costPerSignupUsd: number | null;
     costPerPaidClientUsd: number | null;
@@ -175,6 +198,22 @@ export interface ProjectionRow {
    * A row is never half-measured: the two states are what the row rests on, not how much it has.
    */
   measured: boolean;
+  /**
+   * THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the caller
+   * named a `?leg=`, so every existing body is byte-unchanged.
+   *
+   * It exists so NO consumer ever re-derives one. A dashboard ranking the subset it happens to display
+   * produces a second order, and the two disagree: measured in prod 2026-09-12, the workflow this
+   * service recommends sat 18th of 24 on a page that said the list was ranked the way we pick, because
+   * the page ranked one row per workflow while the recommendation was chosen over every row.
+   *
+   * So the rank is a property of the WORKFLOW, not of the row: every row of one dynasty carries the
+   * same number, and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION rather than by
+   * coincidence. It is a TOTAL order — no ties and no gaps — broken deterministically on the dynasty
+   * slug, and a workflow that has never run (the explore allowance) can never outrank one with
+   * measured evidence.
+   */
+  rank?: number;
 }
 
 /**
@@ -294,6 +333,15 @@ export interface WorkflowProjectionResponse {
    * request, so those bodies are byte-identical to what they have always been.
    */
   leg?: ProjectionLeg;
+  /**
+   * WHAT THE CAMPAIGN GRAIN ANSWERED FOR — present ⟺ the caller named a `?campaignId=`. The byte-same
+   * block `/revenue?campaignId=` and `/audience-stats` already carry, so the fleet speaks ONE
+   * vocabulary about one campaign: the figures are totalled over the whole IDENTITY (org × brand ×
+   * sales funnel × acquisition channel), never over the newest stored row of a campaign that has been
+   * running for weeks. A consumer must be able to SEE that the subject is the family rather than infer
+   * it from a number that moved.
+   */
+  campaignIdentity?: CampaignIdentityView;
   economics: EconomicsEcho | null;
   rows: ProjectionRow[];
   recommendedWorkflowDynastySlug: string | null;
@@ -570,6 +618,9 @@ function buildGrainBlock(
   formSubmissionGoal: boolean,
   parentUnitCosts: GrainUnitCosts | null = null,
   meetingChannel: MeetingChannel | null = null,
+  // Present ⟺ the caller named a `?leg=`: the grain's cost-per-outcome and outcome COUNT are then
+  // denominated in the LEG's own step rather than in the step its basis funnel is named after.
+  legTerms: LegOutcomeTerms | null = null,
 ): GrainBlock {
   const spentUsd = evidence.totalCostInUsdCents / 100;
   const observedContacted = evidence.contacted;
@@ -608,16 +659,33 @@ function buildGrainBlock(
     };
   }
 
-  // Goal-resolved outcome count from THIS grain's OWN observed evidence (no floor). Null at cold start
-  // (no economics) — mirrors the projected costs' null gate.
-  const resolvedOutcomeCount = econ
-    ? resolvedOutcomeCountForGoal({ observedClicks, observedPositiveReplies }, econ, objective, singleStepGoal, formSubmissionGoal, meetingChannel)
+  // WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP. A leg-keyed read is priced on the step
+  // the leg MOVES A LEAD TO — never on the step its basis funnel is named after, which is the whole
+  // substitution this removes. The grain's own cascade-floored driver cost is walked forward through
+  // the basis funnel's declared rates, so the explore device is untouched and only the denomination
+  // moved; an ENTRY leg walks nothing, so its count is a raw observation and its cost the driver's own.
+  const legOutcome: GrainLegOutcome | null = legTerms
+    ? grainLegOutcome(legTerms, {
+        spentUsd,
+        driverUnitCostUsd: legTerms.driver === "click" ? costPerClickUsd : costPerPositiveReplyUsd,
+        driverObserved: legTerms.driver === "click" ? observedClicks : observedPositiveReplies,
+      })
     : null;
+
+  // Goal-resolved outcome count from THIS grain's OWN observed evidence (no floor). Null at cold start
+  // (no economics) — mirrors the projected costs' null gate. On a LEG request it is the LEG's own
+  // outcome count, so a consumer can never read a count of one step beside the cost of another.
+  const resolvedOutcomeCount = legTerms
+    ? (legOutcome?.outcomeCount ?? null)
+    : econ
+      ? resolvedOutcomeCountForGoal({ observedClicks, observedPositiveReplies }, econ, objective, singleStepGoal, formSubmissionGoal, meetingChannel)
+      : null;
 
   return {
     evidence: { spentUsd, observedContacted, observedClicks, observedPositiveReplies },
     unitCosts: { costPerClickUsd, costPerPositiveReplyUsd, costPerContactedUsd },
     resolvedOutcomeCount,
+    ...(legOutcome ? { legOutcome } : {}),
     projected,
   };
 }
@@ -698,19 +766,32 @@ function resolvePick(
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
   meetingChannel: MeetingChannel | null = null,
+  legTerms: LegOutcomeTerms | null = null,
 ): ResolvedBlock {
   const measured = (g: GrainName): boolean =>
     !!estimatesByGrain[g] && grainHasObservedOutcome(estimatesByGrain[g]!.evidence, objective, singleStepGoal, meetingChannel);
   // NUMBER source: finest grain with spend (its floored unit costs = max(spent, parent) — Kevin's cascade).
   const numberGrain: GrainName =
-    estimatesByGrain.audience ? "audience" : estimatesByGrain.brand ? "brand" : "crossOrg";
+    estimatesByGrain.audience
+      ? "audience"
+      : estimatesByGrain.campaign
+        ? "campaign"
+        : estimatesByGrain.brand
+          ? "brand"
+          : "crossOrg";
   const block = estimatesByGrain[numberGrain]!;
   // PROVENANCE label: finest MEASURED grain (observed the outcome), else crossOrg benchmark. Decoupled
   // from `numberGrain` so a 0-outcome grain's spend-floor number is never labelled "this brand/audience".
   const grain: GrainName =
-    measured("audience") ? "audience" : measured("brand") ? "brand" : "crossOrg";
+    measured("audience") ? "audience" : measured("campaign") ? "campaign" : measured("brand") ? "brand" : "crossOrg";
   const unitCosts = { clickUsd: block.unitCosts.costPerClickUsd, replyUsd: block.unitCosts.costPerPositiveReplyUsd };
-  const costPerOutcomeUsd = econ ? outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel) : null;
+  // A LEG-keyed read states the cost of ONE OUTCOME OF THE LEG. The goal routing below prices the step
+  // the basis funnel is NAMED after, which for an entry leg is several rungs further down the funnel.
+  const costPerOutcomeUsd = legTerms
+    ? (block.legOutcome?.costPerOutcomeUsd ?? null)
+    : econ
+      ? outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel)
+      : null;
   return {
     grain,
     costBasis: GRAIN_COST_BASIS[numberGrain],
@@ -795,14 +876,23 @@ function exploreResolved(
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
   meetingChannel: MeetingChannel | null,
+  legTerms: LegOutcomeTerms | null = null,
 ): ResolvedBlock {
   const unitCosts = { clickUsd: outreachUsd, replyUsd: outreachUsd };
+  // On a LEG request the allowance is denominated in the leg's own step, exactly as every measured row
+  // is — an allowance priced on a different step than the rows it is ranked beside is not comparable.
+  const legAllowance =
+    legTerms && legTerms.rateFromDriver != null && legTerms.rateFromDriver > 0
+      ? outreachUsd / legTerms.rateFromDriver
+      : null;
   return {
     grain: null,
     // An explore allowance is a FLOOR, not a measured cost, so it states no accounting basis.
     costBasis: null,
     costPerClickUsd: outreachUsd,
-    costPerOutcomeUsd: outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel),
+    costPerOutcomeUsd: legTerms
+      ? legAllowance
+      : outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel),
     costPerPaidClientUsd: null,
     costPerMeetingBookedUsd: null,
     roiMultiple: null,
@@ -876,6 +966,20 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         reason: "leg_and_funnel",
       });
     }
+  }
+
+  // A caller may narrow the ladder to ONE CAMPAIGN, so the grains a screen compares — this campaign,
+  // this brand, every client we run the channel for — all come from one answer instead of being
+  // stitched together from two endpoints. It is only answerable BESIDE a leg: a campaign is bought for
+  // exactly one leg, and adding a grain to a funnel- or goal-keyed body would move an answer
+  // campaign-service's production workflow selection reads. So it FAILS LOUD rather than being ignored.
+  const campaignIdParam = req.query.campaignId as string | undefined;
+  const campaignId = campaignIdParam != null && campaignIdParam !== "" ? campaignIdParam : null;
+  if (campaignId && !legKey) {
+    return res.status(400).json({
+      error: "campaignId is answered beside the leg the campaign is bought for: name a leg as well",
+      reason: "campaign_requires_leg",
+    });
   }
 
   const resolved = funnelKey || legKey ? null : resolveGoalInputs(goalParam);
@@ -986,12 +1090,35 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       }
     }
 
+    // THE CAMPAIGN'S IDENTITY, resolved before anything is computed. A campaign as a customer knows it
+    // is (org, brand, sales funnel, acquisition channel) — campaign-service mints a new row on every
+    // workflow switch and keeps the ancestors, so a figure scoped to the newest row would describe the
+    // last few days of a campaign that has been running for weeks. FAIL-SOFT, like every other surface
+    // that reads it: with campaign-service unreachable the campaign falls back to its own family of
+    // one, which is a real answer about a real subset, never the brand's numbers under its name.
+    let campaignIdentityView: CampaignIdentityView | null = null;
+    let campaignScopeIds: string[] | null = null;
+    if (campaignId) {
+      const families = await fetchCampaignFamiliesSoft(brandId, featureSlug, { orgId, userId, runId });
+      const found = families.identityOf(campaignId);
+      campaignIdentityView = describeIdentity(found, campaignId);
+      campaignScopeIds = campaignIdentityView.campaignIds;
+    }
+
     const [evidence, effective] = await Promise.all([
       servedCached({
         view: "workflow-projection-evidence",
-        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, pricing }),
+        scopeKey: buildScopeKey(featureSlug, {
+          orgId,
+          brandId,
+          pricing,
+          // The IDENTITY, not the campaign: every member of one family asks the same question, so they
+          // land on ONE cell instead of paying a full fan-out per stopped ancestor.
+          ...(campaignIdentityView ? { campaign: campaignIdentityView.key } : {}),
+        }),
         orgId,
-        compute: () => fetchWorkflowProjectionEvidence({ featureSlug, brandId, identity, pricing }),
+        compute: () =>
+          fetchWorkflowProjectionEvidence({ featureSlug, brandId, identity, pricing, campaignIds: campaignScopeIds }),
       }),
       fetchEffectiveEconomics(brandId, identity),
     ]);
@@ -1037,6 +1164,31 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       ({ objective, goal, singleStepGoal, formSubmissionGoal, meetingChannel } = inputsForFunnel(legBasisFunnelKey));
     }
 
+    // THE LEG'S OWN STEP is what a leg-keyed answer is denominated in. The basis funnel above decides
+    // WHICH rates walk the observed signal forward to that step; it no longer decides which step is
+    // being bought. Resolved here, once the basis funnel and the brand's merged economics are known.
+    let legTerms: LegOutcomeTerms | null = null;
+    const mergedEconomics = mergeFunnelEconomics(effective.economics, funnelEconomics);
+    if (legKey && legBasisFunnelKey && mergedEconomics) {
+      const leg = funnelLeg(legKey)!;
+      const e = mergedEconomics;
+      legTerms = legOutcomeTerms(
+        legBasisFunnelKey,
+        leg.toStep.key,
+        {
+          r2m: e.replyToMeetingPct / 100,
+          v2m: e.visitToMeetingPct / 100,
+          m2c: e.meetingToClosePct / 100,
+          v2c: e.visitToClosePct / 100,
+          v2s: e.visitToSignupPct / 100,
+          s2pc: e.signupToPaidClientPct / 100,
+          ...(e.visitToFormSubmissionPct != null ? { v2fs: e.visitToFormSubmissionPct / 100 } : {}),
+          ...(e.formSubmissionToPaidClientPct != null ? { fs2pc: e.formSubmissionToPaidClientPct / 100 } : {}),
+        },
+        bookedToAttendedRate(e),
+      );
+    }
+
     const pricedFunnelKey = funnelKey ?? legBasisFunnelKey;
     const response = projectFromEvidence({
       featureSlug,
@@ -1046,8 +1198,9 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       formSubmissionGoal,
       meetingChannel,
       ...(pricedFunnelKey ? { funnelKey: pricedFunnelKey } : {}),
+      legTerms,
       evidence,
-      economics: mergeFunnelEconomics(effective.economics, funnelEconomics),
+      economics: mergedEconomics,
       maximize,
     });
 
@@ -1080,7 +1233,11 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       };
     }
 
-    res.json(legBlock ? { ...response, leg: legBlock } : response);
+    res.json({
+      ...response,
+      ...(legBlock ? { leg: legBlock } : {}),
+      ...(campaignIdentityView ? { campaignIdentity: campaignIdentityView } : {}),
+    });
   } catch (error) {
     console.error("[features-service] Workflow projection error:", error);
     res.status(502).json({ error: "Failed to compute workflow projection" });
@@ -1109,6 +1266,13 @@ export interface WorkflowProjectionEvidence {
   brandGrain: Array<[string, WorkflowGrainEvidence]>;
   /** Per active audience, its per-dynasty send-tag evidence — entries of each `byDynasty` Map. */
   audienceEvidence: Array<{ audienceId: string; byDynasty: Array<[string, WorkflowGrainEvidence]> }>;
+  /**
+   * CAMPAIGN-grain evidence keyed by the dynasty's ACTIVE workflow slug — present ⟺ the caller named a
+   * `?campaignId=`, and totalled over that campaign's whole IDENTITY. It rides the evidence object (and
+   * therefore the Gold snapshot's `scope_key`, which carries the identity) so a campaign-scoped read
+   * never replays a body computed for the brand.
+   */
+  campaignGrain?: Array<[string, WorkflowGrainEvidence]>;
 }
 
 export async function fetchWorkflowProjectionEvidence(input: {
@@ -1116,8 +1280,12 @@ export async function fetchWorkflowProjectionEvidence(input: {
   brandId: string;
   identity: Identity;
   pricing: Pricing;
+  /** Every member of ONE campaign identity, when the caller narrowed to a campaign. Absent otherwise,
+   *  and the campaign grain is then never read — a brand-wide request asks campaign-service nothing. */
+  campaignIds?: string[] | null;
 }): Promise<WorkflowProjectionEvidence> {
   const { featureSlug, brandId, identity, pricing } = input;
+  const campaignIds = input.campaignIds ?? null;
 
   // The workflow list is needed by the crossOrg AND brand dynasty rollups, so fetch it first; the
   // brand grain then fans out in parallel with the remaining reads.
@@ -1126,11 +1294,14 @@ export async function fetchWorkflowProjectionEvidence(input: {
   // per-audience dynasty attachment aligns with the dynasty-keyed rows (and skips runs-service's
   // lossy workflowDynastySlug regroup, which collapses the co-grouped audienceId).
   const slugToDynasty = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
-  const [costGroups, emailStats, brandGrain, audienceEvidence] = await Promise.all([
+  const [costGroups, emailStats, brandGrain, audienceEvidence, campaignGrain] = await Promise.all([
     fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     fetchPublicEmailStats(featureSlug, "workflowSlug"),
     fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing),
     fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing),
+    campaignIds && campaignIds.length > 0
+      ? fetchCampaignWorkflowEvidence(brandId, featureSlug, campaignIds, workflows, identity, pricing)
+      : Promise.resolve(null),
   ]);
 
   return {
@@ -1139,6 +1310,7 @@ export async function fetchWorkflowProjectionEvidence(input: {
     crossOrgEmailStats: [...emailStats.entries()],
     brandGrain: [...brandGrain.entries()],
     audienceEvidence: audienceEvidence.map((ev) => ({ audienceId: ev.audienceId, byDynasty: [...ev.byDynasty.entries()] })),
+    ...(campaignGrain ? { campaignGrain: [...campaignGrain.entries()] } : {}),
   };
 }
 
@@ -1198,6 +1370,11 @@ export function projectFromEvidence(input: {
   meetingChannel?: MeetingChannel | null;
   /** Echoed on the response when the caller named a funnel. Never shapes the math on its own. */
   funnelKey?: SalesFunnelKey;
+  /**
+   * Present ⟺ the caller named a `?leg=`. It denominates every cost-per-outcome, outcome count and
+   * conversion rate in the LEG's own step, and it is what turns on the per-workflow `rank`.
+   */
+  legTerms?: LegOutcomeTerms | null;
   evidence: WorkflowProjectionEvidence;
   economics: SalesEconomics | null;
   /**
@@ -1210,10 +1387,12 @@ export function projectFromEvidence(input: {
   const { featureSlug, objective, goal, singleStepGoal, formSubmissionGoal, evidence, economics } = input;
   const maximize = input.maximize ?? DEFAULT_MAXIMIZE;
   const meetingChannel = input.meetingChannel ?? null;
+  const legTerms = input.legTerms ?? null;
   const workflows = evidence.workflows;
   const costGroups = evidence.crossOrgCostGroups;
   const emailStats = new Map(evidence.crossOrgEmailStats);
   const brandGrain = new Map(evidence.brandGrain);
+  const campaignGrain = evidence.campaignGrain ? new Map(evidence.campaignGrain) : null;
   const audienceEvidence: AudienceGrainEvidence[] = evidence.audienceEvidence.map((ev) => ({
     audienceId: ev.audienceId,
     byDynasty: new Map(ev.byDynasty),
@@ -1279,9 +1458,9 @@ export function projectFromEvidence(input: {
       ev: WorkflowGrainEvidence,
       parentUnitCosts: GrainUnitCosts | null = null,
     ): GrainBlock =>
-      buildGrainBlock(ev, econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal, parentUnitCosts, meetingChannel);
+      buildGrainBlock(ev, econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal, parentUnitCosts, meetingChannel, legTerms);
     const resolve = (grains: Partial<Record<GrainName, GrainBlock>>): ResolvedBlock =>
-      resolvePick(grains, econ, objective, singleStepGoal, formSubmissionGoal, meetingChannel);
+      resolvePick(grains, econ, objective, singleStepGoal, formSubmissionGoal, meetingChannel, legTerms);
 
     const rows: ProjectionRow[] = [];
 
@@ -1314,10 +1493,19 @@ export function projectFromEvidence(input: {
       if (brandEv && brandEv.totalCostInUsdCents > 0) {
         estimatesByGrain.brand = buildBlock(brandEv, estimatesByGrain.crossOrg?.unitCosts ?? null);
       }
+      // … → brand → CAMPAIGN: one narrowing finer than the brand, floored against it, so a campaign
+      // that has barely spent reads its brand's price rather than looking free.
+      const campaignEv = campaignGrain?.get(activeSlug);
+      if (campaignEv && campaignEv.totalCostInUsdCents > 0) {
+        estimatesByGrain.campaign = buildBlock(
+          campaignEv,
+          estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null,
+        );
+      }
 
       // crossOrg is (almost) always present, but if a dynasty had 0 crossOrg cost AND 0 brand cost there
       // is no grain to resolve — skip the row (nothing to project).
-      if (!estimatesByGrain.crossOrg && !estimatesByGrain.brand) continue;
+      if (!estimatesByGrain.crossOrg && !estimatesByGrain.brand && !estimatesByGrain.campaign) continue;
 
       rows.push({
         audienceId: null,
@@ -1358,12 +1546,21 @@ export function projectFromEvidence(input: {
         if (brandEv && brandEv.totalCostInUsdCents > 0) {
           estimatesByGrain.brand = buildBlock(brandEv, estimatesByGrain.crossOrg?.unitCosts ?? null);
         }
-        const audienceParent = estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null;
+        const campaignEv = campaignGrain?.get(activeSlug);
+        if (campaignEv && campaignEv.totalCostInUsdCents > 0) {
+          estimatesByGrain.campaign = buildBlock(
+            campaignEv,
+            estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null,
+          );
+        }
+        const audienceParent =
+          estimatesByGrain.campaign?.unitCosts ?? estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null;
         const audEv = ev.byDynasty.get(dynastySlug);
         if (audEv && audEv.totalCostInUsdCents > 0) estimatesByGrain.audience = buildBlock(audEv, audienceParent);
 
-        // A couple with no grain at all (no crossOrg/brand/audience spend) has nothing to project.
-        if (!estimatesByGrain.crossOrg && !estimatesByGrain.brand && !estimatesByGrain.audience) continue;
+        // A couple with no grain at all (no crossOrg/brand/campaign/audience spend) has nothing to project.
+        if (!estimatesByGrain.crossOrg && !estimatesByGrain.brand && !estimatesByGrain.campaign && !estimatesByGrain.audience)
+          continue;
 
         rows.push({
           audienceId: ev.audienceId,
@@ -1421,7 +1618,7 @@ export function projectFromEvidence(input: {
     const outreachUsd = channelOutreachPriceUsd(brandGrain, costMap, aggregatedOutcomes);
     const unprovenResolved: ResolvedBlock =
       outreachUsd != null && econ
-        ? exploreResolved(outreachUsd, econ, objective, singleStepGoal, formSubmissionGoal, meetingChannel)
+        ? exploreResolved(outreachUsd, econ, objective, singleStepGoal, formSubmissionGoal, meetingChannel, legTerms)
         : UNMEASURED_RESOLVED;
 
     if (audienceEvidence.length > 0) {
@@ -1458,21 +1655,71 @@ export function projectFromEvidence(input: {
     //
     // Both skip UNMEASURED rows for the same reason: the explore allowance is what makes a workflow
     // REACHABLE, not a recommendation to put a customer's budget behind it.
-    let recommended: ProjectionRow | null = null;
+    //
+    // ── THE ORDER IS SERVED, AND THE RECOMMENDATION IS ITS HEAD BY CONSTRUCTION ──────────────────
+    //
+    // A rank is a property of the WORKFLOW, so it is scored per DYNASTY over every row that dynasty
+    // has — the identical population the recommendation is chosen from. A consumer that re-derived an
+    // order over the subset it displays would produce a second one, and the two disagree: in prod the
+    // recommended workflow sat 18th of 24 on a page ranking one row per workflow while the pick was
+    // made over all of them. Ranked here, rank 1 IS the recommendation and nobody can re-derive.
+    //
+    // A TOTAL order: dynasties sort into three groups — rankable (measured, with a usable metric),
+    // then measured-but-unrankable, then never-run (the explore allowance, which may never outrank
+    // measured evidence) — and ties inside a group break on the dynasty slug, so there are no ties and
+    // no gaps and the same evidence always produces the same list.
+    const better = (a: number, b: number): boolean => (maximize === "conversionRate" ? a > b : a < b);
+    const metricOf = (row: ProjectionRow): number | null =>
+      maximize === "conversionRate" ? row.resolved.conversionRatePct : row.resolved.costPerOutcomeUsd;
+    const rankableMetric = (row: ProjectionRow): number | null => {
+      if (!row.measured) return null;
+      const m = metricOf(row);
+      return m == null || m <= 0 ? null : m;
+    };
+
+    // Per dynasty: its BEST rankable row's metric — the same argmin the recommendation has always used,
+    // simply kept per workflow instead of collapsed to one winner.
+    const bestByDynasty = new Map<string, { metric: number | null; row: ProjectionRow; measured: boolean }>();
     for (const row of rows) {
-      if (!row.measured) continue;
-      if (maximize === "conversionRate") {
-        const rate = row.resolved.conversionRatePct;
-        if (rate == null || rate <= 0) continue;
-        const current = recommended?.resolved.conversionRatePct ?? null;
-        if (current == null || rate > current) recommended = row;
+      const slug = row.workflow.workflowDynastySlug;
+      const metric = rankableMetric(row);
+      const current = bestByDynasty.get(slug);
+      if (!current) {
+        bestByDynasty.set(slug, { metric, row, measured: row.measured });
         continue;
       }
-      const metric = row.resolved.costPerOutcomeUsd;
-      if (metric == null || metric <= 0) continue;
-      const current = recommended?.resolved.costPerOutcomeUsd ?? null;
-      if (current == null || metric < current) recommended = row;
+      current.measured = current.measured || row.measured;
+      if (metric != null && (current.metric == null || better(metric, current.metric))) {
+        current.metric = metric;
+        current.row = row;
+      }
     }
+
+    const orderedDynasties = [...bestByDynasty.entries()].sort((a, b) => {
+      const ga = a[1].measured ? (a[1].metric == null ? 1 : 0) : 2;
+      const gb = b[1].measured ? (b[1].metric == null ? 1 : 0) : 2;
+      if (ga !== gb) return ga - gb;
+      if (ga === 0) {
+        const ma = a[1].metric!;
+        const mb = b[1].metric!;
+        if (ma !== mb) return better(ma, mb) ? -1 : 1;
+      }
+      return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+    });
+
+    const rankByDynasty = new Map<string, number>();
+    orderedDynasties.forEach(([slug], i) => rankByDynasty.set(slug, i + 1));
+    // Only a leg-keyed answer carries the rank on the wire — every funnel- and goal-keyed body is
+    // byte-unchanged, which is what keeps campaign-service's production workflow selection untouched.
+    if (legTerms) {
+      for (const row of rows) row.rank = rankByDynasty.get(row.workflow.workflowDynastySlug);
+    }
+
+    // The recommendation is the head of that order: the best rankable row of the rank-1 dynasty. The
+    // groups above put every rankable dynasty before every unrankable one, so this is non-null exactly
+    // when some row is rankable — the byte-same condition the previous argmin answered on.
+    const head = orderedDynasties[0];
+    const recommended: ProjectionRow | null = head && head[1].metric != null ? head[1].row : null;
     // The budget still answers "what does a month of this cost", whichever way the pick was made — it is
     // priced off the RECOMMENDED row's own cost per outcome, so it describes the workflow that was
     // actually chosen rather than the one the other objective would have chosen.

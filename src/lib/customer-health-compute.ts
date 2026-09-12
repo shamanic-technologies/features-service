@@ -59,6 +59,7 @@ import { computeFeatureRevenue, type DownstreamHeaders } from "../routes/revenue
 import {
   computeWorkflowProjection,
   funnelToProjectionInputs,
+  type GrainName,
   type WorkflowProjectionResponse,
 } from "../routes/workflow-projection.js";
 
@@ -127,8 +128,10 @@ interface BestWorkflow {
   name: string | null;
   /** Best (lowest) projected cost per outcome in USD for the funnel this row is computed on. */
   cacUsd: number;
-  /** Which grain the number comes from: crossOrg (fleet benchmark) | brand | audience. */
-  grain: "crossOrg" | "brand" | "audience";
+  /** Which grain the number comes from: crossOrg (fleet benchmark) | brand | audience. The `campaign`
+   *  grain of the projection ladder cannot appear here — this board never narrows to a campaign — but
+   *  the type is the projection's own, so the two can never drift into two spellings of one vocabulary. */
+  grain: GrainName;
 }
 
 interface HealthInputs {
