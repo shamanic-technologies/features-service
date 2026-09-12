@@ -1,5 +1,77 @@
 # Features Service — CLAUDE.md
 
+## AN AGENCY'S DAILY BUDGET IS AN ALLOCATION DECISION, NOT ITS MRR — the fleet run-rate splits in two, the agency half is what a HUMAN STATED, and the self-serve history is REPLAYED rather than lost
+
+The staff Revenue page stated ONE committed MRR for the whole fleet, `Σ active daily budget × 30`. That
+is the right number for a SELF-SERVE (SaaS) customer, who pays THROUGH the product: their budget IS what
+they are worth per month. It is the wrong number for an AGENCY, which hands over cash at its own
+discretion after which somebody DECIDES how that cash is split into daily budgets across its brands — so
+for those brands budget × 30 answers "how did we spread their money this week", not "what is this
+customer worth". Both halves were being added under one word, and there was nowhere for a person to say
+what the agency is actually worth.
+
+- **THE STORE IS `stated_monthly_amounts` AND IT IS KEYED ON THE (org, brand) PAIR, never the brand
+  alone.** Daily budgets are keyed that way, and in production one brand is mapped under TWO orgs (one
+  funding it, one at $0) — a brand-keyed row could not say which of the two it describes. Full staff CRUD
+  at `/internal/stated-monthly-amounts` (api-key; staff-gated at api-service).
+- **BOTH ENDS OF THE RANGE ARE OPTIONAL AND EACH ABSENCE MEANS SOMETHING SPECIFIC.** No `startDate` = in
+  force since that brand's **FIRST DAY OF BILLED SPEND** (never "since the beginning of time" — the floor
+  is read from the billed-spend ledger per pair, and only for a row that needs it); no `endDate` = still
+  running. Both bounds INCLUSIVE. A brand may carry SEVERAL rows as the amount changes.
+- **TWO ROWS OVERLAPPING ON ONE DAY FOR ONE PAIR ARE REFUSED — 409 `stated_amount_conflict`, naming the
+  row it collided with and its range.** Two stated amounts in force at once is two answers to one
+  question, and no read could pick between them honestly, so it is stopped at WRITE time where a person
+  can fix it. The check is application-level (`assertNoOverlap`), because the rule is about a RANGE, and
+  it treats an absent bound as open — which is what makes a second open-ended row a conflict rather than
+  a harmless append.
+- **WHICH ORGS ARE "AGENCY" IS DERIVED FROM THE STATED ROWS — an org carrying at least one — and NO org
+  id, brand id or domain lives in code.** A second agency later needs no change here.
+- **THE EXCLUSION IS TAKEN OVER THE AGENCY ORG'S WHOLE BRAND SET, not only its stated brands.** A brand
+  funded under an agency org is agency money whether or not anyone has got round to stating it, and
+  leaving it in the self-serve half would overstate the SaaS business. The gap is VISIBLE rather than
+  silent: `agencyBudgetMrrUsd` says exactly how much left the self-serve half, so a reader comparing it
+  against `agencyMrrUsd` sees an unstated agency brand instead of a number that quietly moved.
+- **THE THREE SERIES, AND WHY THEY RECONCILE BY CONSTRUCTION** (`mrrSplit` on
+  `GET /internal/stats/revenue`, live figure + monthly + weekly, same growth treatment as the committed
+  series): **AGENCY** = Σ of the STATED amounts in force on the period's reference date — **NEVER those
+  brands' budget × 30**, which is the entire substitution this removes; **SELF-SERVE** = the recorded
+  committed run-rate for that period MINUS the agency side's committed contribution on the same date
+  (their budget still exists and still belongs to the fleet's spend, it simply is not their MRR);
+  **TOTAL** = agency + self-serve. Disjoint, so the two halves always add.
+- **THE HISTORY IS REPLAYED, NOT RECORDED — and recording a new column going forward would have thrown
+  away every day we already hold for no reason.** No snapshot ever carried the split, but
+  `committed_mrr_snapshots` and billing's append-only `brand_daily_budget_changes` start the SAME DAY
+  (2026-07-15 in prod), so the agency side's budget on any recorded day is readable from
+  `GET /internal/brands/:brandId/daily-budget/history` — an existing deployed route, no producer change.
+  A day BEFORE that pair's first timeline entry contributes 0: we hold no record of a budget then, and
+  asserting one would be fabrication.
+- **DO NOT "SIMPLIFY" THIS TO SUBTRACTING THE STATED AMOUNTS FROM THE FLEET TOTAL.** The fleet total
+  carries those brands' BUDGET × 30, not their stated amount, so the subtraction does not cancel and the
+  self-serve half would be wrong by the difference.
+- **BOTH SERIES EMIT THE SAME PERIODS AGAINST THE SAME DATES, from ONE shared
+  `committedPointsByPeriod`** — a period with no recorded snapshot is OMITTED by both, never fabricated,
+  and the split can never come to describe a different moment than the committed figure beside it.
+- **THE MEASUREMENT CAVEAT IS STATED, not hidden.** Since 2026-08-27 the snapshot records the RUNNING
+  daily budget while billing's timeline records the CONFIGURED one; for a brand whose campaign is ongoing
+  the two agree (every funded agency brand today), and for money posted against a stopped campaign the
+  replayed contribution is the larger, so the self-serve half reads slightly LOW rather than high. The
+  LIVE figures have no such gap: they subtract the accounts audit's own RUNNING budget for the same
+  ACTIVE pairs, so today's self-serve cancels against today's committed MRR to the cent.
+- **ADDITIVE, AND THE REGRESSION GATE IS THAT NOTHING MOVES UNTIL SOMEBODY STATES SOMETHING.** The
+  existing `committedMrr`, the realized-revenue series, the NRR series and every cash figure are
+  untouched. With ZERO stated rows the split issues **zero extra requests**, the self-serve figure equals
+  the fleet committed MRR exactly and the agency figure is 0 — so a consumer still rendering only the old
+  fields sees nothing change. `mrrSplit: null` is "we could not read this" (the store or billing was
+  unreachable), never a zero that would say the agency is worth nothing; the rest of the payload survives.
+- Guards: `src/lib/agency-self-serve-compute.test.ts` — ONE fixture shaped like the production account
+  ($142/day + $1/day agency brands beside $102/day of self-serve, fleet $245/day). Every case asserts the
+  DIVERGENCE between what the split says and what the undivided figure says, so a suite that only checked
+  "a number came back" would pass on an implementation that reported the agency's budget × 30 as its MRR.
+  Plus `src/lib/stated-monthly-amounts-store.test.ts` (the two write rules, the inclusive overlap, the
+  self-edit) and the wiring block in `src/lib/revenue-history-compute.test.ts` (the empty store costing
+  nothing and moving nothing, the fail-soft null, the committed series byte-identical either way).
+  (Set 2026-09-12, features-service#927.)
+
 ## A FUNNEL IS PRICED ON THE RATES IT DECLARES — each funnel states its OWN ladder, and the rung in the MIDDLE of one is worth more than the rung below it
 
 A brand selling FORM MAGNET (`Website visit → Form filled → Paid client`) read its funnel Overview and

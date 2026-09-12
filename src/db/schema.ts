@@ -228,3 +228,52 @@ export const fleetFunnelReturnSnapshots = pgTable(
 );
 
 export type FleetFunnelReturnSnapshot = typeof fleetFunnelReturnSnapshots.$inferSelect;
+
+/**
+ * STATED MONTHLY AMOUNTS (`stated_monthly_amounts`) — what a HUMAN says a brand is worth per month,
+ * over a date range. The whole reason this table exists: not every customer's monthly worth is
+ * `daily budget × 30`.
+ *
+ * A SELF-SERVE (SaaS) customer pays through the product, so their committed run-rate IS their daily
+ * budget × 30 and nothing needs stating. An AGENCY does not: it hands over cash at its own discretion
+ * and somebody then DECIDES how that cash is split into daily budgets across its brands. For those
+ * brands a daily budget is an ALLOCATION DECISION, so budget × 30 is simply the wrong number — the
+ * only true figure is the one a person states here.
+ *
+ * WHICH ORGS ARE "AGENCY" IS DERIVED FROM THESE ROWS, never hardcoded: an org carrying at least one
+ * stated amount is on the agency side; every other org is self-serve. A second agency later needs no
+ * code change.
+ *
+ * KEYED ON THE (org, brand) PAIR, not on the brand alone — daily budgets are keyed that way and one
+ * brand can legitimately be mapped under two orgs (one funding it, one at $0), so a brand-keyed row
+ * could not say which of the two it describes.
+ *
+ * BOTH ENDS OF THE RANGE ARE OPTIONAL and each absence means something specific: no `startDate` = in
+ * force since that brand's FIRST DAY OF BILLED SPEND (never "since the beginning of time"); no
+ * `endDate` = still running. Both bounds are INCLUSIVE. A brand can carry SEVERAL rows over time (the
+ * amount changes), but two rows that overlap on a single day for one pair are REFUSED at write time —
+ * two answers for one brand on one day is exactly the bug this table exists to avoid, and no read
+ * could pick between them honestly.
+ */
+export const statedMonthlyAmounts = pgTable(
+  "stated_monthly_amounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** The org that funds this brand — the pair's first half. An org with any row here is "agency". */
+    orgId: uuid("org_id").notNull(),
+    /** The brand the stated amount is about — the pair's second half. */
+    brandId: uuid("brand_id").notNull(),
+    /** What a person says this brand is worth PER MONTH, in whole cents (FP-safe). A stated 0 is a real answer. */
+    amountCents: integer("amount_cents").notNull(),
+    /** First UTC day the amount is in force (`YYYY-MM-DD`, inclusive). NULL = since the brand's first billed day. */
+    startDate: text("start_date"),
+    /** Last UTC day the amount is in force (`YYYY-MM-DD`, inclusive). NULL = still running. */
+    endDate: text("end_date"),
+    /** Free-text note from whoever stated it (why this figure) — never read by any computation. */
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+export type StatedMonthlyAmount = typeof statedMonthlyAmounts.$inferSelect;
