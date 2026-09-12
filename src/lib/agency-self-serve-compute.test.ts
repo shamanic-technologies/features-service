@@ -157,10 +157,11 @@ describe("agency / self-serve MRR split", () => {
     expect(split.monthly.length).toBeGreaterThan(0);
     expect(split.weekly.length).toBeGreaterThan(0);
     for (const b of [...split.monthly, ...split.weekly]) {
-      expect(b.agencyMrrUsd + b.selfServeMrrUsd).toBeCloseTo(b.totalMrrUsd, 2);
-      expect(b.selfServeMrrUsd + b.agencyBudgetMrrUsd).toBeCloseTo(b.committedMrrUsd, 2);
+      expect(b.selfServeUnmeasurableReason).toBeNull(); // this fixture is measurable throughout
+      expect(b.agencyMrrUsd + b.selfServeMrrUsd!).toBeCloseTo(b.totalMrrUsd!, 2);
+      expect(b.selfServeMrrUsd! + b.agencyBudgetMrrUsd).toBeCloseTo(b.committedMrrUsd, 2);
       expect(b.agencyArrUsd).toBeCloseTo(b.agencyMrrUsd * 12, 2);
-      expect(b.totalArrUsd).toBeCloseTo(b.totalMrrUsd * 12, 2);
+      expect(b.totalArrUsd!).toBeCloseTo(b.totalMrrUsd! * 12, 2);
     }
   });
 
@@ -174,6 +175,7 @@ describe("agency / self-serve MRR split", () => {
     expect(july!.committedMrrUsd).toBe(4080);
     expect(july!.agencyBudgetMrrUsd).toBe(36 * 30);
     expect(july!.selfServeMrrUsd).toBe(4080 - 36 * 30);
+    expect(july!.selfServeUnmeasurableReason).toBeNull();
     // The big brand's stated amount only starts 2026-08-01, so July carries the small brand's alone.
     expect(july!.agencyMrrUsd).toBe(500);
 
@@ -183,6 +185,72 @@ describe("agency / self-serve MRR split", () => {
     expect(august!.agencyMrrUsd).toBe(5500); // both stated amounts now in force
     // The replayed self-serve half DIVERGES from the undivided committed figure it came from.
     expect(august!.selfServeMrrUsd).not.toBe(august!.committedMrrUsd);
+  });
+
+  it("says a period is UNMEASURABLE rather than printing a NEGATIVE self-serve run-rate", () => {
+    // Prod's August: the snapshot is $87/day RUNNING (the 2026-08-27 cutover) while the agency's
+    // CONFIGURED budget replays at $132/day. The remainder is negative, which is not a run-rate.
+    const split = buildMrrSplit(
+      inputs({
+        snapshots: [{ date: "2026-08-31", mrrUsd: 87 * 30 }],
+        budgetTimelines: new Map([
+          [pairKey(AGENCY_ORG, BRAND_BIG), [{ dailyBudgetUsd: 131, changedAt: "2026-08-01T00:00:00Z" }]],
+          [pairKey(AGENCY_ORG, BRAND_SMALL), [{ dailyBudgetUsd: 1, changedAt: "2026-07-25T00:00:00Z" }]],
+        ]),
+      }),
+      NOW,
+      WINDOWS,
+    );
+
+    const august = split.monthly.find((b) => b.period === "2026-08")!;
+    expect(august.selfServeMrrUsd).toBeNull();
+    expect(august.selfServeArrUsd).toBeNull();
+    expect(august.totalMrrUsd).toBeNull();
+    expect(august.totalArrUsd).toBeNull();
+    expect(august.selfServeUnmeasurableReason).toBe("agency_contribution_exceeds_recorded_total");
+    // The two real figures that explain WHY are still on the row, and the stated agency amount stands.
+    expect(august.agencyBudgetMrrUsd).toBe(132 * 30);
+    expect(august.committedMrrUsd).toBe(87 * 30);
+    expect(august.agencyMrrUsd).toBe(5500);
+    // …and it is NOT clamped to zero, which would print a self-serve business nothing supports.
+    expect(august.selfServeMrrUsd).not.toBe(0);
+  });
+
+  it("measures a period where the agency contribution exactly equals the recorded total", () => {
+    const split = buildMrrSplit(
+      inputs({
+        snapshots: [{ date: "2026-08-31", mrrUsd: 143 * 30 }],
+        budgetTimelines: new Map([
+          [pairKey(AGENCY_ORG, BRAND_BIG), [{ dailyBudgetUsd: 142, changedAt: "2026-08-01T00:00:00Z" }]],
+          [pairKey(AGENCY_ORG, BRAND_SMALL), [{ dailyBudgetUsd: 1, changedAt: "2026-07-25T00:00:00Z" }]],
+        ]),
+      }),
+      NOW,
+      WINDOWS,
+    );
+    const august = split.monthly.find((b) => b.period === "2026-08")!;
+    expect(august.selfServeMrrUsd).toBe(0); // a MEASURED zero: the SaaS side really was nothing that month
+    expect(august.selfServeUnmeasurableReason).toBeNull();
+  });
+
+  it("skips an unmeasurable period when computing growth instead of comparing across the gap", () => {
+    const split = buildMrrSplit(
+      inputs({
+        snapshots: [
+          { date: "2026-07-31", mrrUsd: 4080 },
+          { date: "2026-08-31", mrrUsd: 30 }, // unmeasurable: far below the agency replay
+        ],
+      }),
+      NOW,
+      WINDOWS,
+    );
+    const august = split.monthly.find((b) => b.period === "2026-08")!;
+    const september = split.monthly.find((b) => b.period === "2026-09")!;
+    expect(august.totalMrrUsd).toBeNull();
+    expect(august.growthPct).toBeNull();
+    const july = split.monthly.find((b) => b.period === "2026-07")!;
+    // September's growth is measured against JULY, the previous MEASURED point — never against a gap.
+    expect(september.growthPct).toBe(Math.round(((september.totalMrrUsd! - july.totalMrrUsd!) / july.totalMrrUsd!) * 1000) / 10);
   });
 
   it("omits a period with no recorded snapshot rather than fabricating a point", () => {
