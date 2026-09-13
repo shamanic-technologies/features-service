@@ -214,6 +214,30 @@ export interface ProjectionRow {
    * measured evidence.
    */
   rank?: number;
+  /**
+   * THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the
+   * caller named a `?leg=`), so every existing body is byte-unchanged.
+   *
+   * `rank` is a property of the WORKFLOW, scored over EVERY row a dynasty has. That is the right
+   * answer to "which workflow do we pick" and the wrong number to print beside ONE grain's figures,
+   * because the cell that won the argmin is usually not the cell on screen. Measured in prod
+   * 2026-09-13 (brand `75d7e3e8…`, leg `start_to_conversation`): the rank-1 workflow reads **$175**
+   * on its campaign row and **$20.35** on the audience cell that crowned it — 3 conversations on
+   * $61 against 13 on $2,272 — so a page ordering its campaign column on `rank` shows an order with
+   * no visible relation to the number beside it, and reads as arbitrary. 21 of that channel's 24
+   * workflows have no per-audience evidence at all and read the same fleet floor in every column,
+   * which is what makes the 3 that DO diverge look like noise rather than the whole story.
+   *
+   * So a row also states where it sits among the rows sharing its `audienceId` (`null` = the brand /
+   * campaign column). Within one scope a dynasty appears exactly ONCE, so there is no argmin to
+   * take: the rows sort on their own resolved metric, under the SAME objective (`?maximize=`), the
+   * SAME three groups and the SAME tie-break as the workflow order — so no scope can rank an
+   * unproven workflow above a measured one, and no consumer ever re-derives an order.
+   *
+   * The two numbers legitimately DISAGREE, and that disagreement is the point: `rank` says what we
+   * would put the customer on next, `scopeRank` says what the column they are reading actually says.
+   */
+  scopeRank?: number;
 }
 
 /**
@@ -1713,6 +1737,38 @@ export function projectFromEvidence(input: {
     // byte-unchanged, which is what keeps campaign-service's production workflow selection untouched.
     if (legTerms) {
       for (const row of rows) row.rank = rankByDynasty.get(row.workflow.workflowDynastySlug);
+
+      // ── AND THE ORDER WITHIN ONE SCOPE, so a surface showing ONE grain can be read ─────────────
+      //
+      // Rows sharing an `audienceId` are the rows a reader compares: one audience's column, or the
+      // brand / campaign column (`audienceId: null`). A dynasty appears exactly once inside a scope,
+      // so this is a plain sort of the rows on their OWN resolved metric — the same `better` and the
+      // same three groups the dynasty order above uses, which is what keeps an unproven workflow
+      // below every measured one here too. See `ProjectionRow.scopeRank` for why it is served.
+      const byScope = new Map<string | null, ProjectionRow[]>();
+      for (const row of rows) {
+        const bucket = byScope.get(row.audienceId);
+        if (bucket) bucket.push(row);
+        else byScope.set(row.audienceId, [row]);
+      }
+      for (const scopeRows of byScope.values()) {
+        scopeRows
+          .slice()
+          .sort((a, b) => {
+            const ma = rankableMetric(a);
+            const mb = rankableMetric(b);
+            const ga = a.measured ? (ma == null ? 1 : 0) : 2;
+            const gb = b.measured ? (mb == null ? 1 : 0) : 2;
+            if (ga !== gb) return ga - gb;
+            if (ga === 0 && ma !== mb) return better(ma!, mb!) ? -1 : 1;
+            const sa = a.workflow.workflowDynastySlug;
+            const sb = b.workflow.workflowDynastySlug;
+            return sa < sb ? -1 : sa > sb ? 1 : 0;
+          })
+          .forEach((row, i) => {
+            row.scopeRank = i + 1;
+          });
+      }
     }
 
     // The recommendation is the head of that order: the best rankable row of the rank-1 dynasty. The
