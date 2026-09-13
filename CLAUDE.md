@@ -160,6 +160,52 @@ goal, never a leg — verified on its `origin/main`).
   and a funnel- and goal-keyed read carrying none of it while still pricing the booked meeting.
   (Set 2026-09-12, features-service#932.)
 
+## A RANK SCORED OVER EVERY CELL CANNOT BE READ BESIDE ONE COLUMN — `scopeRank` orders the rows a reader is actually comparing, and the two ranks are MEANT to disagree
+
+The campaign Workflows page listed 24 workflows numbered 1..24 and, in the column beside the number,
+a cost that did not ascend with it: rank 1 read **$175**, rank 3 read **$21**. Nothing was broken.
+`rank` is scored per DYNASTY over EVERY row that dynasty has, and the cell that wins that argmin is
+usually not the cell on screen — so the page displayed one number and ordered on another, and the
+deciding one was nowhere on it. Owner, on reading it: *"je n'arrive pas à lire dans cette table ton
+critère de ranking"*.
+
+- **MEASURED IN PROD 2026-09-13** (brand `75d7e3e8…` / campaign `f7b1b610…` / leg
+  `start_to_conversation`, net): the order IS perfectly ascending — on `20.35, 20.43, 21.22, 21.48,
+  21.75, 23.59, 45.15, …`, a series the page never showed. `lithium` is rank 1 on an AUDIENCE cell
+  of **3 conversations on $61.06** while its campaign row is **13 on $2,272.04 = $175**; `cerulean`
+  is rank 2 on a cell of **ONE** conversation. Only 3 of 24 rows diverge by column at all.
+- **THE GRID IS 87% ONE REPEATED NUMBER, and that is the finding, not a rendering bug.** Of 288
+  (workflow × audience) cells, **252 are the crossOrg floor**, 29 the campaign grain and **7** the
+  audience's own evidence; **21 of 24 workflow rows are identical across every audience**. So the
+  three that move look like noise beside a wall of the same figure — which is exactly why the order
+  reads as arbitrary until the cells are on screen.
+- **`scopeRank` IS THE ROW'S POSITION AMONG THE ROWS SHARING ITS `audienceId`** (`null` = the brand /
+  campaign column), on the row's OWN `resolved.costPerOutcomeUsd`, under the SAME `?maximize=`
+  objective, the SAME three groups and the SAME slug tie-break as `rank`. A dynasty appears exactly
+  ONCE inside a scope, so there is no argmin to take — it is a plain sort, and a never-run workflow
+  is still last in every scope.
+- **THE TWO RANKS DISAGREE ON PURPOSE AND BOTH ARE SERVED.** `rank` says what we would put the
+  customer on next (and `recommendedWorkflowDynastySlug` is still rank 1 by construction); `scopeRank`
+  says what the column the reader is looking at says. Serving only one of them is what produced the
+  unreadable page; deriving either consumer-side is the second-order bug `rank` was added to close.
+- **PRESENT ⟺ `rank` IS — i.e. only on a `?leg=` read.** Every funnel- and goal-keyed body is
+  byte-unchanged, so campaign-service's production workflow selection is untouched. Guarded.
+- **DO NOT rank an audience COLUMN on its best cell.** That ties **10 of 12** audiences at $21.22 via
+  the same `alioth` floor — a degenerate order. The audience order comes from `/audience-stats`
+  (already served, already ranked, campaign-identity-scoped), which notes each audience on its OWN
+  pooled cost per conversation: 12 distinct values, $25.56 → $728.43 on the same prod read. Note the
+  #1 there carries **0 replies on 92 contacted** (the same explore floor one grain over) while the
+  only genuinely measured audience — 8 replies on 1,625 — is #2, so row-1 ∩ column-1 is NOT the best
+  cell and a surface must mark that cell explicitly rather than implying the intersection.
+- Guards: `src/routes/scope-rank.test.ts` — ONE fixture where the three orders genuinely disagree
+  (brand column `sodium $60 < lithium $200`; `aud-hot` `lithium $10 < sodium $200`; `aud-cold`
+  `sodium $20 < lithium $900`), so a suite that only checked "a number came back" would pass on an
+  implementation that copied `rank` into `scopeRank`. Every case asserts the DIVERGENCE: the total
+  order per scope, the campaign column contradicting the workflow order, two audiences contradicting
+  each other about the same two workflows, the ascent on the row's own cost, the never-run workflow
+  last everywhere, the objective flipping the scope order, and the funnel- and goal-keyed reads
+  carrying neither rank. (Set 2026-09-13, features-service#935.)
+
 ## A FUNNEL IS PRICED ON THE RATES IT DECLARES — each funnel states its OWN ladder, and the rung in the MIDDLE of one is worth more than the rung below it
 
 A brand selling FORM MAGNET (`Website visit → Form filled → Paid client`) read its funnel Overview and
