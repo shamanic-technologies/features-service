@@ -32,6 +32,7 @@ import { buildNetRevenueRetention, type NrrHistory } from "./nrr-compute.js";
 import { readStatedAmountsSoft, type StatedAmountRow } from "./stated-monthly-amounts-store.js";
 import {
   fetchBrandBudgetByDay,
+  fetchBrandCurrentDailyBudget,
   fetchCampaignEarningOnDay,
   fetchFleetCampaigns,
   fetchPaymentStoppedPeriods,
@@ -168,6 +169,12 @@ export interface RevenueHistoryDeps {
   readStatedAmounts: () => Promise<StatedAmountRow[] | null>;
   /** What amount billing recorded as in force for one (org, brand) on each UTC day of a range. Fails loud. */
   budgetByDay: (brandId: string, orgId: string, from: string, to: string) => Promise<BudgetByDay>;
+  /**
+   * The amount billing holds as in force for one (org, brand) RIGHT NOW — today's answer to
+   * condition 3, where the by-day replay disagrees with billing's own state. `null` = billing holds
+   * no amount, which stays distinct from a recorded 0. Fails loud.
+   */
+  currentDailyBudget: (brandId: string, orgId: string) => Promise<number | null>;
   /** Every stretch during which an org's payment had stopped, plus the day that record begins. Fails loud. */
   paymentStopped: (orgId: string) => Promise<PaymentStoppedFacts>;
   /** Every campaign across every org, in one call — which campaigns each (org, brand) pair has. Fails loud. */
@@ -206,6 +213,7 @@ const REAL_DEPS: RevenueHistoryDeps = {
   readCommittedSnapshots: readCommittedMrrSnapshotsSoft,
   readStatedAmounts: readStatedAmountsSoft,
   budgetByDay: fetchBrandBudgetByDay,
+  currentDailyBudget: fetchBrandCurrentDailyBudget,
   paymentStopped: fetchPaymentStoppedPeriods,
   fleetCampaigns: fetchFleetCampaigns,
   campaignEarningOnDay: fetchCampaignEarningOnDay,
@@ -385,10 +393,17 @@ async function buildMrrSplitSoft(
     const referenceDates = referenceDatesOf(ctx.snapshots, todayIso, windows, ctx.currentMrrUsd);
     const from = referenceDates[0] ?? todayIso;
 
-    const [budgetEntries, paymentEntries, fleetCampaigns] = await Promise.all([
+    const [budgetEntries, liveBudgetEntries, paymentEntries, fleetCampaigns] = await Promise.all([
       mapWithConcurrency(pairs, ORG_FANOUT_CONCURRENCY, async (p): Promise<[string, BudgetByDay]> => [
         p.key,
         await deps.budgetByDay(p.brandId, p.orgId, from, todayIso),
+      ]),
+      // TODAY's amount, from billing's LIVE budget rather than its change log — a second cheap
+      // single-row read per pair, in the same concurrency-capped leg as the replay it corrects, so
+      // it adds no round beyond the one already paid for (45 cold-email pairs in prod today).
+      mapWithConcurrency(pairs, ORG_FANOUT_CONCURRENCY, async (p): Promise<[string, number | null]> => [
+        p.key,
+        await deps.currentDailyBudget(p.brandId, p.orgId),
       ]),
       mapWithConcurrency(orgIds, ORG_FANOUT_CONCURRENCY, async (orgId): Promise<[string, PaymentStoppedFacts]> => [
         orgId,
@@ -491,6 +506,12 @@ async function buildMrrSplitSoft(
 
     const facts: DayFacts = {
       budgetByDay: new Map(budgetEntries.map(([key, b]) => [key, b.byDay])),
+      // Pinned to TODAY and to nothing else: a pair billing holds no amount for is ABSENT here, so
+      // it reads as unrecorded exactly as it does in the replay, never as a zero.
+      liveBudget: {
+        day: todayIso,
+        byPair: new Map(liveBudgetEntries.flatMap(([key, usd]) => (usd === null ? [] : [[key, usd] as [string, number]]))),
+      },
       activityDays: new Map(activityEntries),
       recordedEarning,
       paymentByOrg: new Map(paymentEntries),

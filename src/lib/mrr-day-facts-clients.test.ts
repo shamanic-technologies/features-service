@@ -1,5 +1,5 @@
 /**
- * Guards for the four per-day fact readers behind the MRR split.
+ * Guards for the per-day fact readers behind the MRR split.
  *
  * Every case is about the same thing: `not_recorded` SURVIVES the read. A reader that collapsed it to
  * a 0 or a false would look correct on every fixture and would silently turn "we know nothing about
@@ -14,6 +14,7 @@ vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 import {
   EARNING_BATCH_SIZE,
   fetchBrandBudgetByDay,
+  fetchBrandCurrentDailyBudget,
   fetchCampaignEarningOnDay,
   fetchFleetCampaigns,
   fetchPaymentStoppedPeriods,
@@ -37,6 +38,34 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = ORIGINAL_FETCH;
   vi.restoreAllMocks();
+});
+
+describe("fetchBrandCurrentDailyBudget", () => {
+  it("reads the amount billing holds RIGHT NOW, in USD, on the api-key + org-header contract", async () => {
+    const spy = mockJson({ brandId: "b", dailyBudgetCents: "1500.0000000000", updatedAt: "2026-08-05T13:31:32.764Z" });
+    // Shaped like prod brand `b97440f6…`, whose live $15/day the change log still reports as $1.
+    expect(await fetchBrandCurrentDailyBudget("b", "o")).toBe(15);
+
+    const [url, init] = spy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("http://billing/internal/brands/b/daily-budget");
+    expect((init.headers as Record<string, string>)["x-org-id"]).toBe("o");
+    expect((init.headers as Record<string, string>)["x-api-key"]).toBe("k");
+  });
+
+  it("returns NULL when billing holds no amount — absent is not a zero", async () => {
+    mockJson({ brandId: "b", dailyBudgetCents: null, updatedAt: null });
+    expect(await fetchBrandCurrentDailyBudget("b", "o")).toBeNull();
+  });
+
+  it("keeps a RECORDED zero as 0 — a brand deliberately defunded is a different fact", async () => {
+    mockJson({ brandId: "b", dailyBudgetCents: "0", updatedAt: "2026-08-05T13:31:32.764Z" });
+    expect(await fetchBrandCurrentDailyBudget("b", "o")).toBe(0);
+  });
+
+  it("fails LOUD on a non-OK response rather than reading it as no budget", async () => {
+    mockJson({ error: "nope" }, 500);
+    await expect(fetchBrandCurrentDailyBudget("b", "o")).rejects.toThrow(/daily-budget failed \(500\)/);
+  });
 });
 
 describe("fetchBrandBudgetByDay", () => {
