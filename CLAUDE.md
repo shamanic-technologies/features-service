@@ -295,6 +295,114 @@ critère de ranking"*.
   last everywhere, the objective flipping the scope order, and the funnel- and goal-keyed reads
   carrying neither rank. (Set 2026-09-13, features-service#935.)
 
+## THE GRID IS CONSUMED CELL BY CELL — campaign-service argmins WITHIN an audience's column, so a row's cheapest cell no longer wins the whole campaign
+
+The section above states that `rank` and `scopeRank` are MEANT to disagree, and it is written for a
+READER comparing a column. It says nothing about which order the SELECTOR takes them in, and that
+turned out to be the thing that decided what actually ran.
+
+campaign-service used to argmin `resolved.costPerOutcomeUsd` over EVERY row we serve — the whole
+grid, brand rows and audience cells together — pick the winning dynasty at the trigger, and only
+then pick an audience from that dynasty's rows inside the DAG. So the cells a run could ever land
+on were ONE ROW of the grid. A workflow whose single cheapest cell won that global argmin then ran
+on every audience, including the ones it is worst on, and the starvation was self-reinforcing: a
+workflow that never runs never earns evidence, so it never wins.
+
+- **MEASURED IN PROD 2026-09-14**, the campaign of the section above (brand `75d7e3e8…` / campaign
+  `f7b1b610…` / leg `start_to_conversation`): `lithium` is **$20 on ONE audience and $185 to $572 on
+  the other eleven**, and it took **2,554 of the campaign's 2,759 leads** across every audience.
+  `alioth` — **$21 on ten of the twelve columns** — had never served a single lead. The customer
+  read the Workflows table and asked why the running workflow is not the best one for the audience
+  it is being run on. It was a fair question and the answer was the consumption order.
+- **THE ORDER IS INVERTED NOW, AND IT IS THE CONSUMER'S CHANGE, NOT OURS** (campaign-service
+  v0.72.0, behind workflow-service v0.47.1 which carries the chosen audience from the execute call
+  into the start-run callback). The audience is Thompson-picked first over its POOLED column — every
+  workflow's evidence for that audience summed, so the audience is judged on what the money actually
+  buys rather than on how it did under whichever workflow is winning — and the workflow is then the
+  cheapest cell WITHIN that column. Nothing about what we PRICE moved, and no parameter sent to us
+  changed: the cells and their ordering are identical, only which argmin is taken and in what order.
+- **WE STILL SERVE BOTH RANKS AND BOTH STILL MEAN WHAT THEY MEANT.** `rank` remains the dynasty's
+  global argmin and `recommendedWorkflowDynastySlug` is still its head — that is what we would put
+  the customer on next, and it is a genuine answer. What changed is that it is no longer what the
+  selector reads, so **a change to `rank` no longer moves what runs**. `scopeRank` is the order the
+  selector's second leg now agrees with. A future change to either must say which of the two it is
+  moving.
+- **DO NOT "FIX" THE TIE AT THE EXPLORE FLOOR WITH A SHUFFLE.** 252 of the 288 cells sit at the same
+  crossOrg floor, so the per-column argmin ties constantly and breaks on the dynasty slug. That looks
+  like it would pin one alphabetically-first workflow forever and it does not: the floor is
+  `max(own spend, parent)`, so consuming a workflow raises its OWN floor and rotates it out, and the
+  catalogue sweeps by attrition. That convergence is the explore/exploit mechanism this file already
+  states one section down for a single workflow — it holds per cell too. Adding randomisation would
+  replace a self-correcting sweep with noise.
+- **EXPECT THE MEASURED LEADER TO STOP RUNNING FOR A WHILE AFTER A CHANGE LIKE THIS, and do not read
+  it as a fault.** The explore floor ($21) sits about eight times below the measured leader ($175),
+  so every unproven workflow beats `lithium` in eleven of twelve columns until it has spent its way
+  past the floor — roughly $500 across the catalogue, about two days at this campaign's rate.
+  (Set 2026-09-14, campaign-service#456 / workflow-service#423.)
+
+## WHAT RAN IS A FACT IN THE LEDGER, NOT A COLUMN ON THE CAMPAIGN ROW — `observedPicks`, read live, and nothing new is stored
+
+The campaign Workflows page badged a workflow as "Running now" and named one that had never served a
+single lead. Prod 2026-09-14, campaign `f7b1b610…`: `campaigns.workflow_slug` read
+`sales-cold-email-outreach-rudder-v3`, frozen at the row's creation on 2026-09-06, while the ledger
+recorded **3,473 triggers** over the same period of which **rudder ran zero** and `lithium-v6` ran 2,439,
+most recently that morning. Owner: *"ici ca dit que le workflow running right now est un deepseek pro
+alors que cette ligne n'est jamais le meilleur workflow d'une des audiences"*. Nothing was broken; the
+page was rendering a CONFIGURATION where a reader expects a FACT.
+
+- **THE BANDIT'S CHOICE IS ALREADY PERSISTED AT WRITE TIME, BY THE SERVICE THAT MADE IT — so there is no
+  bronze/silver/gold to add and no third copy to keep.** campaign-service opens a run per trigger and
+  runs-service stores `campaign_id` + `workflow_slug` + `audience_id` + `started_at` on it. The obvious
+  design (a new history table here) was measured against prod and rejected: the history already exists,
+  exactly, and a fourth copy of a fact two services hold is the read-side derivation this file refuses
+  everywhere else, pointed backwards. **`campaigns.workflow_slug` is legitimately the CONFIGURED
+  fallback** and must NOT be rewritten per trigger to make the badge true — that would make one column
+  answer two questions and destroy the only record of what the campaign was set up with.
+- **A TRIGGER RUN IS `service_name='campaign-service'`, AND `task_name = campaign_id` ON 178,046 OF
+  178,046 ROWS** (30 days, fleet-wide). Every descendant inherits the same `campaign_id`, so an
+  unfiltered read answers ~28k rows for one campaign and repeats each pick eight times. `workflow_slug`
+  is non-null on every one of those 178,046; a row stating none answers nothing about a pick and is
+  dropped rather than carried as a half-row.
+- **IT IS READ LIVE, NEVER FROM THE GOLD SNAPSHOT** — the same rule, and the same reason, as this
+  route's ECONOMICS: a figure whose whole job is to say what is happening RIGHT NOW cannot be served
+  from a cell up to half an hour stale. It is fired in the SAME `Promise.all` as the cached evidence
+  fan-out (it needs only the campaign ids), so it costs no extra wall-clock.
+- **ANSWERED FOR THE CAMPAIGN'S WHOLE IDENTITY**, like every other campaign-scoped figure here. runs
+  takes no campaign LIST, so it is one call per member at concurrency 6 — a trigger carries exactly ONE
+  campaign, so the union counts nobody twice, and each member is asked for the full window so the merge
+  is exact rather than a sample of whichever answered first. Bounded by measurement: the largest brand
+  in prod has **17** campaigns with runs over 90 days, and 17 of 20 brands have one or two.
+- **`audienceId: null` IS A REAL STATE.** The audience write-tag is younger than the workflow one —
+  94-97% of triggers in the last three weeks, ~40% in July — so an older pick states its workflow and no
+  audience. Reported as null, never substituted from a neighbouring run.
+- **A LINEAGE THE CATALOGUE NO LONGER DESCRIBES IS ITS OWN DYNASTY OF ONE** (`dynastyOfSlug`'s rule,
+  shared with `?groupBy=workflow` and the drill-down), so a RETIRED workflow — exactly the one a "what
+  actually ran" question is usually about — answers with its real key instead of vanishing.
+- **`?picks=` IS 0..200, DEFAULT 50, AND AN OUT-OF-RANGE VALUE IS A 400 `picks_unrecognised`** rather
+  than a clamp into a window nobody asked for. `0` spends no read at all. `truncated` says the list is a
+  window; `last` is the identity's most recent pick whatever the window, so a badge never depends on it.
+- **PRESENT ⟺ `?campaignId=` (which already requires `?leg=`)**, so every funnel- and goal-keyed body is
+  byte-unchanged and campaign-service's production workflow selection is untouched. Guarded, including
+  that a read naming no campaign issues ZERO `/v1/runs` requests.
+- **FAIL-SOFT with a loud log: `observedPicks: null` is "we could not read this"**, never the CONFIGURED
+  workflow and never a fabricated pick — degrading to the configured slug would restore the exact bug.
+  A campaign that has never triggered is `{last: null, recent: [], truncated: false}`, a real empty
+  answer, distinct from the null.
+- **THIS MAKES THE PICK VISIBLE; IT DOES NOT CHANGE IT.** The selector moved to cell-by-cell consumption
+  in campaign-service v0.72.0 (the section above) — a separate ship, and the reason this read is worth
+  having: the order changed yesterday, so what actually ran is the only way to see it.
+- Guards: `src/routes/observed-picks.test.ts` — ONE fixture shaped like the campaign that reported it
+  (three stored rows, the live one configured with `rudder`, rudder never run, picks interleaved across
+  members and out of order on the wire, one member that never triggered, one untagged audience, one
+  retired lineage). Every case asserts the DIVERGENCE between the configured slug and the observed one,
+  so a suite that only checked "a block came back" would pass on the implementation this replaces: the
+  named workflow, the merge order with a stopped ancestor second, either member reading the same answer,
+  the null audience beside three tagged ones, the retired dynasty, the request shape
+  (`serviceName=campaign-service`, one call per member, the limit on the wire), the empty campaign, the
+  fail-soft null with the rest of the body intact, the absent block on a read naming no campaign, the
+  truncated window, `picks=0` spending nothing, the four 400s, and the funnel- and goal-keyed reads
+  carrying none of it. (Set 2026-09-14, features-service#944.)
+
 ## A FUNNEL IS PRICED ON THE RATES IT DECLARES — each funnel states its OWN ladder, and the rung in the MIDDLE of one is worth more than the rung below it
 
 A brand selling FORM MAGNET (`Website visit → Form filled → Paid client`) read its funnel Overview and
@@ -4266,25 +4374,6 @@ explicitly: when a change BREAKS a recorded series (a snapshot basis that cannot
 beside the section that DESCRIBES that series, not only in the section that caused it — a reader of the
 curve will not be reading the section that moved it.
 
-## A CHANGE THAT SUPERSEDES A DOCUMENTED RULE UPDATES THIS FILE IN THE SAME PR
-
-Most sections here open by stating an invariant and then say "do NOT re-litigate". That wording is what
-makes the next agent trust them, so a section describing a rule the code no longer follows is worse than
-no section: it is a premise someone will build on. `tsc` and the suite cannot catch it — the tests were
-rewritten around the new rule and pass, while the doc keeps asserting the old one.
-
-Before opening a PR that changes a RULE (a verdict, a precedence, a basis, a producer, a field name a
-section names), `git grep` this file for the identifiers you touched and rewrite every section that
-answers with the old rule — including the SIBLING surfaces that share the code (`accountStatus` is read
-by the accounts audit, send-forecast and customer-health, so one rule change is three sections). State
-what it supersedes and why, so the reasoning that produced the old rule is not re-derived later.
-
-Cost 2026-08-27 (#837 → #838): the accounts audit moved to campaign-service's running budget and dropped
-the brand pause flag, and this file went on documenting the pause-first precedence, `dailyBudgetUsd`, and
-billing as the budget source in four places — a second PR the same day. Corollary the brief named
-explicitly: when a change BREAKS a recorded series (a snapshot basis that cannot be replayed), say so
-beside the section that DESCRIBES that series, not only in the section that caused it — a reader of the
-curve will not be reading the section that moved it.
 
 ## OpenAPI Rule
 
