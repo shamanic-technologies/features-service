@@ -76,6 +76,7 @@ describe("buildRevenueHistory — integration via injected deps", () => {
       readCommittedSnapshots: async () => fixture.snapshots ?? [],
       readStatedAmounts: async () => [],
       budgetByDay: async () => ({ recordBeginsAt: null, byDay: new Map() }),
+      currentDailyBudget: async () => null,
       paymentStopped: async () => ({ recordBeginsOn: null, periods: [] }),
       fleetCampaigns: async () => [],
       campaignEarningOnDay: async () => [],
@@ -225,6 +226,7 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
 
   interface Calls {
     budget: Array<{ brandId: string; from: string; to: string }>;
+  liveBudget: Array<{ brandId: string; orgId: string }>;
     payment: string[];
     fleetCampaigns: number;
     earningDays: string[];
@@ -233,7 +235,7 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
   }
 
   function emptyCalls(): Calls {
-    return { budget: [], payment: [], fleetCampaigns: 0, earningDays: [], activity: [], firstBilled: 0 };
+    return { budget: [], liveBudget: [], payment: [], fleetCampaigns: 0, earningDays: [], activity: [], firstBilled: 0 };
   }
 
   const STATED_ROW = {
@@ -269,6 +271,10 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
         const byDay = new Map<string, number>();
         for (const d of ["2026-08-31", TODAY]) byDay.set(d, brandId === BRAND_BIG ? 143 : 102);
         return { recordBeginsAt: "2026-07-15T00:00:00.000Z", byDay };
+      },
+      currentDailyBudget: async (brandId, orgId) => {
+        calls.liveBudget.push({ brandId, orgId });
+        return brandId === BRAND_BIG ? 143 : 102;
       },
       paymentStopped: async (orgId) => {
         calls.payment.push(orgId);
@@ -323,6 +329,79 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
     expect(calls.payment.sort()).toEqual([AGENCY_ORG, SAAS_ORG]);
     expect(calls.fleetCampaigns).toBe(1);
     expect(calls.firstBilled).toBe(0); // the stated row carries a start date
+  });
+
+  it("reads TODAY's amount from billing's LIVE budget and the PAST from its replay, one call per pair", async () => {
+    // The production shape, measured 2026-09-14: the self-serve brand's live budget is $15/day while
+    // the newest row in billing's change log still says $1 — the figure was 15x too small — and the
+    // agency brand is funded live with NOTHING in the log at all, so the replay dropped it entirely.
+    const calls = emptyCalls();
+    const out = await buildRevenueHistory(
+      COLD,
+      SPLIT_NOW,
+      WINDOWS,
+      splitDeps(
+        {
+          readStatedAmounts: async () => [STATED_ROW], // so BRAND_BIG is the agency side
+          budgetByDay: async (brandId, _orgId, from, to) => {
+            calls.budget.push({ brandId, from, to });
+            const byDay = new Map<string, number>();
+            if (brandId === BRAND_SAAS) {
+              byDay.set("2026-08-31", 102);
+              byDay.set(TODAY, 1); // the stale change row
+            }
+            // BRAND_BIG has no change rows whatsoever.
+            return { recordBeginsAt: "2026-07-15T00:00:00.000Z", byDay };
+          },
+          currentDailyBudget: async (brandId, orgId) => {
+            calls.liveBudget.push({ brandId, orgId });
+            return brandId === BRAND_SAAS ? 15 : 8;
+          },
+        },
+        calls,
+      ),
+    );
+
+    const split = out.mrrSplit!;
+    // $15/day, not the log's $1 — and not the $102 the earlier fixture's replay carried either.
+    expect(split.currentSelfServeMrrUsd).toBe(450);
+    expect(split.currentSelfServeMrrUsd).not.toBe(30);
+    // The agency brand billing never logged is funded too, so its budget half is no longer zero.
+    expect(split.currentAgencyBudgetMrrUsd).toBe(240);
+
+    const row = split.selfServeBreakdown.rows.find((r) => r.brandId === BRAND_SAAS)!;
+    expect([row.configuredDailyBudgetUsd, row.amountSource, row.countedMrrUsd]).toEqual([15, "live", 450]);
+    expect(row.excludedBy).toBeNull(); // never "no_recorded_amount" for a brand that is plainly funded
+    expect(split.selfServeBreakdown.countedMrrUsd).toBe(split.currentSelfServeMrrUsd);
+
+    // The PAST bucket still reads the replay: August is $102/day for the self-serve brand, and the
+    // agency brand the log never recorded contributes nothing there.
+    const aug = split.monthly.find((b) => b.period === "2026-08")!;
+    expect(aug.selfServeMrrUsd).toBe(102 * 30);
+    expect(aug.agencyBudgetMrrUsd).toBe(0);
+
+    // ONE live read per pair, beside the one replay per pair — no second round trip per day.
+    expect(calls.liveBudget.map((c) => c.brandId).sort()).toEqual([BRAND_BIG, BRAND_SAAS]);
+    expect(calls.liveBudget.find((c) => c.brandId === BRAND_SAAS)!.orgId).toBe(SAAS_ORG);
+    expect(calls.budget.map((c) => c.brandId).sort()).toEqual([BRAND_BIG, BRAND_SAAS]);
+  });
+
+  it("leaves a pair billing holds no live amount for uncounted, and says the gap is there", async () => {
+    const out = await buildRevenueHistory(
+      COLD,
+      SPLIT_NOW,
+      WINDOWS,
+      splitDeps({ readStatedAmounts: async () => [STATED_ROW], currentDailyBudget: async () => null }),
+    );
+    const split = out.mrrSplit!;
+    // Both pairs are running and neither has an amount billing will state — nothing is invented.
+    expect(split.currentSelfServeMrrUsd).toBe(0);
+    const row = split.selfServeBreakdown.rows.find((r) => r.brandId === BRAND_SAAS)!;
+    expect(row.configuredDailyBudgetUsd).toBeNull();
+    expect(row.amountSource).toBeNull();
+    expect(row.excludedBy).toBe("no_recorded_amount");
+    const sep = split.monthly.find((b) => b.period === "2026-09")!;
+    expect(sep.selfServeUnrecordedBudgetPairCount).toBe(1);
   });
 
   it("asks campaign-service about the REFERENCE DATES only, never every day of the window", async () => {

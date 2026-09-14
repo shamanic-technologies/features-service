@@ -26,8 +26,10 @@
  * THE FOUR CONDITIONS A DAY'S BUDGET MUST MEET TO BE MRR, and the service that records each:
  *   1. PAYMENT HAD NOT STOPPED        — billing-service payment-stopped periods
  *   2. THE CAMPAIGN WAS RUNNING       — campaign-service recorded status
- *   3. AN AMOUNT WAS IN FORCE         — billing-service daily-budget by-day (the brand grain, the
- *                                       finest billing genuinely records over time)
+ *   3. AN AMOUNT WAS IN FORCE         — billing-service, from TWO of its records and never blended:
+ *                                       its LIVE budget for TODAY, its by-day replay for every
+ *                                       earlier day (the brand grain, the finest it records over
+ *                                       time). See `liveBudget` on `DayFacts` for why.
  *   4. SOMEBODY WAS LEFT TO CONTACT   — campaign-service recorded audience availability
  * None of them is invented here; this module only joins them.
  *
@@ -43,7 +45,10 @@
  *
  * AN AMOUNT IS NEVER APPROXIMATED — only the QUALIFICATION is. A pair billing holds no budget record
  * for on a day contributes NOTHING, however obviously it was working, because inventing the amount is
- * the one thing that would put a number on the wire no service ever recorded. The gap is made VISIBLE
+ * the one thing that would put a number on the wire no service ever recorded. Note that reading
+ * TODAY off billing's live budget is not an exception to that: it is billing's own answer about
+ * billing's own state, and it is narrower than the replay rather than wider — the live value is
+ * pinned to the ONE day it is true for, and is never back-cast over the history. The gap is made VISIBLE
  * instead of guessed: `selfServeUnrecordedBudgetPairCount` counts exactly the pairs that looked
  * active on the reference date while billing held no amount for them, so a reader can see the
  * under-statement rather than have it silently folded in.
@@ -346,6 +351,13 @@ export interface PairDayVerdict {
   audienceAvailable: boolean | null;
   /** Condition 3 — the amount billing RECORDED as in force that day, USD/day. `null` = it held none. */
   configuredDailyBudgetUsd: number | null;
+  /**
+   * WHICH of billing's two records answered condition 3: `live` = its current budget (today only),
+   * `replayed` = its append-only change log (every earlier day), `null` = it held no amount. Stated
+   * rather than inferred, because the two sources genuinely disagree for today and a reader
+   * reconciling a figure against billing needs to know which one it is looking at.
+   */
+  amountSource: "live" | "replayed" | null;
   /** The first condition that answered no, or `null` when the pair counted. */
   excludedBy: PairExclusionReason | null;
 }
@@ -354,6 +366,19 @@ export interface PairDayVerdict {
 export interface DayFacts {
   /** pair key → (day → recorded configured brand daily budget, USD). An absent day is NOT RECORDED. */
   budgetByDay: Map<string, Map<string, number>>;
+  /**
+   * THE LIVE AMOUNT, AND THE ONE DAY IT ANSWERS FOR. Billing's change log is a record of the writes
+   * it appended, not a mirror of its current state, so for TODAY it can disagree with what billing
+   * actually holds — and in prod it does, badly (see `fetchBrandCurrentDailyBudget`). Today's amount
+   * therefore comes from billing's live budget and every earlier day stays on the replay, which is
+   * the only source that reaches back.
+   *
+   * The day travels WITH the map rather than beside it so the two cannot be set apart: a live amount
+   * with no day to pin it to would silently price every past day at today's ceiling, which is the
+   * back-casting this file refuses. An absent pair means billing holds no amount, exactly as an
+   * absent day does in the replay.
+   */
+  liveBudget?: { day: string; byPair: Map<string, number> };
   /** pair key → the UTC days it billed cold-email spend (activity evidence for the earlier era). */
   activityDays: Map<string, Set<string>>;
   /** pair key → (day → campaign-service's recorded verdict: true / false / null = not recorded). */
@@ -416,13 +441,18 @@ export function campaignAxesOf(answers: CampaignDayAnswer[] | undefined): Record
 export function evaluatePairDay(key: string, orgId: string, day: string, facts: DayFacts): PairDayVerdict {
   let basis: FactBasis = "recorded";
 
-  const amount = facts.budgetByDay.get(key)?.get(day);
+  // TODAY takes billing's LIVE budget; every earlier day takes its replay. Two sources for one
+  // quantity, never blended: the replay is the only record that reaches back, and the live value is
+  // the only one that is true right now.
+  const onLiveDay = facts.liveBudget !== undefined && facts.liveBudget.day === day;
+  const amount = onLiveDay ? facts.liveBudget?.byPair.get(key) : facts.budgetByDay.get(key)?.get(day);
   const axes = campaignAxesOf(facts.campaignAnswers?.get(key)?.get(day));
   const state = {
     paymentActive: null as boolean | null,
     campaignRunning: axes.running,
     audienceAvailable: axes.audienceAvailable,
     configuredDailyBudgetUsd: amount === undefined ? null : amount,
+    amountSource: (amount === undefined ? null : onLiveDay ? "live" : "replayed") as "live" | "replayed" | null,
   };
 
   // 1. BILLING ACTIVE. A stopped payment ends it outright; an unrecorded one is a fallback, not a yes.
@@ -487,6 +517,8 @@ export interface PairDayRow {
   audienceAvailable: boolean | null;
   /** Condition 3 — billing recorded a positive amount in force that day. */
   amountInForce: boolean;
+  /** Which of billing's records the amount came from: its LIVE budget (today) or its replay (past). */
+  amountSource: "live" | "replayed" | null;
   /** What this pair contributed to the side's run-rate, USD: its budget × 30, or 0. */
   countedMrrUsd: number;
   /** The first condition that answered no, or `null` when the pair counted. */
@@ -535,6 +567,7 @@ export function sumSideOn(pairKeys: string[], day: string, facts: DayFacts): Sid
       campaignRunning: verdict.campaignRunning,
       audienceAvailable: verdict.audienceAvailable,
       amountInForce: (verdict.configuredDailyBudgetUsd ?? 0) > 0,
+      amountSource: verdict.amountSource,
       countedMrrUsd: usd2(verdict.mrrUsd),
       excludedBy: verdict.excludedBy,
       basis: verdict.basis,
@@ -542,7 +575,9 @@ export function sumSideOn(pairKeys: string[], day: string, facts: DayFacts): Sid
     if (verdict.basis === "approximated") anyApproximated = true;
     // A pair EXCLUDED on recorded evidence is as much a recorded input as one that counted.
     if (verdict.basis === "recorded") anyRecordedInput = true;
-    if (facts.budgetByDay.get(key)?.has(day)) anyRecordedInput = true;
+    // An amount is a recorded input whichever of billing's two records it came from — otherwise a
+    // fleet whose only budget fact is today's live value would report itself unmeasurable.
+    if (verdict.amountSource !== null) anyRecordedInput = true;
     if (verdict.mrrUsd > 0) {
       mrrUsd += verdict.mrrUsd;
       pairCount += 1;

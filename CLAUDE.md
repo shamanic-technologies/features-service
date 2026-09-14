@@ -23,8 +23,30 @@ half is a sum now too, so neither can go negative by construction.
   stopped** (billing `GET /internal/accounts/by-org/:orgId/payment-stopped-periods`) · **the campaign
   was running** and **its audience was not exhausted** (campaign-service `POST
   /internal/campaigns/earning-history`, one call per REFERENCE DATE) · **an amount was in force**
-  (billing `GET /internal/brands/:brandId/daily-budget/by-day`). A brand is earning if ANY of its
+  (billing, from TWO of its records — see the next bullet). A brand is earning if ANY of its
   campaigns was; `evaluatePairDay` stops at the first condition that answers no.
+- **THE AMOUNT IS BILLING'S LIVE BUDGET FOR TODAY AND ITS REPLAY FOR EVERY EARLIER DAY, never blended
+  and never back-cast.** `GET /internal/brands/:brandId/daily-budget/by-day` replays billing's
+  append-only change log, and that log is a record of the writes billing APPENDED rather than a mirror
+  of the state it holds — so for TODAY it disagrees with billing's own current budget, badly. Measured
+  in prod 2026-09-14 against billing's database: brand `b97440f6…` (Steady Recruitment) held a live
+  **$15/day** whose newest change row said **$1**, so the run-rate counted $30/month against $450; and
+  brand `a179bbd9…` (Shockwavecenters) held a live **$8/day** against **ZERO** change rows, so it was
+  dropped from the figure outright and reported as `no_recorded_amount` while it was funded and
+  running. Both live amounts sit in `brand_funnel_daily_budgets` (the per-funnel ceilings), which the
+  brand-level scalar table does not carry and which per-funnel writes stopped appending to the log.
+  So today's amount is read from `GET /internal/brands/:brandId/daily-budget` — billing's own
+  composition, the SUM of a brand's per-funnel ceilings else its brand scalar — and every earlier day
+  stays on the replay, which is the only record that reaches back. The two travel together on
+  `DayFacts.liveBudget` as `{day, byPair}` so a live amount can never be applied to a day it is not
+  true for, and every row states `amountSource: "live" | "replayed" | null`. `null` still means
+  billing holds no amount, distinct from a recorded 0. **Do NOT source it from campaign-service's
+  `configuredDailyBudgetCents` instead**, however tempting the zero extra IO is (the accounts audit
+  already fetches it): campaign-service records status and audience, not the amount, and every other
+  condition here is read from the service that records it. It was measured first — **22 of 22** funded
+  pairs agree to the cent — so the reason is the invariant, not a divergence. Cost: one cheap
+  single-row read per pair (45 cold-email pairs in prod), in the SAME concurrency-capped leg as the
+  replay it corrects. (Set 2026-09-14, features-service#960.)
 - **`not_recorded` IS THE ANSWER THAT MATTERS MOST, and every reader preserves it**
   (`lib/mrr-day-facts-clients.ts`). A day before a producer's record begins is a day we know nothing
   about, which is a different statement from "the budget was 0" or "the campaign was stopped" — and
@@ -55,7 +77,9 @@ half is a sum now too, so neither can go negative by construction.
   EVERY campaign answered can answer for the brand.
 - **AN AMOUNT IS NEVER APPROXIMATED — only the QUALIFICATION is.** A pair billing holds no budget record
   for on a day contributes NOTHING, however obviously it was working, because inventing the amount is
-  the one thing that would put a number on the wire no service ever recorded. The gap is made VISIBLE
+  the one thing that would put a number on the wire no service ever recorded. Reading TODAY off
+  billing's live budget is not an exception: it is billing's own answer about billing's own state, and
+  it is NARROWER than the replay rather than wider — pinned to the one day it is true for. The gap is made VISIBLE
   instead: `selfServeUnrecordedBudgetPairCount` counts exactly the pairs that looked active on the
   reference date while billing held no amount, so a reader sees the under-statement rather than have it
   folded in. **Do NOT "fix" it by back-casting the first recorded value, or by using the pair's realized
@@ -96,9 +120,10 @@ half is a sum now too, so neither can go negative by construction.
 - **THE SUM IS SERVED WITH ITS TERMS — `selfServeBreakdown`, one row per self-serve (org, brand),
   and the rows are EMITTED BY the loop that adds the figure up.** A total nobody can take apart has to
   be taken on faith, and taking it apart by hand meant querying billing, campaign-service and this
-  service. Each row states what billing RECORDED as configured, how each of the four conditions
-  answered, what the pair actually contributed, and — when it contributed nothing — WHICH condition
-  stopped it, in the evaluator's own short-circuit order. Measured in prod 2026-09-14: seven brands,
+  service. Each row states what billing holds as configured (and, on `amountSource`, WHICH of its two
+  records answered), how each of the four conditions answered, what the pair actually contributed,
+  and — when it contributed nothing — WHICH condition stopped it, in the evaluator's own short-circuit
+  order. Measured in prod 2026-09-14: seven brands,
   **$102/day configured, $54/day qualified = $1,620/month**, the five excluded ones stopped by four
   different conditions. Properties that are load-bearing rather than incidental: **Σ `countedMrrUsd`
   IS `currentSelfServeMrrUsd`** because the rows are the terms the sum added, never a second pass over
@@ -124,7 +149,10 @@ half is a sum now too, so neither can go negative by construction.
   the DIVERGENCE between what the sum says and what the subtraction said, so a suite that only checked "a
   number came back" would pass on the implementation this replaces. Plus
   `src/lib/mrr-day-facts-clients.test.ts` (`not_recorded` survives every reader, the batch cap, the
-  api-key-only payment read) and the wiring block in `src/lib/revenue-history-compute.test.ts` (each fact
+  api-key-only payment read, the live-budget read's contract and its null-vs-recorded-0) plus the
+  live/replayed block in `agency-self-serve-compute.test.ts` and `self-serve-breakdown.test.ts`
+  (each case asserts the DIVERGENCE between the two records — a suite that only checked "an amount
+  came back" would pass on the replay-for-both-eras implementation this replaces) and the wiring block in `src/lib/revenue-history-compute.test.ts` (each fact
   from its own producer, the read set bounded by the reference dates, the activity fallback paid for only
   while needed, the fail-soft null, and a negative half being impossible whatever the snapshot says).
   (Set 2026-09-12 as a subtraction, features-service#927; replaced by the sum 2026-09-14,

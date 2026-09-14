@@ -120,13 +120,25 @@ function payments(): Map<string, PaymentStoppedFacts> {
 }
 
 function facts(over: Partial<DayFacts> = {}): DayFacts {
-  return {
+  const base: DayFacts = {
     budgetByDay: budgets(),
     activityDays: new Map(SELF_BRANDS.map((b) => [K[b], new Set([TODAY])])),
     recordedEarning: recordedEarning(),
     paymentByOrg: payments(),
     campaignAnswers: campaignAnswers(),
     ...over,
+  };
+  // TODAY's amount comes from billing's LIVE budget now, so the fixture states it there. Unless a
+  // case overrides it, it agrees with the replay — the DIVERGENCE is what the dedicated cases drive.
+  return {
+    ...base,
+    liveBudget:
+      over.liveBudget ?? {
+        day: TODAY,
+        byPair: new Map(
+          [...base.budgetByDay].flatMap(([k, v]) => (v.has(TODAY) ? [[k, v.get(TODAY)!] as [string, number]] : [])),
+        ),
+      },
   };
 }
 
@@ -264,6 +276,40 @@ describe("the SaaS run-rate is served WITH its terms", () => {
     expect(split.selfServeBreakdown.rows.some((r) => r.brandId === AGENCY_BRAND)).toBe(false);
     expect(split.currentAgencyMrrUsd).toBe(4000);
     expect(split.currentTotalMrrUsd).toBe(4000 + 1620);
+  });
+});
+
+describe("each row says WHICH of billing's records its amount came from", () => {
+  it("prices today off the LIVE budget when it disagrees with the replay, and says `live`", () => {
+    // The prod divergence: billing's change log still carries $49/day for the biggest brand while
+    // its live ceiling is $75 — the run-rate under-stated it by $780/month.
+    const live = { day: TODAY, byPair: new Map([[K[COUNTED_BIG], 75], [K[COUNTED_SMALL], 5]]) };
+    const split = buildMrrSplit(inputs({ facts: facts({ liveBudget: live }) }), NOW, WINDOWS);
+    const bd = split.selfServeBreakdown;
+
+    const big = rowOf(split, COUNTED_BIG);
+    expect([big.configuredDailyBudgetUsd, big.amountSource, big.countedMrrUsd]).toEqual([75, "live", 2250]);
+    expect(big.countedMrrUsd).not.toBe(49 * 30); // what the replay-for-both-eras implementation said
+
+    // The rows are still the terms of the sum, so they still add to it exactly.
+    expect(bd.countedMrrUsd).toBe(80 * 30);
+    expect(bd.countedMrrUsd).toBe(split.currentSelfServeMrrUsd);
+    expect(bd.rows.reduce((a, r) => a + r.countedMrrUsd, 0)).toBe(bd.countedMrrUsd);
+    // And `configuredMrrUsd` is read off the same amounts, so it moves with them.
+    expect(bd.configuredMrrUsd).toBe(80 * 30);
+  });
+
+  it("reports a row billing holds no live amount for as unrecorded, with a null source", () => {
+    const split = buildMrrSplit(
+      inputs({ facts: facts({ liveBudget: { day: TODAY, byPair: new Map([[K[COUNTED_SMALL], 5]]) } }) }),
+      NOW,
+      WINDOWS,
+    );
+    const big = rowOf(split, COUNTED_BIG);
+    expect(big.configuredDailyBudgetUsd).toBeNull();
+    expect(big.amountSource).toBeNull();
+    expect(big.excludedBy).toBe("no_recorded_amount");
+    expect(split.selfServeBreakdown.countedMrrUsd).toBe(5 * 30);
   });
 });
 

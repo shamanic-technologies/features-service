@@ -126,12 +126,24 @@ function payments(): Map<string, PaymentStoppedFacts> {
 }
 
 function facts(over: Partial<DayFacts> = {}): DayFacts {
-  return {
+  const base: DayFacts = {
     budgetByDay: budgets(),
     activityDays: activity(),
     recordedEarning: recordedEarning(),
     paymentByOrg: payments(),
     ...over,
+  };
+  // TODAY's amount comes from billing's LIVE budget now, so the fixture states it there. Unless a
+  // case overrides it, it agrees with the replay — the DIVERGENCE is what the dedicated cases drive.
+  return {
+    ...base,
+    liveBudget:
+      over.liveBudget ?? {
+        day: TODAY,
+        byPair: new Map(
+          [...base.budgetByDay].flatMap(([k, v]) => (v.has(TODAY) ? [[k, v.get(TODAY)!] as [string, number]] : [])),
+        ),
+      },
   };
 }
 
@@ -450,5 +462,124 @@ describe("the live figures and the current bucket are ONE number", () => {
     expect(aug.growthPct).toBeNull();
     // September's growth is measured against JULY, the previous MEASURED point.
     expect(sep.growthPct).toBe(Math.round(((sep.totalMrrUsd! - jul.totalMrrUsd!) / jul.totalMrrUsd!) * 1000) / 10);
+  });
+});
+
+/**
+ * TWO SOURCES FOR ONE QUANTITY, NEVER BLENDED — today's amount is billing's LIVE budget, every
+ * earlier day's is its replay.
+ *
+ * The production shape these reproduce, measured 2026-09-14 against billing's own database: brand
+ * `b97440f6…` (Steady Recruitment) held a LIVE $15/day while the newest row in the change log said
+ * $1 — the run-rate counted $30/month where it should have counted $450 — and brand `a179bbd9…`
+ * (Shockwavecenters) held a live $8/day against ZERO change rows, so it was dropped from the figure
+ * entirely and reported as having no recorded amount while it was plainly funded and running.
+ *
+ * Every case asserts the DIVERGENCE between the two records: a suite that only checked "an amount
+ * came back" would pass on the implementation this replaces, which read the replay for both eras.
+ */
+describe("the amount in force — LIVE for today, REPLAYED for every earlier day", () => {
+  /** The prod shape: A's live budget is a fifteenth of its replay; C is funded live and absent from the log. */
+  const DIVERGENT: DayFacts["liveBudget"] = { day: TODAY, byPair: new Map([[K.a, 15], [K.c, 8]]) };
+
+  it("counts TODAY at billing's LIVE amount, never the replay's stale one", () => {
+    const v = evaluatePairDay(K.a, SAAS_A, TODAY, facts({ liveBudget: DIVERGENT }));
+    // The replay still says $100/day for today; the live budget says $15, and the live budget wins.
+    expect(v.configuredDailyBudgetUsd).toBe(15);
+    expect(v.mrrUsd).toBe(450);
+    expect(v.mrrUsd).not.toBe(3000); // what the replay-for-both-eras implementation answered
+    expect(v.amountSource).toBe("live");
+    expect(v.excludedBy).toBeNull();
+  });
+
+  it("counts a brand billing's change log has NEVER recorded, on its live amount alone", () => {
+    // Shockwavecenters: funded, running, and invisible to the replay — the brand this dropped.
+    const v = evaluatePairDay(K.c, SAAS_C, TODAY, facts({ liveBudget: DIVERGENT }));
+    expect(v.configuredDailyBudgetUsd).toBe(8);
+    expect(v.mrrUsd).toBe(240);
+    expect(v.amountSource).toBe("live");
+    expect(v.excludedBy).toBeNull();
+    // It is no longer an under-statement to report: it is counted.
+    expect(v.budgetUnrecordedWhileActive).toBe(false);
+
+    const sum = sumSideOn(SELF_KEYS, TODAY, facts({ liveBudget: DIVERGENT }));
+    expect(sum.unrecordedBudgetPairCount).toBe(0);
+    expect(sum.mrrUsd).toBe(450 + 240); // A and C; B is exhausted and D's payment stopped
+  });
+
+  it("never back-casts the live amount onto a PAST day — the replay still answers there", () => {
+    const f = facts({ liveBudget: DIVERGENT });
+    const aug = evaluatePairDay(K.a, SAAS_A, AUG, f);
+    expect(aug.configuredDailyBudgetUsd).toBe(100); // the replay, not today's $15
+    expect(aug.amountSource).toBe("replayed");
+
+    // And a brand the log never recorded stays unrecorded in the past, however funded it is now.
+    const augC = evaluatePairDay(K.c, SAAS_C, AUG, f);
+    expect(augC.configuredDailyBudgetUsd).toBeNull();
+    expect(augC.amountSource).toBeNull();
+    expect(augC.excludedBy).toBe("no_recorded_amount");
+  });
+
+  it("leaves a pair billing holds NO live amount for unrecorded — absent is never a zero", () => {
+    // C is active today, and billing answers with nothing: the gap stays visible rather than filled.
+    const v = evaluatePairDay(K.c, SAAS_C, TODAY, facts({ liveBudget: { day: TODAY, byPair: new Map() } }));
+    expect(v.configuredDailyBudgetUsd).toBeNull();
+    expect(v.amountSource).toBeNull();
+    expect(v.mrrUsd).toBe(0);
+    expect(v.excludedBy).toBe("no_recorded_amount");
+    expect(v.budgetUnrecordedWhileActive).toBe(true);
+  });
+
+  it("does not let the live amount move an exclusion the EARLIER conditions already made", () => {
+    // B was recorded as not earning and D's payment stopped; a live amount for either changes
+    // nothing, and the reason stays the condition the arithmetic actually stopped at — never the
+    // amount, which the short-circuit never reached.
+    const f = facts({ liveBudget: { day: TODAY, byPair: new Map([[K.b, 99], [K.d, 99]]) } });
+    expect(evaluatePairDay(K.b, SAAS_B, TODAY, f).excludedBy).toBe("not_earning_recorded");
+    expect(evaluatePairDay(K.d, SAAS_D, TODAY, f).excludedBy).toBe("payment_stopped");
+    // Both still state what billing holds for them — a reader asking "what is this customer
+    // configured at" is asking a different question from "did it count".
+    expect(evaluatePairDay(K.b, SAAS_B, TODAY, f).configuredDailyBudgetUsd).toBe(99);
+  });
+
+  it("makes a day MEASURABLE on a live amount alone, with nothing else on record", () => {
+    const onlyLive = facts({
+      budgetByDay: new Map(),
+      recordedEarning: new Map(),
+      paymentByOrg: new Map(),
+      activityDays: new Map([[K.a, new Set([TODAY])]]),
+      liveBudget: { day: TODAY, byPair: new Map([[K.a, 20]]) },
+    });
+    const sum = sumSideOn(SELF_KEYS, TODAY, onlyLive);
+    expect(sum.nothingRecorded).toBe(false);
+    expect(sum.mrrUsd).toBe(600);
+
+    // With no live amount either, the day genuinely has nothing on it and says so.
+    const nothing = facts({
+      budgetByDay: new Map(),
+      recordedEarning: new Map(),
+      paymentByOrg: new Map(),
+      activityDays: new Map(),
+      liveBudget: { day: TODAY, byPair: new Map() },
+    });
+    expect(sumSideOn(SELF_KEYS, TODAY, nothing).nothingRecorded).toBe(true);
+  });
+
+  it("carries the live amount through the whole split, live figure and breakdown alike", () => {
+    const split = buildMrrSplit(inputs({ facts: facts({ liveBudget: DIVERGENT }) }), NOW, WINDOWS);
+    expect(split.currentSelfServeMrrUsd).toBe(450 + 240);
+
+    const rows = split.selfServeBreakdown.rows;
+    const a = rows.find((r) => r.brandId === BRAND_A)!;
+    const c = rows.find((r) => r.brandId === BRAND_C)!;
+    expect([a.configuredDailyBudgetUsd, a.amountSource, a.countedMrrUsd]).toEqual([15, "live", 450]);
+    expect([c.configuredDailyBudgetUsd, c.amountSource, c.countedMrrUsd]).toEqual([8, "live", 240]);
+    // The rows are still the terms of the sum, so they still add up to it.
+    expect(rows.reduce((t, r) => t + r.countedMrrUsd, 0)).toBe(split.currentSelfServeMrrUsd);
+
+    // The HISTORY is untouched: August is still read off the replay.
+    const aug = split.monthly.find((b) => b.period === "2026-08")!;
+    const augReplay = buildMrrSplit(inputs(), NOW, WINDOWS).monthly.find((b) => b.period === "2026-08")!;
+    expect(aug.selfServeMrrUsd).toBe(augReplay.selfServeMrrUsd);
   });
 });

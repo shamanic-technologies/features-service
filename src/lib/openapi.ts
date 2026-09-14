@@ -2448,8 +2448,9 @@ const selfServeBrandRowSchema = z.object({
     .number()
     .nullable()
     .describe(
-      "CONDITION 3 — the amount billing RECORDED as in force for this brand on referenceDate, USD/day. null = billing held NO amount for it that day, which is a different statement from a " +
-        "configured 0: the amount is never approximated, so such a pair contributes nothing and shows up in selfServeUnrecordedBudgetPairCount rather than being filled in.",
+      "CONDITION 3 — the amount billing holds as in force for this brand on referenceDate, USD/day. Since referenceDate is TODAY this is billing's CURRENT budget rather than a replay of its " +
+        "change log (amountSource says which, and for a past day it is the replay). null = billing held NO amount for it, which is a different statement from a configured 0: the amount is " +
+        "never approximated, so such a pair contributes nothing and shows up in selfServeUnrecordedBudgetPairCount rather than being filled in.",
     ),
   paymentActive: z.boolean().nullable().describe("CONDITION 1 — the org's payment had not stopped (billing-service). null = referenceDate precedes billing's episode record, so the absence of an episode is not evidence payment was on."),
   campaignRunning: z.boolean().nullable().describe("CONDITION 2 — a campaign was running (campaign-service). null = nothing recorded settles it; an UNKNOWN campaign beats every recorded stop beside it, exactly as it does for the run-rate itself, so a stopped ancestor never answers for a live campaign."),
@@ -2461,6 +2462,15 @@ const selfServeBrandRowSchema = z.object({
         "null = not recorded, or no campaign was running to ask about.",
     ),
   amountInForce: z.boolean().describe("CONDITION 3 as a verdict — billing recorded a POSITIVE amount in force that day. False covers both 'no amount on record' and 'recorded at 0'; configuredDailyBudgetUsd tells the two apart."),
+  amountSource: z
+    .enum(["live", "replayed"])
+    .nullable()
+    .describe(
+      "WHICH of billing's two records answered CONDITION 3. `live` = its CURRENT budget, which is what TODAY is priced on — billing's append-only change log is a record of the writes it " +
+        "appended rather than a mirror of its state, and for today the two genuinely disagree (measured in prod 2026-09-14: a brand holding a live $15/day whose newest change row said $1, and " +
+        "another holding a live $8/day against no change rows at all). `replayed` = that change log, which is the only record that reaches BACK and still answers every earlier day. " +
+        "`null` = billing held no amount at all. Stated rather than left to be inferred, because a reader reconciling this figure against billing needs to know which record it is looking at.",
+    ),
   countedMrrUsd: z.number().describe("What this customer contributed to the SaaS run-rate, USD: its recorded daily budget × 30 when all four conditions held, else 0. Σ of this column over the rows IS countedMrrUsd on the breakdown — the rows are emitted by the loop that sums the figure, from the very verdicts it added."),
   excludedBy: z
     .enum(["payment_stopped", "campaign_not_running", "audience_exhausted", "not_earning_recorded", "no_recent_activity", "no_recorded_amount", "zero_amount"])
