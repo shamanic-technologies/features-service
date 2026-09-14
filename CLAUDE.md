@@ -1,88 +1,101 @@
 # Features Service — CLAUDE.md
 
-## AN AGENCY'S DAILY BUDGET IS AN ALLOCATION DECISION, NOT ITS MRR — the fleet run-rate splits in two, the agency half is what a HUMAN STATED, and the self-serve history is REPLAYED rather than lost
+## BOTH HALVES OF THE RUN-RATE ARE SUMS — the SaaS half is summed over the customers who were EARNING that day, the four conditions come from the services that RECORD them, and an approximated period says so on the wire
 
-The staff Revenue page stated ONE committed MRR for the whole fleet, `Σ active daily budget × 30`. That
-is the right number for a SELF-SERVE (SaaS) customer, who pays THROUGH the product: their budget IS what
-they are worth per month. It is the wrong number for an AGENCY, which hands over cash at its own
-discretion after which somebody DECIDES how that cash is split into daily budgets across its brands — so
-for those brands budget × 30 answers "how did we spread their money this week", not "what is this
-customer worth". Both halves were being added under one word, and there was nowhere for a person to say
-what the agency is actually worth.
+The staff Revenue page states ONE committed MRR for the whole fleet, `Σ active daily budget × 30`. That
+is right for a SELF-SERVE (SaaS) customer, who pays THROUGH the product: their budget IS what they are
+worth per month. It is wrong for an AGENCY, which hands over cash at its own discretion after which
+somebody DECIDES how that cash is split into daily budgets across its brands — so for those brands
+budget × 30 answers "how did we spread their money this week", not "what is this customer worth".
 
-- **THE STORE IS `stated_monthly_amounts` AND IT IS KEYED ON THE (org, brand) PAIR, never the brand
-  alone.** Daily budgets are keyed that way, and in production one brand is mapped under TWO orgs (one
-  funding it, one at $0) — a brand-keyed row could not say which of the two it describes. Full staff CRUD
-  at `/internal/stated-monthly-amounts` (api-key; staff-gated at api-service).
-- **BOTH ENDS OF THE RANGE ARE OPTIONAL AND EACH ABSENCE MEANS SOMETHING SPECIFIC.** No `startDate` = in
-  force since that brand's **FIRST DAY OF BILLED SPEND** (never "since the beginning of time" — the floor
-  is read from the billed-spend ledger per pair, and only for a row that needs it); no `endDate` = still
-  running. Both bounds INCLUSIVE. A brand may carry SEVERAL rows as the amount changes.
-- **TWO ROWS OVERLAPPING ON ONE DAY FOR ONE PAIR ARE REFUSED — 409 `stated_amount_conflict`, naming the
-  row it collided with and its range.** Two stated amounts in force at once is two answers to one
-  question, and no read could pick between them honestly, so it is stopped at WRITE time where a person
-  can fix it. The check is application-level (`assertNoOverlap`), because the rule is about a RANGE, and
-  it treats an absent bound as open — which is what makes a second open-ended row a conflict rather than
-  a harmless append.
-- **WHICH ORGS ARE "AGENCY" IS DERIVED FROM THE STATED ROWS — an org carrying at least one — and NO org
-  id, brand id or domain lives in code.** A second agency later needs no change here.
-- **THE EXCLUSION IS TAKEN OVER THE AGENCY ORG'S WHOLE BRAND SET, not only its stated brands.** A brand
-  funded under an agency org is agency money whether or not anyone has got round to stating it, and
-  leaving it in the self-serve half would overstate the SaaS business. The gap is VISIBLE rather than
-  silent: `agencyBudgetMrrUsd` says exactly how much left the self-serve half, so a reader comparing it
-  against `agencyMrrUsd` sees an unstated agency brand instead of a number that quietly moved.
-- **THE THREE SERIES, AND WHY THEY RECONCILE BY CONSTRUCTION** (`mrrSplit` on
-  `GET /internal/stats/revenue`, live figure + monthly + weekly, same growth treatment as the committed
-  series): **AGENCY** = Σ of the STATED amounts in force on the period's reference date — **NEVER those
-  brands' budget × 30**, which is the entire substitution this removes; **SELF-SERVE** = the recorded
-  committed run-rate for that period MINUS the agency side's committed contribution on the same date
-  (their budget still exists and still belongs to the fleet's spend, it simply is not their MRR);
-  **TOTAL** = agency + self-serve. Disjoint, so the two halves always add.
-- **THE HISTORY IS REPLAYED, NOT RECORDED — and recording a new column going forward would have thrown
-  away every day we already hold for no reason.** No snapshot ever carried the split, but
-  `committed_mrr_snapshots` and billing's append-only `brand_daily_budget_changes` start the SAME DAY
-  (2026-07-15 in prod), so the agency side's budget on any recorded day is readable from
-  `GET /internal/brands/:brandId/daily-budget/history` — an existing deployed route, no producer change.
-  A day BEFORE that pair's first timeline entry contributes 0: we hold no record of a budget then, and
-  asserting one would be fabrication.
-- **DO NOT "SIMPLIFY" THIS TO SUBTRACTING THE STATED AMOUNTS FROM THE FLEET TOTAL.** The fleet total
-  carries those brands' BUDGET × 30, not their stated amount, so the subtraction does not cancel and the
-  self-serve half would be wrong by the difference.
-- **BOTH SERIES EMIT THE SAME PERIODS AGAINST THE SAME DATES, from ONE shared
-  `committedPointsByPeriod`** — a period with no recorded snapshot is OMITTED by both, never fabricated,
-  and the split can never come to describe a different moment than the committed figure beside it.
-- **A PERIOD WHOSE TWO SIDES WERE RECORDED ON DIFFERENT BASES ANSWERS `null`, NEVER A NUMBER AND NEVER A
-  CLAMP.** Since 2026-08-27 the snapshot records the RUNNING daily budget while billing's timeline
-  records the CONFIGURED one, so for a brand with money posted against a stopped campaign the replay is
-  an UPPER BOUND on its contribution rather than the contribution. Usually the gap is small and the
-  subtraction still describes the SaaS business; when the replayed agency contribution EXCEEDS the
-  committed figure it comes out of, the remainder is NEGATIVE, and a negative monthly run-rate is not a
-  slightly-low number but an incoherent one. Measured in prod the day this shipped: August's snapshot is
-  **$87/day RUNNING** (the 2026-08-27 cutover) against **$132/day of agency CONFIGURED** budget, i.e. a
-  self-serve half of **−$720/month**. That period now reports `selfServeMrrUsd: null` +
-  `selfServeUnmeasurableReason: "agency_contribution_exceeds_recorded_total"`, beside the two real
-  figures (`agencyBudgetMrrUsd`, `committedMrrUsd`) that say exactly why, and growth skips it rather than
-  comparing across the gap. **Do NOT "fix" this by clamping at 0** — that prints a self-serve business
-  the evidence does not support, which is the same fabrication the whole file refuses everywhere else.
-- **THE LIVE FIGURES CANNOT FALL INTO THAT CASE**, so they are never null: they subtract the accounts
-  audit's own RUNNING budget for the same ACTIVE pairs — a SUBSET of the very sum the live committed MRR
-  is built from — so the agency share can never exceed the total and today's self-serve cancels to the
-  cent. Verified in prod 2026-09-12: $5,820 committed, $3,960 agency budget, $1,860 self-serve, $5,500
-  stated agency, $7,360 total; deleting the stated rows restored $5,820 / $0 / $5,820 exactly.
-- **ADDITIVE, AND THE REGRESSION GATE IS THAT NOTHING MOVES UNTIL SOMEBODY STATES SOMETHING.** The
-  existing `committedMrr`, the realized-revenue series, the NRR series and every cash figure are
-  untouched. With ZERO stated rows the split issues **zero extra requests**, the self-serve figure equals
-  the fleet committed MRR exactly and the agency figure is 0 — so a consumer still rendering only the old
-  fields sees nothing change. `mrrSplit: null` is "we could not read this" (the store or billing was
-  unreachable), never a zero that would say the agency is worth nothing; the rest of the payload survives.
-- Guards: `src/lib/agency-self-serve-compute.test.ts` — ONE fixture shaped like the production account
-  ($142/day + $1/day agency brands beside $102/day of self-serve, fleet $245/day). Every case asserts the
-  DIVERGENCE between what the split says and what the undivided figure says, so a suite that only checked
-  "a number came back" would pass on an implementation that reported the agency's budget × 30 as its MRR.
-  Plus `src/lib/stated-monthly-amounts-store.test.ts` (the two write rules, the inclusive overlap, the
-  self-edit) and the wiring block in `src/lib/revenue-history-compute.test.ts` (the empty store costing
-  nothing and moving nothing, the fail-soft null, the committed series byte-identical either way).
-  (Set 2026-09-12, features-service#927.)
+**WHAT SUPERSEDES WHAT.** Until 2026-09-14 the SaaS half was `the fleet's recorded committed snapshot
+MINUS the agency side's replayed budget`. The two sides of that subtraction were recorded differently —
+the snapshot counts RUNNING money for ACTIVE pairs, the replay counted CONFIGURED brand ceilings whether
+or not anything was running — so for August 2026 the subtrahend EXCEEDED the total, the remainder came
+out at **−$720/month**, and the period had to be published as unmeasurable. That whole mechanism is gone,
+with `selfServeUnmeasurableReason: "agency_contribution_exceeds_recorded_total"`, which can no longer
+occur. **Do NOT reintroduce a subtraction here in any form** — not from the snapshot, not from a
+replayed fleet total. The agency half was always immune because it is a SUM of stated amounts; the SaaS
+half is a sum now too, so neither can go negative by construction.
+
+- **THE FOUR CONDITIONS A DAY'S BUDGET MUST MEET TO BE MRR, and the service that RECORDS each** (owner's
+  definition, `lib/agency-self-serve-compute.ts` joins them and invents none): **payment had not
+  stopped** (billing `GET /internal/accounts/by-org/:orgId/payment-stopped-periods`) · **the campaign
+  was running** and **its audience was not exhausted** (campaign-service `POST
+  /internal/campaigns/earning-history`, one call per REFERENCE DATE) · **an amount was in force**
+  (billing `GET /internal/brands/:brandId/daily-budget/by-day`). A brand is earning if ANY of its
+  campaigns was; `evaluatePairDay` stops at the first condition that answers no.
+- **`not_recorded` IS THE ANSWER THAT MATTERS MOST, and every reader preserves it**
+  (`lib/mrr-day-facts-clients.ts`). A day before a producer's record begins is a day we know nothing
+  about, which is a different statement from "the budget was 0" or "the campaign was stopped" — and
+  telling the two apart is the ONLY reason a period can honestly be marked approximated instead of
+  presenting a guess as a measurement. A reader that collapsed it to a 0 or a false would pass every
+  fixture and silently destroy the distinction; guarded explicitly.
+- **TWO ERAS, NEVER BLENDED SILENTLY.** campaign-service's status and audience records open on the day
+  that service shipped them (measured in prod: **status 2026-09-12, audience 2026-09-12**, against a
+  committed snapshot series starting 2026-07-15). For an earlier day the qualification falls back to the
+  pair's own billed cold-email ACTIVITY, and **run-presence and run-silence are treated ASYMMETRICALLY,
+  never as a boolean**: ONE billed day marks the pair as working for `ACTIVITY_WINDOW_DAYS` (7) either
+  side of it — a live campaign is idle on plenty of days — while silence concludes nothing until the
+  whole fortnight is empty. Every such bucket carries `selfServeBasis: "approximated"` plus
+  `selfServeApproximatedPairCount`, and `earningRecordBeginsOn` states the boundary as a measured fact
+  rather than a declared one. A RECORDED answer always beats the activity evidence, in both directions.
+- **A campaign RECORDED as `stopped` is a recorded NO, even while its audience axis is still empty**
+  (`recordedEarningOf`). campaign-service reports `earning: null` there because only one of its two axes
+  is answerable; a stopped campaign was not earning whatever the audience did, and reading it as unknown
+  would push nearly the whole fleet onto the approximated path for no reason.
+- **AN AMOUNT IS NEVER APPROXIMATED — only the QUALIFICATION is.** A pair billing holds no budget record
+  for on a day contributes NOTHING, however obviously it was working, because inventing the amount is
+  the one thing that would put a number on the wire no service ever recorded. The gap is made VISIBLE
+  instead: `selfServeUnrecordedBudgetPairCount` counts exactly the pairs that looked active on the
+  reference date while billing held no amount, so a reader sees the under-statement rather than have it
+  folded in. **Do NOT "fix" it by back-casting the first recorded value, or by using the pair's realized
+  spend rate as the amount** — both were measured against prod first: the spend rate reads **$17.13/day
+  for a brand whose running budget is $8/day**, i.e. a 2x OVERSTATEMENT in the one direction a revenue
+  figure must not move. Realized spend is used as EVIDENCE that the pair was working, never as a price.
+- **THE LIVE FIGURES GO THROUGH THE SAME EVALUATOR AS THE HISTORY**, so the scalar and the current
+  monthly bucket are one number rather than two answers to one question on one screen. They therefore
+  **no longer cancel against `currentMrrUsd`** (which they did before, "to the cent"): that figure counts
+  RUNNING money for active pairs and has never known about audience exhaustion, while these count each
+  producer's recorded CONFIGURED amount gated on all four conditions. `committedMrrUsd` rides each bucket
+  for comparison and is **no longer claimed to equal `selfServe + agencyBudget`**.
+- **THE AGENCY HALF IS UNCHANGED**: Σ of the STATED amounts in force on the period's reference date
+  (`stated_monthly_amounts`, keyed on the (org, brand) PAIR — in prod one brand is mapped under TWO orgs,
+  so a brand-keyed row could not say which it describes; overlapping ranges are refused at write time
+  with 409 `stated_amount_conflict`; an absent `startDate` means since that pair's FIRST DAY OF BILLED
+  SPEND, an absent `endDate` means still running, both bounds inclusive). `agencyBudgetMrrUsd` is that
+  side's qualifying budget × 30 under the SAME four conditions, so the unstated-agency gap stays visible.
+  **WHICH ORGS ARE AGENCY IS DERIVED** from the stated rows — an org carrying at least one — and the
+  exclusion is taken over that org's WHOLE brand set. No org id, brand id or domain lives in code.
+- **THE TWO SIDES PARTITION THE PAIR UNIVERSE**, so `totalMrrUsd = agencyMrrUsd + selfServeMrrUsd` holds
+  by construction and nothing is counted twice or dropped. `selfServeMrrUsd: null` survives for exactly
+  one case — `no_records_for_period`, a reference date on which NO producer held a single fact about any
+  pair — and growth skips an unmeasurable period rather than comparing across the gap.
+- **WHAT IT COSTS, and why the old "an empty store costs nothing" property is GONE.** The half used to be
+  a subtraction, so with no stated rows it needed no reads. Summing the self-serve side means reading it:
+  one budget replay and one activity read per (org, brand), one payment read per org, ONE call for the
+  fleet's campaigns (`GET /campaigns/list`), and one earning read per REFERENCE DATE — **never per day of
+  the window**, which over a displayed year would be (campaigns × days) rows, tens of megabytes through a
+  384 MB heap to use a hundredth of it. The ACTIVITY read is skipped outright once
+  `earningRecordBeginsOn <= from` (a real condition, not a heuristic: nothing is approximated then, so the
+  fallback buys nothing). `MAX_EARNING_REFERENCE_DATES` caps the per-date fan-out; beyond it the oldest
+  buckets fall back to activity evidence and SAY so, which is the same marking the pre-record era carries.
+- **STILL ADDITIVE, and the regression gate is that the rest of the payload does not move.** The existing
+  `committedMrr`, the realized-revenue series, the NRR series and every cash figure are untouched.
+  `mrrSplit: null` is "we could not read this" (the store or a producer was unreachable), never a zero
+  that would say the agency is worth nothing; the rest of the payload survives.
+- Guards: `src/lib/agency-self-serve-compute.test.ts` — ONE fixture carrying the production shape that
+  broke the old code (the agency's configured $110/day → $3,330 against a recorded fleet run-rate of
+  $87/day → $2,610 on the same reference date), beside four self-serve pairs each excluded for a
+  DIFFERENT one of the four conditions and one excluded for having no recorded amount. Every case asserts
+  the DIVERGENCE between what the sum says and what the subtraction said, so a suite that only checked "a
+  number came back" would pass on the implementation this replaces. Plus
+  `src/lib/mrr-day-facts-clients.test.ts` (`not_recorded` survives every reader, the batch cap, the
+  api-key-only payment read) and the wiring block in `src/lib/revenue-history-compute.test.ts` (each fact
+  from its own producer, the read set bounded by the reference dates, the activity fallback paid for only
+  while needed, the fail-soft null, and a negative half being impossible whatever the snapshot says).
+  (Set 2026-09-12 as a subtraction, features-service#927; replaced by the sum 2026-09-14,
+  features-service#949.)
 
 ## A LEG-KEYED READ PRICES THE LEG'S OWN STEP, SERVES ITS OWN ORDER, AND ANSWERS FOR THE CAMPAIGN — `?leg=` on `workflow-projection`, and the dashboard displays what it is served
 
@@ -370,8 +383,19 @@ page was rendering a CONFIGURATION where a reader expects a FACT.
 - **ANSWERED FOR THE CAMPAIGN'S WHOLE IDENTITY**, like every other campaign-scoped figure here. runs
   takes no campaign LIST, so it is one call per member at concurrency 6 — a trigger carries exactly ONE
   campaign, so the union counts nobody twice, and each member is asked for the full window so the merge
-  is exact rather than a sample of whichever answered first. Bounded by measurement: the largest brand
-  in prod has **17** campaigns with runs over 90 days, and 17 of 20 brands have one or two.
+  is exact rather than a sample of whichever answered first.
+- **THE FAN-OUT IS OVER STORED MEMBERS, NOT OVER MEMBERS THAT RAN, AND THE DIFFERENCE IS 47 AGAINST 17.**
+  The plan sized it with `count(DISTINCT campaign_id) FROM runs` — campaigns that have RUN — which tops
+  out at **17** per brand over 90 days and reads as a comfortable bound. The loop iterates
+  `campaignIdentity.campaignIds`, i.e. every row campaign-service has ever minted on the identity, and
+  the reported campaign has **47** of which 30 never triggered. Measured in prod the day it shipped, on
+  that worst-case identity: **~540-780ms with `picks=50` against 89-221ms with `picks=0`**, so the block
+  costs about half a second and the cost is the FAN-OUT, not the window — dropping the default window
+  would save nothing. Two consequences worth stating rather than burying: a consumer that POLLS this
+  read should send **`picks=0`** and fetch the picks on demand, and the honest fix is ONE brand-scoped
+  `/v1/runs` call filtered to the identity locally, which is a design change rather than a tuning knob
+  (features-service#947). Same trap as the scope rule at the top of the global config: the query I
+  reasoned from answered a NARROWER population than the one the code walks.
 - **`audienceId: null` IS A REAL STATE.** The audience write-tag is younger than the workflow one —
   94-97% of triggers in the last three weeks, ~40% in July — so an older pick states its workflow and no
   audience. Reported as null, never substituted from a neighbouring run.
@@ -4338,7 +4362,12 @@ new branch, since you can't push to a merged PR's branch). Cost it three times i
 #476→#477 across 19 refs, #481→#483) — twice by guessing the next sequential number, which landed on an
 unrelated sync PR and an unrelated issue. **HARD RULE: never type a `features-service#NNN` from memory or
 arithmetic — create the issue (or open the PR) FIRST and paste the REAL number; `gh {issue,pr} view <n>`
-before baking is mandatory.**
+before baking is mandatory.** **And a guess that turns out RIGHT is the worst outcome, not
+a let-off** — it teaches that the shortcut works and leaves no trace to correct. 2026-09-14, TWICE in one session: `#944` was
+written into a CLAUDE.md section before the issue existed and the issue happened to be created as 944,
+so nothing had to be fixed — and half an hour later the same shortcut produced `#946` for an issue that
+was created as **#947** and needed a correcting commit. The near-miss is why the rule is worth
+re-reading: getting away with it once is what made the second one feel safe.
 
 ## Key Files
 
