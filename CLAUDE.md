@@ -370,8 +370,19 @@ page was rendering a CONFIGURATION where a reader expects a FACT.
 - **ANSWERED FOR THE CAMPAIGN'S WHOLE IDENTITY**, like every other campaign-scoped figure here. runs
   takes no campaign LIST, so it is one call per member at concurrency 6 — a trigger carries exactly ONE
   campaign, so the union counts nobody twice, and each member is asked for the full window so the merge
-  is exact rather than a sample of whichever answered first. Bounded by measurement: the largest brand
-  in prod has **17** campaigns with runs over 90 days, and 17 of 20 brands have one or two.
+  is exact rather than a sample of whichever answered first.
+- **THE FAN-OUT IS OVER STORED MEMBERS, NOT OVER MEMBERS THAT RAN, AND THE DIFFERENCE IS 47 AGAINST 17.**
+  The plan sized it with `count(DISTINCT campaign_id) FROM runs` — campaigns that have RUN — which tops
+  out at **17** per brand over 90 days and reads as a comfortable bound. The loop iterates
+  `campaignIdentity.campaignIds`, i.e. every row campaign-service has ever minted on the identity, and
+  the reported campaign has **47** of which 30 never triggered. Measured in prod the day it shipped, on
+  that worst-case identity: **~540-780ms with `picks=50` against 89-221ms with `picks=0`**, so the block
+  costs about half a second and the cost is the FAN-OUT, not the window — dropping the default window
+  would save nothing. Two consequences worth stating rather than burying: a consumer that POLLS this
+  read should send **`picks=0`** and fetch the picks on demand, and the honest fix is ONE brand-scoped
+  `/v1/runs` call filtered to the identity locally, which is a design change rather than a tuning knob
+  (features-service#947). Same trap as the scope rule at the top of the global config: the query I
+  reasoned from answered a NARROWER population than the one the code walks.
 - **`audienceId: null` IS A REAL STATE.** The audience write-tag is younger than the workflow one —
   94-97% of triggers in the last three weeks, ~40% in July — so an older pick states its workflow and no
   audience. Reported as null, never substituted from a neighbouring run.
@@ -4338,7 +4349,12 @@ new branch, since you can't push to a merged PR's branch). Cost it three times i
 #476→#477 across 19 refs, #481→#483) — twice by guessing the next sequential number, which landed on an
 unrelated sync PR and an unrelated issue. **HARD RULE: never type a `features-service#NNN` from memory or
 arithmetic — create the issue (or open the PR) FIRST and paste the REAL number; `gh {issue,pr} view <n>`
-before baking is mandatory.**
+before baking is mandatory.** **And a guess that turns out RIGHT is the worst outcome, not
+a let-off** — it teaches that the shortcut works and leaves no trace to correct. 2026-09-14, TWICE in one session: `#944` was
+written into a CLAUDE.md section before the issue existed and the issue happened to be created as 944,
+so nothing had to be fixed — and half an hour later the same shortcut produced `#946` for an issue that
+was created as **#947** and needed a correcting commit. The near-miss is why the rule is worth
+re-reading: getting away with it once is what made the second one feel safe.
 
 ## Key Files
 
