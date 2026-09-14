@@ -4514,11 +4514,14 @@ new branch, since you can't push to a merged PR's branch). Cost it three times i
 unrelated sync PR and an unrelated issue. **HARD RULE: never type a `features-service#NNN` from memory or
 arithmetic — create the issue (or open the PR) FIRST and paste the REAL number; `gh {issue,pr} view <n>`
 before baking is mandatory.** **And a guess that turns out RIGHT is the worst outcome, not
-a let-off** — it teaches that the shortcut works and leaves no trace to correct. 2026-09-14, TWICE in one session: `#944` was
+a let-off** — it teaches that the shortcut works and leaves no trace to correct. 2026-09-14, THREE times in one day: `#944` was
 written into a CLAUDE.md section before the issue existed and the issue happened to be created as 944,
-so nothing had to be fixed — and half an hour later the same shortcut produced `#946` for an issue that
-was created as **#947** and needed a correcting commit. The near-miss is why the rule is worth
-re-reading: getting away with it once is what made the second one feel safe.
+so nothing had to be fixed; half an hour later the same shortcut produced `#946` for an issue that
+was created as **#947** and needed a correcting commit; and `#960` was baked into a CLAUDE.md bullet
+from arithmetic on the last PR number and, again, happened to land. The near-miss is why the rule is
+worth re-reading: getting away with it once is what made the next one feel safe, and two of the three
+were near-misses that taught nothing. Treat the shortcut as unavailable, not as usually-fine — the
+issue costs one `gh issue create` and returns the number you were about to guess.
 
 ## Key Files
 
