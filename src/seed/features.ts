@@ -142,7 +142,12 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     implemented: true,
     displayOrder: 1,
     status: "active",
-    acquisitionChannel: { family: "outbound_one_to_one", operatedBy: "platform", stepTransitions: CONVERSATION_AND_VISIT, terms: terms(800, 30, 14) },
+    // A NOMINAL day-rate, the same $1 `ai-meeting-booking` carries and for the same reason: nobody is on
+    // this channel for the day. It is automated end to end and its real cost is the metered send spend
+    // declared per run, so a standing day-rate would be charging for a salary that does not exist. This
+    // figure is the commercial term we publish — the dashboard's budget form and billing-service both read
+    // it live from `/public/channels` as the floor a brand may fund the channel at — never a measurement.
+    acquisitionChannel: { family: "outbound_one_to_one", operatedBy: "platform", stepTransitions: CONVERSATION_AND_VISIT, terms: terms(100, 30, 14) },
     supersededBySlug: null,
     inputs: [
       // NO free-text ICP input. Recipients come from the AUDIENCE BANDIT (a saved human-service
