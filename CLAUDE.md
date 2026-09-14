@@ -336,7 +336,7 @@ cheapest-cell argmin keeps handing campaign-service tiers the study says cannot 
   excluded row keeping its figures and both ranks, one verdict per dynasty, the body byte-equal with
   the block stripped, each of the four gaps, the provider disagreement, the malformed catalogue, the
   request shape (`status=all`, one call each) and the funnel- and goal-keyed reads carrying none of it
-  and spending no read. (Set 2026-09-14, features-service#PRNUM.)
+  and spending no read. (Set 2026-09-14, features-service#952.)
 
 ## A RANK SCORED OVER EVERY CELL CANNOT BE READ BESIDE ONE COLUMN — `scopeRank` orders the rows a reader is actually comparing, and the two ranks are MEANT to disagree
 
