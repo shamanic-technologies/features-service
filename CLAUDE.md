@@ -123,9 +123,13 @@ half is a sum now too, so neither can go negative by construction.
   service. Each row states what billing holds as configured (and, on `amountSource`, WHICH of its two
   records answered), how each of the four conditions answered, what the pair actually contributed,
   and — when it contributed nothing — WHICH condition stopped it, in the evaluator's own short-circuit
-  order. Measured in prod 2026-09-14: seven brands,
-  **$102/day configured, $54/day qualified = $1,620/month**, the five excluded ones stopped by four
-  different conditions. Properties that are load-bearing rather than incidental: **Σ `countedMrrUsd`
+  order. Measured in prod 2026-09-14 AFTER the live-budget fix (v0.165.6): 37 (org, brand) rows,
+  **$97/day configured, $62/day qualified = $1,860/month**, and every row with an amount reads
+  `amountSource: "live"`. The figure it replaced was **$1,620** off the replay, which both
+  under-stated one brand 15x and dropped another entirely — see the live-budget bullet above. The
+  excluded rows are stopped by four different conditions, and
+  `selfServeUnrecordedBudgetPairCount` is now **0** for today against a still-nonzero 2 and 1 on the
+  July and August buckets, which is the eras behaving as documented rather than a regression. Properties that are load-bearing rather than incidental: **Σ `countedMrrUsd`
   IS `currentSelfServeMrrUsd`** because the rows are the terms the sum added, never a second pass over
   the same facts; **every condition's state is reported even where the evaluation short-circuited past
   it**, so a payment-stopped brand still shows its healthy campaign and its real configured amount
