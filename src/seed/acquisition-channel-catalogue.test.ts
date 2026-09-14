@@ -247,6 +247,37 @@ describe("the commercial terms a buyer commits to", () => {
       expect(t.maxDaysToFirstProduction, channel.slug).toBeLessThanOrEqual(t.minimumCommitmentDays);
     }
   });
+
+  it("SALES cold email carries the NOMINAL day-rate, and its cold-email-shaped siblings do NOT", () => {
+    // Nobody is on this channel for the day — it is automated and its real cost is the metered send
+    // spend declared per run — so it carries the same nominal $1 the AI booking leg carries, for the
+    // same stated reason. The dashboard's budget form and billing-service both read this figure live
+    // as the floor a brand may fund the channel at, so it IS what the channel costs a customer per day.
+    const sales = bySlug("sales-cold-email-outreach")!.acquisitionChannel!.terms;
+    expect(sales.dailyOperatingCostCents).toBe(100);
+    expect(sales.dailyOperatingCostCents).toBe(
+      bySlug("ai-meeting-booking")!.acquisitionChannel!.terms.dailyOperatingCostCents,
+    );
+    // The booking and the first-production promise are UNTOUCHED — only the day-rate moved.
+    expect(sales.minimumCommitmentDays).toBe(30);
+    expect(sales.maxDaysToFirstProduction).toBe(14);
+
+    // And it moved for THIS channel alone. Two siblings run the same medium on the same shape and keep
+    // their own published figure, so a suite that only checked "cold email is cheap" would pass on a
+    // sweep that dropped the whole family — which is exactly what must not happen.
+    for (const sibling of ["feedback-request-cold-email-outreach", "sales-crm-email-outreach"]) {
+      expect(bySlug(sibling)!.acquisitionChannel!.terms.dailyOperatingCostCents, sibling).toBe(800);
+    }
+  });
+
+  it("cold CALLING still costs more per day to run than cold email, by further than before", () => {
+    // The ordering the catalogue has always carried: a person on the line all day against a channel with
+    // no salary on it. Lowering the email figure widens the gap rather than inverting it.
+    const call = bySlug("cold-call-outreach")!.acquisitionChannel!.terms.dailyOperatingCostCents;
+    const email = bySlug("sales-cold-email-outreach")!.acquisitionChannel!.terms.dailyOperatingCostCents;
+    expect(call).toBeGreaterThan(email);
+    expect(call / email).toBeGreaterThanOrEqual(100);
+  });
 });
 
 describe("what each channel can produce, and what follows from it", () => {
