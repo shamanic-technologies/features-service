@@ -1,77 +1,145 @@
 /**
  * Guards for the AGENCY / SELF-SERVE split of the fleet monthly run-rate.
  *
- * ONE fixture, shaped like the production account that motivated it: an AGENCY org funding two brands
- * ($142/day + $1/day) beside self-serve orgs funding $102/day, so the fleet committed run-rate is
- * $245/day → $7,350/month. Every case asserts the DIVERGENCE between what the split says and what the
- * undivided figure says — a suite that only checked "a number came back" would pass on an
- * implementation that quietly reported the agency's budget × 30 as its MRR, which is the exact bug
- * this feature exists to remove.
+ * ONE fixture, shaped like the production account that motivated it — an AGENCY org whose brands'
+ * CONFIGURED budget on the August reference date ($110/day → $3,300) EXCEEDS the fleet run-rate
+ * recorded that day ($87/day → $2,610). That is the exact shape that made the old subtraction come
+ * out at −$720/month and forced the period to be published as unmeasurable, so every case here
+ * asserts the DIVERGENCE between what a sum says and what that subtraction said: a suite that only
+ * checked "a number came back" would pass on the implementation this replaces.
  */
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import {
-  agencyBudgetMrrOn,
+  activeNear,
   agencyOrgIdsOf,
   agencyPairKeysOf,
   agencyStatedMrrOn,
-  budgetUsdOn,
   buildMrrSplit,
+  evaluatePairDay,
   pairKey,
+  paymentStoppedOn,
+  recordedEarningOf,
+  referenceDatesOf,
+  selfServePairKeysOf,
   statedAmountInForce,
+  sumSideOn,
+  type DayFacts,
   type MrrSplitInputs,
 } from "./agency-self-serve-compute.js";
+import type { CampaignDayAnswer, PaymentStoppedFacts } from "./mrr-day-facts-clients.js";
 import type { StatedAmountRow } from "./stated-monthly-amounts-store.js";
 
 const AGENCY_ORG = "org-agency";
-const SAAS_ORG_A = "org-saas-a";
-const SAAS_ORG_B = "org-saas-b";
-const BRAND_BIG = "brand-big"; // the agency's funded brand: $142/day
-const BRAND_SMALL = "brand-small"; // the agency's other funded brand: $1/day
-const BRAND_IDLE = "brand-idle"; // an agency brand nobody has stated an amount for, $0/day
-const BRAND_SAAS_A = "brand-saas-a"; // $100/day
-const BRAND_SAAS_B = "brand-saas-b"; // $2/day
+const SAAS_A = "org-saas-a";
+const SAAS_B = "org-saas-b";
+const SAAS_C = "org-saas-c";
+const SAAS_D = "org-saas-d";
 
+const BRAND_BIG = "brand-big"; // the agency's funded brand
+const BRAND_SMALL = "brand-small"; // the agency's other funded brand
+const BRAND_IDLE = "brand-idle"; // an agency brand nobody has stated an amount for
+const BRAND_A = "brand-saas-a"; // self-serve, $100/day, working
+const BRAND_B = "brand-saas-b"; // self-serve, $2/day, audience EXHAUSTED on the reference date
+const BRAND_C = "brand-saas-c"; // self-serve, demonstrably active, NO budget on record
+const BRAND_D = "brand-saas-d"; // self-serve, $50/day, but its org's PAYMENT had stopped
+
+const AUG = "2026-08-29"; // the August reference date — the period that used to read unmeasurable
+const JUL = "2026-07-31";
 const TODAY = "2026-09-12";
 const NOW = new Date(`${TODAY}T12:00:00Z`);
 
-/** Every cold-email (org, brand) pair, with the running budget the accounts audit reports. */
+const K = {
+  big: pairKey(AGENCY_ORG, BRAND_BIG),
+  small: pairKey(AGENCY_ORG, BRAND_SMALL),
+  idle: pairKey(AGENCY_ORG, BRAND_IDLE),
+  a: pairKey(SAAS_A, BRAND_A),
+  b: pairKey(SAAS_B, BRAND_B),
+  c: pairKey(SAAS_C, BRAND_C),
+  d: pairKey(SAAS_D, BRAND_D),
+};
+
 const ALL_PAIRS = [
-  { orgId: AGENCY_ORG, brandId: BRAND_BIG, runningDailyBudgetUsd: 142, active: true },
-  { orgId: AGENCY_ORG, brandId: BRAND_SMALL, runningDailyBudgetUsd: 1, active: true },
-  { orgId: AGENCY_ORG, brandId: BRAND_IDLE, runningDailyBudgetUsd: 0, active: false },
-  { orgId: SAAS_ORG_A, brandId: BRAND_SAAS_A, runningDailyBudgetUsd: 100, active: true },
-  { orgId: SAAS_ORG_B, brandId: BRAND_SAAS_B, runningDailyBudgetUsd: 2, active: true },
+  { orgId: AGENCY_ORG, brandId: BRAND_BIG },
+  { orgId: AGENCY_ORG, brandId: BRAND_SMALL },
+  { orgId: AGENCY_ORG, brandId: BRAND_IDLE },
+  { orgId: SAAS_A, brandId: BRAND_A },
+  { orgId: SAAS_B, brandId: BRAND_B },
+  { orgId: SAAS_C, brandId: BRAND_C },
+  { orgId: SAAS_D, brandId: BRAND_D },
 ];
 
-/** Fleet committed MRR = Σ ACTIVE running budget × 30 = (142 + 1 + 100 + 2) × 30. */
-const FLEET_MRR = 245 * 30; // 7350
-/** What the agency side contributes to that figure: (142 + 1) × 30. */
-const AGENCY_BUDGET_MRR = 143 * 30; // 4290
-/** What is left once the agency's budget stops standing in for its worth: 102 × 30. */
-const SELF_SERVE_MRR = 102 * 30; // 3060
+/** billing's recorded CONFIGURED brand daily budget per day. An absent day is NOT RECORDED. */
+function budgets(): Map<string, Map<string, number>> {
+  const days = [JUL, AUG, TODAY];
+  const of = (usd: number) => new Map(days.map((d) => [d, usd]));
+  return new Map([
+    [K.big, of(110)],
+    [K.small, of(1)],
+    [K.idle, of(0)], // an agency brand recorded at zero — a real answer, not a gap
+    [K.a, of(100)],
+    [K.b, of(2)],
+    // K.c: billing holds NO amount for this pair, on any day
+    [K.d, of(50)],
+  ]);
+}
 
-/** billing's append-only per-pair daily-budget timeline, oldest-first. */
-const TIMELINES = new Map([
-  [
-    pairKey(AGENCY_ORG, BRAND_BIG),
-    [
-      { dailyBudgetUsd: 35, changedAt: "2026-07-28T09:00:00Z" },
-      { dailyBudgetUsd: 50, changedAt: "2026-08-10T09:00:00Z" },
-      { dailyBudgetUsd: 142, changedAt: "2026-09-09T09:00:00Z" },
-    ],
-  ],
-  [pairKey(AGENCY_ORG, BRAND_SMALL), [{ dailyBudgetUsd: 1, changedAt: "2026-07-25T09:00:00Z" }]],
-  [pairKey(AGENCY_ORG, BRAND_IDLE), []],
-]);
+/** Days each pair billed cold-email spend — the activity evidence for the pre-record era. */
+function activity(): Map<string, Set<string>> {
+  return new Map([
+    [K.big, new Set([JUL, "2026-08-28", TODAY])],
+    [K.small, new Set([JUL, AUG, TODAY])],
+    [K.a, new Set(["2026-07-30", "2026-08-25", "2026-09-10"])],
+    [K.b, new Set([AUG])],
+    [K.c, new Set(["2026-08-27", "2026-09-11"])],
+    [K.d, new Set([AUG])],
+    // K.idle has never billed a day
+  ]);
+}
 
-/** The committed snapshots this service has recorded daily since 2026-07-15. */
+/** campaign-service's RECORDED verdict, which only reaches back to 2026-09-01 in this fixture. */
+function recordedEarning(): Map<string, Map<string, boolean | null>> {
+  return new Map([
+    [K.big, new Map([[TODAY, true]])],
+    [K.small, new Map([[TODAY, true]])],
+    [K.idle, new Map([[TODAY, false]])],
+    [K.a, new Map([[TODAY, true]])],
+    // B's audience is recorded EXHAUSTED on the August reference date AND today
+    [K.b, new Map([[AUG, false], [TODAY, false]])],
+    [K.c, new Map([[TODAY, true]])],
+    [K.d, new Map([[TODAY, true]])],
+  ]);
+}
+
+function payments(): Map<string, PaymentStoppedFacts> {
+  const clear: PaymentStoppedFacts = { recordBeginsOn: "2026-06-12", periods: [] };
+  return new Map([
+    [AGENCY_ORG, clear],
+    [SAAS_A, clear],
+    [SAAS_B, clear],
+    [SAAS_C, clear],
+    // D stopped paying across the whole window
+    [SAAS_D, { recordBeginsOn: "2026-06-12", periods: [{ startedOn: "2026-08-01", endedOn: null }] }],
+  ]);
+}
+
+function facts(over: Partial<DayFacts> = {}): DayFacts {
+  return {
+    budgetByDay: budgets(),
+    activityDays: activity(),
+    recordedEarning: recordedEarning(),
+    paymentByOrg: payments(),
+    ...over,
+  };
+}
+
+/** The fleet run-rate this service RECORDED. August's is SMALLER than the agency's configured budget. */
 const SNAPSHOTS = [
   { date: "2026-07-15", mrrUsd: 3000 },
-  { date: "2026-07-31", mrrUsd: 4080 }, // month-end point for July
-  { date: "2026-08-31", mrrUsd: 5100 }, // month-end point for August
+  { date: JUL, mrrUsd: 4080 },
+  { date: AUG, mrrUsd: 2610 }, // $87/day — the production figure the old code subtracted $3,300 from
 ];
 
 const STATED: StatedAmountRow[] = [
@@ -79,284 +147,269 @@ const STATED: StatedAmountRow[] = [
     id: "row-big",
     orgId: AGENCY_ORG,
     brandId: BRAND_BIG,
-    amountUsd: 5000,
-    startDate: "2026-08-01",
-    endDate: null,
+    amountUsd: 1500,
+    startDate: null, // in force since this brand's FIRST DAY OF BILLED SPEND
+    endDate: "2026-08-31",
     note: "what they actually hand us",
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
   },
   {
-    id: "row-small",
+    id: "row-big-2",
     orgId: AGENCY_ORG,
-    brandId: BRAND_SMALL,
-    amountUsd: 500,
-    startDate: null, // in force since this brand's FIRST DAY OF BILLED SPEND
+    brandId: BRAND_BIG,
+    amountUsd: 2000,
+    startDate: "2026-09-01",
     endDate: null,
     note: null,
-    createdAt: "2026-08-01T00:00:00.000Z",
-    updatedAt: "2026-08-01T00:00:00.000Z",
+    createdAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: "2026-09-01T00:00:00.000Z",
   },
 ];
 
-const FIRST_BILLED = new Map<string, string | null>([[pairKey(AGENCY_ORG, BRAND_SMALL), "2026-07-25"]]);
+const FIRST_BILLED = new Map<string, string | null>([[K.big, "2026-07-20"]]);
 
-function inputs(overrides: Partial<MrrSplitInputs> = {}): MrrSplitInputs {
+function inputs(over: Partial<MrrSplitInputs> = {}): MrrSplitInputs {
   return {
     statedRows: STATED,
-    allPairs: ALL_PAIRS.map((p) => ({ orgId: p.orgId, brandId: p.brandId })),
-    budgetTimelines: TIMELINES,
+    allPairs: ALL_PAIRS,
+    facts: facts(),
     firstBilledDayByPair: FIRST_BILLED,
     snapshots: SNAPSHOTS,
-    currentMrrUsd: FLEET_MRR,
-    currentAgencyBudgetMrrUsd: AGENCY_BUDGET_MRR,
-    ...overrides,
+    currentMrrUsd: 5820,
+    earningRecordBeginsOn: "2026-09-01",
+    ...over,
   };
 }
 
 const WINDOWS = { weeks: 12, months: 6 };
 
-describe("agency / self-serve MRR split", () => {
-  it("states the agency at what a human STATED, never at its budget × 30 — and the two figures DIVERGE", () => {
-    const split = buildMrrSplit(inputs(), NOW, WINDOWS);
+const SELF_KEYS = [K.a, K.b, K.c, K.d].sort();
+const AGENCY_KEYS = [K.big, K.small, K.idle].sort();
 
-    expect(split.currentAgencyMrrUsd).toBe(5500); // 5000 + 500, the stated amounts
-    expect(split.currentAgencyBudgetMrrUsd).toBe(AGENCY_BUDGET_MRR); // 4290 — what left the self-serve half
-    // The whole point: the agency's worth is NOT its budget projection.
+describe("the self-serve half is a SUM, so it can never be negative", () => {
+  it("answers a POSITIVE figure for the month whose subtraction came out at −$720", () => {
+    const split = buildMrrSplit(inputs(), NOW, WINDOWS);
+    const aug = split.monthly.find((b) => b.period === "2026-08")!;
+
+    // The shape that broke the old code is intact in the fixture: the agency's replayed budget is
+    // LARGER than the fleet figure it used to be subtracted from.
+    expect(aug.referenceDate).toBe(AUG);
+    expect(aug.committedMrrUsd).toBe(2610);
+    expect(aug.agencyBudgetMrrUsd).toBe(3330); // (110 + 1) × 30
+    expect(aug.agencyBudgetMrrUsd).toBeGreaterThan(aug.committedMrrUsd);
+    expect(aug.committedMrrUsd - aug.agencyBudgetMrrUsd).toBeLessThan(0); // what the old code computed
+
+    // …and the sum answers a real figure instead: only BRAND_A qualifies ($100/day × 30).
+    expect(aug.selfServeMrrUsd).toBe(3000);
+    expect(aug.selfServeUnmeasurableReason).toBeNull();
+    expect(aug.totalMrrUsd).toBe(1500 + 3000);
+  });
+
+  it("counts a pair ONLY when all four conditions held, and each exclusion is for its own reason", () => {
+    const f = facts();
+    // A: working, budgeted, paying → counted
+    expect(evaluatePairDay(K.a, SAAS_A, AUG, f).mrrUsd).toBe(3000);
+    // B: budgeted and paying, but its AUDIENCE was recorded exhausted → nothing
+    expect(evaluatePairDay(K.b, SAAS_B, AUG, f).mrrUsd).toBe(0);
+    // C: demonstrably active, but billing holds NO amount → nothing, and the gap is flagged
+    const c = evaluatePairDay(K.c, SAAS_C, AUG, f);
+    expect(c.mrrUsd).toBe(0);
+    expect(c.budgetUnrecordedWhileActive).toBe(true);
+    // D: budgeted and active, but its org's PAYMENT had stopped → nothing
+    expect(evaluatePairDay(K.d, SAAS_D, AUG, f).mrrUsd).toBe(0);
+  });
+
+  it("never fabricates the AMOUNT for a pair billing holds no record of — it counts the gap instead", () => {
+    const aug = buildMrrSplit(inputs(), NOW, WINDOWS).monthly.find((b) => b.period === "2026-08")!;
+    expect(aug.selfServeUnrecordedBudgetPairCount).toBe(1); // BRAND_C
+    // Its activity is real and it still contributes nothing: an invented amount is the one thing
+    // that would put a number on the wire no service ever recorded.
+    expect(aug.selfServeMrrUsd).toBe(3000);
+  });
+
+  it("a stated ZERO budget is a real answer and is not confused with an absent record", () => {
+    const f = facts();
+    expect(evaluatePairDay(K.idle, AGENCY_ORG, TODAY, f).budgetUnrecordedWhileActive).toBe(false);
+    expect(evaluatePairDay(K.c, SAAS_C, TODAY, f).budgetUnrecordedWhileActive).toBe(true);
+  });
+});
+
+describe("the two eras are marked, never blended", () => {
+  it("marks a pre-record period APPROXIMATED and a covered one RECORDED, on the same fixture", () => {
+    const split = buildMrrSplit(inputs(), NOW, WINDOWS);
+    const aug = split.monthly.find((b) => b.period === "2026-08")!;
+    const sep = split.monthly.find((b) => b.period === "2026-09")!;
+
+    expect(aug.selfServeBasis).toBe("approximated"); // campaign-service records nothing back then
+    expect(aug.selfServeApproximatedPairCount).toBe(1);
+    expect(sep.selfServeBasis).toBe("recorded"); // every pair answered from the record
+    expect(sep.selfServeApproximatedPairCount).toBe(0);
+    expect(split.earningRecordBeginsOn).toBe("2026-09-01");
+  });
+
+  it("treats run PRESENCE and run SILENCE asymmetrically — one billed day covers a window either side", () => {
+    const days = new Set(["2026-08-25"]);
+    expect(activeNear(days, "2026-08-25")).toBe(true);
+    expect(activeNear(days, "2026-08-31")).toBe(true); // six days later, still evidence
+    expect(activeNear(days, "2026-08-19")).toBe(true); // six days earlier, still evidence
+    expect(activeNear(days, "2026-09-02")).toBe(false); // a full window of silence either side
+    expect(activeNear(new Set(), "2026-08-25")).toBe(false);
+  });
+
+  it("a RECORDED answer beats the activity evidence, in both directions", () => {
+    // B billed spend ON the August reference date, yet the record says its audience was exhausted.
+    expect(activeNear(activity().get(K.b), AUG)).toBe(true);
+    expect(evaluatePairDay(K.b, SAAS_B, AUG, facts()).mrrUsd).toBe(0);
+    // C has no activity anywhere near today, yet the record says it was earning.
+    expect(activeNear(activity().get(K.c), TODAY)).toBe(true);
+    const noActivity = facts({ activityDays: new Map() });
+    expect(evaluatePairDay(K.a, SAAS_A, TODAY, noActivity).mrrUsd).toBe(3000);
+  });
+
+  it("a campaign RECORDED as stopped is a recorded NO, even while its audience axis is still empty", () => {
+    const answers: CampaignDayAnswer[] = [
+      { campaignId: "c1", status: "stopped", audience: "not_recorded", earning: null, statusRecordedSince: "2026-09-01T00:00:00Z", audienceRecordedSince: null },
+    ];
+    expect(recordedEarningOf(answers)).toBe(false);
+    // …while an ONGOING campaign with no audience record says nothing at all.
+    expect(
+      recordedEarningOf([{ campaignId: "c2", status: "ongoing", audience: "not_recorded", earning: null, statusRecordedSince: "2026-09-01T00:00:00Z", audienceRecordedSince: null }]),
+    ).toBeNull();
+    // A brand is earning if ANY of its campaigns was.
+    expect(
+      recordedEarningOf([
+        { campaignId: "c1", status: "stopped", audience: "not_recorded", earning: null, statusRecordedSince: null, audienceRecordedSince: null },
+        { campaignId: "c2", status: "ongoing", audience: "available", earning: true, statusRecordedSince: null, audienceRecordedSince: null },
+      ]),
+    ).toBe(true);
+    expect(recordedEarningOf([])).toBeNull();
+  });
+
+  it("an unrecorded PAYMENT axis is a fallback, not a yes — it marks the day approximated", () => {
+    const noRecord: PaymentStoppedFacts = { recordBeginsOn: null, periods: [] };
+    expect(paymentStoppedOn(noRecord, AUG)).toBeNull();
+    expect(paymentStoppedOn(undefined, AUG)).toBeNull();
+    expect(paymentStoppedOn({ recordBeginsOn: "2026-09-01", periods: [] }, AUG)).toBeNull();
+    expect(paymentStoppedOn({ recordBeginsOn: "2026-06-12", periods: [] }, AUG)).toBe(false);
+    expect(paymentStoppedOn({ recordBeginsOn: "2026-06-12", periods: [{ startedOn: "2026-08-01", endedOn: "2026-08-15" }] }, AUG)).toBe(false);
+    expect(
+      paymentStoppedOn({ recordBeginsOn: "2026-06-12", periods: [{ startedOn: "2026-08-01", endedOn: null }] }, AUG),
+    ).toBe(true);
+
+    const f = facts({ paymentByOrg: new Map([[SAAS_A, noRecord]]) });
+    expect(evaluatePairDay(K.a, SAAS_A, TODAY, f).basis).toBe("approximated");
+  });
+
+  it("answers UNMEASURABLE, never 0, when nothing about the day is on record for any pair", () => {
+    const empty = facts({ budgetByDay: new Map(), recordedEarning: new Map(), paymentByOrg: new Map(), activityDays: new Map() });
+    const sum = sumSideOn(SELF_KEYS, AUG, empty);
+    expect(sum.nothingRecorded).toBe(true);
+
+    const split = buildMrrSplit(inputs({ facts: empty }), NOW, WINDOWS);
+    const aug = split.monthly.find((b) => b.period === "2026-08")!;
+    expect(aug.selfServeMrrUsd).toBeNull();
+    expect(aug.selfServeUnmeasurableReason).toBe("no_records_for_period");
+    expect(aug.totalMrrUsd).toBeNull();
+    expect(aug.selfServeBasis).toBeNull();
+  });
+});
+
+describe("the agency half is untouched, and the two halves stay disjoint", () => {
+  it("states the agency at what a human STATED, never at its budget × 30 — and the two DIVERGE", () => {
+    const split = buildMrrSplit(inputs(), NOW, WINDOWS);
+    expect(split.currentAgencyMrrUsd).toBe(2000); // the September stated row
+    expect(split.currentAgencyBudgetMrrUsd).toBe(3330); // (110 + 1) × 30, the substitution this removes
     expect(split.currentAgencyMrrUsd).not.toBe(split.currentAgencyBudgetMrrUsd);
   });
 
-  it("drops the self-serve half by EXACTLY the agency's committed contribution (AC4)", () => {
-    const withStated = buildMrrSplit(inputs(), NOW, WINDOWS);
-    const withoutStated = buildMrrSplit(inputs({ statedRows: [], currentAgencyBudgetMrrUsd: 0 }), NOW, WINDOWS);
-
-    expect(withoutStated.currentSelfServeMrrUsd).toBe(FLEET_MRR);
-    expect(withStated.currentSelfServeMrrUsd).toBe(SELF_SERVE_MRR);
-    expect(withoutStated.currentSelfServeMrrUsd - withStated.currentSelfServeMrrUsd).toBe(AGENCY_BUDGET_MRR);
+  it("derives the agency orgs from the stated rows and excludes their WHOLE brand set", () => {
+    expect(agencyOrgIdsOf(STATED)).toEqual([AGENCY_ORG]);
+    expect(agencyPairKeysOf(STATED, ALL_PAIRS)).toEqual(AGENCY_KEYS);
+    // BRAND_IDLE carries no stated amount and is still excluded from the SaaS figure.
+    expect(agencyPairKeysOf(STATED, ALL_PAIRS)).toContain(K.idle);
+    expect(selfServePairKeysOf(STATED, ALL_PAIRS)).toEqual(SELF_KEYS);
   });
 
-  it("with ZERO stated rows the self-serve figure IS the fleet committed MRR and the agency is zero (AC3)", () => {
-    const split = buildMrrSplit(inputs({ statedRows: [], currentAgencyBudgetMrrUsd: 0 }), NOW, WINDOWS);
+  it("the two sides partition the pair universe, so nothing is counted twice or dropped", () => {
+    const agency = agencyPairKeysOf(STATED, ALL_PAIRS);
+    const self = selfServePairKeysOf(STATED, ALL_PAIRS);
+    expect([...agency, ...self].sort()).toEqual(ALL_PAIRS.map((p) => pairKey(p.orgId, p.brandId)).sort());
+    expect(agency.filter((k) => self.includes(k))).toEqual([]);
+  });
 
+  it("totals agency + self-serve, and reconciles with the total served beside them", () => {
+    for (const b of buildMrrSplit(inputs(), NOW, WINDOWS).monthly) {
+      if (b.totalMrrUsd === null) continue;
+      expect(b.totalMrrUsd).toBe(Math.round((b.agencyMrrUsd + b.selfServeMrrUsd!) * 100) / 100);
+      expect(b.totalArrUsd).toBe(Math.round(b.totalMrrUsd * 12 * 100) / 100);
+    }
+  });
+
+  it("honours both inclusive bounds, and a null start means the brand's first BILLED day", () => {
+    const row = STATED[0];
+    expect(statedAmountInForce(row, "2026-07-19", "2026-07-20")).toBe(false);
+    expect(statedAmountInForce(row, "2026-07-20", "2026-07-20")).toBe(true);
+    expect(statedAmountInForce(row, "2026-08-31", "2026-07-20")).toBe(true);
+    expect(statedAmountInForce(row, "2026-09-01", "2026-07-20")).toBe(false);
+    // Exactly one of the two rows is ever in force, so the sum never doubles.
+    expect(agencyStatedMrrOn(STATED, AUG, FIRST_BILLED)).toBe(1500);
+    expect(agencyStatedMrrOn(STATED, TODAY, FIRST_BILLED)).toBe(2000);
+  });
+
+  it("reports NO agency and the whole fleet as self-serve when nothing is stated", () => {
+    const split = buildMrrSplit(inputs({ statedRows: [] }), NOW, WINDOWS);
     expect(split.currentAgencyMrrUsd).toBe(0);
-    expect(split.currentSelfServeMrrUsd).toBe(FLEET_MRR);
-    expect(split.currentTotalMrrUsd).toBe(FLEET_MRR);
     expect(split.agencyOrgIds).toEqual([]);
     expect(split.agencyPairKeys).toEqual([]);
-    // Every historical point is the recorded committed figure, untouched.
-    for (const b of split.monthly) {
-      expect(b.selfServeMrrUsd).toBe(b.committedMrrUsd);
-      expect(b.agencyMrrUsd).toBe(0);
-    }
-  });
-
-  it("the two halves add to the total in EVERY period, live and historical (AC2)", () => {
-    const split = buildMrrSplit(inputs(), NOW, WINDOWS);
-
-    expect(split.currentAgencyMrrUsd + split.currentSelfServeMrrUsd).toBe(split.currentTotalMrrUsd);
-    expect(split.monthly.length).toBeGreaterThan(0);
-    expect(split.weekly.length).toBeGreaterThan(0);
-    for (const b of [...split.monthly, ...split.weekly]) {
-      expect(b.selfServeUnmeasurableReason).toBeNull(); // this fixture is measurable throughout
-      expect(b.agencyMrrUsd + b.selfServeMrrUsd!).toBeCloseTo(b.totalMrrUsd!, 2);
-      expect(b.selfServeMrrUsd! + b.agencyBudgetMrrUsd).toBeCloseTo(b.committedMrrUsd, 2);
-      expect(b.agencyArrUsd).toBeCloseTo(b.agencyMrrUsd * 12, 2);
-      expect(b.totalArrUsd!).toBeCloseTo(b.totalMrrUsd! * 12, 2);
-    }
-  });
-
-  it("reaches back to the first recorded snapshot day and REPLAYS the agency budget there (AC5)", () => {
-    const split = buildMrrSplit(inputs(), NOW, WINDOWS);
-
-    const july = split.monthly.find((b) => b.period === "2026-07");
-    expect(july).toBeDefined();
-    // July's point is the 2026-07-31 snapshot; on that day the agency ran $35 + $1 = $36/day.
-    expect(july!.referenceDate).toBe("2026-07-31");
-    expect(july!.committedMrrUsd).toBe(4080);
-    expect(july!.agencyBudgetMrrUsd).toBe(36 * 30);
-    expect(july!.selfServeMrrUsd).toBe(4080 - 36 * 30);
-    expect(july!.selfServeUnmeasurableReason).toBeNull();
-    // The big brand's stated amount only starts 2026-08-01, so July carries the small brand's alone.
-    expect(july!.agencyMrrUsd).toBe(500);
-
-    const august = split.monthly.find((b) => b.period === "2026-08");
-    expect(august!.referenceDate).toBe("2026-08-31");
-    expect(august!.agencyBudgetMrrUsd).toBe(51 * 30); // $50 + $1
-    expect(august!.agencyMrrUsd).toBe(5500); // both stated amounts now in force
-    // The replayed self-serve half DIVERGES from the undivided committed figure it came from.
-    expect(august!.selfServeMrrUsd).not.toBe(august!.committedMrrUsd);
-  });
-
-  it("says a period is UNMEASURABLE rather than printing a NEGATIVE self-serve run-rate", () => {
-    // Prod's August: the snapshot is $87/day RUNNING (the 2026-08-27 cutover) while the agency's
-    // CONFIGURED budget replays at $132/day. The remainder is negative, which is not a run-rate.
-    const split = buildMrrSplit(
-      inputs({
-        snapshots: [{ date: "2026-08-31", mrrUsd: 87 * 30 }],
-        budgetTimelines: new Map([
-          [pairKey(AGENCY_ORG, BRAND_BIG), [{ dailyBudgetUsd: 131, changedAt: "2026-08-01T00:00:00Z" }]],
-          [pairKey(AGENCY_ORG, BRAND_SMALL), [{ dailyBudgetUsd: 1, changedAt: "2026-07-25T00:00:00Z" }]],
-        ]),
-      }),
-      NOW,
-      WINDOWS,
-    );
-
-    const august = split.monthly.find((b) => b.period === "2026-08")!;
-    expect(august.selfServeMrrUsd).toBeNull();
-    expect(august.selfServeArrUsd).toBeNull();
-    expect(august.totalMrrUsd).toBeNull();
-    expect(august.totalArrUsd).toBeNull();
-    expect(august.selfServeUnmeasurableReason).toBe("agency_contribution_exceeds_recorded_total");
-    // The two real figures that explain WHY are still on the row, and the stated agency amount stands.
-    expect(august.agencyBudgetMrrUsd).toBe(132 * 30);
-    expect(august.committedMrrUsd).toBe(87 * 30);
-    expect(august.agencyMrrUsd).toBe(5500);
-    // …and it is NOT clamped to zero, which would print a self-serve business nothing supports.
-    expect(august.selfServeMrrUsd).not.toBe(0);
-  });
-
-  it("measures a period where the agency contribution exactly equals the recorded total", () => {
-    const split = buildMrrSplit(
-      inputs({
-        snapshots: [{ date: "2026-08-31", mrrUsd: 143 * 30 }],
-        budgetTimelines: new Map([
-          [pairKey(AGENCY_ORG, BRAND_BIG), [{ dailyBudgetUsd: 142, changedAt: "2026-08-01T00:00:00Z" }]],
-          [pairKey(AGENCY_ORG, BRAND_SMALL), [{ dailyBudgetUsd: 1, changedAt: "2026-07-25T00:00:00Z" }]],
-        ]),
-      }),
-      NOW,
-      WINDOWS,
-    );
-    const august = split.monthly.find((b) => b.period === "2026-08")!;
-    expect(august.selfServeMrrUsd).toBe(0); // a MEASURED zero: the SaaS side really was nothing that month
-    expect(august.selfServeUnmeasurableReason).toBeNull();
-  });
-
-  it("skips an unmeasurable period when computing growth instead of comparing across the gap", () => {
-    const split = buildMrrSplit(
-      inputs({
-        snapshots: [
-          { date: "2026-07-31", mrrUsd: 4080 },
-          { date: "2026-08-31", mrrUsd: 30 }, // unmeasurable: far below the agency replay
-        ],
-      }),
-      NOW,
-      WINDOWS,
-    );
-    const august = split.monthly.find((b) => b.period === "2026-08")!;
-    const september = split.monthly.find((b) => b.period === "2026-09")!;
-    expect(august.totalMrrUsd).toBeNull();
-    expect(august.growthPct).toBeNull();
-    const july = split.monthly.find((b) => b.period === "2026-07")!;
-    // September's growth is measured against JULY, the previous MEASURED point — never against a gap.
-    expect(september.growthPct).toBe(Math.round(((september.totalMrrUsd! - july.totalMrrUsd!) / july.totalMrrUsd!) * 1000) / 10);
-  });
-
-  it("omits a period with no recorded snapshot rather than fabricating a point", () => {
-    const split = buildMrrSplit(inputs({ snapshots: [{ date: "2026-08-31", mrrUsd: 5100 }] }), NOW, WINDOWS);
-    expect(split.monthly.map((b) => b.period)).toEqual(["2026-08", "2026-09"]);
-  });
-
-  it("derives the agency orgs from the stated rows and excludes the org's WHOLE brand set", () => {
-    const split = buildMrrSplit(inputs(), NOW, WINDOWS);
-
-    expect(split.agencyOrgIds).toEqual([AGENCY_ORG]);
-    // BRAND_IDLE carries no stated amount and is still excluded from the self-serve half — agency money
-    // is agency money whether or not anyone has got round to stating it.
-    expect(split.agencyPairKeys).toEqual([
-      pairKey(AGENCY_ORG, BRAND_BIG),
-      pairKey(AGENCY_ORG, BRAND_IDLE),
-      pairKey(AGENCY_ORG, BRAND_SMALL),
-    ]);
-    expect(split.agencyPairKeys).not.toContain(pairKey(SAAS_ORG_A, BRAND_SAAS_A));
-  });
-
-  it("makes an UNSTATED agency brand visible instead of silent", () => {
-    // The agency funds a third brand at $10/day that nobody has stated an amount for: its budget leaves
-    // the self-serve half, so the total sits BELOW the committed figure by exactly that amount.
-    const pairs = ALL_PAIRS.map((p) => (p.brandId === BRAND_IDLE ? { ...p, runningDailyBudgetUsd: 10, active: true } : p));
-    const split = buildMrrSplit(
-      inputs({
-        allPairs: pairs.map((p) => ({ orgId: p.orgId, brandId: p.brandId })),
-        currentMrrUsd: FLEET_MRR + 10 * 30,
-        currentAgencyBudgetMrrUsd: AGENCY_BUDGET_MRR + 10 * 30,
-      }),
-      NOW,
-      WINDOWS,
-    );
-
-    const stated = buildMrrSplit(inputs(), NOW, WINDOWS);
-    // Its $300/month of budget is in NEITHER half — and the difference between what the agency side
-    // CONTRIBUTED and what anybody STATED is exactly that, readable straight off the two fields.
-    expect(split.currentAgencyBudgetMrrUsd - stated.currentAgencyBudgetMrrUsd).toBe(10 * 30);
-    expect(split.currentAgencyMrrUsd).toBe(stated.currentAgencyMrrUsd);
-    expect(split.currentSelfServeMrrUsd).toBe(SELF_SERVE_MRR);
-    expect(split.currentTotalMrrUsd).toBe(5500 + SELF_SERVE_MRR);
+    expect(split.currentAgencyBudgetMrrUsd).toBe(0);
+    // …and the agency's brands now sit on the SaaS side, so the self-serve figure GROWS.
+    const withStated = buildMrrSplit(inputs(), NOW, WINDOWS);
+    expect(split.currentSelfServeMrrUsd!).toBeGreaterThan(withStated.currentSelfServeMrrUsd!);
   });
 });
 
-describe("a stated amount's date range", () => {
-  it("with NO start is in force from the brand's first BILLED day, not before it (AC6)", () => {
-    const row = STATED[1]; // startDate null, first billed 2026-07-25
-    expect(statedAmountInForce(row, "2026-07-24", "2026-07-25")).toBe(false);
-    expect(statedAmountInForce(row, "2026-07-25", "2026-07-25")).toBe(true);
-    expect(statedAmountInForce(row, "2026-09-12", "2026-07-25")).toBe(true);
+describe("the live figures and the current bucket are ONE number", () => {
+  it("the live scalar equals the current monthly bucket, computed the same way", () => {
+    const split = buildMrrSplit(inputs(), NOW, WINDOWS);
+    const sep = split.monthly.find((b) => b.period === "2026-09")!;
+    expect(sep.referenceDate).toBe(TODAY);
+    expect(split.currentSelfServeMrrUsd).toBe(sep.selfServeMrrUsd);
+    expect(split.currentAgencyMrrUsd).toBe(sep.agencyMrrUsd);
+    expect(split.currentTotalMrrUsd).toBe(sep.totalMrrUsd);
+    expect(split.currentSelfServeBasis).toBe(sep.selfServeBasis);
   });
 
-  it("with no start and a brand that has NEVER billed carries no lower bound", () => {
-    expect(statedAmountInForce(STATED[1], "2020-01-01", null)).toBe(true);
+  it("today's self-serve figure reflects AUDIENCE EXHAUSTION, which the fleet run-rate beside it does not", () => {
+    const split = buildMrrSplit(inputs(), NOW, WINDOWS);
+    // A ($100) counts; B ($2) is exhausted, C has no amount, D stopped paying.
+    expect(split.currentSelfServeMrrUsd).toBe(3000);
+    // The recorded fleet figure still carries B's money, so the two legitimately differ.
+    expect(split.currentSelfServeMrrUsd! + split.currentAgencyBudgetMrrUsd).not.toBe(5820);
   });
 
-  it("is inclusive at both ends and closed by an endDate", () => {
-    const row: StatedAmountRow = { ...STATED[0], startDate: "2026-08-01", endDate: "2026-08-31" };
-    expect(statedAmountInForce(row, "2026-07-31", null)).toBe(false);
-    expect(statedAmountInForce(row, "2026-08-01", null)).toBe(true);
-    expect(statedAmountInForce(row, "2026-08-31", null)).toBe(true);
-    expect(statedAmountInForce(row, "2026-09-01", null)).toBe(false);
+  it("emits the same periods as the committed series, against the same dates", () => {
+    const split = buildMrrSplit(inputs(), NOW, WINDOWS);
+    expect(split.monthly.map((b) => b.period)).toEqual(["2026-07", "2026-08", "2026-09"]);
+    expect(referenceDatesOf(SNAPSHOTS, TODAY, WINDOWS, 5820)).toContain(TODAY);
+    expect(referenceDatesOf(SNAPSHOTS, TODAY, WINDOWS, 5820)).toContain(AUG);
+    // A month with no recorded snapshot is OMITTED, never fabricated.
+    expect(split.monthly.map((b) => b.period)).not.toContain("2026-06");
   });
 
-  it("with no end is still running today", () => {
-    expect(agencyStatedMrrOn(STATED, TODAY, FIRST_BILLED)).toBe(5500);
-  });
-});
-
-describe("replaying a daily budget from billing's timeline", () => {
-  const timeline = TIMELINES.get(pairKey(AGENCY_ORG, BRAND_BIG))!;
-
-  it("answers the value carried by the last change on or before the day", () => {
-    expect(budgetUsdOn(timeline, "2026-07-28")).toBe(35);
-    expect(budgetUsdOn(timeline, "2026-08-09")).toBe(35);
-    expect(budgetUsdOn(timeline, "2026-08-10")).toBe(50);
-    expect(budgetUsdOn(timeline, "2026-09-12")).toBe(142);
-  });
-
-  it("answers 0 for a day BEFORE the first entry — we hold no record of a budget then", () => {
-    expect(budgetUsdOn(timeline, "2026-07-15")).toBe(0);
-    expect(budgetUsdOn([], "2026-09-12")).toBe(0);
-  });
-
-  it("takes the day's FINAL value when several changes land on one day", () => {
-    const sameDay = [
-      { dailyBudgetUsd: 210, changedAt: "2026-08-30T08:00:00Z" },
-      { dailyBudgetUsd: 150, changedAt: "2026-08-30T18:00:00Z" },
-    ];
-    expect(budgetUsdOn(sameDay, "2026-08-30")).toBe(150);
-  });
-
-  it("sums only the agency pairs", () => {
-    const keys = agencyPairKeysOf(STATED, ALL_PAIRS.map((p) => ({ orgId: p.orgId, brandId: p.brandId })));
-    expect(agencyBudgetMrrOn(keys, TIMELINES, "2026-09-12")).toBe(143 * 30);
-  });
-});
-
-describe("deriving the agency side", () => {
-  it("is any org carrying at least one stated amount, whatever its date range", () => {
-    expect(agencyOrgIdsOf(STATED)).toEqual([AGENCY_ORG]);
-    expect(agencyOrgIdsOf([{ ...STATED[0], orgId: "z" }, { ...STATED[1], orgId: "a" }])).toEqual(["a", "z"]);
-  });
-
-  it("keeps a stated pair even when the membership read has not caught up to it", () => {
-    expect(agencyPairKeysOf(STATED, [])).toEqual([pairKey(AGENCY_ORG, BRAND_BIG), pairKey(AGENCY_ORG, BRAND_SMALL)]);
+  it("skips growth across an unmeasurable period rather than comparing over the gap", () => {
+    const f = facts();
+    f.budgetByDay = new Map([...f.budgetByDay].map(([k, v]) => [k, new Map([...v].filter(([d]) => d !== AUG))]));
+    f.recordedEarning = new Map();
+    f.paymentByOrg = new Map();
+    f.activityDays = new Map();
+    const split = buildMrrSplit(inputs({ facts: f }), NOW, WINDOWS);
+    const aug = split.monthly.find((b) => b.period === "2026-08")!;
+    const sep = split.monthly.find((b) => b.period === "2026-09")!;
+    const jul = split.monthly.find((b) => b.period === "2026-07")!;
+    expect(aug.totalMrrUsd).toBeNull();
+    expect(aug.growthPct).toBeNull();
+    // September's growth is measured against JULY, the previous MEASURED point.
+    expect(sep.growthPct).toBe(Math.round(((sep.totalMrrUsd! - jul.totalMrrUsd!) / jul.totalMrrUsd!) * 1000) / 10);
   });
 });
