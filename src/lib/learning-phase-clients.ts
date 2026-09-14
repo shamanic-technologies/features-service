@@ -4,6 +4,8 @@
  *  - PER-CAMPAIGN driver counts, so every campaign of a scope states its own outcome count and the
  *    verdict can say which one leads. ONE call per acquisition channel for the whole brand, NOT one
  *    per campaign: `groupBy=campaignId` answers for every campaign at once.
+ *  - PER-CAMPAIGN COMMITTED SPEND, on the same basis and from the same ledger the money block above it
+ *    rides, so "spent X of a Y target" can never contradict the "Invested X" beside it.
  *  - THE LEG'S DAILY CEILING, so the countdown has a rate to divide the remaining spend by — and so
  *    "what would raising it buy" can be answered in the same unit.
  *
@@ -13,7 +15,8 @@
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
-import { featureSlugList, soleFeatureSlug, type FeatureScope } from "./feature-scope.js";
+import { featureSlugList, featureSlugsParam, soleFeatureSlug, type FeatureScope } from "./feature-scope.js";
+import { selectCostCents, type Pricing } from "./pricing.js";
 
 /** The two counted signals a grain observes, for ONE campaign id. */
 export interface CampaignDriverCounts {
@@ -127,4 +130,57 @@ export async function fetchLegDailyCeilingUsd(
   const cents = typeof raw === "number" ? raw : Number(raw);
   if (!Number.isFinite(cents) || cents < 0) return null;
   return cents / 100;
+}
+
+/**
+ * EVERY campaign's COMMITTED spend cents for one (brand, channel set) — `groupBy=campaignId`, so it is
+ * ONE call for the whole brand rather than one per campaign.
+ *
+ * WHY THIS RATHER THAN SUMMING THE (campaign × workflow) CELLS. Those cells are rolled up by workflow
+ * DYNASTY, and `buildWorkflowDynasties` keys on the ACTIVE version — so spend a campaign made on a
+ * lineage that has since been retired is absent from them. Summing them therefore UNDER-states what the
+ * campaign has committed, and the countdown would then sit on this body beside a `costEconomics`
+ * figure that disagrees with it. Measured in prod on the campaign this feature was built for: the
+ * dynasty-rolled cells came to **$790.53** against the ledger's **$850.35** — $59.82 on retired
+ * lineages, two numbers about one campaign's money under one body. The cells price ONE outcome (and
+ * are right to exclude a lineage that produced none); the ledger says what has been SPENT.
+ *
+ * COMMITTED (actual + holds), the one basis every money figure on this service rides, and it takes the
+ * caller's `pricing` so a NET read divides a net target by net spend.
+ */
+export async function fetchCampaignCommittedCents(
+  brandId: string,
+  featureScope: FeatureScope,
+  headers: { orgId: string; userId?: string; runId?: string },
+  pricing: Pricing,
+): Promise<Map<string, number>> {
+  const baseUrl = process.env.RUNS_SERVICE_URL;
+  const apiKey = process.env.RUNS_SERVICE_API_KEY;
+  if (!baseUrl || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
+
+  const h: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId, "x-brand-id": brandId };
+  if (headers.userId) h["x-user-id"] = headers.userId;
+  if (headers.runId) h["x-run-id"] = headers.runId;
+
+  const params = new URLSearchParams({
+    groupBy: "campaignId",
+    brandId,
+    featureSlugs: featureSlugsParam(featureScope),
+  });
+  const response = await fetchWithRetry(`${baseUrl}/v1/stats/costs?${params}`, { headers: h });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`runs-service /v1/stats/costs (groupBy=campaignId) failed (${response.status}): ${text}`);
+  }
+  const data = (await response.json()) as { groups?: Array<{ dimensions?: Record<string, string | null> }> };
+  const result = new Map<string, number>();
+  if (!Array.isArray(data.groups)) return result;
+  for (const group of data.groups) {
+    const campaignId = group.dimensions?.campaignId;
+    if (!campaignId) continue;
+    const cents = selectCostCents(group, "totalCostInUsdCents", pricing);
+    if (!Number.isFinite(cents)) continue;
+    result.set(campaignId, (result.get(campaignId) ?? 0) + cents);
+  }
+  return result;
 }

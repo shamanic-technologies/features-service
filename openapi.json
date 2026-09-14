@@ -2311,7 +2311,7 @@
               "committedSpentUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "What the LEADING campaign has committed so far on this channel set, pooled from the SAME cells the price is, so the target and the spend against it describe one campaign's money. COMMITTED (actual + holds), the one basis every money figure on this body rides."
+                "description": "What the LEADING campaign has committed so far on this channel set, read from the runs LEDGER on the same COMMITTED basis (actual + holds) every money figure on this body rides — so on a campaign-scoped read it IS `costEconomics.committedCostUsd`, to sub-cent rounding. Deliberately NOT the sum of the cells the price is pooled from: those are rolled up by workflow DYNASTY, so spend on a lineage since retired is absent from them, and summing them would put two numbers about one campaign's money on one body (measured in prod: $790.53 of cells against $850.35 of ledger). The cells price ONE outcome and are right to exclude a lineage that produced none; this says what has been SPENT."
               },
               "spendRemainingUsd": {
                 "type": "number",
@@ -7368,7 +7368,7 @@
               "committedSpentUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "What the LEADING campaign has committed so far on this channel set, pooled from the SAME cells the price is, so the target and the spend against it describe one campaign's money. COMMITTED (actual + holds), the one basis every money figure on this body rides."
+                "description": "What the LEADING campaign has committed so far on this channel set, read from the runs LEDGER on the same COMMITTED basis (actual + holds) every money figure on this body rides — so on a campaign-scoped read it IS `costEconomics.committedCostUsd`, to sub-cent rounding. Deliberately NOT the sum of the cells the price is pooled from: those are rolled up by workflow DYNASTY, so spend on a lineage since retired is absent from them, and summing them would put two numbers about one campaign's money on one body (measured in prod: $790.53 of cells against $850.35 of ledger). The cells price ONE outcome and are right to exclude a lineage that produced none; this says what has been SPENT."
               },
               "spendRemainingUsd": {
                 "type": "number",
@@ -10313,7 +10313,7 @@
               "committedSpentUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "What the LEADING campaign has committed so far on this channel set, pooled from the SAME cells the price is, so the target and the spend against it describe one campaign's money. COMMITTED (actual + holds), the one basis every money figure on this body rides."
+                "description": "What the LEADING campaign has committed so far on this channel set, read from the runs LEDGER on the same COMMITTED basis (actual + holds) every money figure on this body rides — so on a campaign-scoped read it IS `costEconomics.committedCostUsd`, to sub-cent rounding. Deliberately NOT the sum of the cells the price is pooled from: those are rolled up by workflow DYNASTY, so spend on a lineage since retired is absent from them, and summing them would put two numbers about one campaign's money on one body (measured in prod: $790.53 of cells against $850.35 of ledger). The cells price ONE outcome and are right to exclude a lineage that produced none; this says what has been SPENT."
               },
               "spendRemainingUsd": {
                 "type": "number",
@@ -13048,7 +13048,7 @@
               "committedSpentUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "What the LEADING campaign has committed so far on this channel set, pooled from the SAME cells the price is, so the target and the spend against it describe one campaign's money. COMMITTED (actual + holds), the one basis every money figure on this body rides."
+                "description": "What the LEADING campaign has committed so far on this channel set, read from the runs LEDGER on the same COMMITTED basis (actual + holds) every money figure on this body rides — so on a campaign-scoped read it IS `costEconomics.committedCostUsd`, to sub-cent rounding. Deliberately NOT the sum of the cells the price is pooled from: those are rolled up by workflow DYNASTY, so spend on a lineage since retired is absent from them, and summing them would put two numbers about one campaign's money on one body (measured in prod: $790.53 of cells against $850.35 of ledger). The cells price ONE outcome and are right to exclude a lineage that produced none; this says what has been SPENT."
               },
               "spendRemainingUsd": {
                 "type": "number",
