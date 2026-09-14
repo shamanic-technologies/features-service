@@ -286,6 +286,45 @@ describe("the two eras are marked, never blended", () => {
     expect(recordedEarningOf([])).toBeNull();
   });
 
+  it("an UNKNOWN campaign beats every recorded NO beside it — the prod shape that vanished a customer", () => {
+    // One ongoing campaign whose audience is not yet recorded, beside a stopped ancestor. The
+    // ancestor says nothing about the live campaign, so the brand's day is UNKNOWN and falls to the
+    // activity evidence. Reading it as a recorded NO dropped the brand from the run-rate outright,
+    // and out of the unrecorded-budget gap too, so it disappeared with nothing saying why.
+    expect(
+      recordedEarningOf([
+        { campaignId: "stopped-ancestor", status: "stopped", audience: "not_recorded", earning: null, statusRecordedSince: "2026-09-12T00:00:00Z", audienceRecordedSince: null },
+        { campaignId: "live", status: "ongoing", audience: "not_recorded", earning: null, statusRecordedSince: "2026-09-12T00:00:00Z", audienceRecordedSince: null },
+      ]),
+    ).toBeNull();
+    // Same for a campaign whose STATUS is not recorded at all.
+    expect(
+      recordedEarningOf([
+        { campaignId: "stopped-ancestor", status: "stopped", audience: "not_recorded", earning: null, statusRecordedSince: null, audienceRecordedSince: null },
+        { campaignId: "unknown", status: "not_recorded", audience: "not_recorded", earning: null, statusRecordedSince: null, audienceRecordedSince: null },
+      ]),
+    ).toBeNull();
+    // A recorded NO still wins when EVERY campaign answered.
+    expect(
+      recordedEarningOf([
+        { campaignId: "stopped-ancestor", status: "stopped", audience: "not_recorded", earning: null, statusRecordedSince: null, audienceRecordedSince: null },
+        { campaignId: "exhausted", status: "ongoing", audience: "exhausted", earning: false, statusRecordedSince: null, audienceRecordedSince: null },
+      ]),
+    ).toBe(false);
+  });
+
+  it("the unknown-beats-no rule reaches the FIGURE: the customer keeps its budget and its gap is counted", () => {
+    // BRAND_C is active and has no recorded amount; give it a live campaign whose audience is
+    // unrecorded beside a stopped ancestor, exactly the prod shape.
+    const unresolved = new Map(recordedEarning());
+    unresolved.set(K.c, new Map<string, boolean | null>([[TODAY, null]]));
+    const f = facts({ recordedEarning: unresolved });
+    const verdict = evaluatePairDay(K.c, SAAS_C, TODAY, f);
+    expect(verdict.mrrUsd).toBe(0);
+    expect(verdict.budgetUnrecordedWhileActive).toBe(true); // the gap is VISIBLE, not a silent drop
+    expect(verdict.basis).toBe("approximated");
+  });
+
   it("an unrecorded PAYMENT axis is a fallback, not a yes — it marks the day approximated", () => {
     const noRecord: PaymentStoppedFacts = { recordBeginsOn: null, periods: [] };
     expect(paymentStoppedOn(noRecord, AUG)).toBeNull();

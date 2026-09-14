@@ -40,10 +40,19 @@ half is a sum now too, so neither can go negative by construction.
   whole fortnight is empty. Every such bucket carries `selfServeBasis: "approximated"` plus
   `selfServeApproximatedPairCount`, and `earningRecordBeginsOn` states the boundary as a measured fact
   rather than a declared one. A RECORDED answer always beats the activity evidence, in both directions.
-- **A campaign RECORDED as `stopped` is a recorded NO, even while its audience axis is still empty**
-  (`recordedEarningOf`). campaign-service reports `earning: null` there because only one of its two axes
-  is answerable; a stopped campaign was not earning whatever the audience did, and reading it as unknown
-  would push nearly the whole fleet onto the approximated path for no reason.
+- **A campaign RECORDED as `stopped` is a recorded NO, even while its audience axis is still empty —
+  but an UNKNOWN campaign BEATS every recorded NO beside it** (`recordedEarningOf`). campaign-service
+  reports `earning: null` on a stopped campaign because only one of its two axes is answerable; a
+  stopped campaign was not earning whatever the audience did, and reading it as unknown would push the
+  whole fleet onto the approximated path for no reason. Getting the OTHER half backwards is what shipped
+  broken in v0.165.3 and needed v0.165.4: a brand with one ongoing campaign whose audience is not yet
+  recorded, sitting beside a stopped ANCESTOR (campaign-service mints a new row on every workflow switch
+  and keeps the ancestors, so nearly every real brand has some), answered a recorded FALSE and was
+  dropped from the run-rate outright — never reaching the activity fallback, and never counted in
+  `selfServeUnrecordedBudgetPairCount` either, so it vanished with nothing on the wire saying why.
+  Measured in prod on the first deploy: brand `a179bbd9…` had spent on **14 of September's days** and
+  read `selfServePairCount: 2 / selfServeUnrecordedBudgetPairCount: 0` beside it. Only a day on which
+  EVERY campaign answered can answer for the brand.
 - **AN AMOUNT IS NEVER APPROXIMATED — only the QUALIFICATION is.** A pair billing holds no budget record
   for on a day contributes NOTHING, however obviously it was working, because inventing the amount is
   the one thing that would put a number on the wire no service ever recorded. The gap is made VISIBLE
@@ -95,7 +104,7 @@ half is a sum now too, so neither can go negative by construction.
   from its own producer, the read set bounded by the reference dates, the activity fallback paid for only
   while needed, the fail-soft null, and a negative half being impossible whatever the snapshot says).
   (Set 2026-09-12 as a subtraction, features-service#927; replaced by the sum 2026-09-14,
-  features-service#949.)
+  features-service#949, with the unknown-beats-no correction in v0.165.4 the same day.)
 
 ## A LEG-KEYED READ PRICES THE LEG'S OWN STEP, SERVES ITS OWN ORDER, AND ANSWERS FOR THE CAMPAIGN — `?leg=` on `workflow-projection`, and the dashboard displays what it is served
 
