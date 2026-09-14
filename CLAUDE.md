@@ -2090,7 +2090,16 @@ per funded (funnel, channel) pair, so the catalogue was the only thing in the wa
   else: **0** means no day of work is charged for the channel, which is true of every customer-run
   channel (we put nobody on it) AND of a platform-run channel whose real cost is metered per run or
   which the owner prices at zero. Two live examples of the second: `ai-meeting-booking` at 100¢ nominal
-  with its API spend declared per run, and `agency-meeting-booking` priced at 0. The parser still
+  with its API spend declared per run, and `agency-meeting-booking` priced at 0. **`sales-cold-email-outreach`
+  carries that SAME 100¢ for the same reason (owner's decision 2026-09-14, features-service#963, down from
+  800¢): nobody is on it for the day, it is automated end to end, and its real cost is the metered send
+  spend declared per run.** The figure is not decorative — the dashboard's budget form and billing-service
+  BOTH read `terms.dailyOperatingCostCents` live off `GET /public/channels` as the floor a brand may fund
+  the channel at, so this catalogue is the single place that sets what a channel costs a customer per day,
+  and lowering it here is what lowers it everywhere. It moved for that ONE channel:
+  `feedback-request-cold-email-outreach` and `sales-crm-email-outreach` run the same medium on the same
+  shape and keep their own 800¢, and cold calling still costs 24000¢ because a person is on the line all
+  day (the ordering the catalogue has always carried, now 240x rather than 30x). The parser still
   REFUSES a customer-operated channel stating anything but 0 (we do not charge for work we do not do),
   but there is deliberately **no converse guard** — a platform zero is legal and meaningful. Reading the
   price to infer the operator is the bug this wording exists to prevent, and the published
