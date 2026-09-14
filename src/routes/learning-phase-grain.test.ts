@@ -117,6 +117,10 @@ interface Fixture {
   repliesByCampaign: Record<string, number>;
   /** Per-WORKFLOW spend cents + replies for the campaign-grain read — the (campaign × workflow) cells. */
   cells: Record<string, { cents: number; replies: number }>;
+  /** Cents a campaign committed on a workflow the DYNASTY rollup drops (a lineage since retired). It
+   *  is real spend the ledger reports and the cells do not — the divergence the committed figure has
+   *  to be read from the ledger to avoid. Keyed by campaign id. */
+  retiredLineageCents?: Record<string, number>;
   /** billing's per-leg ceiling, in cents. `null` = this leg has none. */
   dailyBudgetCents?: string | null;
   /** Make campaign-service unreachable, to drive the degrade. */
@@ -175,6 +179,22 @@ function mockFetch(fixture: Fixture): void {
     }
 
     if (url.includes("/stats/costs")) {
+      const cellCents = Object.values(fixture.cells).reduce((sum, c) => sum + c.cents, 0);
+      // THE LEDGER: every campaign's committed cents, including spend on a lineage the dynasty rollup
+      // drops. This is what the committed figure is read from, and what costEconomics rides.
+      if (url.includes("groupBy=campaignId")) {
+        const ids = new Set([...Object.keys(fixture.repliesByCampaign), ...Object.keys(fixture.retiredLineageCents ?? {})]);
+        return json({
+          groups: [...ids].map((id) => ({
+            dimensions: { campaignId: id },
+            totalCostInUsdCents: String(cellCents + (fixture.retiredLineageCents?.[id] ?? 0)),
+            actualCostInUsdCents: String(cellCents + (fixture.retiredLineageCents?.[id] ?? 0)),
+            runCount: 1,
+            minStartedAt: null,
+            maxStartedAt: null,
+          })),
+        });
+      }
       // The campaign grain asks per workflow; everything else takes the scope's one total.
       if (url.includes("groupBy=workflowSlug")) {
         return json({
@@ -188,7 +208,7 @@ function mockFetch(fixture: Fixture): void {
           })),
         });
       }
-      const total = Object.values(fixture.cells).reduce((sum, c) => sum + c.cents, 0);
+      const total = cellCents + (fixture.retiredLineageCents?.[cid ?? "c-live"] ?? 0);
       return json({
         groups: [{
           dimensions: { campaignId: cid ?? "c-live", costName: "email-send" },
@@ -253,6 +273,24 @@ describe("the countdown a browser could not compute", () => {
     expect(phase.spendTargetUsd).toBeGreaterThan(phase.committedSpentUsd);
     // ...and it is not the campaign's whole spend over its outcomes either ($109.50).
     expect(phase.expectedCostPerOutcomeUsd).not.toBeCloseTo(438 / 4, 2);
+  });
+
+  it("reads the committed spend from the LEDGER, so it cannot contradict the money beside it", async () => {
+    // $59.82 of this campaign's spend sits on a lineage the dynasty rollup drops. Summing the cells
+    // would report $438.00 against a costEconomics that says $497.82 — two numbers about one
+    // campaign's money, on one body. Measured in prod at $790.53 against $850.35.
+    mockFetch({ ...LIVE_ONLY, retiredLineageCents: { "c-live": 5982 } });
+    const res = await request(app).get(`/features/${SALES}/revenue?brandId=b1&campaignId=c-live`).set(AUTH);
+    expect(res.status).toBe(200);
+    const phase = res.body.learningPhase;
+    expect(phase.committedSpentUsd).toBeCloseTo(497.82, 6);
+    expect(phase.committedSpentUsd).toBeCloseTo(res.body.costEconomics.committedCostUsd, 6);
+    // THE DIVERGENCE: the cells alone would have said $438 — the price's numerator, not the spend.
+    expect(phase.committedSpentUsd).not.toBeCloseTo(438, 2);
+    // The PRICE is still pooled over the cells that observed an outcome — the retired lineage's spend
+    // bought no outcome, so it belongs in what was SPENT and not in what an outcome COSTS.
+    expect(phase.expectedCostPerOutcomeUsd).toBeCloseTo(77.6825, 4);
+    expect(phase.spendRemainingUsd).toBeCloseTo(776.825 - 497.82, 6);
   });
 
   it("states what raising the ceiling buys, in days, so the consumer divides nothing", async () => {

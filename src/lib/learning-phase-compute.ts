@@ -25,7 +25,7 @@ import { buildCampaignFamilies, type CampaignIdentityRow } from "./campaign-iden
 import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 import { fetchPublicWorkflows } from "./public-stats-clients.js";
 import { fetchCampaignWorkflowEvidence, type Identity } from "./workflow-projection-grains.js";
-import { fetchCampaignDriverCounts, fetchLegDailyCeilingUsd } from "./learning-phase-clients.js";
+import { fetchCampaignCommittedCents, fetchCampaignDriverCounts, fetchLegDailyCeilingUsd } from "./learning-phase-clients.js";
 import {
   buildLearningPhase,
   resolveLearningLeader,
@@ -71,8 +71,9 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
   const scopeIds = scope.campaignScopeIds.length > 0 ? new Set(scope.campaignScopeIds) : null;
   const scoped = rows.filter((row) => inScope(row, slugs, scopeIds));
 
-  const [driverCounts, workflows] = await Promise.all([
+  const [driverCounts, committedCents, workflows] = await Promise.all([
     fetchCampaignDriverCounts(brandId, featureScope, headers),
+    fetchCampaignCommittedCents(brandId, featureScope, headers, pricing),
     fetchPublicWorkflows(featureSlugsParam(featureScope), "all"),
   ]);
 
@@ -144,10 +145,14 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
         clicks: cell.clicks,
         replies: cell.replies,
       }));
-      // The leading campaign's OWN committed spend on this channel set — the same cells the price is
-      // pooled from, so the target and what has been spent against it describe one campaign's money.
-      leadingCommittedSpentUsd = leadingCells.reduce((sum, cell) => sum + cell.spentUsd, 0);
     }
+    // The leading campaign's committed spend comes from the LEDGER, not from summing the cells above:
+    // those are rolled up by workflow DYNASTY and a lineage since retired is absent from them, so the
+    // sum under-states what the campaign spent and would contradict the `costEconomics` figure sitting
+    // beside it on the same body. See `fetchCampaignCommittedCents`.
+    let leadingCents = 0;
+    for (const id of leader.input.campaignIds) leadingCents += committedCents.get(id) ?? 0;
+    leadingCommittedSpentUsd = leadingCents / 100;
     dailyCeilingUsd = ceiling;
   }
 
