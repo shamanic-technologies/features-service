@@ -60,6 +60,8 @@ import { declaredEconomicsForFunnel, mergeFunnelEconomics } from "../lib/declare
 import { primaryDeclaredFunnel } from "../lib/brand-funnels.js";
 import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { campaignScopeIds, singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js";
+import { computeLearningPhaseSoft } from "../lib/learning-phase-compute.js";
+import type { LearningPhase } from "../lib/learning-phase.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
 import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
@@ -626,6 +628,27 @@ interface RevenueResponse {
   funnelSteps: FunnelStepBreakdown | null;
   /** WHOSE WINS THIS BODY COUNTED, and how many outcomes sit in each state. See {@link OutcomeCauses}. */
   outcomeCauses: OutcomeCauses;
+  /**
+   * WHEN THIS SCOPE'S FIGURES STOP BEING NOISE — the verdict, the countdown, and every figure the two
+   * rest on ({@link LearningPhase}). A campaign has finished gathering once it has ten outcomes of the
+   * LEG IT IS BOUGHT FOR; a funnel, an offer or a brand has finished once one of its campaigns has.
+   *
+   * It exists because the consumer was deriving it in the browser and could not: it picked the
+   * expected price as the CHEAPEST figure across every workflow — by construction the one that spent
+   * least and produced nothing, an explore floor rather than a price — so the countdown reached zero
+   * long before the outcomes did, and it had no state in which to say so.
+   *
+   * Five verdicts, and the middle three are the ones a browser collapsed into one: `priced`,
+   * `learning` (still gathering, with days left), `learning_limited` (the spend target is reached and
+   * the outcomes have not arrived), `paused` (nothing is running, so nothing is gathering) and
+   * `unmeasured` (we cannot say — `unmeasuredReason` names which ingredient is missing).
+   *
+   * NULL when this path never computed it — the no-funnel short-circuit, the cold-start path, the
+   * lensed response and the lean `?groupBy=` groups, the same gate `spend` and `funnelSteps` ride.
+   * A path that DID compute it always answers, `unmeasured` included: "we could not say" is a
+   * statement, and it is never a zero.
+   */
+  learningPhase: LearningPhase | null;
 }
 
 /**
@@ -698,6 +721,9 @@ function emptyBody(
     outcomes,
     funnelSteps,
     outcomeCauses: { counted: [...causes], counts: null },
+    // Not computed on either path that reaches here (no funnel wired, or cold start): the verdict
+    // needs the brand's rate ladder to walk a leg's outcome, and neither path has one.
+    learningPhase: null,
   };
 }
 
@@ -995,6 +1021,10 @@ function buildLensBody(
     // moves with the parameter — `counted` is echoed anyway so a consumer can SEE that, and `counts`
     // is null because this path never reads the statements.
     outcomeCauses: { counted: [...causes], counts: null },
+    // Same gate as `spend`, `outcomes` and `funnelSteps`: a lens is a SUBSET of the brand's leads while
+    // the campaigns the verdict is built from are the whole scope's, so a verdict here would be about
+    // a different population than the money beside it.
+    learningPhase: null,
   };
 }
 
@@ -1250,7 +1280,7 @@ export async function computeFeatureRevenue(
   // declared funnels are several chains, so no chain is stated rather than one being picked. Resolved
   // HERE because it decides whether the customer's statements are worth reading at all.
   const stepsFunnel = funnelForSteps(requestedFunnel, priced.pricedFunnelKeys);
-  const [timestamps, observed, quals, stepCosts] = await Promise.all([
+  const [timestamps, observed, quals, stepCosts, learningPhase] = await Promise.all([
     fetchEventTimestamps(brandId, campaignId, emails, headers).catch((err) => {
       console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
       return null;
@@ -1274,6 +1304,22 @@ export async function computeFeatureRevenue(
       : includeSpend && stepsFunnel
         ? fetchBrandStepCostsSoft(brandId)
         : Promise.resolve<BrandStepCosts | null>(null),
+    // WHEN THIS SCOPE'S FIGURES STOP BEING NOISE. Full-page reads only, the same gate `spend` rides —
+    // a lean `?groupBy=` group discards the block, so computing it would pay a fan-out for nothing.
+    // It is scoped by the SAME campaign ids the money is (`[]` = the whole brand's, on this channel
+    // set), so the verdict and the figures beside it can never describe different campaigns. Fail-soft
+    // by construction: `computeLearningPhaseSoft` degrades to a NAMED `unmeasured` reason rather than
+    // 502-ing a page whose every other figure is right.
+    includeSpend
+      ? computeLearningPhaseSoft({
+          brandId,
+          featureScope,
+          campaignScopeIds: stepCostScope,
+          headers,
+          economics,
+          pricing,
+        })
+      : Promise.resolve<LearningPhase | null>(null),
   ]);
 
   // The identical merge the per-workflow grain applies (`lib/signal-overlays.ts`) — one copy, so the
@@ -1351,6 +1397,7 @@ export async function computeFeatureRevenue(
     // the REQUEST and is always stated, so a consumer can never be looking at a figure whose basis it
     // cannot name; `counts` is a fact about the DATA and is null when the statements could not be read.
     outcomeCauses: { counted: [...causes], counts: observed?.causeCounts ?? null },
+    learningPhase,
   };
 }
 

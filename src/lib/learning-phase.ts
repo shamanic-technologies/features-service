@@ -53,7 +53,7 @@
  * learning on the budget it has. It is NOT `priced` (the evidence did not arrive) and NOT `learning`
  * (there is no spend left to wait on). Collapsing the three into one is precisely what the browser did.
  */
-import type { ChannelStepDef, ChannelStepKey } from "./acquisition-channels.js";
+import { funnelStepKeys, type ChannelStepDef, type ChannelStepKey } from "./acquisition-channels.js";
 import { funnelLeg, funnelsContainingLeg, matchFunnelLegKey } from "./funnel-legs.js";
 import { bookedToAttendedRate, legOutcomeTerms, FUNNEL_DRIVER, type LegDriver } from "./leg-outcome.js";
 import { matchSalesFunnelKey, type SalesFunnelKey } from "./sales-funnels.js";
@@ -233,8 +233,19 @@ function resolveLeg(input: LearningCampaignInput, economics: SalesEconomics | nu
   const funnelKey = stated && containing.includes(stated) ? stated : containing[0]!;
 
   const driver = FUNNEL_DRIVER[funnelKey];
+  // AN ENTRY LEG NEEDS NO RATE — the driver signal IS its outcome, so it is counted and priced for a
+  // brand that has declared nothing at all. Only a deeper leg needs the ladder, and without one it is
+  // unpriceable rather than zero.
+  const isEntry = funnelStepKeys(funnelKey)[0] === leg.toStep.key;
   if (!economics) {
-    return { legKey, funnelKey, outcomeStep: leg.toStep, driver, rateFromDriver: null, outcomeObserved: false };
+    return {
+      legKey,
+      funnelKey,
+      outcomeStep: leg.toStep,
+      driver,
+      rateFromDriver: isEntry ? 1 : null,
+      outcomeObserved: isEntry,
+    };
   }
 
   const terms = legOutcomeTerms(
