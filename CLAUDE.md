@@ -238,7 +238,7 @@ arrive", so an overrun rendered as a countdown that had finished.
   campaign keeping its counts and losing its countdown, the empty scope reading unmeasured, each named
   degrade, the brand reading priced while the campaign inside it still gathers, and the rest of the
   body identical with the verdict and without it.
-  (Set 2026-09-14.)
+  (Set 2026-09-14, features-service#938.)
 
 ## A RANK SCORED OVER EVERY CELL CANNOT BE READ BESIDE ONE COLUMN — `scopeRank` orders the rows a reader is actually comparing, and the two ranks are MEANT to disagree
 
