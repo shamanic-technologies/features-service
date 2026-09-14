@@ -2439,6 +2439,52 @@ const mrrSplitBucketSchema = z.object({
   growthPct: z.number().nullable().describe("Point-over-point growth of totalMrrUsd vs the previous MEASURED bucket, percent (1-decimal). null on the first bucket, a 0 base, or an unmeasurable period — growth is never compared across a gap."),
 });
 
+const selfServeBrandRowSchema = z.object({
+  orgId: z.string().describe("The org half of the pair."),
+  brandId: z.string().describe("The brand half of the pair."),
+  brandName: z.string().nullable().describe("The brand's human-readable name, from the accounts audit's own batched brand read (so naming a row costs no extra call). null = brand-service named it nothing."),
+  brandDomain: z.string().nullable().describe("The brand's domain, same source. null = brand-service named it nothing."),
+  configuredDailyBudgetUsd: z
+    .number()
+    .nullable()
+    .describe(
+      "CONDITION 3 — the amount billing RECORDED as in force for this brand on referenceDate, USD/day. null = billing held NO amount for it that day, which is a different statement from a " +
+        "configured 0: the amount is never approximated, so such a pair contributes nothing and shows up in selfServeUnrecordedBudgetPairCount rather than being filled in.",
+    ),
+  paymentActive: z.boolean().nullable().describe("CONDITION 1 — the org's payment had not stopped (billing-service). null = referenceDate precedes billing's episode record, so the absence of an episode is not evidence payment was on."),
+  campaignRunning: z.boolean().nullable().describe("CONDITION 2 — a campaign was running (campaign-service). null = nothing recorded settles it; an UNKNOWN campaign beats every recorded stop beside it, exactly as it does for the run-rate itself, so a stopped ancestor never answers for a live campaign."),
+  audienceAvailable: z
+    .boolean()
+    .nullable()
+    .describe(
+      "CONDITION 4 — somebody was left to contact (campaign-service), read over the ONGOING campaigns ONLY: a stopped campaign's audience says nothing about whether the brand was earning. " +
+        "null = not recorded, or no campaign was running to ask about.",
+    ),
+  amountInForce: z.boolean().describe("CONDITION 3 as a verdict — billing recorded a POSITIVE amount in force that day. False covers both 'no amount on record' and 'recorded at 0'; configuredDailyBudgetUsd tells the two apart."),
+  countedMrrUsd: z.number().describe("What this customer contributed to the SaaS run-rate, USD: its recorded daily budget × 30 when all four conditions held, else 0. Σ of this column over the rows IS countedMrrUsd on the breakdown — the rows are emitted by the loop that sums the figure, from the very verdicts it added."),
+  excludedBy: z
+    .enum(["payment_stopped", "campaign_not_running", "audience_exhausted", "not_earning_recorded", "no_recent_activity", "no_recorded_amount", "zero_amount"])
+    .nullable()
+    .describe(
+      "WHICH CONDITION STOPPED THIS ROW, in the evaluator's own order, so it is the reason the arithmetic actually took rather than a plausible one picked afterwards. null = the row counted. " +
+        "`not_earning_recorded` is deliberate and is NOT a gap in the data: campaign-service recorded a NO that neither axis settles on its own, so attributing it to one of them would be a " +
+        "guess. `no_recent_activity` only occurs on a day campaign-service's record does not reach, where the fallback evidence decided it (that row's basis is `approximated`).",
+    ),
+  basis: z.enum(["recorded", "approximated"]).describe("Whether THIS row's qualification came from a producer's record or fell back to the pair's own billed activity. The bucket-level selfServeBasis is `approximated` when any row is."),
+});
+
+const selfServeBreakdownSchema = z.object({
+  referenceDate: z.string().describe("The UTC day (`YYYY-MM-DD`) every row was evaluated on — today, the same day the current* figures above are read on."),
+  countedMrrUsd: z
+    .number()
+    .nullable()
+    .describe("Σ of the rows' countedMrrUsd — the SAME number as currentSelfServeMrrUsd, not a second answer to one question. null whenever that figure is."),
+  configuredMrrUsd: z
+    .number()
+    .describe("Σ of EVERY row's recorded amount × 30, counted or not — what the SaaS side would be worth if every customer qualified. The gap against countedMrrUsd is exactly what the four conditions removed, and the rows say which condition removed each one."),
+  rows: z.array(selfServeBrandRowSchema).describe("One row per self-serve (org, brand) pair, richest first, then by configured amount, then by brand id so the order is stable across reads."),
+});
+
 const mrrSplitSchema = z.object({
   currentAgencyMrrUsd: z.number().describe("LIVE agency MRR — Σ of the stated amounts in force today, USD."),
   currentAgencyArrUsd: z.number().describe("LIVE agency ARR = currentAgencyMrrUsd × 12, USD."),
@@ -2464,6 +2510,11 @@ const mrrSplitSchema = z.object({
     ),
   agencyOrgIds: z.array(z.string()).describe("The orgs the stated rows identify as agency, sorted. DERIVED — an org carrying at least one stated amount, whatever its date range. No org id lives in code, so a second agency needs no change."),
   agencyPairKeys: z.array(z.string()).describe("Every (org, brand) pair excluded from the self-serve half, as `orgId::brandId`, sorted. Taken over the agency orgs' WHOLE brand set, not only their stated brands: a brand funded under an agency org is agency money whether or not anyone has stated an amount for it."),
+  selfServeBreakdown: selfServeBreakdownSchema.describe(
+    "THE ROWS BEHIND currentSelfServeMrrUsd — who is counted, who is not, and which of the four conditions excluded each one, so the SaaS figure can be read rather than taken on faith. " +
+      "Served for the LIVE figure only: the history's buckets each carry their own counts, and a row set per bucket would put (pairs × periods) objects on the payload to explain one number. " +
+      "The rows are emitted by the loop that SUMS the figure, from the same verdicts it added, so they reconcile to it by construction and nothing here re-derives the total.",
+  ),
   monthly: z.array(mrrSplitBucketSchema).describe("The split by calendar month (oldest→newest), over exactly the periods the committed series emits — a month with no recorded snapshot is omitted, never fabricated. Each month says on the wire whether its self-serve half is recorded or approximated."),
   weekly: z.array(mrrSplitBucketSchema).describe("The split by ISO week (oldest→newest). Same period sourcing and same marking as monthly."),
 });
