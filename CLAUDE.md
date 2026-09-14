@@ -160,6 +160,86 @@ goal, never a leg — verified on its `origin/main`).
   and a funnel- and goal-keyed read carrying none of it while still pricing the booked meeting.
   (Set 2026-09-12, features-service#932.)
 
+## A COUNTDOWN PRICED OFF THE CHEAPEST WORKFLOW COUNTS DOWN TO THE WRONG NUMBER — `learningPhase`, five verdicts, and the price rests on cells that OBSERVED an outcome
+
+The dashboard told a customer "Learning: 0 days left" on a campaign that had **4 of the 10 outcomes it
+needs**, had been running for weeks, and was nowhere near done. It computed that countdown itself, in
+the browser, out of ingredients it assembled from three services, and it was wrong in both halves.
+
+It picked the expected price by taking the CHEAPEST figure across every workflow — which selects, by
+construction, the workflow that has spent the LEAST and produced NOTHING of the outcome: an EXPLORE
+FLOOR, not a price. And it had no state in which to say "the estimate ran out and the outcomes did not
+arrive", so an overrun rendered as a countdown that had finished.
+
+- **MEASURED IN PROD 2026-09-13** (brand `a179bbd9…` / campaign `3922c8e1…` / leg
+  `start_to_conversation` / funnel `sales_meetings_from_conversation`, ongoing, ceiling **800
+  cents/day**): the browser read **`alioth` at $21.22 with ZERO observed outcomes**, so its target was
+  $212.20 — a figure **$438 of committed spend passed weeks ago**. The honest price is **`azalea`'s
+  $310.73 over the 4 conversations it produced = $77.6825**, a **$776.83** target, **$338.83** left,
+  **43 days** at $8/day. The campaign's stored workflow is **`tango`, which has 0 outcomes**, so
+  "the price of the workflow currently running" answers `null` on the very campaign this exists for —
+  that approach was tried against prod and rejected.
+- **THE PRICE IS POOLED OVER THE (CAMPAIGN × WORKFLOW) CELLS THAT OBSERVED AN OUTCOME**, Σ their spend
+  over Σ their outcomes. Spend on a workflow that produced nothing is EXPLORATION spend — the price of
+  finding out — not the price of an outcome, and a ratio whose denominator is zero is a floor. **Do
+  NOT "simplify" it to the campaign's whole spend over its whole count**: that reads **$438 / 4 =
+  $109.50** on the same campaign and prices the barren workflows' exploration into the found. With no
+  cell having observed one, the answer is `unmeasured` / `no_expected_price` — **never a floor**.
+- **THE OUTCOME IS THE CAMPAIGN'S OWN LEG'S `toStep`, never the first step of the funnel the leg
+  belongs to** — the same rule and the same `lib/leg-outcome.ts` walk `?leg=` already prices on, so a
+  campaign converting a reply into a meeting is measured on MEETINGS it produces rather than replies it
+  does not. An ENTRY leg's count is a raw OBSERVATION (and is counted and priced even for a brand that
+  declared no rate at all); a deeper leg's is that observation walked forward through the funnel's own
+  declared rates, so it is fractional and `outcomeObserved` says which a consumer is reading. A rate the
+  brand never declared leaves the leg `leg_unpriceable`, never 0.
+- **FIVE VERDICTS, AND THE MIDDLE THREE ARE THE ONES THE BROWSER COLLAPSED INTO ONE.** `priced` (a
+  campaign of this scope has its ten) · `learning` (still gathering, with spend left, carries the
+  countdown) · `learning_limited` (the spend target is reached and the outcomes have NOT arrived —
+  neither priced nor still spending) · `paused` (nothing is running) · `unmeasured` (we cannot say,
+  and `unmeasuredReason` names which of seven ingredients is missing). None of the five is a zero.
+- **A SCOPE FINISHES WHEN ITS FIRST CAMPAIGN DOES**, and a scope with NO campaigns is `unmeasured` /
+  `no_campaigns` rather than gathering — nothing is being gathered and nothing ever will be. The
+  countdown is the LEADING LIVE campaign's (most outcomes; the id breaks a tie so the same evidence
+  always names the same campaign), because **a paused campaign is never the subject of a countdown**:
+  its days-left would be priced against a daily spend that is not happening. Its counts survive on
+  `campaigns[]`, which lists every campaign of the scope so a reader can SEE why the verdict reads as
+  it does.
+- **FINISHING THE SPEND IS NOT FINISHING THE GATHERING.** Cold email's outcomes keep arriving for about
+  **two weeks** after the spend is in, so `outcomeLagDays` rides the body: it is why `learning_limited`
+  is not terminal, and a consumer has to be able to SAY that rather than render a finished bar. It is
+  deliberately NOT folded into `daysRemaining`, which answers only "how long until the spend is in".
+- **THE COUNTDOWN IS PRICED AGAINST BILLING'S PER-LEG CEILING** (`GET
+  /internal/brands/:brandId/legs/:legKey/daily-budget`) — a campaign is (brand, offer, channel, LEG),
+  so that is the money pacing one campaign, read on the key the campaign is keyed on. `null` there is
+  "this leg has no ceiling", a DIFFERENT answer from 0, and it lands on `unmeasured` /
+  `no_daily_ceiling` with the price figures it DID resolve still stated. `ceilingScenarios` answers
+  **what raising it would buy, in the same unit** (2× / 3× / 5×) — served rather than derived, because
+  a consumer dividing one of our figures into another is how two surfaces print two numbers for one
+  statistic.
+- **THE CALL BUDGET IS BOUNDED BY THE LEADER, NOT BY THE SCOPE.** Counting EVERY campaign's outcomes is
+  ONE email-gateway call per channel (`groupBy=campaignId`), so the `priced` / `paused` half is flat in
+  the number of campaigns. Only the COUNTDOWN needs the (campaign × workflow) split, and a scope has
+  exactly one countdown, so that fan-out is paid ONCE — and it is the byte-same
+  `fetchCampaignWorkflowEvidence` the leg-keyed projection already makes for `?leg=&campaignId=`.
+- **IT RIDES `RevenueBody`, so the campaign, funnel, offer and brand grains all carry it from ONE
+  implementation**, scoped by the SAME campaign ids the money is. NULL where this path never computed
+  it — the no-funnel short-circuit, the cold-start path, the lensed `?lens=` read and the lean
+  `?groupBy=` groups, the same gate `spend` and `funnelSteps` ride. FAIL-SOFT with a loud log: a
+  producer blip lands on a NAMED `unmeasured` reason rather than 502-ing a page whose every other
+  figure is right, and **every other field on the body is byte-unchanged whatever the verdict says**
+  (guarded).
+- Guards: `src/lib/learning-phase.test.ts` + `src/routes/learning-phase-grain.test.ts` — ONE fixture
+  carrying the reported campaign's real economics ($310.73 / 4 on `azalea`, $127.27 / 0 on `tango`,
+  $438 committed, $8/day, 20% reply→meeting). Every case asserts the DIVERGENCE, so a suite that only
+  checked "a block came back" would pass on the implementation this replaces: the $77.6825 price
+  against the $21.22 floor AND against the $109.50 whole-spend figure, the 43 days, the three
+  ceiling scenarios, `learning_limited` told apart from `learning` and from `priced` on the same
+  fixture, the deeper leg counted at 0.8 and priced five times dearer on identical spend, the paused
+  campaign keeping its counts and losing its countdown, the empty scope reading unmeasured, each named
+  degrade, the brand reading priced while the campaign inside it still gathers, and the rest of the
+  body identical with the verdict and without it.
+  (Set 2026-09-14, features-service#938.)
+
 ## A RANK SCORED OVER EVERY CELL CANNOT BE READ BESIDE ONE COLUMN — `scopeRank` orders the rows a reader is actually comparing, and the two ranks are MEANT to disagree
 
 The campaign Workflows page listed 24 workflows numbered 1..24 and, in the column beside the number,

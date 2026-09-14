@@ -512,6 +512,59 @@ const outcomeCausesSchema = z.object({
   }).nullable().describe("How many stated outcomes sit in each of the three states, keyed by step (signup | form_submission | meeting_booked | meeting_attended | sale). NOT filtered by `?cause=` — the point is that a consumer leaving a state out can say how much it left out. BRAND-scoped, like the statement read it comes from. Null when the statements could not be read on this path: the no-funnel short-circuit and the cold-start path never read them, and a degraded read nulls it rather than reporting a 0 that would say the brand has no outcomes. The legacy instantly qualifications are a different producer carrying no cause and are counted nowhere here."),
 }).describe("WHOSE WIN EACH OUTCOME WAS. A brand contacts people through us AND through everything else it already does — referrals, conferences, an existing pipeline, another agency — so some of the people we email buy for reasons that have nothing to do with our outreach. lead-service records the answer per statement (`causedByOutreach`); this block states what this read counted and what exists. Deliberately NOT the tracker's `attributed / needs_review / unmatched` vocabulary, which answers whether we managed to identify who somebody was.");
 
+/** One funnel step, as every leg-keyed and step-keyed surface names it. */
+const channelStepSchema = z.object({
+  key: z.enum([
+    "conversation",
+    "website_visit",
+    "meeting_booked",
+    "meeting_attended",
+    "signup",
+    "form_filled",
+    "paid_client",
+    "in_ad_form_submission",
+    "in_ad_booked_meeting",
+  ]),
+  label: z.string(),
+  description: z.string(),
+});
+
+const learningCampaignSchema = z.object({
+  campaignId: z.string().describe("The identity's representative id — the live member when there is one."),
+  campaignIds: z.array(z.string()).describe("Every member id this row totals over. A campaign's stopped ancestors carry real sends and real spend, and the customer reads them as the campaign still running."),
+  campaignIdentityKey: z.string().nullable().describe("campaign-service's identity key, or null for a row it could not place (one predating its migration 0044, which is its own family of one)."),
+  legKey: z.string().nullable().describe("The FUNNEL LEG this campaign is bought for, as campaign-service states it. Null = it states none, and there is then no step to count its outcomes in."),
+  outcomeStep: channelStepSchema.nullable().describe("The step `outcomesObserved` is denominated in — the leg's OWN toStep, never the first step of the funnel the leg belongs to."),
+  outcomesObserved: z.number().nullable().describe("How many of that step this campaign accounts for. `0` is a MEASUREMENT (it reached people and none of them converted); NULL is 'we could not count this' — no leg stated, a rate the brand never declared, or a degraded producer. Fractional when the leg is not an entry leg: the count is then the observed driver signal walked forward through the funnel's declared rates."),
+  outcomeObserved: z.boolean().describe("TRUE ⟺ the count above is a raw OBSERVATION (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ it is that observation walked forward — a consumer that wants to say which it is reading has to be told."),
+  live: z.boolean().describe("TRUE ⟺ at least one member is `ongoing`. A stopped campaign gathers nothing, so it is never the subject of a countdown — though what it already gathered still counts towards the scope."),
+});
+
+const learningPhaseSchema = z.object({
+  status: z.enum(["priced", "learning", "learning_limited", "paused", "unmeasured"]).describe("WHAT THIS SCOPE'S FIGURES ARE WORTH. 'priced' — a campaign of this scope has its ten outcomes; the money beside this block is the answer. 'learning' — still gathering, with spend left to do it with; carries the countdown. 'learning_limited' — the spend needed has been reached and the outcomes have NOT arrived: not priced (the evidence did not come) and not learning (there is no spend left to wait on). 'paused' — no campaign of this scope is running, so nothing is being gathered and a countdown would be priced against a daily spend that is not happening. 'unmeasured' — we cannot say; `unmeasuredReason` names which ingredient is missing. The middle three are the ones a browser deriving this itself collapsed into one."),
+  unmeasuredReason: z.enum(["no_campaigns", "campaigns_unreadable", "no_leg_stated", "no_outcome_evidence", "leg_unpriceable", "no_expected_price", "no_daily_ceiling"]).nullable().describe("WHICH INGREDIENT IS MISSING, present ⟺ status is 'unmeasured'. 'no_campaigns' — this scope has none, so nothing is gathering and nothing ever will (a scope with no campaigns is NOT 'learning'). 'campaigns_unreadable' — campaign-service degraded, so we do not know which campaigns it has: a different statement from having none. 'no_leg_stated' — the leading campaign names no leg, so there is no step to count its outcomes in. 'no_outcome_evidence' — the producer behind the counts degraded. 'leg_unpriceable' — the leg needs a conversion rate the brand never declared; nothing is defaulted, averaged or borrowed. 'no_expected_price' — no cell has observed an outcome yet, so every figure we hold is an explore FLOOR rather than a price, and a floor may not found a spend target. 'no_daily_ceiling' — billing states none for this leg, so there is no rate to divide the remaining spend by. None of these is a zero."),
+  campaignId: z.string().nullable().describe("The LEADING campaign — whose countdown this is: the live campaign of the scope with the most outcomes of its own leg, which is the one that will cross the bar first. On a 'priced' scope it is the campaign that crossed. Null when there is none to lead."),
+  campaignIdentityKey: z.string().nullable(),
+  legKey: z.string().nullable().describe("The leading campaign's own leg — what it is bought for, and therefore what its outcomes are counted in."),
+  outcomeStep: channelStepSchema.nullable().describe("The leg's own toStep. A campaign converting a reply into a meeting is measured on MEETINGS, never on the replies it does not produce."),
+  outcomesObserved: z.number().nullable().describe("The leading campaign's own count of that step. 0 is measured; null is 'we could not count this'."),
+  outcomesRequired: z.number().int().describe("How many outcomes of its own leg a campaign needs before its figures stop being noise. ALWAYS stated, whatever the verdict — the consumer renders the bar and divides nothing."),
+  progressPct: z.number().nullable().describe("100 × outcomesObserved / outcomesRequired, clamped to 100. Null when the count is."),
+  outcomeObserved: z.boolean().describe("TRUE ⟺ the leading campaign's count is a raw OBSERVATION rather than walked from its driver signal."),
+  expectedCostPerOutcomeUsd: z.number().nullable().describe("What ONE outcome of this leg costs, pooled over the leading campaign's (campaign × workflow) cells that OBSERVED one: Σ their spend over Σ their outcomes. Spend on a workflow that produced nothing is EXPLORATION spend, not the price of an outcome, so it is excluded — and the cheapest per-workflow figure is by construction an explore FLOOR (the workflow that spent least and produced nothing), which is what a consumer deriving this itself picked and why its countdown expired early. NULL when no cell has observed an outcome: a floor may not found a spend target."),
+  spendTargetUsd: z.number().nullable().describe("expectedCostPerOutcomeUsd × outcomesRequired — the spend the countdown counts down."),
+  committedSpentUsd: z.number().nullable().describe("What the LEADING campaign has committed so far on this channel set, pooled from the SAME cells the price is, so the target and the spend against it describe one campaign's money. COMMITTED (actual + holds), the one basis every money figure on this body rides."),
+  spendRemainingUsd: z.number().nullable().describe("max(0, spendTargetUsd − committedSpentUsd). `0` says the target is reached, which is what makes the verdict 'learning_limited'."),
+  dailyCeilingUsd: z.number().nullable().describe("What billing has this LEG funded at, per day — the money that paces one campaign, read on the same key the campaign is keyed on. NULL is 'this leg has no ceiling', which billing states explicitly and which is a DIFFERENT answer from a ceiling of 0."),
+  daysRemaining: z.number().int().nullable().describe("Whole days to the spend target at the CURRENT ceiling. Present only on 'learning' — a paused campaign carries no countdown, a priced one needs none, and a 'learning_limited' one has no spend left to wait on."),
+  ceilingScenarios: z.array(z.object({
+    dailyCeilingUsd: z.number(),
+    daysRemaining: z.number().int(),
+  })).describe("WHAT RAISING THE CEILING WOULD BUY, in the same unit as daysRemaining, at 2× / 3× / 5× what it is today. `[]` whenever daysRemaining is null. Served rather than derived: a consumer dividing one of our figures into another is how two surfaces come to print two numbers for one statistic."),
+  outcomeLagDays: z.number().int().describe("How long this scope's outcomes keep landing after its spend is in (cold email: about two weeks). Stated rather than folded into the countdown, because it is why a 'learning_limited' verdict is not a terminal one and a consumer has to be able to SAY that instead of rendering a finished bar."),
+  campaigns: z.array(learningCampaignSchema).describe("EVERY campaign of the scope with its own count, so a consumer can SEE why the verdict reads the way it does — above all why a scope is 'priced' while the campaign in front of the reader is not. A scope finishes once ONE of its campaigns has its ten outcomes."),
+}).describe("WHEN THIS SCOPE'S FIGURES STOP BEING NOISE — the verdict, the countdown, and every figure the two rest on. A campaign has finished gathering once it has ten outcomes of the LEG IT IS BOUGHT FOR; a funnel, an offer or a brand has finished once at least one of its campaigns has. NULL when this path never computed it — the no-funnel short-circuit, the cold-start path, the lensed (?lens=) response and the lean ?groupBy= groups, the same gate `spend` and `funnelSteps` ride. A path that DID compute it always answers, 'unmeasured' included: 'we could not say' is a statement and it is never a zero.");
+
 const featureRevenueResponseSchema = z.object({
   costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
@@ -544,7 +597,8 @@ const featureRevenueResponseSchema = z.object({
     workflowDynastyName: z.string().nullable().describe("Human name of the dynasty. Null when workflow-service describes no version of it."),
     workflowSlugs: z.array(z.string()).describe("Every versioned slug the catalogue folds into it, ascending — nothing is hidden. EMPTY when workflow-service describes none, which is the dynasty-of-one case: the read still answers, over the leads and the spend frozen on that single slug."),
   }).optional().describe("WHAT THIS BODY ANSWERED FOR, present ONLY on a ?workflow= read. The drill-down narrows every block above to ONE workflow of the scope: the leads are the ones lead-service FROZE on that workflow at serve time, the spend is the runs / email-gateway spend frozen on the dynasty's versioned slugs, and each leg is resolved through the SAME workflow-service catalogue — neither is ever inferred from the campaign row's CURRENT workflow, which mis-attributes everything spent before a switch. Absent on an un-narrowed read."),
-  funnelSteps: funnelStepBreakdownSchema.nullable().describe("THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are.")
+  funnelSteps: funnelStepBreakdownSchema.nullable().describe("THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."),
+  learningPhase: learningPhaseSchema.nullable()
 });
 
 const featureRevenueResponseRef = registry.register("FeatureRevenueResponse", featureRevenueResponseSchema);
@@ -2828,22 +2882,6 @@ const channelTermsSchema = z.object({
   dailyOperatingCostCents: z.number().int().describe("What operating this channel costs for a DAY regardless of volume, in whole cents. A phone channel carries the person on the line; an ad platform carries its own daily floor; a specialist-run channel carries that salary. A commercial figure we set, never a measured one. ZERO means no standing day-rate is charged for this channel — it does NOT mean the customer operates it: an automated channel whose real cost is metered per run, and a hand-run channel the owner prices at zero, both read zero here. Read `operatedBy` for who is on it."),
   minimumCommitmentDays: z.number().int().describe("The shortest booking we sell, in days."),
   maxDaysToFirstProduction: z.number().int().describe("UPPER BOUND on how many days after booking the channel starts producing — a promise, not an estimate. A channel we are slower to deliver says so HERE; there is deliberately no availability or coming-soon flag anywhere on this payload."),
-});
-
-const channelStepSchema = z.object({
-  key: z.enum([
-    "conversation",
-    "website_visit",
-    "meeting_booked",
-    "meeting_attended",
-    "signup",
-    "form_filled",
-    "paid_client",
-    "in_ad_form_submission",
-    "in_ad_booked_meeting",
-  ]),
-  label: z.string(),
-  description: z.string(),
 });
 
 const funnelLegSchema = registry.register(
