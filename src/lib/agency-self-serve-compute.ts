@@ -229,26 +229,42 @@ export function activeNear(activityDays: Set<string> | undefined, day: string, w
 }
 
 /**
- * The brand's RECORDED earning verdict from its campaigns' answers on one day, or `null` when none of
- * them answered.
+ * The brand's RECORDED earning verdict from its campaigns' answers on one day, or `null` when the
+ * campaigns between them do not settle it.
  *
  * A campaign campaign-service records as `stopped` was not earning, full stop — the audience axis
  * cannot rescue it — so that is a RECORDED false even though the producer reports `earning: null`
  * while its own audience record is still empty. An `ongoing` campaign needs the audience axis to be
- * recorded too before it can answer either way. A brand is earning if ANY of its campaigns was. Pure.
+ * recorded too before it can answer either way.
+ *
+ * A brand is earning if ANY of its campaigns was, so a single YES ends it. But **an UNKNOWN campaign
+ * beats every recorded NO beside it**, and getting that backwards is what made this wrong in prod: a
+ * brand with one ongoing campaign whose audience is not yet recorded, sitting beside a stopped
+ * ancestor, answered a RECORDED false and was dropped from the run-rate outright — never reaching
+ * the activity fallback, and never counted in the unrecorded-budget gap either, so it vanished with
+ * nothing on the wire saying why. The stopped ancestor says nothing whatever about the live campaign;
+ * only a day on which EVERY campaign answered can answer for the brand. Pure.
  */
 export function recordedEarningOf(answers: CampaignDayAnswer[]): boolean | null {
   let sawRecordedNo = false;
+  let sawUnknown = false;
   for (const a of answers) {
     if (a.status === "stopped") {
       sawRecordedNo = true;
       continue;
     }
-    if (a.status !== "ongoing") continue; // status not recorded — this campaign says nothing
+    if (a.status !== "ongoing") {
+      sawUnknown = true; // status not recorded — this campaign could have been running
+      continue;
+    }
     if (a.audience === "available") return true;
-    if (a.audience === "exhausted") sawRecordedNo = true;
-    // ongoing + audience not recorded: unknown, and no other campaign is helped by it
+    if (a.audience === "exhausted") {
+      sawRecordedNo = true;
+      continue;
+    }
+    sawUnknown = true; // ongoing, audience not recorded — it could have been earning
   }
+  if (sawUnknown) return null;
   return sawRecordedNo ? false : null;
 }
 
