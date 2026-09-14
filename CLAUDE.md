@@ -93,7 +93,31 @@ half is a sum now too, so neither can go negative by construction.
   `committedMrr`, the realized-revenue series, the NRR series and every cash figure are untouched.
   `mrrSplit: null` is "we could not read this" (the store or a producer was unreachable), never a zero
   that would say the agency is worth nothing; the rest of the payload survives.
-- Guards: `src/lib/agency-self-serve-compute.test.ts` — ONE fixture carrying the production shape that
+- **THE SUM IS SERVED WITH ITS TERMS — `selfServeBreakdown`, one row per self-serve (org, brand),
+  and the rows are EMITTED BY the loop that adds the figure up.** A total nobody can take apart has to
+  be taken on faith, and taking it apart by hand meant querying billing, campaign-service and this
+  service. Each row states what billing RECORDED as configured, how each of the four conditions
+  answered, what the pair actually contributed, and — when it contributed nothing — WHICH condition
+  stopped it, in the evaluator's own short-circuit order. Measured in prod 2026-09-14: seven brands,
+  **$102/day configured, $54/day qualified = $1,620/month**, the five excluded ones stopped by four
+  different conditions. Properties that are load-bearing rather than incidental: **Σ `countedMrrUsd`
+  IS `currentSelfServeMrrUsd`** because the rows are the terms the sum added, never a second pass over
+  the same facts; **every condition's state is reported even where the evaluation short-circuited past
+  it**, so a payment-stopped brand still shows its healthy campaign and its real configured amount
+  rather than reading as a brand with nothing set up; **an exclusion that cannot be attributed to ONE
+  axis says `not_earning_recorded`** instead of naming a plausible condition; the audience axis is
+  read over the ONGOING campaigns ALONE (a stopped ancestor's audience says nothing about the live
+  campaign beside it, the same doctrine `recordedEarningOf` applies to the verdict); and the whole
+  per-campaign detail rides `DayFacts.campaignAnswers`, which **no figure depends on** — stripping it
+  leaves every number byte-identical and only degrades the reasons to `not_earning_recorded`
+  (guarded). The brand NAME comes from the accounts audit's own batched brand read, so naming a row
+  costs no extra call and an unnamed brand is `null`, never guessed. Served for the LIVE figure only:
+  a row set per bucket would put (pairs × periods) objects on the payload to explain one number.
+- Guards: `src/lib/self-serve-breakdown.test.ts` — ONE fixture carrying that whole production side,
+  brand for brand, so every case asserts the DIVERGENCE between what a brand has CONFIGURED and what
+  it CONTRIBUTES: a suite that only checked "rows came back" would pass on an implementation that
+  listed each brand at its configured amount, which is the answer this exists not to give. Plus
+  `src/lib/agency-self-serve-compute.test.ts` — ONE fixture carrying the production shape that
   broke the old code (the agency's configured $110/day → $3,330 against a recorded fleet run-rate of
   $87/day → $2,610 on the same reference date), beside four self-serve pairs each excluded for a
   DIFFERENT one of the four conditions and one excluded for having no recorded amount. Every case asserts
@@ -104,7 +128,8 @@ half is a sum now too, so neither can go negative by construction.
   from its own producer, the read set bounded by the reference dates, the activity fallback paid for only
   while needed, the fail-soft null, and a negative half being impossible whatever the snapshot says).
   (Set 2026-09-12 as a subtraction, features-service#927; replaced by the sum 2026-09-14,
-  features-service#949, with the unknown-beats-no correction in v0.165.4 the same day.)
+  features-service#949, with the unknown-beats-no correction in v0.165.4 the same day; the rows behind
+  the SaaS half 2026-09-14, features-service#957.)
 
 ## A LEG-KEYED READ PRICES THE LEG'S OWN STEP, SERVES ITS OWN ORDER, AND ANSWERS FOR THE CAMPAIGN — `?leg=` on `workflow-projection`, and the dashboard displays what it is served
 

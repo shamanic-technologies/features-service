@@ -15894,6 +15894,122 @@
                 },
                 "description": "Every (org, brand) pair excluded from the self-serve half, as `orgId::brandId`, sorted. Taken over the agency orgs' WHOLE brand set, not only their stated brands: a brand funded under an agency org is agency money whether or not anyone has stated an amount for it."
               },
+              "selfServeBreakdown": {
+                "type": "object",
+                "properties": {
+                  "referenceDate": {
+                    "type": "string",
+                    "description": "The UTC day (`YYYY-MM-DD`) every row was evaluated on — today, the same day the current* figures above are read on."
+                  },
+                  "countedMrrUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Σ of the rows' countedMrrUsd — the SAME number as currentSelfServeMrrUsd, not a second answer to one question. null whenever that figure is."
+                  },
+                  "configuredMrrUsd": {
+                    "type": "number",
+                    "description": "Σ of EVERY row's recorded amount × 30, counted or not — what the SaaS side would be worth if every customer qualified. The gap against countedMrrUsd is exactly what the four conditions removed, and the rows say which condition removed each one."
+                  },
+                  "rows": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "orgId": {
+                          "type": "string",
+                          "description": "The org half of the pair."
+                        },
+                        "brandId": {
+                          "type": "string",
+                          "description": "The brand half of the pair."
+                        },
+                        "brandName": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "The brand's human-readable name, from the accounts audit's own batched brand read (so naming a row costs no extra call). null = brand-service named it nothing."
+                        },
+                        "brandDomain": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "The brand's domain, same source. null = brand-service named it nothing."
+                        },
+                        "configuredDailyBudgetUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "CONDITION 3 — the amount billing RECORDED as in force for this brand on referenceDate, USD/day. null = billing held NO amount for it that day, which is a different statement from a configured 0: the amount is never approximated, so such a pair contributes nothing and shows up in selfServeUnrecordedBudgetPairCount rather than being filled in."
+                        },
+                        "paymentActive": {
+                          "type": "boolean",
+                          "nullable": true,
+                          "description": "CONDITION 1 — the org's payment had not stopped (billing-service). null = referenceDate precedes billing's episode record, so the absence of an episode is not evidence payment was on."
+                        },
+                        "campaignRunning": {
+                          "type": "boolean",
+                          "nullable": true,
+                          "description": "CONDITION 2 — a campaign was running (campaign-service). null = nothing recorded settles it; an UNKNOWN campaign beats every recorded stop beside it, exactly as it does for the run-rate itself, so a stopped ancestor never answers for a live campaign."
+                        },
+                        "audienceAvailable": {
+                          "type": "boolean",
+                          "nullable": true,
+                          "description": "CONDITION 4 — somebody was left to contact (campaign-service), read over the ONGOING campaigns ONLY: a stopped campaign's audience says nothing about whether the brand was earning. null = not recorded, or no campaign was running to ask about."
+                        },
+                        "amountInForce": {
+                          "type": "boolean",
+                          "description": "CONDITION 3 as a verdict — billing recorded a POSITIVE amount in force that day. False covers both 'no amount on record' and 'recorded at 0'; configuredDailyBudgetUsd tells the two apart."
+                        },
+                        "countedMrrUsd": {
+                          "type": "number",
+                          "description": "What this customer contributed to the SaaS run-rate, USD: its recorded daily budget × 30 when all four conditions held, else 0. Σ of this column over the rows IS countedMrrUsd on the breakdown — the rows are emitted by the loop that sums the figure, from the very verdicts it added."
+                        },
+                        "excludedBy": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "payment_stopped",
+                            "campaign_not_running",
+                            "audience_exhausted",
+                            "not_earning_recorded",
+                            "no_recent_activity",
+                            "no_recorded_amount",
+                            "zero_amount"
+                          ],
+                          "description": "WHICH CONDITION STOPPED THIS ROW, in the evaluator's own order, so it is the reason the arithmetic actually took rather than a plausible one picked afterwards. null = the row counted. `not_earning_recorded` is deliberate and is NOT a gap in the data: campaign-service recorded a NO that neither axis settles on its own, so attributing it to one of them would be a guess. `no_recent_activity` only occurs on a day campaign-service's record does not reach, where the fallback evidence decided it (that row's basis is `approximated`)."
+                        },
+                        "basis": {
+                          "type": "string",
+                          "enum": [
+                            "recorded",
+                            "approximated"
+                          ],
+                          "description": "Whether THIS row's qualification came from a producer's record or fell back to the pair's own billed activity. The bucket-level selfServeBasis is `approximated` when any row is."
+                        }
+                      },
+                      "required": [
+                        "orgId",
+                        "brandId",
+                        "brandName",
+                        "brandDomain",
+                        "configuredDailyBudgetUsd",
+                        "paymentActive",
+                        "campaignRunning",
+                        "audienceAvailable",
+                        "amountInForce",
+                        "countedMrrUsd",
+                        "excludedBy",
+                        "basis"
+                      ]
+                    },
+                    "description": "One row per self-serve (org, brand) pair, richest first, then by configured amount, then by brand id so the order is stable across reads."
+                  }
+                },
+                "required": [
+                  "referenceDate",
+                  "countedMrrUsd",
+                  "configuredMrrUsd",
+                  "rows"
+                ],
+                "description": "THE ROWS BEHIND currentSelfServeMrrUsd — who is counted, who is not, and which of the four conditions excluded each one, so the SaaS figure can be read rather than taken on faith. Served for the LIVE figure only: the history's buckets each carry their own counts, and a row set per bucket would put (pairs × periods) objects on the payload to explain one number. The rows are emitted by the loop that SUMS the figure, from the same verdicts it added, so they reconcile to it by construction and nothing here re-derives the total."
+              },
               "monthly": {
                 "type": "array",
                 "items": {
@@ -16147,6 +16263,7 @@
               "earningRecordBeginsOn",
               "agencyOrgIds",
               "agencyPairKeys",
+              "selfServeBreakdown",
               "monthly",
               "weekly"
             ],

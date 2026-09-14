@@ -151,7 +151,14 @@ export interface RevenueHistoryDeps {
     mrrUsd: number;
     dailyBudgetUsd: number;
     activeCount: number;
-    pairs: Array<{ orgId: string; brandId: string; runningDailyBudgetUsd: number; active: boolean }>;
+    pairs: Array<{
+      orgId: string;
+      brandId: string;
+      brandName: string | null;
+      brandDomain: string | null;
+      runningDailyBudgetUsd: number;
+      active: boolean;
+    }>;
   }>;
   /** Persist today's committed-budget snapshot (fail-soft; recorded going forward, no boot backfill). */
   recordCommittedSnapshot: (dailyBudgetUsd: number, activeCount: number, now: Date) => Promise<void>;
@@ -186,6 +193,10 @@ const REAL_DEPS: RevenueHistoryDeps = {
       pairs: audit.rows.map((r) => ({
         orgId: r.orgId,
         brandId: r.brandId,
+        // The audit already batches brand-service for its own table, so naming a brand in the
+        // self-serve breakdown costs no extra read.
+        brandName: r.brandName,
+        brandDomain: r.brandDomain,
         runningDailyBudgetUsd: r.runningDailyBudgetUsd,
         active: r.status === "active",
       })),
@@ -355,7 +366,7 @@ async function buildMrrSplitSoft(
     coldEmailSlugsCsv: string;
     snapshots: Array<{ date: string; mrrUsd: number }>;
     currentMrrUsd: number;
-    pairs: Array<{ orgId: string; brandId: string }>;
+    pairs: Array<{ orgId: string; brandId: string; brandName?: string | null; brandDomain?: string | null }>;
   },
   now: Date,
   windows: { weeks: number; months: number },
@@ -428,8 +439,12 @@ async function buildMrrSplitSoft(
       async (day): Promise<[string, CampaignDayAnswer[]]> => [day, await earningOn(day)],
     );
 
-    // pair key → day → the RECORDED verdict (true / false / null = campaign-service knows nothing).
+    // pair key → day → the RECORDED verdict (true / false / null = campaign-service knows nothing),
+    // and beside it the per-campaign answers that verdict was collapsed FROM. Both come out of the
+    // SAME grouping, so the breakdown's "which condition said no" can never describe a different set
+    // of campaigns than the verdict the arithmetic took.
     const recordedEarning = new Map<string, Map<string, boolean | null>>();
+    const campaignAnswers = new Map<string, Map<string, CampaignDayAnswer[]>>();
     for (const [day, answers] of [[todayIso, todayAnswers] as [string, CampaignDayAnswer[]], ...pastAnswers]) {
       const byPair = new Map<string, CampaignDayAnswer[]>();
       for (const a of answers) {
@@ -443,6 +458,10 @@ async function buildMrrSplitSoft(
         const days = recordedEarning.get(key) ?? new Map<string, boolean | null>();
         days.set(day, recordedEarningOf(list));
         recordedEarning.set(key, days);
+
+        const raw = campaignAnswers.get(key) ?? new Map<string, CampaignDayAnswer[]>();
+        raw.set(day, list);
+        campaignAnswers.set(key, raw);
       }
     }
 
@@ -475,6 +494,7 @@ async function buildMrrSplitSoft(
       activityDays: new Map(activityEntries),
       recordedEarning,
       paymentByOrg: new Map(paymentEntries),
+      campaignAnswers,
     };
 
     return buildMrrSplit(
@@ -486,6 +506,9 @@ async function buildMrrSplitSoft(
         snapshots: ctx.snapshots,
         currentMrrUsd: ctx.currentMrrUsd,
         earningRecordBeginsOn,
+        brandNamesByPair: new Map(
+          ctx.pairs.map((p) => [pairKey(p.orgId, p.brandId), { name: p.brandName ?? null, domain: p.brandDomain ?? null }]),
+        ),
       },
       now,
       windows,
