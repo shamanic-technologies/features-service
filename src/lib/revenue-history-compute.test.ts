@@ -75,7 +75,11 @@ describe("buildRevenueHistory — integration via injected deps", () => {
       },
       readCommittedSnapshots: async () => fixture.snapshots ?? [],
       readStatedAmounts: async () => [],
-      budgetHistory: async () => [],
+      budgetByDay: async () => ({ recordBeginsAt: null, byDay: new Map() }),
+      paymentStopped: async () => ({ recordBeginsOn: null, periods: [] }),
+      fleetCampaigns: async () => [],
+      campaignEarningOnDay: async () => [],
+      brandSpendByDay: async () => new Map(),
       firstBilledDay: async () => null,
     };
   }
@@ -206,19 +210,47 @@ describe("buildRevenueHistory — integration via injected deps", () => {
 
 /**
  * WIRING of the agency / self-serve split into the revenue payload. The split's own arithmetic is
- * guarded in agency-self-serve-compute.test.ts; these cases assert what only this layer decides — that
- * an empty store costs NOTHING and moves NOTHING (the regression gate for every existing consumer),
- * that a stated amount reaches the wire, and that a failed read NULLS the split instead of 502-ing a
- * payload whose every other figure is correct.
+ * guarded in agency-self-serve-compute.test.ts; these cases assert what only this layer decides —
+ * which producer each fact is read from, that the read set is bounded by the REFERENCE DATES rather
+ * than by the displayed window, that the activity fallback is paid for only while it is needed, and
+ * that a failed read NULLS the split instead of 502-ing a payload whose every other figure is right.
  */
 describe("buildRevenueHistory — the agency / self-serve split", () => {
   const SPLIT_NOW = new Date("2026-09-12T12:00:00Z");
+  const TODAY = "2026-09-12";
   const AGENCY_ORG = "org-agency";
+  const SAAS_ORG = "org-saas";
   const BRAND_BIG = "brand-big";
+  const BRAND_SAAS = "brand-saas";
 
-  function splitDeps(over: Partial<RevenueHistoryDeps> = {}, calls?: { budget: number; firstBilled: number }): RevenueHistoryDeps {
+  interface Calls {
+    budget: Array<{ brandId: string; from: string; to: string }>;
+    payment: string[];
+    fleetCampaigns: number;
+    earningDays: string[];
+    activity: string[];
+    firstBilled: number;
+  }
+
+  function emptyCalls(): Calls {
+    return { budget: [], payment: [], fleetCampaigns: 0, earningDays: [], activity: [], firstBilled: 0 };
+  }
+
+  const STATED_ROW = {
+    id: "row-1",
+    orgId: AGENCY_ORG,
+    brandId: BRAND_BIG,
+    amountUsd: 5000,
+    startDate: "2026-08-01",
+    endDate: null,
+    note: null,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+  };
+
+  function splitDeps(over: Partial<RevenueHistoryDeps> = {}, calls: Calls = emptyCalls()): RevenueHistoryDeps {
     return {
-      featureMemberships: async () => [{ orgId: AGENCY_ORG }, { orgId: "org-saas" }],
+      featureMemberships: async () => [{ orgId: AGENCY_ORG }, { orgId: SAAS_ORG }],
       orgDailySpendCents: async () => new Map(),
       currentFleetStats: async () => ({
         mrrUsd: 7350,
@@ -226,18 +258,47 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
         activeCount: 2,
         pairs: [
           { orgId: AGENCY_ORG, brandId: BRAND_BIG, runningDailyBudgetUsd: 143, active: true },
-          { orgId: "org-saas", brandId: "brand-saas", runningDailyBudgetUsd: 102, active: true },
+          { orgId: SAAS_ORG, brandId: BRAND_SAAS, runningDailyBudgetUsd: 102, active: true },
         ],
       }),
       recordCommittedSnapshot: async () => {},
       readCommittedSnapshots: async () => [{ date: "2026-08-31", mrrUsd: 6000 }],
       readStatedAmounts: async () => [],
-      budgetHistory: async () => {
-        if (calls) calls.budget += 1;
-        return [{ dailyBudgetUsd: 143, changedAt: "2026-08-01T00:00:00Z" }];
+      budgetByDay: async (brandId, _orgId, from, to) => {
+        calls.budget.push({ brandId, from, to });
+        const byDay = new Map<string, number>();
+        for (const d of ["2026-08-31", TODAY]) byDay.set(d, brandId === BRAND_BIG ? 143 : 102);
+        return { recordBeginsAt: "2026-07-15T00:00:00.000Z", byDay };
+      },
+      paymentStopped: async (orgId) => {
+        calls.payment.push(orgId);
+        return { recordBeginsOn: "2026-06-12", periods: [] };
+      },
+      fleetCampaigns: async () => {
+        calls.fleetCampaigns += 1;
+        return [
+          { campaignId: "camp-agency", orgId: AGENCY_ORG, brandId: BRAND_BIG },
+          { campaignId: "camp-saas", orgId: SAAS_ORG, brandId: BRAND_SAAS },
+          { campaignId: "camp-orphan", orgId: SAAS_ORG, brandId: null },
+        ];
+      },
+      campaignEarningOnDay: async (campaignIds, day) => {
+        calls.earningDays.push(day);
+        return campaignIds.map((campaignId) => ({
+          campaignId,
+          status: "ongoing" as const,
+          audience: "available" as const,
+          earning: true,
+          statusRecordedSince: "2026-09-01T00:00:00.000Z",
+          audienceRecordedSince: "2026-09-01T00:00:00.000Z",
+        }));
+      },
+      brandSpendByDay: async (_orgId, brandId) => {
+        calls.activity.push(brandId);
+        return new Map([["2026-08-31", 12]]);
       },
       firstBilledDay: async () => {
-        if (calls) calls.firstBilled += 1;
+        calls.firstBilled += 1;
         return "2026-07-25";
       },
       ...over,
@@ -246,103 +307,141 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
 
   const WINDOWS = { days: 7, weeks: 4, months: 3 };
 
-  it("with NO stated amounts the self-serve figure IS the fleet committed MRR, and NOTHING is fetched", async () => {
-    const calls = { budget: 0, firstBilled: 0 };
-    const out = await buildRevenueHistory(COLD, SPLIT_NOW, WINDOWS, splitDeps({}, calls));
+  it("sums the self-serve side rather than subtracting, and reads each fact from its own producer", async () => {
+    const calls = emptyCalls();
+    const out = await buildRevenueHistory(COLD, SPLIT_NOW, WINDOWS, splitDeps({ readStatedAmounts: async () => [STATED_ROW] }, calls));
 
-    expect(out.mrrSplit).not.toBeNull();
-    expect(out.mrrSplit!.currentSelfServeMrrUsd).toBe(out.currentMrrUsd);
-    expect(out.mrrSplit!.currentAgencyMrrUsd).toBe(0);
-    expect(out.mrrSplit!.currentTotalMrrUsd).toBe(out.currentMrrUsd);
-    // An empty store means no agency side, so the split issues ZERO extra requests — no new failure
-    // mode on an endpoint that was already working.
-    expect(calls).toEqual({ budget: 0, firstBilled: 0 });
+    const split = out.mrrSplit!;
+    expect(split.currentAgencyMrrUsd).toBe(5000); // the STATED amount
+    expect(split.currentSelfServeMrrUsd).toBe(102 * 30); // a SUM over the self-serve pair
+    expect(split.currentAgencyBudgetMrrUsd).toBe(143 * 30);
+    expect(split.currentTotalMrrUsd).toBe(5000 + 102 * 30);
+    expect(split.agencyOrgIds).toEqual([AGENCY_ORG]);
+
+    // One budget replay per pair, one payment read per org, one fleet campaign list.
+    expect(calls.budget.map((c) => c.brandId).sort()).toEqual([BRAND_BIG, BRAND_SAAS]);
+    expect(calls.payment.sort()).toEqual([AGENCY_ORG, SAAS_ORG]);
+    expect(calls.fleetCampaigns).toBe(1);
+    expect(calls.firstBilled).toBe(0); // the stated row carries a start date
   });
 
-  it("a stated amount reaches the wire as the agency's worth, and its budget leaves the self-serve half", async () => {
-    const calls = { budget: 0, firstBilled: 0 };
+  it("asks campaign-service about the REFERENCE DATES only, never every day of the window", async () => {
+    const calls = emptyCalls();
+    await buildRevenueHistory(COLD, SPLIT_NOW, WINDOWS, splitDeps({}, calls));
+    // The window spans months; the split is read on a handful of dates, and today is always one.
+    expect(calls.earningDays).toContain(TODAY);
+    expect(new Set(calls.earningDays).size).toBeLessThanOrEqual(6);
+    expect(calls.earningDays.every((d) => d >= "2026-08-31")).toBe(true);
+    // The budget replay is bounded by the same dates, not by the displayed window.
+    expect(calls.budget.every((c) => c.from >= "2026-08-31" && c.to === TODAY)).toBe(true);
+  });
+
+  it("pays for the ACTIVITY fallback only while some reference date predates campaign-service's record", async () => {
+    // Record begins AFTER the oldest reference date → the fallback is needed and is read.
+    const needed = emptyCalls();
+    await buildRevenueHistory(COLD, SPLIT_NOW, WINDOWS, splitDeps({}, needed));
+    expect(needed.activity.sort()).toEqual([BRAND_BIG, BRAND_SAAS]);
+
+    // Record reaches back past every reference date → nothing is approximated, so nothing is fetched.
+    const covered = emptyCalls();
     const out = await buildRevenueHistory(
       COLD,
       SPLIT_NOW,
       WINDOWS,
       splitDeps(
         {
-          readStatedAmounts: async () => [
-            {
-              id: "row-1",
-              orgId: AGENCY_ORG,
-              brandId: BRAND_BIG,
-              amountUsd: 5000,
-              startDate: null,
-              endDate: null,
-              note: null,
-              createdAt: "2026-08-01T00:00:00.000Z",
-              updatedAt: "2026-08-01T00:00:00.000Z",
-            },
-          ],
+          campaignEarningOnDay: async (campaignIds, day) => {
+            covered.earningDays.push(day);
+            return campaignIds.map((campaignId) => ({
+              campaignId,
+              status: "ongoing" as const,
+              audience: "available" as const,
+              earning: true,
+              statusRecordedSince: "2026-01-01T00:00:00.000Z",
+              audienceRecordedSince: "2026-01-01T00:00:00.000Z",
+            }));
+          },
         },
-        calls,
+        covered,
       ),
     );
-
-    const split = out.mrrSplit!;
-    expect(split.currentAgencyMrrUsd).toBe(5000); // the STATED amount
-    expect(split.currentAgencyBudgetMrrUsd).toBe(143 * 30); // 4290 — what it contributed to the fleet figure
-    expect(split.currentSelfServeMrrUsd).toBe(7350 - 4290); // 3060, the SaaS business on its own
-    expect(split.currentTotalMrrUsd).toBe(5000 + 3060);
-    expect(split.agencyOrgIds).toEqual([AGENCY_ORG]);
-    // One budget-timeline read per agency pair; the first-billed-day read only because the row has no start.
-    expect(calls).toEqual({ budget: 1, firstBilled: 1 });
+    expect(covered.activity).toEqual([]);
+    expect(out.mrrSplit!.currentSelfServeBasis).toBe("recorded");
+    expect(out.mrrSplit!.earningRecordBeginsOn).toBe("2026-01-01");
   });
 
-  it("skips the first-billed-day read when every stated row carries a start date", async () => {
-    const calls = { budget: 0, firstBilled: 0 };
-    await buildRevenueHistory(
-      COLD,
-      SPLIT_NOW,
-      WINDOWS,
-      splitDeps(
-        {
-          readStatedAmounts: async () => [
-            {
-              id: "row-1",
-              orgId: AGENCY_ORG,
-              brandId: BRAND_BIG,
-              amountUsd: 5000,
-              startDate: "2026-08-01",
-              endDate: null,
-              note: null,
-              createdAt: "2026-08-01T00:00:00.000Z",
-              updatedAt: "2026-08-01T00:00:00.000Z",
-            },
-          ],
-        },
-        calls,
-      ),
-    );
-    expect(calls).toEqual({ budget: 1, firstBilled: 0 });
-  });
-
-  it("NULLS the split when a read fails, leaving every other figure intact", async () => {
+  it("MARKS an approximated period, so a consumer can label it rather than present it as measured", async () => {
     const out = await buildRevenueHistory(
       COLD,
       SPLIT_NOW,
       WINDOWS,
       splitDeps({
-        readStatedAmounts: async () => [
-          {
-            id: "row-1",
-            orgId: AGENCY_ORG,
-            brandId: BRAND_BIG,
-            amountUsd: 5000,
-            startDate: "2026-08-01",
-            endDate: null,
-            note: null,
-            createdAt: "2026-08-01T00:00:00.000Z",
-            updatedAt: "2026-08-01T00:00:00.000Z",
-          },
-        ],
-        budgetHistory: async () => {
+        readStatedAmounts: async () => [STATED_ROW],
+        // campaign-service knows nothing about any of these days…
+        campaignEarningOnDay: async (campaignIds) =>
+          campaignIds.map((campaignId) => ({
+            campaignId,
+            status: "not_recorded" as const,
+            audience: "not_recorded" as const,
+            earning: null,
+            statusRecordedSince: null,
+            audienceRecordedSince: null,
+          })),
+        // …but the pair billed spend on the August reference date.
+        brandSpendByDay: async () => new Map([["2026-08-31", 12]]),
+      }),
+    );
+    const split = out.mrrSplit!;
+    const aug = split.monthly.find((b) => b.period === "2026-08")!;
+    expect(aug.selfServeBasis).toBe("approximated");
+    expect(aug.selfServeMrrUsd).toBe(102 * 30); // still a figure, not a hole
+    expect(aug.selfServeApproximatedPairCount).toBe(1);
+    expect(split.earningRecordBeginsOn).toBeNull();
+  });
+
+  it("a campaign row naming no brand joins to no pair and is never asked about", async () => {
+    const asked: string[][] = [];
+    await buildRevenueHistory(
+      COLD,
+      SPLIT_NOW,
+      WINDOWS,
+      splitDeps({
+        campaignEarningOnDay: async (campaignIds, day) => {
+          asked.push(campaignIds);
+          return campaignIds.map((campaignId) => ({
+            campaignId,
+            status: "ongoing" as const,
+            audience: "available" as const,
+            earning: true,
+            statusRecordedSince: "2026-09-01T00:00:00.000Z",
+            audienceRecordedSince: "2026-09-01T00:00:00.000Z",
+          }));
+        },
+      }),
+    );
+    expect(asked.flat()).not.toContain("camp-orphan");
+    expect(asked.flat()).toContain("camp-agency");
+  });
+
+  it("reads the first billed day only for a stated row with NO start date", async () => {
+    const calls = emptyCalls();
+    await buildRevenueHistory(
+      COLD,
+      SPLIT_NOW,
+      WINDOWS,
+      splitDeps({ readStatedAmounts: async () => [{ ...STATED_ROW, startDate: null }] }, calls),
+    );
+    expect(calls.firstBilled).toBe(1);
+  });
+
+  it("NULLS the split when a producer read fails, leaving every other figure intact", async () => {
+    const out = await buildRevenueHistory(
+      COLD,
+      SPLIT_NOW,
+      WINDOWS,
+      splitDeps({
+        readStatedAmounts: async () => [STATED_ROW],
+        budgetByDay: async () => {
           throw new Error("billing-service unreachable");
         },
       }),
@@ -359,34 +458,37 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
     expect(out.mrrSplit).toBeNull();
   });
 
-  it("leaves the committed series byte-identical whether or not anything is stated (AC7)", async () => {
+  it("leaves every other figure byte-identical whether or not anything is stated", async () => {
     const withNone = await buildRevenueHistory(COLD, SPLIT_NOW, WINDOWS, splitDeps());
-    const withStated = await buildRevenueHistory(
-      COLD,
-      SPLIT_NOW,
-      WINDOWS,
-      splitDeps({
-        readStatedAmounts: async () => [
-          {
-            id: "row-1",
-            orgId: AGENCY_ORG,
-            brandId: BRAND_BIG,
-            amountUsd: 5000,
-            startDate: "2026-08-01",
-            endDate: null,
-            note: null,
-            createdAt: "2026-08-01T00:00:00.000Z",
-            updatedAt: "2026-08-01T00:00:00.000Z",
-          },
-        ],
-      }),
-    );
+    const withStated = await buildRevenueHistory(COLD, SPLIT_NOW, WINDOWS, splitDeps({ readStatedAmounts: async () => [STATED_ROW] }));
 
     expect(withStated.committedMrr).toEqual(withNone.committedMrr);
     expect(withStated.currentMrrUsd).toBe(withNone.currentMrrUsd);
     expect(withStated.totalRevenueUsd).toBe(withNone.totalRevenueUsd);
     expect(withStated.netRevenueRetention).toEqual(withNone.netRevenueRetention);
-    // …while the split itself DIVERGES, which is the whole point.
-    expect(withStated.mrrSplit!.currentSelfServeMrrUsd).not.toBe(withNone.mrrSplit!.currentSelfServeMrrUsd);
+    // …while the split itself DIVERGES, which is the whole point: with nothing stated the agency's
+    // brand sits on the SaaS side, so the self-serve figure is LARGER.
+    expect(withNone.mrrSplit!.currentSelfServeMrrUsd!).toBeGreaterThan(withStated.mrrSplit!.currentSelfServeMrrUsd!);
+    expect(withNone.mrrSplit!.currentAgencyMrrUsd).toBe(0);
+  });
+
+  it("never reports a NEGATIVE self-serve half, whatever the recorded fleet figure says", async () => {
+    // The recorded snapshot is far SMALLER than the agency's replayed budget — the shape that used
+    // to produce −$720/month and force the period to be published as unmeasurable.
+    const out = await buildRevenueHistory(
+      COLD,
+      SPLIT_NOW,
+      WINDOWS,
+      splitDeps({
+        readStatedAmounts: async () => [STATED_ROW],
+        readCommittedSnapshots: async () => [{ date: "2026-08-31", mrrUsd: 100 }],
+      }),
+    );
+    const aug = out.mrrSplit!.monthly.find((b) => b.period === "2026-08")!;
+    expect(aug.committedMrrUsd).toBe(100);
+    expect(aug.agencyBudgetMrrUsd).toBeGreaterThan(aug.committedMrrUsd);
+    expect(aug.selfServeMrrUsd).toBe(102 * 30);
+    expect(aug.selfServeMrrUsd!).toBeGreaterThan(0);
+    expect(aug.selfServeUnmeasurableReason).toBeNull();
   });
 });

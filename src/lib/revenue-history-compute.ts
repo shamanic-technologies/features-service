@@ -30,12 +30,39 @@ import { recordCommittedMrrSnapshotSoft, readCommittedMrrSnapshotsSoft } from ".
 import { buildCommittedMrrHistory, type CommittedMrrHistory } from "./committed-mrr-compute.js";
 import { buildNetRevenueRetention, type NrrHistory } from "./nrr-compute.js";
 import { readStatedAmountsSoft, type StatedAmountRow } from "./stated-monthly-amounts-store.js";
-import { fetchBudgetChangeHistory, type BudgetChangeEntry } from "./history-clients.js";
-import { MRR_DAY_MULTIPLE } from "./committed-mrr-store.js";
-import { agencyPairKeysOf, buildMrrSplit, pairKey, type MrrSplit } from "./agency-self-serve-compute.js";
+import {
+  fetchBrandBudgetByDay,
+  fetchCampaignEarningOnDay,
+  fetchFleetCampaigns,
+  fetchPaymentStoppedPeriods,
+  EARNING_BATCH_SIZE,
+  type BudgetByDay,
+  type CampaignDayAnswer,
+  type FleetCampaignRow,
+  type PaymentStoppedFacts,
+} from "./mrr-day-facts-clients.js";
+import { fetchBrandCommittedSpendByDay } from "./brand-spend-by-day-client.js";
+import {
+  agencyPairKeysOf,
+  buildMrrSplit,
+  pairKey,
+  recordedEarningOf,
+  referenceDatesOf,
+  type DayFacts,
+  type MrrSplit,
+} from "./agency-self-serve-compute.js";
 
-/** Cap the per-org runs-service fan-out so a cold-Neon sibling is not hit with N sockets at once. */
+/** Cap the per-org runs-service fan-out so a cold sibling is not hit with N sockets at once. */
 const ORG_FANOUT_CONCURRENCY = 6;
+
+/**
+ * How many past reference dates the earning read is paid for. Every emitted period asks campaign-service
+ * one question, so the fan-out grows with the DISPLAYED window rather than with the fleet; a staff caller
+ * asking for three years of weekly buckets would otherwise mint a request per week. Beyond the cap the
+ * oldest buckets fall back to activity evidence and say so (`selfServeBasis: "approximated"`) — the same
+ * marking the pre-record era already carries, never a silent blend.
+ */
+const MAX_EARNING_REFERENCE_DATES = 60;
 
 /**
  * Lower bound for the all-time (since-inception) per-org spend fetch. Well before the product existed, so
@@ -132,8 +159,16 @@ export interface RevenueHistoryDeps {
   readCommittedSnapshots: (sinceIso: string) => Promise<Array<{ date: string; mrrUsd: number }>>;
   /** Every stated monthly amount on record (fail-soft → null = "could not read", distinct from [] = "none stated"). */
   readStatedAmounts: () => Promise<StatedAmountRow[] | null>;
-  /** Billing's append-only daily-budget timeline for one (org, brand), oldest-first. Fails loud. */
-  budgetHistory: (brandId: string, orgId: string) => Promise<BudgetChangeEntry[]>;
+  /** What amount billing recorded as in force for one (org, brand) on each UTC day of a range. Fails loud. */
+  budgetByDay: (brandId: string, orgId: string, from: string, to: string) => Promise<BudgetByDay>;
+  /** Every stretch during which an org's payment had stopped, plus the day that record begins. Fails loud. */
+  paymentStopped: (orgId: string) => Promise<PaymentStoppedFacts>;
+  /** Every campaign across every org, in one call — which campaigns each (org, brand) pair has. Fails loud. */
+  fleetCampaigns: () => Promise<FleetCampaignRow[]>;
+  /** Was each campaign running, and did it have anybody to contact, on ONE UTC day. Fails loud. */
+  campaignEarningOnDay: (campaignIds: string[], day: string) => Promise<CampaignDayAnswer[]>;
+  /** One (org, brand)'s billed cold-email spend per UTC day — the activity evidence for the earlier era. Fails loud. */
+  brandSpendByDay: (orgId: string, brandId: string, coldEmailSlugsCsv: string) => Promise<Map<string, number>>;
   /** First UTC day one (org, brand) ever billed cold-email spend, or null. Fails loud. */
   firstBilledDay: (orgId: string, brandId: string, coldEmailSlugsCsv: string, startedAfterIso: string) => Promise<string | null>;
 }
@@ -159,7 +194,12 @@ const REAL_DEPS: RevenueHistoryDeps = {
   recordCommittedSnapshot: recordCommittedMrrSnapshotSoft,
   readCommittedSnapshots: readCommittedMrrSnapshotsSoft,
   readStatedAmounts: readStatedAmountsSoft,
-  budgetHistory: fetchBudgetChangeHistory,
+  budgetByDay: fetchBrandBudgetByDay,
+  paymentStopped: fetchPaymentStoppedPeriods,
+  fleetCampaigns: fetchFleetCampaigns,
+  campaignEarningOnDay: fetchCampaignEarningOnDay,
+  brandSpendByDay: (orgId, brandId, coldEmailSlugsCsv) =>
+    fetchBrandCommittedSpendByDay(brandId, undefined, coldEmailSlugsCsv.split(","), { orgId }),
   firstBilledDay: fetchBrandFirstBilledDay,
 };
 
@@ -295,21 +335,27 @@ export async function buildRevenueHistory(
 
 /**
  * Assemble the agency / self-serve split, FAIL-SOFT as a whole (`null` = "we could not read this",
- * never a zero agency). Cost is proportional to the AGENCY side only, so with no stated amounts on
- * record it issues ZERO extra requests and simply reports the whole fleet as self-serve — which is
- * exactly today's number, with no new failure mode for an existing consumer.
+ * never a zero agency). Both halves are SUMS over their own pairs, so neither can come out negative
+ * and neither depends on the other.
  *
- * Two bounded per-agency-pair reads: billing's daily-budget timeline (to replay what left the
- * self-serve half on each recorded day) and, only for a stated row with no start date, the pair's
- * first billed day (the floor such a row is in force from). Both are capped fan-outs over a set of a
- * couple of pairs, not a fleet-wide one.
+ * WHAT IT COSTS, AND WHY THE OLD "an empty store costs nothing" PROPERTY IS GONE. The self-serve half
+ * used to be a subtraction, so with no stated amounts on record it needed no reads at all. It is a sum
+ * over the self-serve side now, and reading that side is what an honest figure costs: one recorded
+ * budget replay and one activity read per (org, brand), one payment-stopped read per org, one call for
+ * the fleet's campaigns, and one earning read per REFERENCE DATE (not per day of the window). Every
+ * fan-out is capped and every read is bounded by the ~30 cold-email pairs the accounts audit already
+ * enumerates; the whole thing sits behind this endpoint's existing SWR window.
+ *
+ * The activity read is SKIPPED entirely once campaign-service's record covers the oldest reference
+ * date — at that point nothing is approximated, so the fallback evidence buys nothing and is not paid
+ * for. That is a real condition, not a heuristic: it is exactly `earningRecordBeginsOn <= from`.
  */
 async function buildMrrSplitSoft(
   ctx: {
     coldEmailSlugsCsv: string;
     snapshots: Array<{ date: string; mrrUsd: number }>;
     currentMrrUsd: number;
-    pairs: Array<{ orgId: string; brandId: string; runningDailyBudgetUsd: number; active: boolean }>;
+    pairs: Array<{ orgId: string; brandId: string }>;
   },
   now: Date,
   windows: { weeks: number; months: number },
@@ -319,44 +365,127 @@ async function buildMrrSplitSoft(
     const statedRows = await deps.readStatedAmounts();
     if (statedRows === null) return null; // could not read the store — say so, never a zero agency
 
+    const todayIso = now.toISOString().slice(0, 10);
+    const pairs = ctx.pairs.map((p) => ({ ...p, key: pairKey(p.orgId, p.brandId) }));
+    const orgIds = [...new Set(pairs.map((p) => p.orgId))];
+
+    // The split is only ever read ON these days — one per emitted period, plus today. Everything
+    // below is fetched for that set, never for every day of the displayed window.
+    const referenceDates = referenceDatesOf(ctx.snapshots, todayIso, windows, ctx.currentMrrUsd);
+    const from = referenceDates[0] ?? todayIso;
+
+    const [budgetEntries, paymentEntries, fleetCampaigns] = await Promise.all([
+      mapWithConcurrency(pairs, ORG_FANOUT_CONCURRENCY, async (p): Promise<[string, BudgetByDay]> => [
+        p.key,
+        await deps.budgetByDay(p.brandId, p.orgId, from, todayIso),
+      ]),
+      mapWithConcurrency(orgIds, ORG_FANOUT_CONCURRENCY, async (orgId): Promise<[string, PaymentStoppedFacts]> => [
+        orgId,
+        await deps.paymentStopped(orgId),
+      ]),
+      pairs.length > 0 ? deps.fleetCampaigns() : Promise.resolve([] as FleetCampaignRow[]),
+    ]);
+
+    // Which campaigns belong to each pair — the brand-level earning question is an OR over them.
+    const pairOfCampaign = new Map<string, string>();
+    const campaignIdsOfPair = new Map<string, string[]>();
+    const pairKeySet = new Set(pairs.map((p) => p.key));
+    for (const c of fleetCampaigns) {
+      if (c.brandId === null) continue; // a row naming no brand joins to no pair
+      const key = pairKey(c.orgId, c.brandId);
+      if (!pairKeySet.has(key)) continue;
+      pairOfCampaign.set(c.campaignId, key);
+      const list = campaignIdsOfPair.get(key);
+      if (list) list.push(c.campaignId);
+      else campaignIdsOfPair.set(key, [c.campaignId]);
+    }
+    const trackedCampaignIds = [...pairOfCampaign.keys()];
+    const chunks: string[][] = [];
+    for (let i = 0; i < trackedCampaignIds.length; i += EARNING_BATCH_SIZE) {
+      chunks.push(trackedCampaignIds.slice(i, i + EARNING_BATCH_SIZE));
+    }
+
+    /** One reference date's per-campaign answers, merged across the batches. */
+    const earningOn = async (day: string): Promise<CampaignDayAnswer[]> =>
+      (await mapWithConcurrency(chunks, ORG_FANOUT_CONCURRENCY, (ids) => deps.campaignEarningOnDay(ids, day))).flat();
+
+    // TODAY first, on its own: its answer is needed anyway, and it is what tells us the day
+    // campaign-service's record begins — so no earlier date is asked for an answer we already know
+    // is `not_recorded`.
+    const todayAnswers = chunks.length > 0 ? await earningOn(todayIso) : [];
+    const recordStarts = todayAnswers
+      .flatMap((a) => [a.statusRecordedSince, a.audienceRecordedSince])
+      .filter((v): v is string => typeof v === "string")
+      .map((v) => v.slice(0, 10));
+    const earningRecordBeginsOn = recordStarts.length > 0 ? recordStarts.reduce((a, b) => (a < b ? a : b)) : null;
+
+    const inRecordDates = referenceDates.filter(
+      (d) => d !== todayIso && earningRecordBeginsOn !== null && d >= earningRecordBeginsOn,
+    );
+    const pastAnswers = await mapWithConcurrency(
+      inRecordDates.slice(-MAX_EARNING_REFERENCE_DATES),
+      ORG_FANOUT_CONCURRENCY,
+      async (day): Promise<[string, CampaignDayAnswer[]]> => [day, await earningOn(day)],
+    );
+
+    // pair key → day → the RECORDED verdict (true / false / null = campaign-service knows nothing).
+    const recordedEarning = new Map<string, Map<string, boolean | null>>();
+    for (const [day, answers] of [[todayIso, todayAnswers] as [string, CampaignDayAnswer[]], ...pastAnswers]) {
+      const byPair = new Map<string, CampaignDayAnswer[]>();
+      for (const a of answers) {
+        const key = pairOfCampaign.get(a.campaignId);
+        if (!key) continue;
+        const list = byPair.get(key);
+        if (list) list.push(a);
+        else byPair.set(key, [a]);
+      }
+      for (const [key, list] of byPair) {
+        const days = recordedEarning.get(key) ?? new Map<string, boolean | null>();
+        days.set(day, recordedEarningOf(list));
+        recordedEarning.set(key, days);
+      }
+    }
+
+    // The fallback evidence, paid for ONLY while some reference date sits before the record begins.
+    const needsActivity = earningRecordBeginsOn === null || from < earningRecordBeginsOn;
+    const activityEntries = needsActivity
+      ? await mapWithConcurrency(pairs, ORG_FANOUT_CONCURRENCY, async (p): Promise<[string, Set<string>]> => {
+          const byDay = await deps.brandSpendByDay(p.orgId, p.brandId, ctx.coldEmailSlugsCsv);
+          return [p.key, new Set([...byDay].filter(([, usd]) => usd > 0).map(([day]) => day))];
+        })
+      : [];
+
+    // Only a stated row with NO start date needs its brand's first billed day.
     const agencyPairKeys = agencyPairKeysOf(statedRows, ctx.pairs);
     const agencyPairs = agencyPairKeys.map((key) => {
       const [orgId, brandId] = key.split("::");
       return { key, orgId, brandId };
     });
-
-    // The agency's share of the LIVE committed MRR, on the SAME running-budget basis the fleet figure
-    // was summed from (ACTIVE pairs only) — so today's self-serve cancels against it to the cent.
-    const agencyKeySet = new Set(agencyPairKeys);
-    const currentAgencyBudgetMrrUsd = ctx.pairs
-      .filter((p) => p.active && agencyKeySet.has(pairKey(p.orgId, p.brandId)))
-      .reduce((sum, p) => sum + p.runningDailyBudgetUsd * MRR_DAY_MULTIPLE, 0);
-
-    const [timelineEntries, firstBilledEntries] = await Promise.all([
-      mapWithConcurrency(agencyPairs, ORG_FANOUT_CONCURRENCY, async (p): Promise<[string, BudgetChangeEntry[]]> => [
+    const firstBilledEntries = await mapWithConcurrency(
+      agencyPairs.filter((p) => statedRows.some((r) => r.orgId === p.orgId && r.brandId === p.brandId && r.startDate === null)),
+      ORG_FANOUT_CONCURRENCY,
+      async (p): Promise<[string, string | null]> => [
         p.key,
-        await deps.budgetHistory(p.brandId, p.orgId),
-      ]),
-      // Only a stated row with NO start date needs its brand's first billed day.
-      mapWithConcurrency(
-        agencyPairs.filter((p) => statedRows.some((r) => r.orgId === p.orgId && r.brandId === p.brandId && r.startDate === null)),
-        ORG_FANOUT_CONCURRENCY,
-        async (p): Promise<[string, string | null]> => [
-          p.key,
-          await deps.firstBilledDay(p.orgId, p.brandId, ctx.coldEmailSlugsCsv, INCEPTION_FLOOR_ISO),
-        ],
-      ),
-    ]);
+        await deps.firstBilledDay(p.orgId, p.brandId, ctx.coldEmailSlugsCsv, INCEPTION_FLOOR_ISO),
+      ],
+    );
+
+    const facts: DayFacts = {
+      budgetByDay: new Map(budgetEntries.map(([key, b]) => [key, b.byDay])),
+      activityDays: new Map(activityEntries),
+      recordedEarning,
+      paymentByOrg: new Map(paymentEntries),
+    };
 
     return buildMrrSplit(
       {
         statedRows,
         allPairs: ctx.pairs,
-        budgetTimelines: new Map(timelineEntries),
+        facts,
         firstBilledDayByPair: new Map(firstBilledEntries),
         snapshots: ctx.snapshots,
         currentMrrUsd: ctx.currentMrrUsd,
-        currentAgencyBudgetMrrUsd,
+        earningRecordBeginsOn,
       },
       now,
       windows,
