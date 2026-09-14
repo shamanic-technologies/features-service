@@ -340,6 +340,69 @@ workflow that never runs never earns evidence, so it never wins.
   past the floor — roughly $500 across the catalogue, about two days at this campaign's rate.
   (Set 2026-09-14, campaign-service#456 / workflow-service#423.)
 
+## WHAT RAN IS A FACT IN THE LEDGER, NOT A COLUMN ON THE CAMPAIGN ROW — `observedPicks`, read live, and nothing new is stored
+
+The campaign Workflows page badged a workflow as "Running now" and named one that had never served a
+single lead. Prod 2026-09-14, campaign `f7b1b610…`: `campaigns.workflow_slug` read
+`sales-cold-email-outreach-rudder-v3`, frozen at the row's creation on 2026-09-06, while the ledger
+recorded **3,473 triggers** over the same period of which **rudder ran zero** and `lithium-v6` ran 2,439,
+most recently that morning. Owner: *"ici ca dit que le workflow running right now est un deepseek pro
+alors que cette ligne n'est jamais le meilleur workflow d'une des audiences"*. Nothing was broken; the
+page was rendering a CONFIGURATION where a reader expects a FACT.
+
+- **THE BANDIT'S CHOICE IS ALREADY PERSISTED AT WRITE TIME, BY THE SERVICE THAT MADE IT — so there is no
+  bronze/silver/gold to add and no third copy to keep.** campaign-service opens a run per trigger and
+  runs-service stores `campaign_id` + `workflow_slug` + `audience_id` + `started_at` on it. The obvious
+  design (a new history table here) was measured against prod and rejected: the history already exists,
+  exactly, and a fourth copy of a fact two services hold is the read-side derivation this file refuses
+  everywhere else, pointed backwards. **`campaigns.workflow_slug` is legitimately the CONFIGURED
+  fallback** and must NOT be rewritten per trigger to make the badge true — that would make one column
+  answer two questions and destroy the only record of what the campaign was set up with.
+- **A TRIGGER RUN IS `service_name='campaign-service'`, AND `task_name = campaign_id` ON 178,046 OF
+  178,046 ROWS** (30 days, fleet-wide). Every descendant inherits the same `campaign_id`, so an
+  unfiltered read answers ~28k rows for one campaign and repeats each pick eight times. `workflow_slug`
+  is non-null on every one of those 178,046; a row stating none answers nothing about a pick and is
+  dropped rather than carried as a half-row.
+- **IT IS READ LIVE, NEVER FROM THE GOLD SNAPSHOT** — the same rule, and the same reason, as this
+  route's ECONOMICS: a figure whose whole job is to say what is happening RIGHT NOW cannot be served
+  from a cell up to half an hour stale. It is fired in the SAME `Promise.all` as the cached evidence
+  fan-out (it needs only the campaign ids), so it costs no extra wall-clock.
+- **ANSWERED FOR THE CAMPAIGN'S WHOLE IDENTITY**, like every other campaign-scoped figure here. runs
+  takes no campaign LIST, so it is one call per member at concurrency 6 — a trigger carries exactly ONE
+  campaign, so the union counts nobody twice, and each member is asked for the full window so the merge
+  is exact rather than a sample of whichever answered first. Bounded by measurement: the largest brand
+  in prod has **17** campaigns with runs over 90 days, and 17 of 20 brands have one or two.
+- **`audienceId: null` IS A REAL STATE.** The audience write-tag is younger than the workflow one —
+  94-97% of triggers in the last three weeks, ~40% in July — so an older pick states its workflow and no
+  audience. Reported as null, never substituted from a neighbouring run.
+- **A LINEAGE THE CATALOGUE NO LONGER DESCRIBES IS ITS OWN DYNASTY OF ONE** (`dynastyOfSlug`'s rule,
+  shared with `?groupBy=workflow` and the drill-down), so a RETIRED workflow — exactly the one a "what
+  actually ran" question is usually about — answers with its real key instead of vanishing.
+- **`?picks=` IS 0..200, DEFAULT 50, AND AN OUT-OF-RANGE VALUE IS A 400 `picks_unrecognised`** rather
+  than a clamp into a window nobody asked for. `0` spends no read at all. `truncated` says the list is a
+  window; `last` is the identity's most recent pick whatever the window, so a badge never depends on it.
+- **PRESENT ⟺ `?campaignId=` (which already requires `?leg=`)**, so every funnel- and goal-keyed body is
+  byte-unchanged and campaign-service's production workflow selection is untouched. Guarded, including
+  that a read naming no campaign issues ZERO `/v1/runs` requests.
+- **FAIL-SOFT with a loud log: `observedPicks: null` is "we could not read this"**, never the CONFIGURED
+  workflow and never a fabricated pick — degrading to the configured slug would restore the exact bug.
+  A campaign that has never triggered is `{last: null, recent: [], truncated: false}`, a real empty
+  answer, distinct from the null.
+- **THIS MAKES THE PICK VISIBLE; IT DOES NOT CHANGE IT.** The selector moved to cell-by-cell consumption
+  in campaign-service v0.72.0 (the section above) — a separate ship, and the reason this read is worth
+  having: the order changed yesterday, so what actually ran is the only way to see it.
+- Guards: `src/routes/observed-picks.test.ts` — ONE fixture shaped like the campaign that reported it
+  (three stored rows, the live one configured with `rudder`, rudder never run, picks interleaved across
+  members and out of order on the wire, one member that never triggered, one untagged audience, one
+  retired lineage). Every case asserts the DIVERGENCE between the configured slug and the observed one,
+  so a suite that only checked "a block came back" would pass on the implementation this replaces: the
+  named workflow, the merge order with a stopped ancestor second, either member reading the same answer,
+  the null audience beside three tagged ones, the retired dynasty, the request shape
+  (`serviceName=campaign-service`, one call per member, the limit on the wire), the empty campaign, the
+  fail-soft null with the rest of the body intact, the absent block on a read naming no campaign, the
+  truncated window, `picks=0` spending nothing, the four 400s, and the funnel- and goal-keyed reads
+  carrying none of it. (Set 2026-09-14, features-service#944.)
+
 ## A FUNNEL IS PRICED ON THE RATES IT DECLARES — each funnel states its OWN ladder, and the rung in the MIDDLE of one is worth more than the rung below it
 
 A brand selling FORM MAGNET (`Website visit → Form filled → Paid client`) read its funnel Overview and

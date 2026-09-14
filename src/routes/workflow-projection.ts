@@ -30,6 +30,12 @@ import {
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { describeIdentity, type CampaignIdentityView } from "../lib/campaign-identity.js";
 import { DEFAULT_MAXIMIZE, MAXIMIZE_ERROR, parseMaximize, type Maximize } from "../lib/maximize.js";
+import {
+  buildObservedPicks,
+  fetchCampaignTriggerRunsSoft,
+  OBSERVED_PICKS_DEFAULT,
+  OBSERVED_PICKS_MAX,
+} from "../lib/observed-picks.js";
 import { rankDeclaredFunnels } from "../lib/funnel-ranking.js";
 import {
   fetchPublicWorkflows,
@@ -1041,6 +1047,23 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
   }
   const maximize = maximizeParam.maximize;
 
+  // HOW MANY OBSERVED PICKS the body states. Only ever read beside a `?campaignId=` (the block is a
+  // fact about ONE campaign's own triggers), bounded because a debug panel must not be able to ask for
+  // a campaign's whole history, and `0` is a real answer — "do not spend the read". An unreadable or
+  // out-of-range value FAILS LOUD rather than being clamped into something the caller did not ask for.
+  const picksRaw = req.query.picks as string | undefined;
+  let picksLimit = OBSERVED_PICKS_DEFAULT;
+  if (picksRaw != null && picksRaw !== "") {
+    const parsed = Number(picksRaw);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > OBSERVED_PICKS_MAX) {
+      return res.status(400).json({
+        error: `picks must be a whole number between 0 and ${OBSERVED_PICKS_MAX}`,
+        reason: "picks_unrecognised",
+      });
+    }
+    picksLimit = parsed;
+  }
+
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) {
@@ -1129,7 +1152,11 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       campaignScopeIds = campaignIdentityView.campaignIds;
     }
 
-    const [evidence, effective] = await Promise.all([
+    // WHAT ACTUALLY RAN — read LIVE beside the cached evidence, never from the snapshot: a figure whose
+    // job is to say what is happening right now cannot be served from a cell half an hour old. Fired in
+    // the same round trip as the fan-out (it needs only the campaign ids, not the ladder), so it costs
+    // no extra wall-clock, and FAIL-SOFT so a runs blip nulls one block rather than a whole page.
+    const [evidence, effective, triggerRuns] = await Promise.all([
       servedCached({
         view: "workflow-projection-evidence",
         scopeKey: buildScopeKey(featureSlug, {
@@ -1145,6 +1172,9 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
           fetchWorkflowProjectionEvidence({ featureSlug, brandId, identity, pricing, campaignIds: campaignScopeIds }),
       }),
       fetchEffectiveEconomics(brandId, identity),
+      campaignScopeIds && picksLimit > 0
+        ? fetchCampaignTriggerRunsSoft(campaignScopeIds, { orgId, userId, runId, brandId }, picksLimit)
+        : Promise.resolve(null),
     ]);
     // THE LEG'S BASIS FUNNEL. Ranked on the IDENTICAL `returnPerDollar` `/funnel-ranking` ranks a
     // brand's declared funnels on — one implementation, so the two surfaces can never name different
@@ -1257,10 +1287,21 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       };
     }
 
+    // The bandit's OWN choices, newest first. Present ⟺ the caller named a campaign and asked for a
+    // non-zero window; `null` there is "we could not read this", and it is deliberately NOT the
+    // campaign row's CONFIGURED workflow, which is the number badging this as "running" got wrong.
+    const observedPicks =
+      campaignScopeIds && picksLimit > 0
+        ? triggerRuns
+          ? buildObservedPicks(triggerRuns, evidence.workflows, picksLimit)
+          : null
+        : undefined;
+
     res.json({
       ...response,
       ...(legBlock ? { leg: legBlock } : {}),
       ...(campaignIdentityView ? { campaignIdentity: campaignIdentityView } : {}),
+      ...(observedPicks !== undefined ? { observedPicks } : {}),
     });
   } catch (error) {
     console.error("[features-service] Workflow projection error:", error);
