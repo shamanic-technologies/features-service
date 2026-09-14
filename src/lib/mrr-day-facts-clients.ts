@@ -6,7 +6,8 @@
  * was somebody left to contact. Every one of those is a fact some service already keeps, and none of
  * them is this service's to invent — so this module is four readers and no arithmetic.
  *
- *   billing-service  GET /internal/brands/:brandId/daily-budget/by-day            → the AMOUNT in force
+ *   billing-service  GET /internal/brands/:brandId/daily-budget                   → the LIVE amount (TODAY)
+ *   billing-service  GET /internal/brands/:brandId/daily-budget/by-day            → the AMOUNT in force (PAST)
  *   billing-service  GET /internal/accounts/by-org/:orgId/payment-stopped-periods → PAYMENT stopped
  *   campaign-service GET /campaigns/list                                          → which campaigns a pair has
  *   campaign-service POST /internal/campaigns/earning-history                     → RUNNING + AUDIENCE
@@ -76,6 +77,47 @@ export async function fetchBrandBudgetByDay(
     byDay.set(d.date, cents / 100);
   }
   return { recordBeginsAt: data.recordBeginsAt ?? null, byDay };
+}
+
+/**
+ * THE AMOUNT IN FORCE RIGHT NOW, read from billing's LIVE budget rather than replayed from its
+ * change log — the answer for TODAY, and only for today.
+ *
+ * The replay above is the only thing that reaches BACK, and for past days it remains the answer. But
+ * it is a log of the writes billing happened to append, not a mirror of its current state, and the
+ * two have drifted: measured in prod 2026-09-14, brand `b97440f6…` held a LIVE $15/day whose newest
+ * change row said $1 (a per-funnel write that never appended), and brand `a179bbd9…` held a live
+ * $8/day against ZERO change rows at all — so the run-rate under-stated the first 15x and dropped
+ * the second entirely, reporting it as having no recorded amount while it was plainly funded.
+ *
+ * This read is billing's own composition of the state it holds: the SUM of a brand's per-funnel
+ * ceilings when it is funnel-funded, else its brand-level scalar. `null` is "billing holds no amount
+ * for this pair" and stays distinguishable from a recorded 0 — a brand deliberately defunded is a
+ * different fact from one nobody ever funded, exactly as the replay's `not_recorded` is.
+ *
+ * Do NOT source this from campaign-service's `configuredDailyBudgetCents` instead, however tempting
+ * the zero extra IO is: campaign-service RECORDS status and audience, not the amount, and every
+ * other condition here is read from the service that records it. (It was measured first — 22 of 22
+ * funded pairs agree to the cent today — so the reason is the invariant, not a divergence.)
+ */
+export async function fetchBrandCurrentDailyBudget(brandId: string, orgId: string): Promise<number | null> {
+  const url = process.env.BILLING_SERVICE_URL;
+  const apiKey = process.env.BILLING_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("BILLING_SERVICE_URL or BILLING_SERVICE_API_KEY not configured");
+
+  const response = await fetchWithRetry(`${url}/internal/brands/${encodeURIComponent(brandId)}/daily-budget`, {
+    headers: { "x-api-key": apiKey, "x-org-id": orgId },
+  });
+  if (!response.ok) {
+    throw new Error(`billing-service daily-budget failed (${response.status}): ${await response.text()}`);
+  }
+  const data = (await response.json()) as { dailyBudgetCents?: string | number | null };
+  if (data.dailyBudgetCents === null || data.dailyBudgetCents === undefined) return null;
+  const cents = Number(data.dailyBudgetCents);
+  if (!Number.isFinite(cents)) {
+    throw new Error(`billing-service daily-budget returned non-numeric cents: ${JSON.stringify(data)}`);
+  }
+  return cents / 100;
 }
 
 /** Every stretch during which an org was not paying, plus the day the fleet's record begins. */

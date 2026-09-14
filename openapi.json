@@ -15936,7 +15936,7 @@
                         "configuredDailyBudgetUsd": {
                           "type": "number",
                           "nullable": true,
-                          "description": "CONDITION 3 — the amount billing RECORDED as in force for this brand on referenceDate, USD/day. null = billing held NO amount for it that day, which is a different statement from a configured 0: the amount is never approximated, so such a pair contributes nothing and shows up in selfServeUnrecordedBudgetPairCount rather than being filled in."
+                          "description": "CONDITION 3 — the amount billing holds as in force for this brand on referenceDate, USD/day. Since referenceDate is TODAY this is billing's CURRENT budget rather than a replay of its change log (amountSource says which, and for a past day it is the replay). null = billing held NO amount for it, which is a different statement from a configured 0: the amount is never approximated, so such a pair contributes nothing and shows up in selfServeUnrecordedBudgetPairCount rather than being filled in."
                         },
                         "paymentActive": {
                           "type": "boolean",
@@ -15956,6 +15956,15 @@
                         "amountInForce": {
                           "type": "boolean",
                           "description": "CONDITION 3 as a verdict — billing recorded a POSITIVE amount in force that day. False covers both 'no amount on record' and 'recorded at 0'; configuredDailyBudgetUsd tells the two apart."
+                        },
+                        "amountSource": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "live",
+                            "replayed"
+                          ],
+                          "description": "WHICH of billing's two records answered CONDITION 3. `live` = its CURRENT budget, which is what TODAY is priced on — billing's append-only change log is a record of the writes it appended rather than a mirror of its state, and for today the two genuinely disagree (measured in prod 2026-09-14: a brand holding a live $15/day whose newest change row said $1, and another holding a live $8/day against no change rows at all). `replayed` = that change log, which is the only record that reaches BACK and still answers every earlier day. `null` = billing held no amount at all. Stated rather than left to be inferred, because a reader reconciling this figure against billing needs to know which record it is looking at."
                         },
                         "countedMrrUsd": {
                           "type": "number",
@@ -15994,6 +16003,7 @@
                         "campaignRunning",
                         "audienceAvailable",
                         "amountInForce",
+                        "amountSource",
                         "countedMrrUsd",
                         "excludedBy",
                         "basis"
