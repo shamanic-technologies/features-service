@@ -193,13 +193,13 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     const { leg, ...withoutLeg } = byLeg.body;
     expect(leg.basisFunnelKey).toBe("sales_meetings_from_website");
     // Identical apart from what ONLY a leg-keyed answer carries: the leg block that states which
-    // funnel answered, the two ranks (`rank` per workflow, `scopeRank` per column), and the
-    // per-grain statement of the leg's OWN step.
+    // funnel answered, the two ranks (`rank` per workflow, `scopeRank` per column), the model-tier
+    // verdict (whose rule is keyed on the leg's own step), and the per-grain statement of that step.
     // Every figure a funnel-keyed request has ever served is unmoved — including, on this leg, the
     // cost per outcome, because the leg's step and this funnel's priced step happen to coincide.
     const stripLegOnly = (body: any) => ({
       ...body,
-      rows: body.rows.map(({ rank, scopeRank, ...row }: any) => ({
+      rows: body.rows.map(({ rank, scopeRank, modelEligibility, ...row }: any) => ({
         ...row,
         estimatesByGrain: Object.fromEntries(
           Object.entries(row.estimatesByGrain).map(([g, block]: [string, any]) => {
@@ -215,6 +215,9 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     expect(byLeg.body.rows.every((r: any) => typeof r.scopeRank === "number")).toBe(true);
     expect(byFunnel.body.rows.every((r: any) => r.rank === undefined)).toBe(true);
     expect(byFunnel.body.rows.every((r: any) => r.scopeRank === undefined)).toBe(true);
+    // …and so is the model-tier verdict, whose rule is keyed on the leg's own step.
+    expect(byLeg.body.rows.every((r: any) => r.modelEligibility !== undefined)).toBe(true);
+    expect(byFunnel.body.rows.every((r: any) => r.modelEligibility === undefined)).toBe(true);
   });
 
   it("a leg only ONE declared funnel contains says so, rather than claiming a comparison it never made", async () => {

@@ -4058,6 +4058,48 @@
                   "type": "number",
                   "description": "THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the request named a `?leg=`). `rank` is scored over EVERY row a dynasty has, so the cell that won it is usually not the cell on screen: measured in prod 2026-09-13 the rank-1 workflow read $175 on its campaign row and $20.35 on the audience cell that crowned it, which makes a column ordered on `rank` look arbitrary. `scopeRank` orders the rows sharing this row's `audienceId` (null = the brand / campaign column) on their OWN resolved metric, under the same `?maximize=` objective, the same three groups and the same slug tie-break — a TOTAL order per scope, with never-run workflows always last. The two ranks legitimately DISAGREE: `rank` says what we would put the customer on next, `scopeRank` says what the column they are reading says. Serve both; derive neither."
                 },
+                "modelEligibility": {
+                  "type": "object",
+                  "properties": {
+                    "modelAlias": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The chat-service model alias this workflow writes its content with, read from its DAG's content-generation call by workflow-service. NULL when its DAG names none (no content call, no stated model, a run-time value, or several content calls disagreeing) — never a guess."
+                    },
+                    "modelTier": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "cheap",
+                        "strong",
+                        "frontier"
+                      ],
+                      "description": "The capability tier chat-service RECORDS for that alias, read from its catalogue and NEVER derived from the alias string: `flash-pro` resolves to a Flash model and is CHEAP despite containing 'pro'. NULL = the tier is UNKNOWABLE on this request (the workflow names no model, the alias is absent from the catalogue, or a producer read failed) — see unknownTierReason."
+                    },
+                    "eligible": {
+                      "type": "boolean",
+                      "description": "FALSE ⟺ the tier is KNOWN and this leg's rule excludes it. An unknowable tier is always TRUE: we never exclude a workflow on a gap in our own reading, and never silently."
+                    },
+                    "ineligibleReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why this workflow is excluded, in a form a human reads — present ⟺ eligible is false, null otherwise. Served rather than left to a consumer so two surfaces cannot word it differently."
+                    },
+                    "unknownTierReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why the tier could not be read, same human form — present ⟺ modelTier is null. It tells 'this workflow records no model' apart from 'chat-service was unreachable' and from 'workflow-service was unreachable', which are different problems with different owners. A row carrying this is ELIGIBLE."
+                    }
+                  },
+                  "required": [
+                    "modelAlias",
+                    "modelTier",
+                    "eligible",
+                    "ineligibleReason",
+                    "unknownTierReason"
+                  ],
+                  "description": "WHETHER THE MODEL WRITING THIS WORKFLOW'S EMAILS IS RIGHT FOR THIS LEG — present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). Measured fleet-wide: the capability TIER of the model writing the content decides the outcome, and the direction depends on what the leg sells — the cheap tier badly underperforms on a leg selling a CONVERSATION, the strong and frontier tiers are wasted on one selling a WEBSITE VISIT. Every other leg restricts nothing; the study said nothing about them and nothing is invented. The verdict is STATED, never acted on here: the row is served whatever it says, with its figures, its `rank`, its `scopeRank` and its history unchanged — so campaign-service can filter on `eligible` while a customer surface can tell 'this workflow is excluded' apart from 'this workflow does not exist', including for a workflow that is excluded but has ALREADY RUN."
+                },
                 "measured": {
                   "type": "boolean",
                   "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for: estimatesByGrain is empty and resolved carries the EXPLORE ALLOWANCE (a cost floor, no return), so a serving consumer that ranks on resolved.costPerOutcomeUsd can REACH an active workflow with no history — which is the only way it can earn a first run — while every display / benchmark surface filters on this flag instead of probing for nulls. Unmeasured rows appear beside measured ones in an established channel (the mixed case): an active dynasty with no grain anywhere is offered here, never recommended. When the channel has measured nothing whatsoever there is no allowance to state either and every resolved figure is null."
@@ -5186,6 +5228,48 @@
                 "scopeRank": {
                   "type": "number",
                   "description": "THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the request named a `?leg=`). `rank` is scored over EVERY row a dynasty has, so the cell that won it is usually not the cell on screen: measured in prod 2026-09-13 the rank-1 workflow read $175 on its campaign row and $20.35 on the audience cell that crowned it, which makes a column ordered on `rank` look arbitrary. `scopeRank` orders the rows sharing this row's `audienceId` (null = the brand / campaign column) on their OWN resolved metric, under the same `?maximize=` objective, the same three groups and the same slug tie-break — a TOTAL order per scope, with never-run workflows always last. The two ranks legitimately DISAGREE: `rank` says what we would put the customer on next, `scopeRank` says what the column they are reading says. Serve both; derive neither."
+                },
+                "modelEligibility": {
+                  "type": "object",
+                  "properties": {
+                    "modelAlias": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The chat-service model alias this workflow writes its content with, read from its DAG's content-generation call by workflow-service. NULL when its DAG names none (no content call, no stated model, a run-time value, or several content calls disagreeing) — never a guess."
+                    },
+                    "modelTier": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "cheap",
+                        "strong",
+                        "frontier"
+                      ],
+                      "description": "The capability tier chat-service RECORDS for that alias, read from its catalogue and NEVER derived from the alias string: `flash-pro` resolves to a Flash model and is CHEAP despite containing 'pro'. NULL = the tier is UNKNOWABLE on this request (the workflow names no model, the alias is absent from the catalogue, or a producer read failed) — see unknownTierReason."
+                    },
+                    "eligible": {
+                      "type": "boolean",
+                      "description": "FALSE ⟺ the tier is KNOWN and this leg's rule excludes it. An unknowable tier is always TRUE: we never exclude a workflow on a gap in our own reading, and never silently."
+                    },
+                    "ineligibleReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why this workflow is excluded, in a form a human reads — present ⟺ eligible is false, null otherwise. Served rather than left to a consumer so two surfaces cannot word it differently."
+                    },
+                    "unknownTierReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why the tier could not be read, same human form — present ⟺ modelTier is null. It tells 'this workflow records no model' apart from 'chat-service was unreachable' and from 'workflow-service was unreachable', which are different problems with different owners. A row carrying this is ELIGIBLE."
+                    }
+                  },
+                  "required": [
+                    "modelAlias",
+                    "modelTier",
+                    "eligible",
+                    "ineligibleReason",
+                    "unknownTierReason"
+                  ],
+                  "description": "WHETHER THE MODEL WRITING THIS WORKFLOW'S EMAILS IS RIGHT FOR THIS LEG — present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). Measured fleet-wide: the capability TIER of the model writing the content decides the outcome, and the direction depends on what the leg sells — the cheap tier badly underperforms on a leg selling a CONVERSATION, the strong and frontier tiers are wasted on one selling a WEBSITE VISIT. Every other leg restricts nothing; the study said nothing about them and nothing is invented. The verdict is STATED, never acted on here: the row is served whatever it says, with its figures, its `rank`, its `scopeRank` and its history unchanged — so campaign-service can filter on `eligible` while a customer surface can tell 'this workflow is excluded' apart from 'this workflow does not exist', including for a workflow that is excluded but has ALREADY RUN."
                 },
                 "measured": {
                   "type": "boolean",
@@ -19376,6 +19460,48 @@
                             "type": "number",
                             "description": "THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the request named a `?leg=`). `rank` is scored over EVERY row a dynasty has, so the cell that won it is usually not the cell on screen: measured in prod 2026-09-13 the rank-1 workflow read $175 on its campaign row and $20.35 on the audience cell that crowned it, which makes a column ordered on `rank` look arbitrary. `scopeRank` orders the rows sharing this row's `audienceId` (null = the brand / campaign column) on their OWN resolved metric, under the same `?maximize=` objective, the same three groups and the same slug tie-break — a TOTAL order per scope, with never-run workflows always last. The two ranks legitimately DISAGREE: `rank` says what we would put the customer on next, `scopeRank` says what the column they are reading says. Serve both; derive neither."
                           },
+                          "modelEligibility": {
+                            "type": "object",
+                            "properties": {
+                              "modelAlias": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The chat-service model alias this workflow writes its content with, read from its DAG's content-generation call by workflow-service. NULL when its DAG names none (no content call, no stated model, a run-time value, or several content calls disagreeing) — never a guess."
+                              },
+                              "modelTier": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "cheap",
+                                  "strong",
+                                  "frontier"
+                                ],
+                                "description": "The capability tier chat-service RECORDS for that alias, read from its catalogue and NEVER derived from the alias string: `flash-pro` resolves to a Flash model and is CHEAP despite containing 'pro'. NULL = the tier is UNKNOWABLE on this request (the workflow names no model, the alias is absent from the catalogue, or a producer read failed) — see unknownTierReason."
+                              },
+                              "eligible": {
+                                "type": "boolean",
+                                "description": "FALSE ⟺ the tier is KNOWN and this leg's rule excludes it. An unknowable tier is always TRUE: we never exclude a workflow on a gap in our own reading, and never silently."
+                              },
+                              "ineligibleReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Why this workflow is excluded, in a form a human reads — present ⟺ eligible is false, null otherwise. Served rather than left to a consumer so two surfaces cannot word it differently."
+                              },
+                              "unknownTierReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Why the tier could not be read, same human form — present ⟺ modelTier is null. It tells 'this workflow records no model' apart from 'chat-service was unreachable' and from 'workflow-service was unreachable', which are different problems with different owners. A row carrying this is ELIGIBLE."
+                              }
+                            },
+                            "required": [
+                              "modelAlias",
+                              "modelTier",
+                              "eligible",
+                              "ineligibleReason",
+                              "unknownTierReason"
+                            ],
+                            "description": "WHETHER THE MODEL WRITING THIS WORKFLOW'S EMAILS IS RIGHT FOR THIS LEG — present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). Measured fleet-wide: the capability TIER of the model writing the content decides the outcome, and the direction depends on what the leg sells — the cheap tier badly underperforms on a leg selling a CONVERSATION, the strong and frontier tiers are wasted on one selling a WEBSITE VISIT. Every other leg restricts nothing; the study said nothing about them and nothing is invented. The verdict is STATED, never acted on here: the row is served whatever it says, with its figures, its `rank`, its `scopeRank` and its history unchanged — so campaign-service can filter on `eligible` while a customer surface can tell 'this workflow is excluded' apart from 'this workflow does not exist', including for a workflow that is excluded but has ALREADY RUN."
+                          },
                           "measured": {
                             "type": "boolean",
                             "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for: estimatesByGrain is empty and resolved carries the EXPLORE ALLOWANCE (a cost floor, no return), so a serving consumer that ranks on resolved.costPerOutcomeUsd can REACH an active workflow with no history — which is the only way it can earn a first run — while every display / benchmark surface filters on this flag instead of probing for nulls. Unmeasured rows appear beside measured ones in an established channel (the mixed case): an active dynasty with no grain anywhere is offered here, never recommended. When the channel has measured nothing whatsoever there is no allowance to state either and every resolved figure is null."
@@ -20673,6 +20799,48 @@
                           "scopeRank": {
                             "type": "number",
                             "description": "THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the request named a `?leg=`). `rank` is scored over EVERY row a dynasty has, so the cell that won it is usually not the cell on screen: measured in prod 2026-09-13 the rank-1 workflow read $175 on its campaign row and $20.35 on the audience cell that crowned it, which makes a column ordered on `rank` look arbitrary. `scopeRank` orders the rows sharing this row's `audienceId` (null = the brand / campaign column) on their OWN resolved metric, under the same `?maximize=` objective, the same three groups and the same slug tie-break — a TOTAL order per scope, with never-run workflows always last. The two ranks legitimately DISAGREE: `rank` says what we would put the customer on next, `scopeRank` says what the column they are reading says. Serve both; derive neither."
+                          },
+                          "modelEligibility": {
+                            "type": "object",
+                            "properties": {
+                              "modelAlias": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The chat-service model alias this workflow writes its content with, read from its DAG's content-generation call by workflow-service. NULL when its DAG names none (no content call, no stated model, a run-time value, or several content calls disagreeing) — never a guess."
+                              },
+                              "modelTier": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "cheap",
+                                  "strong",
+                                  "frontier"
+                                ],
+                                "description": "The capability tier chat-service RECORDS for that alias, read from its catalogue and NEVER derived from the alias string: `flash-pro` resolves to a Flash model and is CHEAP despite containing 'pro'. NULL = the tier is UNKNOWABLE on this request (the workflow names no model, the alias is absent from the catalogue, or a producer read failed) — see unknownTierReason."
+                              },
+                              "eligible": {
+                                "type": "boolean",
+                                "description": "FALSE ⟺ the tier is KNOWN and this leg's rule excludes it. An unknowable tier is always TRUE: we never exclude a workflow on a gap in our own reading, and never silently."
+                              },
+                              "ineligibleReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Why this workflow is excluded, in a form a human reads — present ⟺ eligible is false, null otherwise. Served rather than left to a consumer so two surfaces cannot word it differently."
+                              },
+                              "unknownTierReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Why the tier could not be read, same human form — present ⟺ modelTier is null. It tells 'this workflow records no model' apart from 'chat-service was unreachable' and from 'workflow-service was unreachable', which are different problems with different owners. A row carrying this is ELIGIBLE."
+                              }
+                            },
+                            "required": [
+                              "modelAlias",
+                              "modelTier",
+                              "eligible",
+                              "ineligibleReason",
+                              "unknownTierReason"
+                            ],
+                            "description": "WHETHER THE MODEL WRITING THIS WORKFLOW'S EMAILS IS RIGHT FOR THIS LEG — present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). Measured fleet-wide: the capability TIER of the model writing the content decides the outcome, and the direction depends on what the leg sells — the cheap tier badly underperforms on a leg selling a CONVERSATION, the strong and frontier tiers are wasted on one selling a WEBSITE VISIT. Every other leg restricts nothing; the study said nothing about them and nothing is invented. The verdict is STATED, never acted on here: the row is served whatever it says, with its figures, its `rank`, its `scopeRank` and its history unchanged — so campaign-service can filter on `eligible` while a customer surface can tell 'this workflow is excluded' apart from 'this workflow does not exist', including for a workflow that is excluded but has ALREADY RUN."
                           },
                           "measured": {
                             "type": "boolean",
