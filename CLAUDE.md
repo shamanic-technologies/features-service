@@ -40,10 +40,19 @@ half is a sum now too, so neither can go negative by construction.
   whole fortnight is empty. Every such bucket carries `selfServeBasis: "approximated"` plus
   `selfServeApproximatedPairCount`, and `earningRecordBeginsOn` states the boundary as a measured fact
   rather than a declared one. A RECORDED answer always beats the activity evidence, in both directions.
-- **A campaign RECORDED as `stopped` is a recorded NO, even while its audience axis is still empty**
-  (`recordedEarningOf`). campaign-service reports `earning: null` there because only one of its two axes
-  is answerable; a stopped campaign was not earning whatever the audience did, and reading it as unknown
-  would push nearly the whole fleet onto the approximated path for no reason.
+- **A campaign RECORDED as `stopped` is a recorded NO, even while its audience axis is still empty —
+  but an UNKNOWN campaign BEATS every recorded NO beside it** (`recordedEarningOf`). campaign-service
+  reports `earning: null` on a stopped campaign because only one of its two axes is answerable; a
+  stopped campaign was not earning whatever the audience did, and reading it as unknown would push the
+  whole fleet onto the approximated path for no reason. Getting the OTHER half backwards is what shipped
+  broken in v0.165.3 and needed v0.165.4: a brand with one ongoing campaign whose audience is not yet
+  recorded, sitting beside a stopped ANCESTOR (campaign-service mints a new row on every workflow switch
+  and keeps the ancestors, so nearly every real brand has some), answered a recorded FALSE and was
+  dropped from the run-rate outright — never reaching the activity fallback, and never counted in
+  `selfServeUnrecordedBudgetPairCount` either, so it vanished with nothing on the wire saying why.
+  Measured in prod on the first deploy: brand `a179bbd9…` had spent on **14 of September's days** and
+  read `selfServePairCount: 2 / selfServeUnrecordedBudgetPairCount: 0` beside it. Only a day on which
+  EVERY campaign answered can answer for the brand.
 - **AN AMOUNT IS NEVER APPROXIMATED — only the QUALIFICATION is.** A pair billing holds no budget record
   for on a day contributes NOTHING, however obviously it was working, because inventing the amount is
   the one thing that would put a number on the wire no service ever recorded. The gap is made VISIBLE
@@ -95,7 +104,7 @@ half is a sum now too, so neither can go negative by construction.
   from its own producer, the read set bounded by the reference dates, the activity fallback paid for only
   while needed, the fail-soft null, and a negative half being impossible whatever the snapshot says).
   (Set 2026-09-12 as a subtraction, features-service#927; replaced by the sum 2026-09-14,
-  features-service#949.)
+  features-service#949, with the unknown-beats-no correction in v0.165.4 the same day.)
 
 ## A LEG-KEYED READ PRICES THE LEG'S OWN STEP, SERVES ITS OWN ORDER, AND ANSWERS FOR THE CAMPAIGN — `?leg=` on `workflow-projection`, and the dashboard displays what it is served
 
@@ -261,6 +270,82 @@ arrive", so an overrun rendered as a countdown that had finished.
   degrade, the brand reading priced while the campaign inside it still gathers, and the rest of the
   body identical with the verdict and without it.
   (Set 2026-09-14, features-service#938.)
+
+## THE TIER OF THE MODEL WRITING THE EMAIL IS A PROPERTY OF THE LEG, NOT OF THE WORKFLOW — `modelEligibility`, stated on every row and acted on by nobody here
+
+We measured, fleet-wide, that the CAPABILITY TIER of the model a workflow writes its content with
+decides how that workflow performs, and that the direction of the effect depends on WHAT THE LEG
+SELLS: the cheap tier badly underperforms on a leg that has to earn a REPLY, and the strong and
+frontier tiers are money burnt on a leg that only has to earn a WEBSITE VISIT. Nothing this service
+ranked carried any notion of which model writes a workflow's content, so that finding could not be
+applied anywhere — most visibly during the EXPLORE ALLOWANCE, where the large majority of cells sit:
+an unproven workflow is priced at the channel's outreach floor whatever model it names, so the
+cheapest-cell argmin keeps handing campaign-service tiers the study says cannot work for that leg.
+
+- **THE RULE, AND NOTHING BEYOND IT** (`lib/model-tier-eligibility.ts`), keyed on the leg's own
+  `toStep` — the SAME step every leg-keyed figure is denominated in, so the thing being bought decides
+  the restriction exactly as it decides the price: a leg selling a **CONVERSATION** may be served only
+  by the **strong and frontier** tiers; a leg selling a **WEBSITE VISIT** only by the **cheap** tier;
+  **every other leg restricts nothing**. That third line is the one worth stating out loud — the study
+  says nothing about a leg selling a booked meeting, an attended meeting, a signup, a form or a paid
+  client, so nothing is excluded there and nothing is invented. Extending the rule because it "feels"
+  like it should would be a claim about data nobody measured.
+- **THE VERDICT IS STATED ON THE ROW AND THE ROW IS NEVER DROPPED.** Two consumers need the difference
+  and neither can recover it from an absence: campaign-service FILTERS on `eligible`, and the customer
+  dashboard must tell "this workflow is excluded" apart from "this workflow does not exist" — because
+  **a workflow that is excluded but has ALREADY RUN keeps appearing with its history**, exactly as a
+  retired lineage does. A dropped row is also undebuggable: "why does this workflow never run" has no
+  answer if the workflow is nowhere on the body.
+- **IT MOVES NO NUMBER.** The figures, the cascade, `rank`, `scopeRank`, the recommendation and
+  `recommendedBudgetUsd` are what they were — guarded by a case that strips the block and asserts the
+  two bodies are byte-equal with both producers up and with both down. This ship adds a verdict; the
+  consumer that acts on it is a following ship.
+- **AN UNKNOWABLE TIER IS ELIGIBLE, LOUDLY, AND THE FOUR GAPS ARE TOLD APART.** A workflow whose DAG
+  names no model, an alias chat-service's catalogue does not carry, a failed catalogue read, and a
+  failed workflow read each state their own `unknownTierReason` and leave the row ELIGIBLE. Excluding
+  a workflow because we could not read its tier would starve it on evidence we do not have, and a
+  silent degrade would leave a feature that looks live and decides nothing. Both reads are FAIL-SOFT
+  with a loud log; the per-request log names how many workflows were unreadable.
+- **THE TIER IS READ FROM chat-service AND NEVER DERIVED FROM THE ALIAS STRING.** The deployed
+  catalogue (`GET /internal/models`, `x-api-key` only, `{models:[{provider,model,capabilityTier}]}`)
+  holds TWO live counter-examples a substring rule gets wrong: **`flash-pro` is CHEAP** despite
+  containing "pro", and **`deepseek-pro` is CHEAP** because both DeepSeek aliases point at V4.1 Flash
+  (chat-service#446). Both are pinned in the guard suite. An alias two providers disagree about is
+  DROPPED from the map (loud) rather than resolved arbitrarily, and a malformed entry makes the whole
+  read fail rather than half-populating it — a half map would judge half the fleet and silently
+  excuse the rest.
+- **WHICH MODEL A WORKFLOW NAMES COMES FROM workflow-service `GET /workflows?featureSlug=&status=all`,
+  NOT from `/public/workflows`.** That listing is deliberately narrow and carries no `contentModel`;
+  the field lives on the full workflow shape, derived at read from the DAG's content-generation call.
+  Both are one call to the same service and the full listing filters by nothing but the feature, so it
+  returns the channel's whole cross-org catalogue — the exact set the projection ranks. `status=all`
+  rather than `active` so a RETIRED lineage resolves to the model its last version named instead of
+  vanishing into "no model stated"; within a dynasty the active version wins, then the highest.
+- **ONE VERDICT PER DYNASTY, attached to every row of it.** A workflow's model is a property of the
+  workflow, so two rows of one dynasty can never disagree about it (guarded).
+- **PRESENT ⟺ `?leg=` IS, so a funnel- or goal-keyed request issues ZERO extra calls and its body is
+  byte-unchanged** — which is what keeps campaign-service's production workflow selection untouched.
+  Both reads are LIVE rather than cached beside the evidence snapshot: a tier is a decision
+  chat-service records and a workflow's model is whatever its DAG names right now, so neither belongs
+  in a cell that can be half an hour old. Fired in the same round trip as the fan-out.
+- **MEASURED IN PROD 2026-09-14** (brand `75d7e3e8…` / campaign `f7b1b610…` / leg
+  `start_to_conversation`): the channel's catalogue holds **27 active dynasties**, of which **9** write
+  their emails with a cheap-tier model — `pro` ×15 and `glm-pro` are strong, `fable` and `gpt-pro` are
+  frontier, and the excluded nine are `flash` ×3, `deepseek-pro` ×3, `deepseek-flash`, `flash-pro` and
+  `glm-flash`. Note the brief that asked for this said six, counted before `deepseek-pro` was
+  repointed at a Flash model the same day: the catalogue is the source of truth and a count taken from
+  it goes stale the moment an alias moves, which is precisely why nothing here caches or re-derives it.
+- Guards: `src/lib/model-tier-eligibility.test.ts` (each case asserts the DIVERGENCE between what two
+  legs say about the SAME workflow, so a suite checking only "a verdict came back" would pass on an
+  implementation returning `eligible: true` for everything — the inert version this must not be; plus
+  the silent steps, both counter-examples, and the four gaps) and
+  `src/routes/model-tier-eligibility-grain.test.ts` — ONE fixture shaped like the reported campaign
+  (`pro` strong, `flash` cheap, `flash-pro` cheap, one workflow naming no model): the conversation and
+  visit legs excluding OPPOSITE sets of the same workflows, nothing excluded on a silent leg, the
+  excluded row keeping its figures and both ranks, one verdict per dynasty, the body byte-equal with
+  the block stripped, each of the four gaps, the provider disagreement, the malformed catalogue, the
+  request shape (`status=all`, one call each) and the funnel- and goal-keyed reads carrying none of it
+  and spending no read. (Set 2026-09-14, features-service#952.)
 
 ## A RANK SCORED OVER EVERY CELL CANNOT BE READ BESIDE ONE COLUMN — `scopeRank` orders the rows a reader is actually comparing, and the two ranks are MEANT to disagree
 

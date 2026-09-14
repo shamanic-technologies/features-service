@@ -38,6 +38,13 @@ import {
 } from "../lib/observed-picks.js";
 import { rankDeclaredFunnels } from "../lib/funnel-ranking.js";
 import {
+  eligibleTiersForStep,
+  modelEligibilityFor,
+  type ModelEligibility,
+} from "../lib/model-tier-eligibility.js";
+import { fetchModelTierCatalogueSoft } from "../lib/model-tier-client.js";
+import { fetchWorkflowContentModelsSoft } from "../lib/workflow-content-model-client.js";
+import {
   fetchPublicWorkflows,
   fetchPublicCosts,
   fetchPublicEmailStats,
@@ -244,6 +251,22 @@ export interface ProjectionRow {
    * would put the customer on next, `scopeRank` says what the column they are reading actually says.
    */
   scopeRank?: number;
+  /**
+   * WHETHER THE MODEL THIS WORKFLOW WRITES ITS EMAILS WITH IS RIGHT FOR THIS LEG — present ⟺ the
+   * caller named a `?leg=`, so every funnel- and goal-keyed body is byte-unchanged.
+   *
+   * We measured fleet-wide that the capability TIER of the model writing the content decides the
+   * outcome, and that the direction depends on what the leg sells: the cheap tier badly underperforms
+   * on a leg selling a REPLY, the strong and frontier tiers are wasted on one selling a WEBSITE
+   * VISIT. The rule and its three cases live in `lib/model-tier-eligibility.ts`.
+   *
+   * It is STATED, never acted on here: the row is served whatever the verdict says, its figures are
+   * unchanged, its `rank` and `scopeRank` are unchanged, and the recommendation is unchanged. This
+   * ship adds a verdict and moves no number. campaign-service filters on `eligible`; a customer
+   * surface reads `ineligibleReason` so an excluded workflow reads as excluded rather than as
+   * missing — and a workflow that is excluded but has ALREADY RUN keeps its history on screen.
+   */
+  modelEligibility?: ModelEligibility;
 }
 
 /**
@@ -1156,7 +1179,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // job is to say what is happening right now cannot be served from a cell half an hour old. Fired in
     // the same round trip as the fan-out (it needs only the campaign ids, not the ladder), so it costs
     // no extra wall-clock, and FAIL-SOFT so a runs blip nulls one block rather than a whole page.
-    const [evidence, effective, triggerRuns] = await Promise.all([
+    const [evidence, effective, triggerRuns, contentModels, tierCatalogue] = await Promise.all([
       servedCached({
         view: "workflow-projection-evidence",
         scopeKey: buildScopeKey(featureSlug, {
@@ -1175,6 +1198,13 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       campaignScopeIds && picksLimit > 0
         ? fetchCampaignTriggerRunsSoft(campaignScopeIds, { orgId, userId, runId, brandId }, picksLimit)
         : Promise.resolve(null),
+      // THE MODEL-TIER VERDICT'S TWO INGREDIENTS — read ONLY beside a `?leg=`, so a funnel- or
+      // goal-keyed request issues ZERO extra calls and its body is byte-unchanged. Both are FAIL-SOFT
+      // and both are LIVE rather than cached: a tier is a decision chat-service records, and a
+      // workflow's model is whatever its DAG names right now — neither belongs in a snapshot that can
+      // be half an hour old. Fired in the same round trip as the fan-out, so they cost no wall-clock.
+      legKey ? fetchWorkflowContentModelsSoft(featureSlug, identity) : Promise.resolve(null),
+      legKey ? fetchModelTierCatalogueSoft() : Promise.resolve(null),
     ]);
     // THE LEG'S BASIS FUNNEL. Ranked on the IDENTICAL `returnPerDollar` `/funnel-ranking` ranks a
     // brand's declared funnels on — one implementation, so the two surfaces can never name different
@@ -1243,6 +1273,42 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       );
     }
 
+    // ── IS THE MODEL WRITING EACH WORKFLOW'S EMAILS RIGHT FOR THIS LEG ────────────────────────────
+    //
+    // The restriction is keyed on the leg's OWN step — the same step every leg-keyed figure is
+    // denominated in — so it is known from `legKey` alone, before the basis funnel is resolved. One
+    // verdict per DYNASTY (a workflow's model is a property of the workflow, not of one of its rows),
+    // attached to every row of that dynasty inside `projectFromEvidence`.
+    //
+    // Every unknowable case stays ELIGIBLE and says why: a workflow whose DAG names no model, an
+    // alias chat-service's catalogue does not carry, and either read having failed. We never exclude
+    // a workflow on a gap in our own reading, and never silently.
+    let modelEligibilityByDynasty: Map<string, ModelEligibility> | null = null;
+    if (legKey) {
+      const leg = funnelLeg(legKey)!;
+      const restriction = eligibleTiersForStep(leg.toStep.key);
+      const dynastySlugs = new Set(evidence.workflows.map((w) => w.workflowDynastySlug));
+      modelEligibilityByDynasty = new Map(
+        [...dynastySlugs].map((slug) => [
+          slug,
+          modelEligibilityFor({
+            stepLabel: leg.toStep.label,
+            restriction,
+            modelAlias: contentModels ? (contentModels.get(slug) ?? null) : null,
+            modelsUnavailable: contentModels === null,
+            tierByAlias: tierCatalogue,
+          }),
+        ]),
+      );
+      const excluded = [...modelEligibilityByDynasty.values()].filter((v) => !v.eligible).length;
+      const unknown = [...modelEligibilityByDynasty.values()].filter((v) => v.modelTier === null).length;
+      if (unknown > 0) {
+        console.warn(
+          `[features-service] workflow-projection leg=${legKey}: ${unknown} of ${modelEligibilityByDynasty.size} workflows have no readable capability tier — left ELIGIBLE, never excluded on ignorance (${excluded} excluded by the rule)`,
+        );
+      }
+    }
+
     const pricedFunnelKey = funnelKey ?? legBasisFunnelKey;
     const response = projectFromEvidence({
       featureSlug,
@@ -1253,6 +1319,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       meetingChannel,
       ...(pricedFunnelKey ? { funnelKey: pricedFunnelKey } : {}),
       legTerms,
+      modelEligibilityByDynasty,
       evidence,
       economics: mergedEconomics,
       maximize,
@@ -1440,6 +1507,13 @@ export function projectFromEvidence(input: {
    * conversion rate in the LEG's own step, and it is what turns on the per-workflow `rank`.
    */
   legTerms?: LegOutcomeTerms | null;
+  /**
+   * The model-tier verdict per workflow DYNASTY. Read ONLY beside a `?leg=` (the rule is keyed on the
+   * leg's own step), and attached verbatim to every row of that dynasty — a verdict about a workflow
+   * cannot differ between two of its rows. Absent on every funnel- and goal-keyed read, which is what
+   * keeps those bodies byte-unchanged. It STATES; it never filters, reorders or reprices.
+   */
+  modelEligibilityByDynasty?: ReadonlyMap<string, ModelEligibility> | null;
   evidence: WorkflowProjectionEvidence;
   economics: SalesEconomics | null;
   /**
@@ -1778,6 +1852,21 @@ export function projectFromEvidence(input: {
     // byte-unchanged, which is what keeps campaign-service's production workflow selection untouched.
     if (legTerms) {
       for (const row of rows) row.rank = rankByDynasty.get(row.workflow.workflowDynastySlug);
+
+      // ── AND WHETHER THE MODEL WRITING THIS WORKFLOW'S EMAILS IS RIGHT FOR THIS LEG ─────────────
+      //
+      // Stated per row, never acted on: the order above is already fixed, the figures are untouched,
+      // and the recommendation below is chosen from the same rows it always was. A dropped row would
+      // be undebuggable ("why does this workflow never run" has no answer if it is nowhere) and would
+      // erase the history of a workflow that is excluded but has ALREADY RUN for this campaign.
+      // Absent entirely when the two reads it rests on were never made.
+      const eligibility = input.modelEligibilityByDynasty ?? null;
+      if (eligibility) {
+        for (const row of rows) {
+          const verdict = eligibility.get(row.workflow.workflowDynastySlug);
+          if (verdict) row.modelEligibility = verdict;
+        }
+      }
 
       // ── AND THE ORDER WITHIN ONE SCOPE, so a surface showing ONE grain can be read ─────────────
       //
