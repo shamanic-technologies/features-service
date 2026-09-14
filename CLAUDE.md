@@ -208,6 +208,15 @@ arrive", so an overrun rendered as a countdown that had finished.
   **two weeks** after the spend is in, so `outcomeLagDays` rides the body: it is why `learning_limited`
   is not terminal, and a consumer has to be able to SAY that rather than render a finished bar. It is
   deliberately NOT folded into `daysRemaining`, which answers only "how long until the spend is in".
+- **THE SPEND IT COUNTS FROM IS THE LEDGER'S, NOT THE CELLS'.** The cells are rolled up by workflow
+  DYNASTY, so a lineage since retired is absent from them — summing them UNDER-states what the campaign
+  committed and puts two numbers about one campaign's money on one body. Measured in prod on the first
+  deploy: **$790.53 of cells against $850.35 of ledger**, $59.82 on retired lineages, beside a
+  `costEconomics.committedCostUsd` that said the larger figure. `committedSpentUsd` is therefore read
+  from runs `groupBy=campaignId` (one call, flat in the number of campaigns), so on a campaign-scoped
+  read it IS `costEconomics.committedCostUsd`. The two are answering different questions and both are
+  right: the cells price ONE OUTCOME and must exclude a lineage that produced none; the ledger says
+  what has been SPENT. Guarded on a fixture where they diverge.
 - **THE COUNTDOWN IS PRICED AGAINST BILLING'S PER-LEG CEILING** (`GET
   /internal/brands/:brandId/legs/:legKey/daily-budget`) — a campaign is (brand, offer, channel, LEG),
   so that is the money pacing one campaign, read on the key the campaign is keyed on. `null` there is
