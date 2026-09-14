@@ -257,8 +257,8 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
         dailyBudgetUsd: 245,
         activeCount: 2,
         pairs: [
-          { orgId: AGENCY_ORG, brandId: BRAND_BIG, runningDailyBudgetUsd: 143, active: true },
-          { orgId: SAAS_ORG, brandId: BRAND_SAAS, runningDailyBudgetUsd: 102, active: true },
+          { orgId: AGENCY_ORG, brandId: BRAND_BIG, brandName: "Big Agency Brand", brandDomain: "big.example", runningDailyBudgetUsd: 143, active: true },
+          { orgId: SAAS_ORG, brandId: BRAND_SAAS, brandName: "Self Serve Co", brandDomain: "saas.example", runningDailyBudgetUsd: 102, active: true },
         ],
       }),
       recordCommittedSnapshot: async () => {},

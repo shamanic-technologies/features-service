@@ -51,6 +51,13 @@
  * WHICH ORGS ARE AGENCY IS DERIVED FROM THE STATED ROWS — an org carrying at least one — and the
  * exclusion is taken over that org's WHOLE brand set, not only its stated brands. No org id lives in
  * code; a second agency later needs no change here.
+ *
+ * THE SUM IS SERVED WITH ITS TERMS. `selfServeBreakdown` states one row per self-serve (org, brand):
+ * what it has configured, how each of the four conditions answered for it, what it actually
+ * contributed, and — when it contributed nothing — WHICH condition stopped it. The rows are emitted
+ * by the loop that adds the figure up, from the very verdicts it added, so they cannot come to
+ * disagree with the total they explain; nothing here re-derives it. A row whose exclusion cannot be
+ * attributed to one condition says `not_earning_recorded` rather than naming a plausible one.
  */
 import { bucketOf, enumerateBuckets } from "./active-users-compute.js";
 import { committedPointsByPeriod } from "./committed-mrr-compute.js";
@@ -143,6 +150,33 @@ export interface MrrSplitBucket {
   growthPct: number | null;
 }
 
+/** One self-serve customer's row behind the live SaaS run-rate — a `PairDayRow` with a name on it. */
+export interface SelfServeBrandRow extends PairDayRow {
+  /** The brand's human-readable name, from the accounts audit's own brand read. `null` = unnamed there. */
+  brandName: string | null;
+  /** The brand's domain, same source. `null` = unnamed there. */
+  brandDomain: string | null;
+}
+
+/**
+ * THE ROWS BEHIND THE LIVE SaaS FIGURE — who is counted, who is not, and which condition excluded
+ * each one. Emitted by the loop that SUMS the figure, from the same verdicts it added, so
+ * `countedMrrUsd` here is `currentSelfServeMrrUsd` rather than a second answer to one question.
+ */
+export interface SelfServeBreakdown {
+  /** The UTC day every row was evaluated on — today, the day the live figures are read on. */
+  referenceDate: string;
+  /** Σ of the rows' `countedMrrUsd` — the same number as `currentSelfServeMrrUsd`, null whenever it is. */
+  countedMrrUsd: number | null;
+  /**
+   * Σ of EVERY row's recorded amount × 30, counted or not — what the SaaS side would be worth if
+   * every customer qualified. The gap against `countedMrrUsd` is what the four conditions removed.
+   */
+  configuredMrrUsd: number;
+  /** One row per self-serve (org, brand) pair, richest first, then by brand id so the order is stable. */
+  rows: SelfServeBrandRow[];
+}
+
 export interface MrrSplit {
   /** LIVE agency MRR — Σ stated amounts in force today. */
   currentAgencyMrrUsd: number;
@@ -167,6 +201,12 @@ export interface MrrSplit {
   agencyOrgIds: string[];
   /** Every (org, brand) pair excluded from the self-serve half, as `orgId::brandId`. Sorted. */
   agencyPairKeys: string[];
+  /**
+   * The rows behind `currentSelfServeMrrUsd`. Served for the LIVE figure only: the history's buckets
+   * each carry their own counts, and a row set per bucket would put (pairs × periods) objects on a
+   * payload to explain one number a reader is looking at.
+   */
+  selfServeBreakdown: SelfServeBreakdown;
   monthly: MrrSplitBucket[];
   weekly: MrrSplitBucket[];
 }
@@ -268,6 +308,21 @@ export function recordedEarningOf(answers: CampaignDayAnswer[]): boolean | null 
   return sawRecordedNo ? false : null;
 }
 
+/**
+ * WHY A PAIR'S BUDGET DID NOT COUNT — the FIRST condition that answered no, in the evaluator's own
+ * order, so the reason is the one the arithmetic actually took rather than a plausible one chosen
+ * afterwards. `not_earning_recorded` exists precisely so that a verdict we cannot ATTRIBUTE to one
+ * axis says so instead of guessing which of the two it was.
+ */
+export type PairExclusionReason =
+  | "payment_stopped"
+  | "campaign_not_running"
+  | "audience_exhausted"
+  | "not_earning_recorded"
+  | "no_recent_activity"
+  | "no_recorded_amount"
+  | "zero_amount";
+
 /** One pair's contribution to one day's run-rate, and what evidence it rested on. */
 export interface PairDayVerdict {
   /** The pair's qualifying monthly contribution, USD (daily budget × 30), or 0. */
@@ -276,6 +331,23 @@ export interface PairDayVerdict {
   basis: FactBasis;
   /** The pair looked active while billing held no amount for it — a visible, uncounted gap. */
   budgetUnrecordedWhileActive: boolean;
+  /** Condition 1 — payment had not stopped. `null` = the day precedes billing's episode record. */
+  paymentActive: boolean | null;
+  /**
+   * Condition 2 — a campaign was running. `null` = campaign-service recorded nothing that settles it
+   * (an unknown campaign beats every recorded stop beside it, exactly as it does for the verdict).
+   */
+  campaignRunning: boolean | null;
+  /**
+   * Condition 4 — somebody was left to contact, read over the ONGOING campaigns only: a stopped
+   * campaign's audience says nothing about whether the brand was earning. `null` = not recorded, or
+   * no campaign was running to ask about.
+   */
+  audienceAvailable: boolean | null;
+  /** Condition 3 — the amount billing RECORDED as in force that day, USD/day. `null` = it held none. */
+  configuredDailyBudgetUsd: number | null;
+  /** The first condition that answered no, or `null` when the pair counted. */
+  excludedBy: PairExclusionReason | null;
 }
 
 /** The per-day facts the evaluation joins, all keyed the way each producer serves them. */
@@ -288,41 +360,139 @@ export interface DayFacts {
   recordedEarning: Map<string, Map<string, boolean | null>>;
   /** org id → billing's payment-stopped facts. */
   paymentByOrg: Map<string, PaymentStoppedFacts>;
+  /**
+   * pair key → (day → the per-campaign answers `recordedEarning` was collapsed FROM). Optional and
+   * read by NOTHING the total depends on: the verdict still comes from `recordedEarning`, so this can
+   * never move a number. It exists only to say WHICH of conditions 2 and 4 answered no, because the
+   * collapsed verdict cannot.
+   */
+  campaignAnswers?: Map<string, Map<string, CampaignDayAnswer[]>>;
+}
+
+/** Conditions 2 and 4 as campaign-service recorded them, told apart. */
+export interface RecordedCampaignAxes {
+  running: boolean | null;
+  audienceAvailable: boolean | null;
+}
+
+/**
+ * Split a day's campaign answers into the two axes, under the SAME doctrine `recordedEarningOf`
+ * applies to the verdict: an UNKNOWN campaign beats every recorded NO beside it, because a stopped
+ * ancestor says nothing whatever about a live campaign. The audience axis is read over the ONGOING
+ * campaigns alone — a stopped campaign's audience cannot make the brand earn — so a brand with no
+ * running campaign answers `null` there rather than inventing an exhaustion. Pure.
+ */
+export function campaignAxesOf(answers: CampaignDayAnswer[] | undefined): RecordedCampaignAxes {
+  if (!answers || answers.length === 0) return { running: null, audienceAvailable: null };
+
+  const running = answers.some((a) => a.status === "ongoing")
+    ? true
+    : answers.some((a) => a.status !== "stopped")
+      ? null // some campaign's status is not recorded — it could have been running
+      : false;
+
+  const ongoing = answers.filter((a) => a.status === "ongoing");
+  const audienceAvailable =
+    ongoing.length === 0
+      ? null
+      : ongoing.some((a) => a.audience === "available")
+        ? true
+        : ongoing.some((a) => a.audience === "not_recorded")
+          ? null
+          : false;
+
+  return { running, audienceAvailable };
 }
 
 /**
  * Does this pair's budget count as MRR on `day`, and on what evidence? The four conditions in order,
  * stopping at the first that answers no. Pure.
+ *
+ * Every condition's STATE is reported whether or not the evaluation reached it — a pair excluded at
+ * condition 1 still states the amount billing recorded for it, because a reader asking "what is this
+ * customer configured at" is asking a different question from "did it count". Only `excludedBy`
+ * carries the short-circuit, and it names the condition the arithmetic actually stopped at.
  */
 export function evaluatePairDay(key: string, orgId: string, day: string, facts: DayFacts): PairDayVerdict {
   let basis: FactBasis = "recorded";
 
+  const amount = facts.budgetByDay.get(key)?.get(day);
+  const axes = campaignAxesOf(facts.campaignAnswers?.get(key)?.get(day));
+  const state = {
+    paymentActive: null as boolean | null,
+    campaignRunning: axes.running,
+    audienceAvailable: axes.audienceAvailable,
+    configuredDailyBudgetUsd: amount === undefined ? null : amount,
+  };
+
   // 1. BILLING ACTIVE. A stopped payment ends it outright; an unrecorded one is a fallback, not a yes.
   const stopped = paymentStoppedOn(facts.paymentByOrg.get(orgId), day);
-  if (stopped === true) return { mrrUsd: 0, basis: "recorded", budgetUnrecordedWhileActive: false };
+  state.paymentActive = stopped === null ? null : !stopped;
+  if (stopped === true) {
+    return { mrrUsd: 0, basis: "recorded", budgetUnrecordedWhileActive: false, ...state, excludedBy: "payment_stopped" };
+  }
   if (stopped === null) basis = "approximated";
 
   // 2 + 4. RUNNING, AND SOMEBODY LEFT TO CONTACT. Recorded when campaign-service reaches this day,
   // else inferred from the pair's own billed activity around it.
   const recorded = facts.recordedEarning.get(key)?.get(day) ?? null;
   let earning: boolean;
+  let notEarningBecause: PairExclusionReason;
   if (recorded !== null) {
     earning = recorded;
+    // A recorded NO is attributed to the axis that said so; when neither axis settles it on its own,
+    // the honest answer is that we could not attribute it — never a guess between the two.
+    notEarningBecause =
+      axes.running === false ? "campaign_not_running" : axes.audienceAvailable === false ? "audience_exhausted" : "not_earning_recorded";
   } else {
     earning = activeNear(facts.activityDays.get(key), day);
     basis = "approximated";
+    notEarningBecause = "no_recent_activity";
   }
-  if (!earning) return { mrrUsd: 0, basis, budgetUnrecordedWhileActive: false };
+  if (!earning) {
+    return { mrrUsd: 0, basis, budgetUnrecordedWhileActive: false, ...state, excludedBy: notEarningBecause };
+  }
 
   // 3. AN AMOUNT IN FORCE. Never approximated: a pair billing holds no amount for contributes
   // nothing, and the gap is COUNTED rather than filled with a number nobody recorded. That is an
   // under-statement, not an approximation — a different fact, so it rides its own field and does not
   // move `basis`, which says only what the QUALIFICATION rested on.
-  const amount = facts.budgetByDay.get(key)?.get(day);
-  if (amount === undefined) return { mrrUsd: 0, basis, budgetUnrecordedWhileActive: true };
-  if (amount <= 0) return { mrrUsd: 0, basis, budgetUnrecordedWhileActive: false };
+  if (amount === undefined) {
+    return { mrrUsd: 0, basis, budgetUnrecordedWhileActive: true, ...state, excludedBy: "no_recorded_amount" };
+  }
+  if (amount <= 0) {
+    return { mrrUsd: 0, basis, budgetUnrecordedWhileActive: false, ...state, excludedBy: "zero_amount" };
+  }
 
-  return { mrrUsd: amount * MRR_DAY_MULTIPLE, basis, budgetUnrecordedWhileActive: false };
+  return { mrrUsd: amount * MRR_DAY_MULTIPLE, basis, budgetUnrecordedWhileActive: false, ...state, excludedBy: null };
+}
+
+/**
+ * ONE TERM OF THE SUM, kept so a reader can see the sum rather than take it on faith.
+ *
+ * It is emitted BY the loop that adds the figure up, from the very verdict that was added, so a row
+ * cannot come to disagree with the total it explains: Σ `countedMrrUsd` IS the side's `mrrUsd`, by
+ * construction rather than by a second pass over the same facts.
+ */
+export interface PairDayRow {
+  orgId: string;
+  brandId: string;
+  /** The amount billing RECORDED as in force that day, USD/day. `null` = it held none for this pair. */
+  configuredDailyBudgetUsd: number | null;
+  /** Condition 1 — payment had not stopped. `null` = the day precedes billing's episode record. */
+  paymentActive: boolean | null;
+  /** Condition 2 — a campaign was running. `null` = campaign-service recorded nothing that settles it. */
+  campaignRunning: boolean | null;
+  /** Condition 4 — somebody was left to contact, over the ONGOING campaigns only. `null` = not recorded. */
+  audienceAvailable: boolean | null;
+  /** Condition 3 — billing recorded a positive amount in force that day. */
+  amountInForce: boolean;
+  /** What this pair contributed to the side's run-rate, USD: its budget × 30, or 0. */
+  countedMrrUsd: number;
+  /** The first condition that answered no, or `null` when the pair counted. */
+  excludedBy: PairExclusionReason | null;
+  /** `recorded` when every input came from a producer's record; `approximated` when one fell back. */
+  basis: FactBasis;
 }
 
 /** One side's summed run-rate on one day, with the evidence it rested on. */
@@ -338,6 +508,8 @@ export interface SideSum {
   unrecordedBudgetPairCount: number;
   /** True when NOTHING on this day was on record for any pair — the only unmeasurable case. */
   nothingRecorded: boolean;
+  /** The terms of the sum, one per pair, in `pairKeys` order. Σ `countedMrrUsd` === `mrrUsd`. */
+  rows: PairDayRow[];
 }
 
 /** Σ over a set of pairs of their qualifying budget × 30 on `day`. A sum: it can never be negative. Pure. */
@@ -348,10 +520,25 @@ export function sumSideOn(pairKeys: string[], day: string, facts: DayFacts): Sid
   let unrecordedBudgetPairCount = 0;
   let anyApproximated = false;
   let anyRecordedInput = false;
+  const rows: PairDayRow[] = [];
 
   for (const key of pairKeys) {
-    const orgId = key.slice(0, key.indexOf("::"));
+    const sep = key.indexOf("::");
+    const orgId = key.slice(0, sep);
+    const brandId = key.slice(sep + 2);
     const verdict = evaluatePairDay(key, orgId, day, facts);
+    rows.push({
+      orgId,
+      brandId,
+      configuredDailyBudgetUsd: verdict.configuredDailyBudgetUsd,
+      paymentActive: verdict.paymentActive,
+      campaignRunning: verdict.campaignRunning,
+      audienceAvailable: verdict.audienceAvailable,
+      amountInForce: (verdict.configuredDailyBudgetUsd ?? 0) > 0,
+      countedMrrUsd: usd2(verdict.mrrUsd),
+      excludedBy: verdict.excludedBy,
+      basis: verdict.basis,
+    });
     if (verdict.basis === "approximated") anyApproximated = true;
     // A pair EXCLUDED on recorded evidence is as much a recorded input as one that counted.
     if (verdict.basis === "recorded") anyRecordedInput = true;
@@ -371,6 +558,7 @@ export function sumSideOn(pairKeys: string[], day: string, facts: DayFacts): Sid
     approximatedPairCount,
     unrecordedBudgetPairCount,
     nothingRecorded: pairKeys.length > 0 && !anyRecordedInput,
+    rows,
   };
 }
 
@@ -389,6 +577,12 @@ export interface MrrSplitInputs {
   currentMrrUsd: number;
   /** Earliest UTC day campaign-service has any recorded status/audience answer, or null. */
   earningRecordBeginsOn: string | null;
+  /**
+   * pair key → the brand's name and domain, for the breakdown rows. Taken from the accounts audit,
+   * which already batches that read for its own table, so naming a brand costs nothing extra. An
+   * absent pair is reported with a `null` name rather than an invented one.
+   */
+  brandNamesByPair?: Map<string, { name: string | null; domain: string | null }>;
 }
 
 /** The agency orgs, derived: any org carrying at least one stated amount, whatever its date range. Pure. */
@@ -542,7 +736,44 @@ export function buildMrrSplit(inputs: MrrSplitInputs, now: Date, windows: { week
     earningRecordBeginsOn: inputs.earningRecordBeginsOn,
     agencyOrgIds: agencyOrgIdsOf(inputs.statedRows),
     agencyPairKeys: agencyKeys,
+    selfServeBreakdown: breakdownOf(self, todayIso, currentSelfServeMrr, inputs.brandNamesByPair),
     monthly,
     weekly,
+  };
+}
+
+/**
+ * Name the terms of the live self-serve sum and order them for reading. The FIGURES are the ones the
+ * sum already produced — this joins a name onto each and sorts; it recomputes nothing, so the rows
+ * cannot disagree with the total they explain. Pure.
+ */
+function breakdownOf(
+  self: SideSum,
+  referenceDate: string,
+  countedMrrUsd: number | null,
+  names: Map<string, { name: string | null; domain: string | null }> | undefined,
+): SelfServeBreakdown {
+  const rows: SelfServeBrandRow[] = self.rows.map((r) => {
+    const named = names?.get(pairKey(r.orgId, r.brandId));
+    return { ...r, brandName: named?.name ?? null, brandDomain: named?.domain ?? null };
+  });
+  // Richest first — a reader scanning for "who is this figure" wants the customers that carry it —
+  // then by brand id, so two brands on the same amount always come back in the same order.
+  rows.sort((a, b) => {
+    if (b.countedMrrUsd !== a.countedMrrUsd) return b.countedMrrUsd - a.countedMrrUsd;
+    const ca = a.configuredDailyBudgetUsd ?? 0;
+    const cb = b.configuredDailyBudgetUsd ?? 0;
+    if (cb !== ca) return cb - ca;
+    return a.brandId < b.brandId ? -1 : a.brandId > b.brandId ? 1 : 0;
+  });
+
+  let configured = 0;
+  for (const r of rows) configured += (r.configuredDailyBudgetUsd ?? 0) * MRR_DAY_MULTIPLE;
+
+  return {
+    referenceDate,
+    countedMrrUsd: countedMrrUsd === null ? null : usd2(countedMrrUsd),
+    configuredMrrUsd: usd2(configured),
+    rows,
   };
 }
