@@ -295,6 +295,51 @@ critère de ranking"*.
   last everywhere, the objective flipping the scope order, and the funnel- and goal-keyed reads
   carrying neither rank. (Set 2026-09-13, features-service#935.)
 
+## THE GRID IS CONSUMED CELL BY CELL — campaign-service argmins WITHIN an audience's column, so a row's cheapest cell no longer wins the whole campaign
+
+The section above states that `rank` and `scopeRank` are MEANT to disagree, and it is written for a
+READER comparing a column. It says nothing about which order the SELECTOR takes them in, and that
+turned out to be the thing that decided what actually ran.
+
+campaign-service used to argmin `resolved.costPerOutcomeUsd` over EVERY row we serve — the whole
+grid, brand rows and audience cells together — pick the winning dynasty at the trigger, and only
+then pick an audience from that dynasty's rows inside the DAG. So the cells a run could ever land
+on were ONE ROW of the grid. A workflow whose single cheapest cell won that global argmin then ran
+on every audience, including the ones it is worst on, and the starvation was self-reinforcing: a
+workflow that never runs never earns evidence, so it never wins.
+
+- **MEASURED IN PROD 2026-09-14**, the campaign of the section above (brand `75d7e3e8…` / campaign
+  `f7b1b610…` / leg `start_to_conversation`): `lithium` is **$20 on ONE audience and $185 to $572 on
+  the other eleven**, and it took **2,554 of the campaign's 2,759 leads** across every audience.
+  `alioth` — **$21 on ten of the twelve columns** — had never served a single lead. The customer
+  read the Workflows table and asked why the running workflow is not the best one for the audience
+  it is being run on. It was a fair question and the answer was the consumption order.
+- **THE ORDER IS INVERTED NOW, AND IT IS THE CONSUMER'S CHANGE, NOT OURS** (campaign-service
+  v0.72.0, behind workflow-service v0.47.1 which carries the chosen audience from the execute call
+  into the start-run callback). The audience is Thompson-picked first over its POOLED column — every
+  workflow's evidence for that audience summed, so the audience is judged on what the money actually
+  buys rather than on how it did under whichever workflow is winning — and the workflow is then the
+  cheapest cell WITHIN that column. Nothing about what we PRICE moved, and no parameter sent to us
+  changed: the cells and their ordering are identical, only which argmin is taken and in what order.
+- **WE STILL SERVE BOTH RANKS AND BOTH STILL MEAN WHAT THEY MEANT.** `rank` remains the dynasty's
+  global argmin and `recommendedWorkflowDynastySlug` is still its head — that is what we would put
+  the customer on next, and it is a genuine answer. What changed is that it is no longer what the
+  selector reads, so **a change to `rank` no longer moves what runs**. `scopeRank` is the order the
+  selector's second leg now agrees with. A future change to either must say which of the two it is
+  moving.
+- **DO NOT "FIX" THE TIE AT THE EXPLORE FLOOR WITH A SHUFFLE.** 252 of the 288 cells sit at the same
+  crossOrg floor, so the per-column argmin ties constantly and breaks on the dynasty slug. That looks
+  like it would pin one alphabetically-first workflow forever and it does not: the floor is
+  `max(own spend, parent)`, so consuming a workflow raises its OWN floor and rotates it out, and the
+  catalogue sweeps by attrition. That convergence is the explore/exploit mechanism this file already
+  states one section down for a single workflow — it holds per cell too. Adding randomisation would
+  replace a self-correcting sweep with noise.
+- **EXPECT THE MEASURED LEADER TO STOP RUNNING FOR A WHILE AFTER A CHANGE LIKE THIS, and do not read
+  it as a fault.** The explore floor ($21) sits about eight times below the measured leader ($175),
+  so every unproven workflow beats `lithium` in eleven of twelve columns until it has spent its way
+  past the floor — roughly $500 across the catalogue, about two days at this campaign's rate.
+  (Set 2026-09-14, campaign-service#456 / workflow-service#423.)
+
 ## A FUNNEL IS PRICED ON THE RATES IT DECLARES — each funnel states its OWN ladder, and the rung in the MIDDLE of one is worth more than the rung below it
 
 A brand selling FORM MAGNET (`Website visit → Form filled → Paid client`) read its funnel Overview and
@@ -4266,25 +4311,6 @@ explicitly: when a change BREAKS a recorded series (a snapshot basis that cannot
 beside the section that DESCRIBES that series, not only in the section that caused it — a reader of the
 curve will not be reading the section that moved it.
 
-## A CHANGE THAT SUPERSEDES A DOCUMENTED RULE UPDATES THIS FILE IN THE SAME PR
-
-Most sections here open by stating an invariant and then say "do NOT re-litigate". That wording is what
-makes the next agent trust them, so a section describing a rule the code no longer follows is worse than
-no section: it is a premise someone will build on. `tsc` and the suite cannot catch it — the tests were
-rewritten around the new rule and pass, while the doc keeps asserting the old one.
-
-Before opening a PR that changes a RULE (a verdict, a precedence, a basis, a producer, a field name a
-section names), `git grep` this file for the identifiers you touched and rewrite every section that
-answers with the old rule — including the SIBLING surfaces that share the code (`accountStatus` is read
-by the accounts audit, send-forecast and customer-health, so one rule change is three sections). State
-what it supersedes and why, so the reasoning that produced the old rule is not re-derived later.
-
-Cost 2026-08-27 (#837 → #838): the accounts audit moved to campaign-service's running budget and dropped
-the brand pause flag, and this file went on documenting the pause-first precedence, `dailyBudgetUsd`, and
-billing as the budget source in four places — a second PR the same day. Corollary the brief named
-explicitly: when a change BREAKS a recorded series (a snapshot basis that cannot be replayed), say so
-beside the section that DESCRIBES that series, not only in the section that caused it — a reader of the
-curve will not be reading the section that moved it.
 
 ## OpenAPI Rule
 
