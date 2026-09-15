@@ -426,7 +426,11 @@ router.get("/offers/:offerId/audience-stats", apiKeyAuth, async (req, res) => {
         econ,
       }),
       orgId: headers.orgId,
-      compute: () => computeAudienceStats(req, pricing, campaignIds, channels),
+      // The offer is NAMED in the path, so the declared-funnel read is priced on its own terms
+      // rather than on brand-service resolving a sole offer — which it refuses to do (409
+      // SEVERAL_OFFERS) for a brand selling more than one. A single-offer brand resolves to the same
+      // offer either way, so its body is byte-unchanged.
+      compute: () => computeAudienceStats(req, pricing, campaignIds, channels, offerId),
     });
     if (!result.ok) return res.status(result.status).json({ error: result.error });
     res.json({ offerId, channels: describeChannels(channels), ...result.envelope });
