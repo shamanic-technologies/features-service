@@ -87,6 +87,7 @@ import {
   type PublicChannel,
 } from "../lib/channel-catalogue.js";
 import { pricePair, type PairResult } from "../lib/channel-funnel-economics.js";
+import { minimumCommitmentDaysFor } from "../lib/funnel-commercial-terms.js";
 import {
   buildFleetReturnOnSpend,
   parseMinSpendUsd,
@@ -2730,6 +2731,10 @@ interface ChannelFunnelPairRow {
   funnelName: string;
   /** The funnel's steps in order, so a row renders without the consumer knowing the catalogue. */
   funnelSteps: readonly string[];
+  /** The FUNNEL's own minimum commitment, in whole days. `null` = none — a written statement, never
+   *  a gap (most funnels carry none today). A buyer is bound by BOTH this and the channel's
+   *  `terms.minimumCommitmentDays`; the stricter of the two governs the booking. */
+  minimumCommitmentDays: number | null;
   result: PairResult;
 }
 
@@ -2778,6 +2783,7 @@ async function buildChannelFunnelEconomics(channels: readonly PublicChannel[]): 
       funnelKey: funnel.key,
       funnelName: funnel.name,
       funnelSteps: funnel.steps,
+      minimumCommitmentDays: minimumCommitmentDaysFor(funnel.key),
       result: pricePair({ funnelKey: funnel.key, unitCosts, economics, lifetimeRevenueUsd, evidence }),
     }));
   });

@@ -122,6 +122,16 @@ describe("building the public catalogue", () => {
       "Meeting attended",
       "Paid client",
     ]);
+    // Each funnel entry carries the FUNNEL's own minimum commitment, per (channel × funnel) — the term
+    // a payment screen states before checkout. NULL = none, and it is per funnel, never the channel's.
+    expect(channel.salesFunnels.map((f) => [f.key, f.minimumCommitmentDays])).toEqual([
+      ["sales_meetings_from_conversation", 30],
+      ["sales_meetings_from_website", null],
+      ["website_purchases", null],
+      ["form_magnet", null],
+    ]);
+    // The CHANNEL's own terms are unchanged and stand beside it — a buyer is bound by both.
+    expect(channel.terms.minimumCommitmentDays).toBe(CHANNEL.terms.minimumCommitmentDays);
   });
 
   it("a channel producing only an on-platform step publishes an EMPTY funnel list, and still publishes", () => {
