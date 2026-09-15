@@ -49,7 +49,12 @@
  * would be the silent fallback this fleet forbids.
  */
 import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
-import type { CampaignIdentityRow } from "./campaign-identity.js";
+import {
+  buildCampaignFamilies,
+  EMPTY_CAMPAIGN_FAMILIES,
+  type CampaignFamilies,
+  type CampaignIdentityRow,
+} from "./campaign-identity.js";
 
 /**
  * A brand's campaigns, partitioned by the offer they sell.
@@ -152,4 +157,63 @@ export async function resolveOfferCampaignIds(
   const campaignIds = (await fetchOfferCampaigns(brandId, featureSlug, headers)).campaignIdsOf(offerId);
   if (campaignIds.length === 0) throw new OfferHasNoCampaignsError(offerId, brandId, featureSlug);
   return campaignIds;
+}
+
+/**
+ * THE TWO GRAINS A CAMPAIGN ROW CARRIES, OFF ONE READ — a campaign's IDENTITY family and the OFFER it
+ * sells. Both are built from `fetchBrandCampaignRows`, so asking for both costs the byte-same single
+ * `/campaigns` request the identity read already made.
+ *
+ * ── WHY THE OFFER HAS TO BE RESOLVED HERE, and cannot be a query parameter ──────────────────────
+ *
+ * A declared funnel hangs off an OFFER: a brand selling a $200 self-serve plan and a $20k contract
+ * converts and is worth completely different numbers on the same funnel. So brand-service refuses a
+ * brand-scoped declaration read for a brand selling several (409 `SEVERAL_OFFERS`) rather than serving
+ * one proposition's economics under the other's name — and a read that never named an offer 502s.
+ *
+ * A campaign sells exactly ONE offer, so a request that names a campaign has already named the offer,
+ * transitively. Asking the consumer to send it as well is not available: `/audience-stats` 400s when
+ * `offerId` and `campaignId` arrive together, precisely because a campaign already answers it. So the
+ * only path that works is resolving it server-side, from the producer that owns the campaign row.
+ *
+ * FAIL-SOFT, like the identity families it travels with: with campaign-service unreachable the offer is
+ * simply unknown, the declaration read stays brand-scoped, and the surface degrades exactly as it does
+ * today. A guessed offer would price one proposition's rates under another's name — the one outcome
+ * worse than not answering.
+ */
+export interface CampaignScope {
+  families: CampaignFamilies;
+  offers: OfferCampaigns;
+  /** The offer a campaign sells, or `undefined` when the producer states none / could not be read. */
+  offerOf(campaignId: string | undefined): string | undefined;
+}
+
+function buildCampaignScope(rows: CampaignIdentityRow[]): CampaignScope {
+  const families = buildCampaignFamilies(rows);
+  const offers = buildOfferCampaigns(rows);
+  return {
+    families,
+    offers,
+    offerOf: (campaignId) => (campaignId ? (offers.offerIdOf(campaignId) ?? undefined) : undefined),
+  };
+}
+
+/** The soft read every stats surface takes: one `/campaigns` call, both grains, never a throw. */
+export async function fetchCampaignScopeSoft(
+  brandId: string,
+  featureSlug: string,
+  headers: { orgId: string; userId?: string; runId?: string },
+): Promise<CampaignScope> {
+  try {
+    return buildCampaignScope(await fetchBrandCampaignRows(brandId, featureSlug, headers));
+  } catch (error) {
+    console.warn(
+      `[features-service] campaign scope unavailable (per-campaign totals stay ungrouped and the declared-funnel read stays brand-scoped): ${(error as Error).message}`,
+    );
+    return {
+      families: EMPTY_CAMPAIGN_FAMILIES,
+      offers: EMPTY_OFFER_CAMPAIGNS,
+      offerOf: () => undefined,
+    };
+  }
 }

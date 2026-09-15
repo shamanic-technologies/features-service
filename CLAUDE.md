@@ -1,5 +1,68 @@
 # Features Service — CLAUDE.md
 
+## A DECLARED FUNNEL HANGS OFF AN OFFER — a campaign already names one, and the BRAND grain of a several-offer brand DEGRADES with a named reason instead of 502-ing
+
+A brand can sell more than one OFFER, and each carries its own conversion rates, its own lifetime
+revenue and its own value proposition. So "what does this BRAND declare" genuinely has no single
+answer, and brand-service refuses it: `GET /internal/brands/:brandId/sales-funnels` answers **409
+`SEVERAL_OFFERS`** for a brand selling several unless `?offerId=` names one, rather than serving one
+proposition's economics under the other's name. features-service turned that refusal into a
+`502 declared_funnels_unavailable`, and from the moment an org clicked "create offer" a second time —
+2026-09-09 13:50 UTC, org `f0420eb5…` on brand `f4d73dab…` (distribute.you), offers Product-led
+`832126f3…` and Sales-led `5a2868bb…` — the campaign Workflows matrix, the audience cost columns and
+the best-model figures were blank on every poll. `/revenue` was unaffected, and that was the tell: it
+already passed `offerId` through and already degraded fail-soft. It stays UNTOUCHED; do not
+"harmonise" it onto this path.
+
+- **A CAMPAIGN SELLS EXACTLY ONE OFFER, SO A REQUEST NAMING A CAMPAIGN HAS ALREADY NAMED THE OFFER —
+  and it cannot name it any other way.** `/audience-stats` 400s when `offerId` and `campaignId` arrive
+  together (a campaign already answers it), so resolving it SERVER-SIDE is the only path that works;
+  adding an `?offerId=` parameter to `workflow-projection` would have needed a dashboard change and
+  would still not have fixed the campaign-scoped reads. `fetchCampaignScopeSoft`
+  (`lib/offer-scope.ts`) serves the identity family AND the offer partition off the byte-same single
+  `/campaigns` read the identity resolution already made, so the offer costs no extra IO. On
+  `/workflow-projection` that read therefore had to move ABOVE the declared-funnel read it now feeds.
+- **DO NOT PICK AN OFFER WHEN NOTHING NAMES ONE.** That is precisely the guess brand-service refuses
+  to make, and it would price one proposition's rates under another's name. FAIL-SOFT wherever the
+  offer cannot be resolved (campaign-service unreachable ⇒ the offer is simply unknown and the read
+  behaves exactly as it did before this change) — never a guessed offer, never a blend.
+- **THE BRAND GRAIN DEGRADES AND SAYS WHY, in ONE vocabulary across three endpoints.**
+  `declaredFunnelsGap: {reason: "several_offers", offers: [{offerId, name}], message}` rides
+  `/audience-stats`, `/workflow-projection` and `/funnel-ranking`, and it is ABSENT for every brand
+  selling one thing — so their bodies are byte-unchanged (guarded). The offers are the producer's own
+  list off its 409 body, so the refusal is ACTIONABLE: a consumer puts an offer chooser in front of
+  the reader instead of an unexplained dash. Projected figures go `null`, never 0 and never borrowed
+  from one of the two propositions; `funnelCoverage` is ABSENT rather than claiming a set nobody read;
+  a leg-keyed read at brand grain serves NO `leg` block rather than naming a basis funnel it never
+  read. `/funnel-ranking` answers 200 `arbitration.status: "unrankable"` / `reason: "several_offers"`
+  with `economics: null` — the brand-wide set is NOT either offer's terms, which is the whole reason
+  the read could not be answered — and takes `?offerId=` to rank one proposition properly.
+- **`SeveralOffersError` IS A SUBCLASS OF `SalesFunnelsUnavailableError`, on purpose.** Every call
+  site this change did not teach to degrade keeps its documented 502 instead of falling through to an
+  unhandled 500, and a site that CAN degrade catches the subclass FIRST. The two are never conflated:
+  "we could not read the authorized set" (transport, a non-OK response, an EMPTY list — a producer
+  gap) stays distinguishable from "you have to tell us which proposition you are pricing". A 409 that
+  does not carry the `SEVERAL_OFFERS` code is a plain unavailable (guarded).
+- **`fetchDeclaredFunnelKeys` ANSWERS A STRICTLY NARROWER QUESTION, so it COMPOSES where a rate does
+  not.** It returns which funnels, as a SET — and a set composes. On a several-offer brand it reads
+  each offer the producer NAMED ON ITS OWN 409 and returns the UNION in catalogue order, deduped:
+  nothing is averaged, and no funnel appears that some offer did not declare. An offer whose own
+  declaration is unreadable is logged and left out rather than erasing its sibling's funnels; with NO
+  offer answering, the refusal is re-thrown, because at that point we know nothing. That is what takes
+  the staff customer-health board and the cross-org cost-per-outcome buckets off the 409. A caller that
+  NAMED an offer pays no fan-out.
+- Guards: `src/lib/several-offers-declaration.test.ts` (the producer's real 409 body, read off prod
+  2026-09-15; the subclass; the non-`SEVERAL_OFFERS` 409; the offer on the wire and its ABSENCE for a
+  single-offer brand; the union, deduped and in catalogue order; one unreadable offer; no offer
+  answering; the campaign→offer resolution off ONE `/campaigns` read; the fail-soft degrade) and
+  `src/routes/several-offers-grain.test.ts` — ONE fixture where the two offers declare the SAME funnel
+  twenty times apart ($200 self-serve against a $20,000 contract) on one brand, one evidence set. Every
+  case asserts the DIVERGENCE, so a suite that only checked "it answered 200" would pass on an
+  implementation that served whichever offer brand-service happened to resolve — the outcome worse
+  than the 502 this replaces. Plus the byte-unchanged single-offer bodies on all three endpoints, the
+  goal-keyed read that spends no declaration call at all, and a genuine outage still 502-ing.
+  (Set 2026-09-15, features-service#971.)
+
 ## BOTH HALVES OF THE RUN-RATE ARE SUMS — the SaaS half is summed over the customers who were EARNING that day, the four conditions come from the services that RECORD them, and an approximated period says so on the wire
 
 The staff Revenue page states ONE committed MRR for the whole fleet, `Σ active daily budget × 30`. That
@@ -2910,6 +2973,10 @@ across the whole fleet plus a mapping for the objectives that have no funnel at 
   throwing `SalesFunnelsUnavailableError` ⇒ **502 `reason: "authorized_goals_unavailable"`** naming what
   failed — never a substituted default set. The wire `reason` keeps that legacy spelling on purpose:
   campaign-service matches on it verbatim to tell "no ranking yet" from a genuine fault.
+  **A brand selling SEVERAL OFFERS is NOT that case and is no longer a 502** — it answers 200
+  `arbitration.status: "unrankable"` / `reason: "several_offers"` with the offers on
+  `declaredFunnelsGap`, and `?offerId=` ranks one of them. See the several-offers section at the top
+  of this file.
 - **THE TWO MEETING FUNNELS are ranked SEPARATELY AND PRICED APART (supersedes #704–#711).**
   They used to collapse into one `meetingBooked` entry whose rates unioned
   and whose lifetime revenue took the LOWEST of the two, because a single-elected-goal answer had no
@@ -4637,7 +4704,8 @@ carries `returnPerDollar` / `costPerPaidClientUsd` / `costOfAcquisitionPct` for 
 - **A brand that declared NOTHING has no answer here, and it is distinguishable: 502
   `reason: "declared_funnels_unavailable"`** — the same producer-gap doctrine as `/funnel-ranking` (an
   empty declaration is a gap, not "sells through nothing"), never a zero return and never a substituted
-  set. A brand whose funnels price but state no lifetime revenue reads `null` on every return field with
+  set. A brand selling SEVERAL OFFERS is a DIFFERENT statement and is no longer a 502 — it answers 200
+  with `declaredFunnelsGap`; see the several-offers section at the top of this file. A brand whose funnels price but state no lifetime revenue reads `null` on every return field with
   `reason: "no_return_defined"` — a different statement from an unreadable declaration, and neither is 0.
 - **NAMING A FUNNEL IS UNCHANGED, byte for byte** — one funnel, its own cost columns, its own `cpc`/`cppr`
   order, no `funnelCoverage`, no `basisFunnelKey`. The campaign level genuinely sells ONE funnel, so that

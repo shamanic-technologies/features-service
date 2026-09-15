@@ -18,7 +18,12 @@ import {
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
 import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "./sales-funnels.js";
-import { fetchDeclaredSalesFunnels } from "./sales-funnels-client.js";
+import {
+  fetchDeclaredSalesFunnels,
+  declaredFunnelsGapOf,
+  SeveralOffersError,
+  type DeclaredFunnelsGap,
+} from "./sales-funnels-client.js";
 import { declaredEconomicsForFunnel, declaredFunnelsToRank } from "./declared-funnels.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 import { mapWithConcurrency } from "./concurrency.js";
@@ -229,6 +234,14 @@ export interface AudienceStatsEnvelope {
   goal: Goal | null;
   /** Present ONLY on the brand-level (funnel-less) read; absent when the caller named a funnel/goal. */
   funnelCoverage?: AudienceStatsFunnelCoverage;
+  /**
+   * WHY THE PROJECTED COLUMNS ARE NULL, when they are null because we could not resolve which funnels
+   * the brand declared. Present only for a brand selling SEVERAL offers on a read that named none —
+   * absent for every brand selling one thing, so their payload is byte-unchanged. It carries the offers
+   * brand-service named, so a consumer can ask the reader which proposition they mean instead of
+   * rendering an unexplained dash. Never a pick made on the org's behalf.
+   */
+  declaredFunnelsGap?: DeclaredFunnelsGap;
   brandProfileId: string | null;
   sortMetric: SortMetric;
   audiences: AudienceStatsRow[];
@@ -485,6 +498,8 @@ interface DeclaredFunnelProjection {
   /** Every declared funnel priced, on the brand-level read; `null` on a single-funnel read. */
   priced: PricedFunnel[] | null;
   coverage?: AudienceStatsFunnelCoverage;
+  /** Set when the brand's declaration could not be resolved because it sells several offers. */
+  gap?: DeclaredFunnelsGap;
 }
 
 /**
@@ -508,11 +523,38 @@ async function projectDeclaredFunnels(
   identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
   pricing: Pricing,
   audienceIds: string[],
+  /** WHICH offer's declaration — resolved from the campaign this read is scoped to, else undefined. */
+  offerId?: string,
 ): Promise<DeclaredFunnelProjection> {
-  const [declared, evidence] = await Promise.all([
-    fetchDeclaredSalesFunnels(brandId, orgId),
+  const [declaredResult, evidence] = await Promise.all([
+    fetchDeclaredSalesFunnels(brandId, orgId, offerId).then(
+      (funnels) => ({ funnels, gap: undefined as DeclaredFunnelsGap | undefined }),
+      (error: unknown) => {
+        // A brand selling SEVERAL offers has no single declaration to price the BRAND on — each offer
+        // carries its own rates and its own lifetime revenue. Combining them would put a number under a
+        // proposition nobody stated, and picking one is the guess brand-service refuses to make. So the
+        // projected columns degrade to "we could not estimate this" and the payload SAYS WHY, naming the
+        // offers a caller can choose from. Every other failure stays fail-loud (the route's 502).
+        if (error instanceof SeveralOffersError) return { funnels: [], gap: declaredFunnelsGapOf(error) };
+        throw error;
+      },
+    ),
     fetchBrandProjectionEvidence(brandId, featureSlug, identity, pricing, audienceIds),
   ]);
+  const declared = declaredResult.funnels;
+  // Nothing declared that we could read → no funnel to price and no coverage to claim. The cost columns
+  // fall back to each audience's own spend exactly as they do at cold start, never to a fabricated parent.
+  if (declaredResult.gap) {
+    return {
+      parents: {
+        cpcUsd: null, cpprUsd: null, cpfsUsd: null, cpsUsd: null, cpsaleUsd: null, cpsmUsd: null,
+        byAudience: new Map(), costPerPaidClientUsd: null, lifetimeRevenueUsd: null,
+        pricingReason: "no_economics",
+      },
+      priced: null,
+      gap: declaredResult.gap,
+    };
+  }
   const rankable = declaredFunnelsToRank(declared).sort(
     (a, b) => salesFunnelIndex(a.funnelKey) - salesFunnelIndex(b.funnelKey),
   );
@@ -973,6 +1015,12 @@ export async function computeAudienceStats(
   // frozen link; WITHOUT them, one BRAND-WIDE read per channel — the brand grain, where `brandId` is
   // already the producer's filter and enumerating campaigns could only narrow it wrongly.
   scopeChannels?: ScopeChannel[],
+  // WHICH OFFER'S declaration prices this read — resolved by the route from the campaign it is scoped
+  // to (a campaign sells exactly one offer, so a request naming a campaign has already named it), or
+  // from an explicit `?offerId=`. Absent → the brand-scoped declaration read, byte-identical to today
+  // for every brand selling one thing. A brand selling several then has no single answer and the
+  // projected columns degrade with a named reason rather than 502-ing the page.
+  offerId?: string,
 ): Promise<ComputeResult> {
   const featureSlug = req.params.featureSlug;
   const featureScope: FeatureScope = scopeChannels ? scopeChannels.map((c) => c.featureSlug) : featureSlug;
@@ -1026,8 +1074,21 @@ export async function computeAudienceStats(
 
   // A funnel-keyed request prices on the funnel's OWN declared terms, exactly as the ranking does — read
   // from the same declared list, and only on the funnel path so no goal-keyed request pays for it.
+  let declaredFunnelsGap: DeclaredFunnelsGap | undefined;
   const funnelEconomics = funnelKey
-    ? declaredEconomicsForFunnel(await fetchDeclaredSalesFunnels(brandId, orgId), funnelKey)
+    ? declaredEconomicsForFunnel(
+        await fetchDeclaredSalesFunnels(brandId, orgId, offerId).catch((error: unknown) => {
+          // The funnel the CALLER named is still what this read prices; what a several-offer brand costs
+          // us is the funnel's OWN declared terms, so the projection falls through to the brand-wide
+          // effective economics — a poorer answer, never a borrowed one. Said out loud on the payload.
+          if (error instanceof SeveralOffersError) {
+            declaredFunnelsGap = declaredFunnelsGapOf(error);
+            return [];
+          }
+          throw error;
+        }),
+        funnelKey,
+      )
     : null;
 
   const audienceIds = audiences.map((audience) => audience.id);
@@ -1066,7 +1127,7 @@ export async function computeAudienceStats(
     mapWithConcurrency(scopeSlugs, 4, async (slug): Promise<DeclaredFunnelProjection & { featureSlug: string }> => {
       const projection =
         normalizedGoal === null
-          ? await projectDeclaredFunnels(brandId, slug, orgId, identity, pricing, audienceIds)
+          ? await projectDeclaredFunnels(brandId, slug, orgId, identity, pricing, audienceIds, offerId)
           : await fetchBrandProjectedParents(
               brandId,
               slug,
@@ -1089,6 +1150,8 @@ export async function computeAudienceStats(
   const engagement = engagementResult.perAudience;
   const brandProjected = projected.parents;
   const coverage = projected.coverage;
+  // The funnel-keyed read records its own gap above; the brand-level read's comes off the projection.
+  const gap = declaredFunnelsGap ?? projected.gap;
   /**
    * The return for one grain: on a single-funnel read, that funnel's own figure (byte-identical to
    * before); on the brand-level read, the best-returning of the brand's declared funnels.
@@ -1224,6 +1287,9 @@ export async function computeAudienceStats(
       brandId,
       goal: normalizedGoal,
       ...(coverage ? { funnelCoverage: coverage } : {}),
+      // Present ONLY when the brand's declaration could not be resolved — absent for every brand selling
+      // one thing, so their body is byte-unchanged.
+      ...(gap ? { declaredFunnelsGap: gap } : {}),
       brandProfileId,
       sortMetric,
       audiences: audiencesOut,

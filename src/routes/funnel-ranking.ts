@@ -5,7 +5,13 @@ import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { declaredFunnelsToRank } from "../lib/declared-funnels.js";
-import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError, UnknownSalesFunnelError } from "../lib/sales-funnels-client.js";
+import {
+  fetchDeclaredSalesFunnels,
+  declaredFunnelsGapOf,
+  SalesFunnelsUnavailableError,
+  SeveralOffersError,
+  UnknownSalesFunnelError,
+} from "../lib/sales-funnels-client.js";
 import { rankDeclaredFunnels } from "../lib/funnel-ranking.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
@@ -80,6 +86,14 @@ const handleFunnelRanking = async (req: Request, res: Response) => {
   }
   const maximize = maximizeParam.maximize;
 
+  // WHICH OFFER'S DECLARATION IS BEING RANKED. A declared funnel hangs off an offer — each carries its
+  // own conversion rates and its own lifetime revenue — so a brand selling several has no brand-scoped
+  // declaration and brand-service refuses one (409). This endpoint has no campaign to resolve it from
+  // (it ranks the brand's whole declared set), so a caller that knows which proposition it is asking
+  // about names it here; one that does not gets an `unrankable` verdict naming the offers to pick from,
+  // never a ranking over funnels priced on different propositions.
+  const offerId = ((req.query.offerId as string | undefined) ?? "").trim() || undefined;
+
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) {
@@ -104,12 +118,51 @@ const handleFunnelRanking = async (req: Request, res: Response) => {
       // reported below with its own reason, never as a substituted set.
       // The org is part of the QUESTION, not just of the auth: a brand id is shared by every org that
       // claims the same domain, so we must say whose declared set we want.
-      fetchDeclaredSalesFunnels(brandId, identity.orgId),
+      // A brand selling SEVERAL offers on a read that named none is not an outage and not an empty
+      // declaration: it is a question with no single answer. It resolves to `null` here and becomes an
+      // `unrankable` verdict below — the shape campaign-service already reads as "no ranking yet" —
+      // rather than the 502 that blanks the page.
+      fetchDeclaredSalesFunnels(brandId, identity.orgId, offerId).then(
+        (funnels) => ({ funnels, gap: null as ReturnType<typeof declaredFunnelsGapOf> | null }),
+        (error: unknown) => {
+          if (error instanceof SeveralOffersError) return { funnels: null, gap: declaredFunnelsGapOf(error) };
+          throw error;
+        },
+      ),
     ]);
+
+    if (funnels.gap) {
+      return res.json({
+        featureSlug,
+        maximize,
+        ranking: [],
+        recommendation: null,
+        arbitration: {
+          status: "unrankable" as const,
+          funnelKey: null,
+          goal: null,
+          objective: null,
+          reason: "several_offers" as const,
+          returnPerDollar: null,
+          conversionRatePct: null,
+          costPerOutcomeUsd: null,
+          costPerPaidClientUsd: null,
+          grain: null,
+        },
+        workflow: null,
+        declaredFunnelsGap: funnels.gap,
+        // No funnel was projected, so there are no terms to echo — and the brand-wide effective set is
+        // emphatically NOT them: each offer carries its own rates and its own lifetime revenue, which is
+        // the whole reason this read could not be answered. `null`, exactly as when nothing ranks.
+        economics: null,
+        rows: [],
+        recommendedBudgetUsd: null,
+      });
+    }
 
     const response = rankDeclaredFunnels({
       featureSlug,
-      funnels: declaredFunnelsToRank(funnels),
+      funnels: declaredFunnelsToRank(funnels.funnels ?? []),
       evidence,
       economics: effective.economics,
       maximize,

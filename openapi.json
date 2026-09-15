@@ -4124,6 +4124,49 @@
             "nullable": true,
             "description": "10 target outcomes/month × the recommended row's resolved.costPerOutcomeUsd. Null when there is no pick."
           },
+          "declaredFunnelsGap": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "several_offers"
+                ],
+                "description": "The brand sells several offers and the request named none, so there is no single declaration to price on."
+              },
+              "offers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "offerId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The offer's own name, as brand-service serves it. Null when it serves none."
+                    }
+                  },
+                  "required": [
+                    "offerId",
+                    "name"
+                  ]
+                },
+                "description": "EVERY offer the brand sells, exactly as brand-service listed them on its refusal. Never a pick, never one of them."
+              },
+              "message": {
+                "type": "string",
+                "description": "The producer's own sentence, passed through verbatim."
+              }
+            },
+            "required": [
+              "reason",
+              "offers",
+              "message"
+            ],
+            "description": "WHY THE PROJECTED FIGURES ON THIS BODY ARE NULL, when the reason is that we could not resolve WHICH funnels the brand declared. A declared funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES a brand-scoped declaration read for a brand selling several (409 SEVERAL_OFFERS) rather than serving one proposition's economics under the other's name, and features-service will not pick one on the org's behalf either. Present ONLY in that case: a brand selling one thing has no such field and its body is byte-unchanged. The offers brand-service itself named ride along, so a consumer can ask the reader which proposition they mean instead of rendering an unexplained dash — or simply name a `?campaignId=`, since a campaign sells exactly one offer and the offer is then resolved server-side. NOT an outage: a declaration that genuinely could not be READ is still a 502 (reason='declared_funnels_unavailable' / 'authorized_goals_unavailable')."
+          },
           "measured": {
             "type": "boolean",
             "description": "TRUE ⟺ at least one row rests on real evidence — every answer an established channel gives. FALSE says this acquisition channel has measured nothing for this brand yet; unmeasuredReason then names what is missing."
@@ -4461,9 +4504,10 @@
                 "nullable": true,
                 "enum": [
                   "no_declared_funnels",
-                  "no_rankable_funnel"
+                  "no_rankable_funnel",
+                  "several_offers"
                 ],
-                "description": "`no_declared_funnels` = there was no declared funnel to rank (a brand that never stated a set at all is a 502 reason='authorized_goals_unavailable', not this). `no_rankable_funnel` = every declared funnel is unrankable (see ranking[].unrankableReason). Null ⟺ status = resolved."
+                "description": "`no_declared_funnels` = there was no declared funnel to rank (a brand that never stated a set at all is a 502 reason='authorized_goals_unavailable', not this). `no_rankable_funnel` = every declared funnel is unrankable (see ranking[].unrankableReason). `several_offers` = the brand sells SEVERAL offers and the request named none, so there is no single declaration to rank: each offer carries its own rates and its own lifetime revenue, and ranking over the union would compare funnels priced on different propositions. Name one with `?offerId=`; `declaredFunnelsGap` lists them. Null ⟺ status = resolved."
               },
               "returnPerDollar": {
                 "type": "number",
@@ -4525,6 +4569,49 @@
             ],
             "description": "The best workflow FOR THE RECOMMENDED FUNNEL, picked on WHAT WAS ASKED FOR: argmin resolved.costPerOutcomeUsd under `maximize=return` (the same ungated argmin the Strategy page ranks on), argmax resolved.conversionRatePct under `maximize=conversionRate`. Null ⟺ status = unrankable."
           },
+          "declaredFunnelsGap": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "several_offers"
+                ],
+                "description": "The brand sells several offers and the request named none, so there is no single declaration to price on."
+              },
+              "offers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "offerId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The offer's own name, as brand-service serves it. Null when it serves none."
+                    }
+                  },
+                  "required": [
+                    "offerId",
+                    "name"
+                  ]
+                },
+                "description": "EVERY offer the brand sells, exactly as brand-service listed them on its refusal. Never a pick, never one of them."
+              },
+              "message": {
+                "type": "string",
+                "description": "The producer's own sentence, passed through verbatim."
+              }
+            },
+            "required": [
+              "reason",
+              "offers",
+              "message"
+            ],
+            "description": "WHY THE PROJECTED FIGURES ON THIS BODY ARE NULL, when the reason is that we could not resolve WHICH funnels the brand declared. A declared funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES a brand-scoped declaration read for a brand selling several (409 SEVERAL_OFFERS) rather than serving one proposition's economics under the other's name, and features-service will not pick one on the org's behalf either. Present ONLY in that case: a brand selling one thing has no such field and its body is byte-unchanged. The offers brand-service itself named ride along, so a consumer can ask the reader which proposition they mean instead of rendering an unexplained dash — or simply name a `?campaignId=`, since a campaign sells exactly one offer and the offer is then resolved server-side. NOT an outage: a declaration that genuinely could not be READ is still a 502 (reason='declared_funnels_unavailable' / 'authorized_goals_unavailable')."
+          },
           "economics": {
             "type": "object",
             "nullable": true,
@@ -4572,7 +4659,7 @@
               "visitToClosePct",
               "replyToMeetingPct"
             ],
-            "description": "The brand's EFFECTIVE economics as the recommended funnel saw them (including its own per-funnel refinement). Null at cold start."
+            "description": "The brand's EFFECTIVE economics as the recommended funnel saw them (including its own per-funnel refinement). Null at cold start, and null on a `several_offers` verdict — the brand-wide set is NOT either offer's terms, which is the whole reason that read could not be answered."
           },
           "rows": {
             "type": "array",
@@ -5947,6 +6034,49 @@
               "costOfAcquisitionPct"
             ],
             "description": "The BRAND-level twin of every row's projection, on the same economics and the same formula."
+          },
+          "declaredFunnelsGap": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "several_offers"
+                ],
+                "description": "The brand sells several offers and the request named none, so there is no single declaration to price on."
+              },
+              "offers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "offerId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The offer's own name, as brand-service serves it. Null when it serves none."
+                    }
+                  },
+                  "required": [
+                    "offerId",
+                    "name"
+                  ]
+                },
+                "description": "EVERY offer the brand sells, exactly as brand-service listed them on its refusal. Never a pick, never one of them."
+              },
+              "message": {
+                "type": "string",
+                "description": "The producer's own sentence, passed through verbatim."
+              }
+            },
+            "required": [
+              "reason",
+              "offers",
+              "message"
+            ],
+            "description": "WHY THE PROJECTED FIGURES ON THIS BODY ARE NULL, when the reason is that we could not resolve WHICH funnels the brand declared. A declared funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES a brand-scoped declaration read for a brand selling several (409 SEVERAL_OFFERS) rather than serving one proposition's economics under the other's name, and features-service will not pick one on the org's behalf either. Present ONLY in that case: a brand selling one thing has no such field and its body is byte-unchanged. The offers brand-service itself named ride along, so a consumer can ask the reader which proposition they mean instead of rendering an unexplained dash — or simply name a `?campaignId=`, since a campaign sells exactly one offer and the offer is then resolved server-side. NOT an outage: a declaration that genuinely could not be READ is still a 502 (reason='declared_funnels_unavailable' / 'authorized_goals_unavailable')."
           },
           "campaignIdentity": {
             "type": "object",
@@ -8617,6 +8747,49 @@
               "costOfAcquisitionPct"
             ],
             "description": "The BRAND-level twin of every row's projection, on the same economics and the same formula."
+          },
+          "declaredFunnelsGap": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "several_offers"
+                ],
+                "description": "The brand sells several offers and the request named none, so there is no single declaration to price on."
+              },
+              "offers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "offerId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The offer's own name, as brand-service serves it. Null when it serves none."
+                    }
+                  },
+                  "required": [
+                    "offerId",
+                    "name"
+                  ]
+                },
+                "description": "EVERY offer the brand sells, exactly as brand-service listed them on its refusal. Never a pick, never one of them."
+              },
+              "message": {
+                "type": "string",
+                "description": "The producer's own sentence, passed through verbatim."
+              }
+            },
+            "required": [
+              "reason",
+              "offers",
+              "message"
+            ],
+            "description": "WHY THE PROJECTED FIGURES ON THIS BODY ARE NULL, when the reason is that we could not resolve WHICH funnels the brand declared. A declared funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES a brand-scoped declaration read for a brand selling several (409 SEVERAL_OFFERS) rather than serving one proposition's economics under the other's name, and features-service will not pick one on the org's behalf either. Present ONLY in that case: a brand selling one thing has no such field and its body is byte-unchanged. The offers brand-service itself named ride along, so a consumer can ask the reader which proposition they mean instead of rendering an unexplained dash — or simply name a `?campaignId=`, since a campaign sells exactly one offer and the offer is then resolved server-side. NOT an outage: a declaration that genuinely could not be READ is still a 502 (reason='declared_funnels_unavailable' / 'authorized_goals_unavailable')."
           },
           "campaignIdentity": {
             "type": "object",
@@ -11345,6 +11518,49 @@
             ],
             "description": "The BRAND-level twin of every row's projection, on the same economics and the same formula."
           },
+          "declaredFunnelsGap": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "several_offers"
+                ],
+                "description": "The brand sells several offers and the request named none, so there is no single declaration to price on."
+              },
+              "offers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "offerId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The offer's own name, as brand-service serves it. Null when it serves none."
+                    }
+                  },
+                  "required": [
+                    "offerId",
+                    "name"
+                  ]
+                },
+                "description": "EVERY offer the brand sells, exactly as brand-service listed them on its refusal. Never a pick, never one of them."
+              },
+              "message": {
+                "type": "string",
+                "description": "The producer's own sentence, passed through verbatim."
+              }
+            },
+            "required": [
+              "reason",
+              "offers",
+              "message"
+            ],
+            "description": "WHY THE PROJECTED FIGURES ON THIS BODY ARE NULL, when the reason is that we could not resolve WHICH funnels the brand declared. A declared funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES a brand-scoped declaration read for a brand selling several (409 SEVERAL_OFFERS) rather than serving one proposition's economics under the other's name, and features-service will not pick one on the org's behalf either. Present ONLY in that case: a brand selling one thing has no such field and its body is byte-unchanged. The offers brand-service itself named ride along, so a consumer can ask the reader which proposition they mean instead of rendering an unexplained dash — or simply name a `?campaignId=`, since a campaign sells exactly one offer and the offer is then resolved server-side. NOT an outage: a declaration that genuinely could not be READ is still a 502 (reason='declared_funnels_unavailable' / 'authorized_goals_unavailable')."
+          },
           "campaignIdentity": {
             "type": "object",
             "properties": {
@@ -14049,6 +14265,49 @@
               "costOfAcquisitionPct"
             ],
             "description": "The BRAND-level twin of every row's projection, on the same economics and the same formula."
+          },
+          "declaredFunnelsGap": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "several_offers"
+                ],
+                "description": "The brand sells several offers and the request named none, so there is no single declaration to price on."
+              },
+              "offers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "offerId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The offer's own name, as brand-service serves it. Null when it serves none."
+                    }
+                  },
+                  "required": [
+                    "offerId",
+                    "name"
+                  ]
+                },
+                "description": "EVERY offer the brand sells, exactly as brand-service listed them on its refusal. Never a pick, never one of them."
+              },
+              "message": {
+                "type": "string",
+                "description": "The producer's own sentence, passed through verbatim."
+              }
+            },
+            "required": [
+              "reason",
+              "offers",
+              "message"
+            ],
+            "description": "WHY THE PROJECTED FIGURES ON THIS BODY ARE NULL, when the reason is that we could not resolve WHICH funnels the brand declared. A declared funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES a brand-scoped declaration read for a brand selling several (409 SEVERAL_OFFERS) rather than serving one proposition's economics under the other's name, and features-service will not pick one on the org's behalf either. Present ONLY in that case: a brand selling one thing has no such field and its body is byte-unchanged. The offers brand-service itself named ride along, so a consumer can ask the reader which proposition they mean instead of rendering an unexplained dash — or simply name a `?campaignId=`, since a campaign sells exactly one offer and the offer is then resolved server-side. NOT an outage: a declaration that genuinely could not be READ is still a 502 (reason='declared_funnels_unavailable' / 'authorized_goals_unavailable')."
           },
           "campaignIdentity": {
             "type": "object",
@@ -19743,6 +20002,49 @@
                       "nullable": true,
                       "description": "10 target outcomes/month × the recommended row's resolved.costPerOutcomeUsd. Null when there is no pick."
                     },
+                    "declaredFunnelsGap": {
+                      "type": "object",
+                      "properties": {
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "several_offers"
+                          ],
+                          "description": "The brand sells several offers and the request named none, so there is no single declaration to price on."
+                        },
+                        "offers": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "offerId": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The offer's own name, as brand-service serves it. Null when it serves none."
+                              }
+                            },
+                            "required": [
+                              "offerId",
+                              "name"
+                            ]
+                          },
+                          "description": "EVERY offer the brand sells, exactly as brand-service listed them on its refusal. Never a pick, never one of them."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "The producer's own sentence, passed through verbatim."
+                        }
+                      },
+                      "required": [
+                        "reason",
+                        "offers",
+                        "message"
+                      ],
+                      "description": "WHY THE PROJECTED FIGURES ON THIS BODY ARE NULL, when the reason is that we could not resolve WHICH funnels the brand declared. A declared funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES a brand-scoped declaration read for a brand selling several (409 SEVERAL_OFFERS) rather than serving one proposition's economics under the other's name, and features-service will not pick one on the org's behalf either. Present ONLY in that case: a brand selling one thing has no such field and its body is byte-unchanged. The offers brand-service itself named ride along, so a consumer can ask the reader which proposition they mean instead of rendering an unexplained dash — or simply name a `?campaignId=`, since a campaign sells exactly one offer and the offer is then resolved server-side. NOT an outage: a declaration that genuinely could not be READ is still a 502 (reason='declared_funnels_unavailable' / 'authorized_goals_unavailable')."
+                    },
                     "measured": {
                       "type": "boolean",
                       "description": "TRUE ⟺ at least one row rests on real evidence — every answer an established channel gives. FALSE says this acquisition channel has measured nothing for this brand yet; unmeasuredReason then names what is missing."
@@ -19887,6 +20189,16 @@
             "required": false,
             "description": "Alias of `maximize` (British spelling of the key). Either is accepted; the value vocabulary is identical.",
             "name": "maximise",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "WHICH OFFER'S DECLARATION to rank. A declared funnel hangs off an offer — each carries its own conversion rates and its own lifetime revenue — so a brand selling several has NO brand-scoped declaration and brand-service refuses one. Omit for a brand selling one thing (unchanged behaviour); a brand selling several then answers arbitration.status='unrankable' with reason='several_offers' and lists them on `declaredFunnelsGap`, rather than a 502. Naming one ranks that proposition's funnels on that proposition's own lifetime revenue."
+            },
+            "required": false,
+            "description": "WHICH OFFER'S DECLARATION to rank. A declared funnel hangs off an offer — each carries its own conversion rates and its own lifetime revenue — so a brand selling several has NO brand-scoped declaration and brand-service refuses one. Omit for a brand selling one thing (unchanged behaviour); a brand selling several then answers arbitration.status='unrankable' with reason='several_offers' and lists them on `declaredFunnelsGap`, rather than a 502. Naming one ranks that proposition's funnels on that proposition's own lifetime revenue.",
+            "name": "offerId",
             "in": "query"
           },
           {
@@ -20249,9 +20561,10 @@
                           "nullable": true,
                           "enum": [
                             "no_declared_funnels",
-                            "no_rankable_funnel"
+                            "no_rankable_funnel",
+                            "several_offers"
                           ],
-                          "description": "`no_declared_funnels` = there was no declared funnel to rank (a brand that never stated a set at all is a 502 reason='authorized_goals_unavailable', not this). `no_rankable_funnel` = every declared funnel is unrankable (see ranking[].unrankableReason). Null ⟺ status = resolved."
+                          "description": "`no_declared_funnels` = there was no declared funnel to rank (a brand that never stated a set at all is a 502 reason='authorized_goals_unavailable', not this). `no_rankable_funnel` = every declared funnel is unrankable (see ranking[].unrankableReason). `several_offers` = the brand sells SEVERAL offers and the request named none, so there is no single declaration to rank: each offer carries its own rates and its own lifetime revenue, and ranking over the union would compare funnels priced on different propositions. Name one with `?offerId=`; `declaredFunnelsGap` lists them. Null ⟺ status = resolved."
                         },
                         "returnPerDollar": {
                           "type": "number",
@@ -20313,6 +20626,49 @@
                       ],
                       "description": "The best workflow FOR THE RECOMMENDED FUNNEL, picked on WHAT WAS ASKED FOR: argmin resolved.costPerOutcomeUsd under `maximize=return` (the same ungated argmin the Strategy page ranks on), argmax resolved.conversionRatePct under `maximize=conversionRate`. Null ⟺ status = unrankable."
                     },
+                    "declaredFunnelsGap": {
+                      "type": "object",
+                      "properties": {
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "several_offers"
+                          ],
+                          "description": "The brand sells several offers and the request named none, so there is no single declaration to price on."
+                        },
+                        "offers": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "offerId": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The offer's own name, as brand-service serves it. Null when it serves none."
+                              }
+                            },
+                            "required": [
+                              "offerId",
+                              "name"
+                            ]
+                          },
+                          "description": "EVERY offer the brand sells, exactly as brand-service listed them on its refusal. Never a pick, never one of them."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "The producer's own sentence, passed through verbatim."
+                        }
+                      },
+                      "required": [
+                        "reason",
+                        "offers",
+                        "message"
+                      ],
+                      "description": "WHY THE PROJECTED FIGURES ON THIS BODY ARE NULL, when the reason is that we could not resolve WHICH funnels the brand declared. A declared funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES a brand-scoped declaration read for a brand selling several (409 SEVERAL_OFFERS) rather than serving one proposition's economics under the other's name, and features-service will not pick one on the org's behalf either. Present ONLY in that case: a brand selling one thing has no such field and its body is byte-unchanged. The offers brand-service itself named ride along, so a consumer can ask the reader which proposition they mean instead of rendering an unexplained dash — or simply name a `?campaignId=`, since a campaign sells exactly one offer and the offer is then resolved server-side. NOT an outage: a declaration that genuinely could not be READ is still a 502 (reason='declared_funnels_unavailable' / 'authorized_goals_unavailable')."
+                    },
                     "economics": {
                       "type": "object",
                       "nullable": true,
@@ -20360,7 +20716,7 @@
                         "visitToClosePct",
                         "replyToMeetingPct"
                       ],
-                      "description": "The brand's EFFECTIVE economics as the recommended funnel saw them (including its own per-funnel refinement). Null at cold start."
+                      "description": "The brand's EFFECTIVE economics as the recommended funnel saw them (including its own per-funnel refinement). Null at cold start, and null on a `several_offers` verdict — the brand-wide set is NOT either offer's terms, which is the whole reason that read could not be answered."
                     },
                     "rows": {
                       "type": "array",
@@ -22143,6 +22499,49 @@
                         "costOfAcquisitionPct"
                       ],
                       "description": "The BRAND-level twin of every row's projection, on the same economics and the same formula."
+                    },
+                    "declaredFunnelsGap": {
+                      "type": "object",
+                      "properties": {
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "several_offers"
+                          ],
+                          "description": "The brand sells several offers and the request named none, so there is no single declaration to price on."
+                        },
+                        "offers": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "offerId": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The offer's own name, as brand-service serves it. Null when it serves none."
+                              }
+                            },
+                            "required": [
+                              "offerId",
+                              "name"
+                            ]
+                          },
+                          "description": "EVERY offer the brand sells, exactly as brand-service listed them on its refusal. Never a pick, never one of them."
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "The producer's own sentence, passed through verbatim."
+                        }
+                      },
+                      "required": [
+                        "reason",
+                        "offers",
+                        "message"
+                      ],
+                      "description": "WHY THE PROJECTED FIGURES ON THIS BODY ARE NULL, when the reason is that we could not resolve WHICH funnels the brand declared. A declared funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES a brand-scoped declaration read for a brand selling several (409 SEVERAL_OFFERS) rather than serving one proposition's economics under the other's name, and features-service will not pick one on the org's behalf either. Present ONLY in that case: a brand selling one thing has no such field and its body is byte-unchanged. The offers brand-service itself named ride along, so a consumer can ask the reader which proposition they mean instead of rendering an unexplained dash — or simply name a `?campaignId=`, since a campaign sells exactly one offer and the offer is then resolved server-side. NOT an outage: a declaration that genuinely could not be READ is still a 502 (reason='declared_funnels_unavailable' / 'authorized_goals_unavailable')."
                     },
                     "campaignIdentity": {
                       "type": "object",

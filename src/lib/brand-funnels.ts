@@ -27,6 +27,11 @@
  * - **The org is part of the question.** A brand id is a shared global identity (every org claiming the
  *   same domain lands on the same row), so what it sells through is the data of an (org, brand) PAIR.
  *   `orgId` is a required argument, never resolved to a stand-in.
+ * - **The OFFER is part of the question too, whenever the brand sells more than one.** A declared
+ *   funnel hangs off an offer, each with its own rates and its own lifetime revenue, so brand-service
+ *   refuses a brand-scoped read for a brand selling several rather than blending them. A caller that
+ *   knows which proposition it is pricing names one; the SET question below composes across them,
+ *   because a set composes where a rate does not.
  * - **A surface that can only carry ONE funnel takes the brand's FIRST DECLARED one in catalogue
  *   order.** That is a deterministic pick over the brand's OWN declarations — not a default, and not an
  *   inference: every candidate is a funnel the brand said it sells through. Any surface that can carry
@@ -34,7 +39,7 @@
  *   instead, which is always the better answer where the shape allows it.
  */
 
-import { fetchDeclaredSalesFunnels } from "./sales-funnels-client.js";
+import { fetchDeclaredSalesFunnels, SeveralOffersError } from "./sales-funnels-client.js";
 import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 
 /**
@@ -43,10 +48,52 @@ import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
  * Throws `SalesFunnelsUnavailableError` when the declaration cannot be READ **or is empty** — the
  * producer's own rule is that "answered, but sells through nothing" does not exist (brand-service
  * refuses to switch off an org's last active funnel), so an empty list is a gap, never an answer.
+ *
+ * ── A BRAND SELLING SEVERAL OFFERS STILL HAS ONE ANSWER HERE, and that is why it is not a refusal ──
+ *
+ * brand-service refuses a brand-scoped read for a brand selling several offers, because the things it
+ * would have to blend — the conversion RATES and the LIFETIME REVENUE — genuinely differ per offer and
+ * there is no honest single value. This function asks a strictly narrower question: WHICH FUNNELS, as a
+ * SET. A set composes where a rate does not, so the answer is the UNION of what each offer declares,
+ * read from the offers the producer itself named on its 409. Nothing is averaged, nothing is picked on
+ * the org's behalf, and no funnel appears that some offer did not declare.
+ *
+ * An offer whose own declaration cannot be read is LOGGED and left out of the union rather than taking
+ * the whole brand down with it — one unanswerable offer must not erase the funnels its sibling did
+ * state. With NO offer answering, the producer's refusal is re-thrown unchanged: at that point we know
+ * nothing, which is exactly what the caller's own fail-loud path is for.
  */
-export async function fetchDeclaredFunnelKeys(brandId: string, orgId: string): Promise<SalesFunnelKey[]> {
-  const declared = await fetchDeclaredSalesFunnels(brandId, orgId);
-  return declared.map((f) => f.funnelKey).sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
+export async function fetchDeclaredFunnelKeys(
+  brandId: string,
+  orgId: string,
+  /** The ONE offer whose declaration is wanted. Omitted → the brand's whole set (see above). */
+  offerId?: string | null,
+): Promise<SalesFunnelKey[]> {
+  const sortKeys = (keys: SalesFunnelKey[]): SalesFunnelKey[] =>
+    [...new Set(keys)].sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
+  try {
+    const declared = await fetchDeclaredSalesFunnels(brandId, orgId, offerId);
+    return sortKeys(declared.map((f) => f.funnelKey));
+  } catch (error) {
+    // A caller that NAMED an offer asked a question the producer could answer; a 409 cannot occur, and
+    // any other failure is the caller's own to surface.
+    if (offerId || !(error instanceof SeveralOffersError)) throw error;
+    const perOffer = await Promise.all(
+      error.offers.map(async (offer) => {
+        try {
+          return (await fetchDeclaredSalesFunnels(brandId, orgId, offer.offerId)).map((f) => f.funnelKey);
+        } catch (offerError) {
+          console.warn(
+            `[features-service] declared funnels unreadable for offer ${offer.offerId} of brand ${brandId} (left out of the brand's set, never substituted): ${(offerError as Error).message}`,
+          );
+          return null;
+        }
+      }),
+    );
+    const answered = perOffer.filter((keys): keys is SalesFunnelKey[] => keys !== null);
+    if (answered.length === 0) throw error;
+    return sortKeys(answered.flat());
+  }
 }
 
 /**

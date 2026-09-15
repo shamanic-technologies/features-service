@@ -815,6 +815,17 @@ const MAXIMIZE_DESC_PROJECTION = "WHAT TO MAXIMISE. `return` (DEFAULT, and byte-
 /** One end of a leg, worded for a buyer — the same shape /public/channels publishes as a step. */
 const legStepSchema = z.object({ key: z.string(), label: z.string(), description: z.string() });
 
+const declaredFunnelsGapSchema = z.object({
+  reason: z.literal("several_offers").describe("The brand sells several offers and the request named none, so there is no single declaration to price on."),
+  offers: z.array(z.object({
+    offerId: z.string(),
+    name: z.string().nullable().describe("The offer's own name, as brand-service serves it. Null when it serves none."),
+  })).describe("EVERY offer the brand sells, exactly as brand-service listed them on its refusal. Never a pick, never one of them."),
+  message: z.string().describe("The producer's own sentence, passed through verbatim."),
+}).optional().describe(
+  "WHY THE PROJECTED FIGURES ON THIS BODY ARE NULL, when the reason is that we could not resolve WHICH funnels the brand declared. A declared funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES a brand-scoped declaration read for a brand selling several (409 SEVERAL_OFFERS) rather than serving one proposition's economics under the other's name, and features-service will not pick one on the org's behalf either. Present ONLY in that case: a brand selling one thing has no such field and its body is byte-unchanged. The offers brand-service itself named ride along, so a consumer can ask the reader which proposition they mean instead of rendering an unexplained dash — or simply name a `?campaignId=`, since a campaign sells exactly one offer and the offer is then resolved server-side. NOT an outage: a declaration that genuinely could not be READ is still a 502 (reason='declared_funnels_unavailable' / 'authorized_goals_unavailable').",
+);
+
 const workflowProjectionResponseSchema = z.object({
   featureSlug: z.string(),
   maximize: z.enum(["return", "conversionRate"]).describe("WHAT THIS ANSWER WAS RANKED UNDER — always present, so a consumer can never present a recommendation without knowing what it optimised for. `return` is the default and what every caller that names nothing gets. Distinct from `objective`/`goal`, which name the OUTCOME being bought rather than the thing being maximised."),
@@ -860,6 +871,7 @@ const workflowProjectionResponseSchema = z.object({
   rows: z.array(workflowProjectionRowSchema),
   recommendedWorkflowDynastySlug: z.string().nullable().describe("Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. Null when none has usable data."),
   recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the recommended row's resolved.costPerOutcomeUsd. Null when there is no pick."),
+  declaredFunnelsGap: declaredFunnelsGapSchema,
   measured: z.boolean().describe("TRUE ⟺ at least one row rests on real evidence — every answer an established channel gives. FALSE says this acquisition channel has measured nothing for this brand yet; unmeasuredReason then names what is missing."),
   unmeasuredReason: z.enum(["no_active_audiences", "no_active_workflows", "no_spend_recorded"]).optional().describe("Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty). `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."),
 });
@@ -956,7 +968,7 @@ const funnelRankingResponseSchema = z.object({
     funnelKey: salesFunnelKeyEnum.nullable().describe("The recommended funnel's key — the unambiguous half of this compatibility view, added beside the lossy `goal` so a consumer can migrate off it without a second endpoint. Null ⟺ status = unrankable."),
     goal: goalEchoEnum.nullable().describe("LEGACY echo of the recommended funnel's goal. Cannot distinguish the two meeting funnels; read funnelKey. Null ⟺ status = unrankable."),
     objective: objectiveEnum.nullable(),
-    reason: z.enum(["no_declared_funnels", "no_rankable_funnel"]).nullable().describe("`no_declared_funnels` = there was no declared funnel to rank (a brand that never stated a set at all is a 502 reason='authorized_goals_unavailable', not this). `no_rankable_funnel` = every declared funnel is unrankable (see ranking[].unrankableReason). Null ⟺ status = resolved."),
+    reason: z.enum(["no_declared_funnels", "no_rankable_funnel", "several_offers"]).nullable().describe("`no_declared_funnels` = there was no declared funnel to rank (a brand that never stated a set at all is a 502 reason='authorized_goals_unavailable', not this). `no_rankable_funnel` = every declared funnel is unrankable (see ranking[].unrankableReason). `several_offers` = the brand sells SEVERAL offers and the request named none, so there is no single declaration to rank: each offer carries its own rates and its own lifetime revenue, and ranking over the union would compare funnels priced on different propositions. Name one with `?offerId=`; `declaredFunnelsGap` lists them. Null ⟺ status = resolved."),
     returnPerDollar: z.number().nullable().describe("The recommended funnel's expected revenue per dollar of spend. Always a positive finite number when status = resolved AND maximize = return."),
     conversionRatePct: z.number().nullable().describe("The recommended funnel's measured outcomes per 100 people reached — the figure the pick was made on under maximize=conversionRate."),
     costPerOutcomeUsd: z.number().nullable(),
@@ -964,7 +976,8 @@ const funnelRankingResponseSchema = z.object({
     grain: z.enum(["audience", "brand", "crossOrg"]).nullable(),
   }).describe("COMPATIBILITY VIEW of `recommendation`, kept byte-compatible for campaign-service, which reads status/goal in prod to pace a brand that has no per-funnel funding. Derived from the same pick, so it can never name a different funnel than the head of `ranking`. New consumers should read `ranking` / `recommendation`."),
   workflow: rankedFunnelWorkflowSchema.nullable().describe("The best workflow FOR THE RECOMMENDED FUNNEL, picked on WHAT WAS ASKED FOR: argmin resolved.costPerOutcomeUsd under `maximize=return` (the same ungated argmin the Strategy page ranks on), argmax resolved.conversionRatePct under `maximize=conversionRate`. Null ⟺ status = unrankable."),
-  economics: workflowProjectionEconomicsSchema.nullable().describe("The brand's EFFECTIVE economics as the recommended funnel saw them (including its own per-funnel refinement). Null at cold start."),
+  declaredFunnelsGap: declaredFunnelsGapSchema,
+  economics: workflowProjectionEconomicsSchema.nullable().describe("The brand's EFFECTIVE economics as the recommended funnel saw them (including its own per-funnel refinement). Null at cold start, and null on a `several_offers` verdict — the brand-wide set is NOT either offer's terms, which is the whole reason that read could not be answered."),
   rows: z.array(workflowProjectionRowSchema).describe("The recommended (funnel × workflow) pairing's projection rows: the brand-level row plus EVERY active audience's row for that dynasty, in the SAME shape /workflow-projection serves (per-audience resolvedOutcomeCount successes, evidence.observedContacted trials, evidence.spentUsd cost). Empty when nothing could be ranked."),
   recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the recommended pairing's resolved.costPerOutcomeUsd. Null when nothing could be ranked."),
 });
@@ -997,6 +1010,7 @@ registry.registerPath({
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (unit costs, cost-per-outcome, cost-per-paid-client, returnPerDollar, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when those are unavailable — never a silent fallback to gross."),
       maximize: z.string().optional().describe(MAXIMIZE_DESC_RANKING),
       maximise: z.string().optional().describe("Alias of `maximize` (British spelling of the key). Either is accepted; the value vocabulary is identical."),
+      offerId: z.string().optional().describe("WHICH OFFER'S DECLARATION to rank. A declared funnel hangs off an offer — each carries its own conversion rates and its own lifetime revenue — so a brand selling several has NO brand-scoped declaration and brand-service refuses one. Omit for a brand selling one thing (unchanged behaviour); a brand selling several then answers arbitration.status='unrankable' with reason='several_offers' and lists them on `declaredFunnelsGap`, rather than a 502. Naming one ranks that proposition's funnels on that proposition's own lifetime revenue."),
     }),
   },
   responses: {
@@ -1170,6 +1184,7 @@ const audienceStatsResponseSchema = z.object({
     returnPerDollar: z.number().nullable().describe("PROJECTED brand-level return per dollar = lifetimeRevenueUsd / costPerPaidClientUsd — the same definition as each row's, one grain coarser. Read a row's return against this ('this audience beats the brand'). Null (never 0) when unmeasurable."),
     costOfAcquisitionPct: z.number().nullable().describe("PROJECTED brand-level cost of acquisition as a share of lifetime revenue, percent = 100 / returnPerDollar — the same definition as each row's, one grain coarser, and the value a row with no measured grain inherits. Read a row's share against this ('this audience wins customers at a smaller slice of their worth than the brand does'). PROJECTED, not the realized /revenue costEconomics.costOfAcquisitionPct. Null (never 0) when unmeasurable."),
   }).describe("The BRAND-level twin of every row's projection, on the same economics and the same formula."),
+  declaredFunnelsGap: declaredFunnelsGapSchema,
   campaignIdentity: campaignIdentitySchema.optional().describe("Present ONLY on a ?campaignId= read: the campaign IDENTITY these per-audience figures were totalled over. A campaign as a customer knows it is (org, brand, sales funnel, acquisition channel) and is stored as MANY rows - campaign-service mints a new one every time the workflow switches and keeps the ancestors - so asking about any member returns the same, complete campaign, and every member lands on one cache cell. Byte-same block as /features/{slug}/revenue?campaignId= carries, so the two reads name one campaign one way."),
 });
 

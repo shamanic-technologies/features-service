@@ -11,7 +11,13 @@ import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { type CostBasis } from "../lib/cost-basis.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type SingleStepGoal, type Goal } from "../lib/goals.js";
 import { SALES_FUNNELS, matchSalesFunnelKey, salesFunnelIndex, type MeetingChannel, type SalesFunnelKey } from "../lib/sales-funnels.js";
-import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
+import {
+  fetchDeclaredSalesFunnels,
+  declaredFunnelsGapOf,
+  SalesFunnelsUnavailableError,
+  SeveralOffersError,
+  type DeclaredFunnelsGap,
+} from "../lib/sales-funnels-client.js";
 import { declaredEconomicsForFunnel, declaredFunnelsToRank, mergeFunnelEconomics } from "../lib/declared-funnels.js";
 import {
   FUNNEL_LEG_KEYS,
@@ -27,7 +33,7 @@ import {
   type GrainLegOutcome,
   type LegOutcomeTerms,
 } from "../lib/leg-outcome.js";
-import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
+import { fetchCampaignScopeSoft } from "../lib/offer-scope.js";
 import { describeIdentity, type CampaignIdentityView } from "../lib/campaign-identity.js";
 import { DEFAULT_MAXIMIZE, MAXIMIZE_ERROR, parseMaximize, type Maximize } from "../lib/maximize.js";
 import {
@@ -1113,17 +1119,52 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // rather than pricing a funnel the org never said it sells through. Fires ONLY on `?funnel=`, so the
     // goal path takes no extra read.
     let funnelEconomics: Partial<SalesEconomics> | null = null;
+
+    // THE CAMPAIGN'S IDENTITY AND THE OFFER IT SELLS, resolved before anything is read, off ONE
+    // `/campaigns` call. A campaign as a customer knows it is (org, brand, sales funnel, acquisition
+    // channel) — campaign-service mints a new row on every workflow switch and keeps the ancestors, so
+    // a figure scoped to the newest row would describe the last few days of a campaign that has been
+    // running for weeks.
+    //
+    // THE OFFER IS RESOLVED FIRST BECAUSE THE DECLARATION READ BELOW DEPENDS ON IT. A declared funnel
+    // hangs off an OFFER — each carries its own rates and its own lifetime revenue — so brand-service
+    // refuses a brand-scoped read for a brand selling several (409) rather than serving one
+    // proposition's economics under the other's name. A campaign sells exactly one offer, so a request
+    // naming a campaign has already named it.
+    //
+    // FAIL-SOFT, like every other surface that reads it: with campaign-service unreachable the campaign
+    // falls back to its own family of one and the offer stays unknown, which is a real answer about a
+    // real subset, never the brand's numbers under its name and never a guessed offer.
+    let campaignIdentityView: CampaignIdentityView | null = null;
+    let campaignScopeIds: string[] | null = null;
+    let pricingOfferId: string | undefined;
+    if (campaignId) {
+      const scope = await fetchCampaignScopeSoft(brandId, featureSlug, { orgId, userId, runId });
+      const found = scope.families.identityOf(campaignId);
+      campaignIdentityView = describeIdentity(found, campaignId);
+      campaignScopeIds = campaignIdentityView.campaignIds;
+      pricingOfferId = scope.offerOf(campaignId);
+    }
+
     // The brand's DECLARED set is needed by both narrowed reads — a named funnel must be one of them,
     // and a named leg is priced through one of them. The goal path takes no extra read.
     let declaredFunnels: Awaited<ReturnType<typeof fetchDeclaredSalesFunnels>> | null = null;
+    // Present ⟺ the brand sells SEVERAL offers and nothing named one. The read then answers on the
+    // brand's own effective economics with no funnel-specific merge, and says so on the wire: refusing
+    // would blank a customer's page over a question the reader was never asked, and picking an offer is
+    // the guess brand-service itself declines to make.
+    let declaredFunnelsGap: DeclaredFunnelsGap | undefined;
     if (funnelKey || legKey) {
       try {
-        declaredFunnels = await fetchDeclaredSalesFunnels(brandId, orgId);
+        declaredFunnels = await fetchDeclaredSalesFunnels(brandId, orgId, pricingOfferId);
       } catch (error) {
-        if (error instanceof SalesFunnelsUnavailableError) {
+        if (error instanceof SeveralOffersError) {
+          declaredFunnelsGap = declaredFunnelsGapOf(error);
+        } else if (error instanceof SalesFunnelsUnavailableError) {
           return res.status(502).json({ error: error.message, reason: "declared_funnels_unavailable" });
+        } else {
+          throw error;
         }
-        throw error;
       }
     }
     if (funnelKey && declaredFunnels) {
@@ -1158,21 +1199,6 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
           declaredFunnelKeys: declared,
         });
       }
-    }
-
-    // THE CAMPAIGN'S IDENTITY, resolved before anything is computed. A campaign as a customer knows it
-    // is (org, brand, sales funnel, acquisition channel) — campaign-service mints a new row on every
-    // workflow switch and keeps the ancestors, so a figure scoped to the newest row would describe the
-    // last few days of a campaign that has been running for weeks. FAIL-SOFT, like every other surface
-    // that reads it: with campaign-service unreachable the campaign falls back to its own family of
-    // one, which is a real answer about a real subset, never the brand's numbers under its name.
-    let campaignIdentityView: CampaignIdentityView | null = null;
-    let campaignScopeIds: string[] | null = null;
-    if (campaignId) {
-      const families = await fetchCampaignFamiliesSoft(brandId, featureSlug, { orgId, userId, runId });
-      const found = families.identityOf(campaignId);
-      campaignIdentityView = describeIdentity(found, campaignId);
-      campaignScopeIds = campaignIdentityView.campaignIds;
     }
 
     // WHAT ACTUALLY RAN — read LIVE beside the cached evidence, never from the snapshot: a figure whose
@@ -1369,6 +1395,8 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       ...(legBlock ? { leg: legBlock } : {}),
       ...(campaignIdentityView ? { campaignIdentity: campaignIdentityView } : {}),
       ...(observedPicks !== undefined ? { observedPicks } : {}),
+      // Absent for every brand selling one thing, so their body is byte-unchanged.
+      ...(declaredFunnelsGap ? { declaredFunnelsGap } : {}),
     });
   } catch (error) {
     console.error("[features-service] Workflow projection error:", error);

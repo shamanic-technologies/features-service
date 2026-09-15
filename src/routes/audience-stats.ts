@@ -4,9 +4,14 @@ import { computeAudienceStats, validateAudienceStatsQuery, type ComputeResult } 
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
-import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
-import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
-import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
+import {
+  fetchDeclaredSalesFunnels,
+  declaredFunnelsGapOf,
+  SalesFunnelsUnavailableError,
+  SeveralOffersError,
+  type DeclaredFunnelsGap,
+} from "../lib/sales-funnels-client.js";
+import { resolveOfferCampaignIds, OfferHasNoCampaignsError, fetchCampaignScopeSoft } from "../lib/offer-scope.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
 
 const router = Router();
@@ -73,28 +78,44 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // falls back to its own family of one, which is TODAY's answer — narrower than the truth, never
     // the brand's numbers under this campaign's name.
     const requestedCampaignId = ((req.query.campaignId as string | undefined) ?? "").trim() || undefined;
-    const identity = requestedCampaignId
-      ? (await fetchCampaignFamiliesSoft(validated.brandId, featureSlug, { orgId, userId, runId })).identityOf(
-          requestedCampaignId,
-        )
+    // ONE `/campaigns` read serves both grains this request needs off a campaign row: the IDENTITY
+    // family above, and the OFFER the campaign sells. The offer is what prices the declaration — a
+    // declared funnel hangs off an offer, so a brand selling several has no brand-scoped answer and
+    // brand-service refuses one (409). A campaign sells exactly one offer, so naming a campaign has
+    // already named it; and a consumer cannot send both (the 400 above), so resolving it here is the
+    // only path. Fail-soft: an unreadable scope leaves the offer unknown and the read behaves as today.
+    const campaignScope = requestedCampaignId
+      ? await fetchCampaignScopeSoft(validated.brandId, featureSlug, { orgId, userId, runId })
       : null;
+    const identity = requestedCampaignId ? (campaignScope?.families.identityOf(requestedCampaignId) ?? null) : null;
     const campaignScopeIds = offerCampaignIds ?? identity?.campaignIds ?? (requestedCampaignId ? [requestedCampaignId] : undefined);
+    // An explicit `?offerId=` already names it; otherwise it comes from the campaign. Never guessed.
+    const pricingOfferId = offerId ?? campaignScope?.offerOf(requestedCampaignId);
 
     // A funnel the brand never declared has no cost to serve — "we could not estimate this" and "it
     // costs zero" are different statements, and only the first is true. 404 with the reason rather than
     // pricing a funnel the org never said it sells through. Fires ONLY on `?funnel=`, so every existing
     // goal-keyed request takes no extra read.
+    let routeGap: DeclaredFunnelsGap | undefined;
     if (validated.funnelKey) {
-      let declared: string[];
+      let declared: string[] | null;
       try {
-        declared = (await fetchDeclaredSalesFunnels(validated.brandId, orgId)).map((f) => f.funnelKey);
+        declared = (await fetchDeclaredSalesFunnels(validated.brandId, orgId, pricingOfferId)).map((f) => f.funnelKey);
       } catch (err) {
-        if (err instanceof SalesFunnelsUnavailableError) {
+        // A brand selling SEVERAL offers on a read that names none: we cannot say whether it declared
+        // this funnel, and REFUSING is the worse answer — it blanks a page over a question the reader
+        // was never asked. The check is skipped, the payload states why, and the compute prices on the
+        // brand-wide terms rather than on a funnel's borrowed ones.
+        if (err instanceof SeveralOffersError) {
+          routeGap = declaredFunnelsGapOf(err);
+          declared = null;
+        } else if (err instanceof SalesFunnelsUnavailableError) {
           return res.status(502).json({ error: err.message, reason: "declared_funnels_unavailable" });
+        } else {
+          throw err;
         }
-        throw err;
       }
-      if (!declared.includes(validated.funnelKey)) {
+      if (declared && !declared.includes(validated.funnelKey)) {
         return res.status(404).json({
           error: `this brand has not declared the ${validated.funnelKey} funnel, so there is no cost to estimate for it`,
           reason: "funnel_not_declared",
@@ -124,7 +145,7 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     let decl: string | undefined;
     if (!validated.funnelKey && validated.goal === null) {
       try {
-        decl = (await fetchDeclaredSalesFunnels(validated.brandId, orgId))
+        decl = (await fetchDeclaredSalesFunnels(validated.brandId, orgId, pricingOfferId))
           .map((f) => f.funnelKey)
           .sort()
           .join(",");
@@ -171,12 +192,17 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
       campaignId: identity?.key ?? requestedCampaignId,
       // Same rule one grain up: an offer-scoped body and the brand-wide one must never share a cell.
       offerId,
+      // The offer the DECLARATION was read under prices every projected column, so two campaigns of one
+      // brand selling different offers must never share a cell. Equal to `offerId` on an offer-scoped
+      // read (dropped as a duplicate below is not possible — buildScopeKey keys on the name), and absent
+      // for every brand selling one thing, so today's keys are unmoved.
+      pricingOfferId,
     });
     const result = await servedCached<ComputeResult>({
       view: "audience-stats",
       scopeKey,
       orgId,
-      compute: () => computeAudienceStats(req, pricing, campaignScopeIds),
+      compute: () => computeAudienceStats(req, pricing, campaignScopeIds, undefined, pricingOfferId),
     });
     if (!result.ok) {
       return res.status(result.status).json({ error: result.error });
@@ -184,10 +210,11 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // A consumer must be able to SEE that a campaign-scoped read answered for the whole identity
     // rather than infer it from a number that moved. Same block, same vocabulary, as the one
     // `/revenue?campaignId=` already carries — one word for one concept across the two reads.
+    const envelope = routeGap ? { ...result.envelope, declaredFunnelsGap: routeGap } : result.envelope;
     res.json(
       requestedCampaignId
-        ? { ...result.envelope, campaignIdentity: describeIdentity(identity, requestedCampaignId) }
-        : result.envelope,
+        ? { ...envelope, campaignIdentity: describeIdentity(identity, requestedCampaignId) }
+        : envelope,
     );
   } catch (error) {
     // An offer no campaign of this brand sells has no spend to rank audiences on — named, never

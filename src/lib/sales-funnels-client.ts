@@ -42,6 +42,70 @@ export class SalesFunnelsUnavailableError extends Error {
   }
 }
 
+/** One offer the brand sells, as brand-service names it on its 409. `name` is null when it serves none. */
+export interface DeclaredOfferSummary {
+  offerId: string;
+  name: string | null;
+}
+
+/**
+ * THE BRAND SELLS SEVERAL OFFERS AND NOTHING NAMED ONE — brand-service's `409 SEVERAL_OFFERS`.
+ *
+ * This is NOT an outage and it is NOT a producer gap: the brand has answered, offer by offer, and the
+ * question we asked ("what does this BRAND declare") genuinely has no single answer, because each offer
+ * carries its own conversion rates, its own lifetime revenue and its own value proposition. Serving one
+ * offer's economics under the other's name is exactly the guess brand-service refuses to make, and this
+ * service must not make it either.
+ *
+ * It is a SUBCLASS of {@link SalesFunnelsUnavailableError} on purpose: every existing call site already
+ * catches that and answers with its documented 502, so a path this change has not taught to degrade
+ * keeps today's behaviour instead of falling through to an unhandled 500. A call site that CAN degrade
+ * catches this one FIRST — the two are never conflated, which is what keeps "we could not read the
+ * authorized set" distinguishable from "you have to tell us which proposition you are pricing".
+ *
+ * The producer NAMES the offers on the 409 body, so the refusal is actionable rather than a dead end: a
+ * consumer is handed the very list it must pick from, and `brand-funnels.ts` reads each offer's own
+ * declaration to answer the set-shaped question honestly.
+ */
+export class SeveralOffersError extends SalesFunnelsUnavailableError {
+  constructor(
+    readonly brandId: string,
+    readonly offers: DeclaredOfferSummary[],
+    message: string,
+  ) {
+    super(message);
+    this.name = "SeveralOffersError";
+  }
+}
+
+/** Parse brand-service's 409 body. Defensive: a body that does not carry the code is not this case. */
+function severalOffersFrom(brandId: string, status: number, text: string): SeveralOffersError | null {
+  if (status !== 409) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const body = parsed as { code?: unknown; error?: unknown; offers?: unknown };
+  if (body.code !== "SEVERAL_OFFERS") return null;
+  const offers = Array.isArray(body.offers)
+    ? (body.offers as Array<Record<string, unknown>>)
+        .map((o) => ({
+          offerId: typeof o.offerId === "string" ? o.offerId : "",
+          name: typeof o.name === "string" ? o.name : null,
+        }))
+        .filter((o) => o.offerId !== "")
+    : [];
+  return new SeveralOffersError(
+    brandId,
+    offers,
+    typeof body.error === "string"
+      ? body.error
+      : `brand ${brandId} sells several offers and none was named`,
+  );
+}
+
 /**
  * One declared funnel, exactly as brand-service serves it. Absent values are `null`, never invented.
  *
@@ -134,6 +198,11 @@ export async function fetchDeclaredSalesFunnels(
 
   if (!response.ok) {
     const text = await response.text();
+    // A brand selling SEVERAL offers is a refusal to GUESS, not a failure — and the producer names the
+    // offers, so the caller can either name one or say on the wire which ones it would need. Raised as
+    // its own subclass so a caller that can degrade tells it apart from a genuine outage.
+    const several = severalOffersFrom(brandId, response.status, text);
+    if (several) throw several;
     throw new SalesFunnelsUnavailableError(
       `brand-service declared sales-funnels read failed (${response.status}): ${text}`,
     );
@@ -173,6 +242,27 @@ export async function fetchDeclaredSalesFunnels(
       name: typeof raw.name === "string" && raw.name !== "" ? raw.name : SALES_FUNNELS[funnelKey].name,
     } satisfies DeclaredSalesFunnel;
   });
+}
+
+/**
+ * WHY A READ COULD NOT BE PRICED ON THE BRAND'S DECLARED FUNNELS — served on the wire, machine-readable,
+ * beside figures that are `null` rather than blank.
+ *
+ * A consumer that gets an empty projected column has to be able to tell "this brand has produced nothing
+ * yet" from "you have to tell us which proposition you are pricing". Only the second is actionable, and
+ * the producer names the offers to pick from, so they ride along: a surface can put an offer chooser in
+ * front of the reader instead of an unexplained dash.
+ */
+export interface DeclaredFunnelsGap {
+  reason: "several_offers";
+  /** Every offer the brand sells, as brand-service named them. Never a pick, never one of them. */
+  offers: DeclaredOfferSummary[];
+  message: string;
+}
+
+/** The wire shape for a refusal, built from the producer's own answer — nothing here is authored. */
+export function declaredFunnelsGapOf(error: SeveralOffersError): DeclaredFunnelsGap {
+  return { reason: "several_offers", offers: error.offers, message: error.message };
 }
 
 /** Re-exported so callers name the funnel type from one place. */

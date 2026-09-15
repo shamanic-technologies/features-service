@@ -73,6 +73,7 @@ import { DEFAULT_MAXIMIZE, type Maximize } from "./maximize.js";
 import type { RankableFunnel } from "./declared-funnels.js";
 import type { SalesEconomics } from "./funnel-registry.js";
 import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
+import type { DeclaredFunnelsGap } from "./sales-funnels-client.js";
 
 /** Why a declared funnel could not be ranked. Never a substituted value — the reason IS the answer. */
 export type UnrankableReason =
@@ -146,7 +147,16 @@ export interface FunnelRecommendation {
 }
 
 export type ArbitrationStatus = "resolved" | "unrankable";
-export type ArbitrationReason = "no_declared_funnels" | "no_rankable_funnel";
+export type ArbitrationReason =
+  | "no_declared_funnels"
+  | "no_rankable_funnel"
+  /**
+   * The brand sells SEVERAL offers and the request named none, so there is no single declaration to
+   * rank. Each offer carries its own conversion rates and its own lifetime revenue, so a ranking over
+   * the union would compare funnels priced on different propositions — and picking an offer is the
+   * guess brand-service itself declines to make. Name one with `?offerId=`.
+   */
+  | "several_offers";
 
 export interface GoalArbitrationResponse {
   featureSlug: string;
@@ -181,6 +191,13 @@ export interface GoalArbitrationResponse {
     grain: GrainName | null;
   };
   workflow: RankedWorkflow | null;
+  /**
+   * WHY NOTHING COULD BE RANKED, when the reason is that the brand's declaration could not be resolved.
+   * Absent for every brand selling one thing, so their body is byte-unchanged. It names the offers
+   * brand-service listed, so a consumer re-asks with `?offerId=` instead of reading an empty ranking as
+   * "this brand has nothing".
+   */
+  declaredFunnelsGap?: DeclaredFunnelsGap;
   economics: WorkflowProjectionResponse["economics"];
   /**
    * The recommended (funnel × workflow) pairing's projection rows — the brand-level row plus EVERY
