@@ -17001,12 +17001,18 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "minimumCommitmentDays": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "The FUNNEL's own minimum commitment, in whole days. NULL = no commitment — a written statement, never a gap, and most funnels carry none today. A buyer is bound by BOTH this and the channel's `terms.minimumCommitmentDays`; the stricter of the two governs the booking."
                 }
               },
               "required": [
                 "key",
                 "name",
-                "steps"
+                "steps",
+                "minimumCommitmentDays"
               ]
             },
             "description": "The sales funnels this channel may be SOLD THROUGH — DERIVED as every declared funnel containing one of its `stepTransitions` as a leg, so it can never drift from them. An empty list is a real statement (no deployed funnel takes any step this channel performs), not a gap."
@@ -17103,6 +17109,11 @@
             "items": {
               "type": "string"
             }
+          },
+          "minimumCommitmentDays": {
+            "type": "integer",
+            "nullable": true,
+            "description": "The FUNNEL's own minimum commitment, in whole days. NULL = no commitment — a written statement, never a gap, and most funnels carry none today. A buyer is bound by BOTH this and the channel's `terms.minimumCommitmentDays`; the stricter of the two governs the booking."
           },
           "result": {
             "anyOf": [
@@ -17248,6 +17259,7 @@
           "funnelKey",
           "funnelName",
           "funnelSteps",
+          "minimumCommitmentDays",
           "result"
         ]
       },
@@ -26922,7 +26934,7 @@
     "/public/channels": {
       "get": {
         "summary": "Every acquisition channel, its commercial terms and what it can produce (public, no auth)",
-        "description": "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), which LEG of a funnel it performs (the step it moves a lead FROM and the step it moves it TO), who operates it, and the sales funnels that follow from those legs. A funnel is sellable LEG BY LEG rather than only end to end, so the catalogue publishes channels for the internal steps a human performs — the ones a specialist of ours runs and the ones the customer runs themselves. An internal leg is published once per OPERATOR, and the channel's NAME says which: our AI, our agency by hand, or the customer's own team. A daily operating cost of 0 means only that no standing day-rate is charged for the channel — it does NOT imply the customer operates it, since an automated channel meters its real cost per run instead; `operatedBy` is the field that says who is on it. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
+        "description": "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), which LEG of a funnel it performs (the step it moves a lead FROM and the step it moves it TO), who operates it, and the sales funnels that follow from those legs, each carrying the FUNNEL's own `minimumCommitmentDays` (`null` = none) beside the channel's terms, so a payment screen can state what the funnel itself commits the buyer to before checkout. A funnel is sellable LEG BY LEG rather than only end to end, so the catalogue publishes channels for the internal steps a human performs — the ones a specialist of ours runs and the ones the customer runs themselves. An internal leg is published once per OPERATOR, and the channel's NAME says which: our AI, our agency by hand, or the customer's own team. A daily operating cost of 0 means only that no standing day-rate is charged for the channel — it does NOT imply the customer operates it, since an automated channel meters its real cost per run instead; `operatedBy` is the field that says who is on it. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
         "tags": [
           "Public"
         ],
@@ -26943,7 +26955,7 @@
     "/public/channel-funnel-economics": {
       "get": {
         "summary": "Measured economics per (sales funnel, acquisition channel) pair, or an explicit not-enough-data (public, no auth)",
-        "description": "One row per (sales funnel, acquisition channel) PAIR: either the pair's MEASURED economics — cost per each STEP of that funnel, cost per SALE, and return per dollar — or an explicit statement that there is not enough data, naming which ingredient is missing. A customer buys a PAIR, and the same funnel costs a very different amount through a phone channel than through paid search, so neither a brand-level nor a channel-level aggregate can answer this. Evidence is the SAME cross-org per-brand dataset every other public cost surface reads, and a funnel is priced through its OWN channel (the conversation funnel on replies, the click-driven funnels on visits), so a public per-pair figure and a customer's own dashboard can never print two prices for one funnel. Nothing is fabricated: a pair with no spend, no produced entry step, or no declared economics returns `measured: false` with its reason.",
+        "description": "One row per (sales funnel, acquisition channel) PAIR: either the pair's MEASURED economics — cost per each STEP of that funnel, cost per SALE, and return per dollar — or an explicit statement that there is not enough data, naming which ingredient is missing. Every row also carries the FUNNEL's own `minimumCommitmentDays` (`null` = none) — the commercial term a payment screen states before checkout, beside the channel's own terms. A customer buys a PAIR, and the same funnel costs a very different amount through a phone channel than through paid search, so neither a brand-level nor a channel-level aggregate can answer this. Evidence is the SAME cross-org per-brand dataset every other public cost surface reads, and a funnel is priced through its OWN channel (the conversation funnel on replies, the click-driven funnels on visits), so a public per-pair figure and a customer's own dashboard can never print two prices for one funnel. Nothing is fabricated: a pair with no spend, no produced entry step, or no declared economics returns `measured: false` with its reason.",
         "tags": [
           "Public"
         ],
