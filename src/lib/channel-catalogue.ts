@@ -30,6 +30,7 @@ import {
 } from "./acquisition-channels.js";
 import { legKeyFor, FUNNEL_LEGS, type FunnelLegDef } from "./funnel-legs.js";
 import { SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
+import { minimumCommitmentDaysFor } from "./funnel-commercial-terms.js";
 
 /** A feature row, narrowed to what the catalogue reads. */
 export interface CatalogueFeatureRow {
@@ -85,7 +86,15 @@ export interface PublicChannel {
    *  only performs internal legs of a funnel legitimately produces none. */
   producibleSteps: ChannelStepDefWire[];
   /** The sales funnels this channel may be sold through — every funnel one of its legs belongs to. */
-  salesFunnels: Array<{ key: SalesFunnelKey; name: string; steps: readonly string[] }>;
+  salesFunnels: Array<{
+    key: SalesFunnelKey;
+    name: string;
+    steps: readonly string[];
+    /** The FUNNEL's own minimum commitment, in whole days. `null` = none — a written statement,
+     *  never a gap. A buyer is bound by BOTH this and the channel's `terms.minimumCommitmentDays`;
+     *  the stricter of the two governs the booking. */
+    minimumCommitmentDays: number | null;
+  }>;
 }
 
 /**
@@ -218,6 +227,7 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
         key,
         name: SALES_FUNNELS[key].name,
         steps: SALES_FUNNELS[key].steps,
+        minimumCommitmentDays: minimumCommitmentDaysFor(key),
       })),
     });
   }
