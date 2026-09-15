@@ -5,8 +5,14 @@ import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { declaredFunnelsToRank } from "../lib/declared-funnels.js";
-import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError, UnknownSalesFunnelError } from "../lib/sales-funnels-client.js";
-import { rankDeclaredFunnels } from "../lib/funnel-ranking.js";
+import {
+  describeSeveralOffers,
+  fetchDeclaredSalesFunnels,
+  SalesFunnelsUnavailableError,
+  SeveralOffersDeclaredError,
+  UnknownSalesFunnelError,
+} from "../lib/sales-funnels-client.js";
+import { rankDeclaredFunnels, severalOffersUnrankable } from "../lib/funnel-ranking.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
 import { MAXIMIZE_ERROR, parseMaximize } from "../lib/maximize.js";
@@ -116,6 +122,16 @@ const handleFunnelRanking = async (req: Request, res: Response) => {
     });
     res.json(response);
   } catch (error) {
+    // SEVERAL OFFERS, none named. The brand HAS declared sets — one per offer — and brand-service
+    // refuses to choose, because each carries its own rates, its own lifetime revenue and its own value
+    // proposition. There is genuinely no single set to rank, so this is a 200 `unrankable` naming the
+    // offers, never the 502 that blanked the page. Checked BEFORE the generic branch: it is a subclass.
+    if (error instanceof SeveralOffersDeclaredError) {
+      console.warn(
+        `[features-service] Funnel ranking: brand sells several offers and none was named: ${error.message}`,
+      );
+      return res.json(severalOffersUnrankable(featureSlug, maximize, describeSeveralOffers(error)!));
+    }
     if (error instanceof SalesFunnelsUnavailableError) {
       // We could not READ what the brand declared — distinct from the brand declaring nothing, and
       // never answered with a substituted default set. The wire `reason` keeps its deployed spelling:

@@ -42,6 +42,52 @@ export class SalesFunnelsUnavailableError extends Error {
   }
 }
 
+/** One offer of a brand, as brand-service names it when it refuses to pick between them. */
+export interface DeclaredOffer {
+  offerId: string;
+  name: string | null;
+}
+
+/**
+ * The brand sells SEVERAL offers and this read named none, so brand-service refused (409
+ * `SEVERAL_OFFERS`) rather than serve one proposition's rates under another's name.
+ *
+ * This is NOT an outage and it is NOT a producer gap — it is a QUESTION WITH SEVERAL ANSWERS, and
+ * telling it apart from the other two is the whole point of the subclass. A caller that can name the
+ * offer (a campaign sells exactly one, so `?campaignId=` names it transitively) retries with it and
+ * gets a real answer; a caller that genuinely cannot must DEGRADE and say so, never 502 and never
+ * substitute one offer's economics.
+ *
+ * It EXTENDS `SalesFunnelsUnavailableError` on purpose: every existing `instanceof` catch — the
+ * fail-soft `/revenue` path above all — keeps behaving exactly as it did, so a brand selling one
+ * offer and a brand whose read merely failed are both byte-unchanged.
+ */
+export class SeveralOffersDeclaredError extends SalesFunnelsUnavailableError {
+  constructor(
+    message: string,
+    readonly offers: DeclaredOffer[],
+  ) {
+    super(message);
+    this.name = "SeveralOffersDeclaredError";
+  }
+}
+
+/** What a consumer is told when the declaration could not be resolved to ONE offer's terms. */
+export interface DeclaredFunnelsUnresolved {
+  /** Machine-readable; the only value today. Never prose a consumer has to match on. */
+  reason: "several_offers";
+  /** brand-service's own sentence, rendered verbatim so the two services say one thing. */
+  message: string;
+  /** The offers it refused to choose between — what a consumer needs to let someone pick one. */
+  offers: DeclaredOffer[];
+}
+
+/** The wire block for a read that had to degrade, or `null` for any other failure. */
+export function describeSeveralOffers(error: unknown): DeclaredFunnelsUnresolved | null {
+  if (!(error instanceof SeveralOffersDeclaredError)) return null;
+  return { reason: "several_offers", message: error.message, offers: error.offers };
+}
+
 /**
  * One declared funnel, exactly as brand-service serves it. Absent values are `null`, never invented.
  *
@@ -134,6 +180,19 @@ export async function fetchDeclaredSalesFunnels(
 
   if (!response.ok) {
     const text = await response.text();
+    // 409 SEVERAL_OFFERS is brand-service REFUSING a question that genuinely has several answers, not
+    // a fault: each offer carries its own conversion rates, its own lifetime revenue and its own value
+    // proposition. It gets its own error type so a caller can name the offer and retry, or degrade and
+    // SAY so, instead of reporting an outage. Parsed defensively — a body that does not carry the code
+    // is an ordinary failure.
+    const several = parseSeveralOffers(response.status, text);
+    if (several) {
+      throw new SeveralOffersDeclaredError(
+        several.message ||
+          `brand ${brandId} sells several offers and this read named none, so brand-service will not pick one`,
+        several.offers,
+      );
+    }
     throw new SalesFunnelsUnavailableError(
       `brand-service declared sales-funnels read failed (${response.status}): ${text}`,
     );
@@ -173,6 +232,34 @@ export async function fetchDeclaredSalesFunnels(
       name: typeof raw.name === "string" && raw.name !== "" ? raw.name : SALES_FUNNELS[funnelKey].name,
     } satisfies DeclaredSalesFunnel;
   });
+}
+
+/**
+ * brand-service's 409 body, or null when this is not the several-offers refusal.
+ *
+ * Shape conforms to what brand-service DEPLOYS (`rejectOfferProblem`):
+ * `{ error, code: "SEVERAL_OFFERS", offers: [{ offerId, name }] }`. Nothing here is authored by
+ * features-service, and an entry missing an id is dropped rather than carried as a half-offer.
+ */
+function parseSeveralOffers(
+  status: number,
+  text: string,
+): { message: string; offers: DeclaredOffer[] } | null {
+  if (status !== 409) return null;
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const record = body as { code?: unknown; error?: unknown; offers?: unknown };
+  if (record.code !== "SEVERAL_OFFERS") return null;
+  const offers = Array.isArray(record.offers)
+    ? (record.offers as Array<Record<string, unknown>>)
+        .filter((o) => typeof o.offerId === "string" && o.offerId !== "")
+        .map((o) => ({ offerId: o.offerId as string, name: typeof o.name === "string" ? o.name : null }))
+    : [];
+  return { message: typeof record.error === "string" ? record.error : "", offers };
 }
 
 /** Re-exported so callers name the funnel type from one place. */

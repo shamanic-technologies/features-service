@@ -1,5 +1,76 @@
 # Features Service — CLAUDE.md
 
+## A CAMPAIGN NAMES THE OFFER ITS FUNNELS ARE READ UNDER — and a brand-scoped read of a SEVERAL-OFFER brand DEGRADES with a named reason, it never 502s
+
+A declared sales funnel hangs off an OFFER: each one carries its own conversion rates, its own lifetime
+revenue and its own value proposition. So brand-service REFUSES a brand-scoped declared-funnel read for
+a brand selling more than one — `409 SEVERAL_OFFERS`, listing the offers — rather than serve one
+proposition's economics under another's name. Three reads here turned that refusal into a
+`502 declared_funnels_unavailable`, and the day a customer declared a second offer their campaign
+Workflows matrix, their audience cost columns and their best-model figures all went blank at once, with
+no retry and no fallback masking it.
+
+Measured in prod 2026-09-15: org `f0420eb5…` on brand `f4d73dab…` (distribute.you) declared a second
+offer on 2026-09-09 at 13:50 UTC — Product-led `832126f3…` beside Sales-led `5a2868bb…` — and from that
+minute `audience-stats` and both `workflow-projection` reads 502'd on every poll.
+
+- **THE OFFER COMES FROM THE CAMPAIGN, AND THAT IS THE ONLY PATH THERE IS.** A campaign sells exactly
+  ONE offer, so a request naming a `?campaignId=` names the offer transitively —
+  `CampaignIdentity.offerId`, read off the members the identity already resolved, so it costs **no extra
+  call**. It is deliberately NOT on `CampaignIdentityView`: it shapes which question we ask
+  brand-service, not what we tell a consumer, so no response body moves. **Do NOT "fix" this by adding
+  an `?offerId=` query parameter to `workflow-projection`** — it would need a dashboard change, and
+  `audience-stats` already proves a consumer cannot send one beside a campaign (`offerId` + `campaignId`
+  is a 400 by design: a campaign already sells exactly one offer).
+- **THE REFUSAL IS A QUESTION WITH SEVERAL ANSWERS, NOT A FAULT, AND THE TYPE SAYS SO.**
+  `SeveralOffersDeclaredError` (`lib/sales-funnels-client.ts`) is parsed from the deployed 409 body
+  (`{error, code:"SEVERAL_OFFERS", offers:[{offerId,name}]}` — brand-service's `rejectOfferProblem`).
+  It EXTENDS `SalesFunnelsUnavailableError` on purpose, so every existing `instanceof` catch — the
+  fail-soft `/revenue` path above all — behaves exactly as it did. **Do NOT collapse the two**: "we could
+  not READ the authorized set" and "the set has several answers" are different statements, and only the
+  first is an outage. Any other 409, and every other status, stays the generic error.
+- **A FUNNEL- OR GOAL-KEYED READ DEGRADES; A LEG-KEYED ONE REFUSES, AND THE ASYMMETRY IS THE POINT.**
+  For a funnel or a goal the caller has already named what is being priced, so an unresolvable
+  declaration falls through to the brand-wide effective economics — the SAME documented path a brand
+  that declared no funnel at all takes — with `declaredFunnelsUnresolved` on the body naming the offers.
+  For a LEG the declared set IS the answer ("which of this brand's funnels is this leg priced
+  through"), so widening to every catalogue funnel containing the leg would price the brand on
+  propositions it may not sell — the fabricated funnel set this service refuses to serve. That is a
+  **409 `several_offers`** listing the offers: not an outage, a choice the caller can make by naming a
+  campaign.
+- **THE VOLUME HALF NEVER DEGRADES.** Audiences, contacted, clicks, replies, conversions and every
+  observed `metrics.*Cents` are measured facts about spend, not about a proposition, so they answer in
+  full while only the PROJECTED half (`projection.*`, `brandProjection.*`, the derived cost columns'
+  floor) reads null. A reader sees an unpriced page, never a blank one, and `declaredFunnelsUnresolved`
+  says why.
+- **`funnel-ranking` ANSWERS 200 `unrankable` WITH ITS OWN REASON** (`several_offers_unnamed`), in the
+  exact shape an empty declaration already produces — no substituted funnel, no fabricated number.
+  campaign-service reads `arbitration.status === "resolved"` in prod to tell "no ranking yet" from a
+  fault, so an unrankable body is already something it handles; a 502 was not.
+- **AN OFFER-SCOPED ROUTE NAMES ITS OWN OFFER.** `/offers/:offerId/audience-stats` and its funnel
+  sibling pass the offer from their own path, so they stop depending on brand-service resolving a sole
+  offer. A single-offer brand resolves to the same offer either way, so those bodies are byte-unchanged.
+- **THE FLEET SWEEPS DEGRADE TO `[]`, LOUDLY** — `fetchDeclaredFunnelKeys` gained the offer argument,
+  but customer-health and the cross-org cost buckets have no campaign to resolve one from and already
+  `.catch` the read. A fleet sweep legitimately cannot name an offer; that is a gap to surface, never a
+  guess to make.
+- **`/revenue` IS UNTOUCHED AND MUST STAY SO.** It already passes `offerId` on its `?offerId=` path and
+  already degrades fail-soft, which is why it never 502'd — it was the tell that the plumbing existed and
+  the other call sites had simply never been given an offer.
+- **NOTHING MOVES FOR A BRAND SELLING ONE OFFER**: no `offerId` reaches the wire, no
+  `declaredFunnelsUnresolved` reaches the body, and the cache keys are byte-identical (the offer a
+  campaign sells is a function of the identity, which is already keyed). Guarded explicitly.
+- Guards: `src/routes/offer-scoped-funnels.test.ts` — ONE fixture carrying the reported brand's shape
+  (two offers on one brand, worth $500 and $5,000 a client, one campaign selling the second). Every case
+  asserts the DIVERGENCE, so a suite that only checked "a number came back" would pass on an
+  implementation that read the wrong offer's terms or none at all: the campaign-scoped read priced on
+  **its own** offer's lifetime revenue and never the other's, the offer named on the wire, the brand
+  grain answering 200 with the volume intact and the projection null, the leg-keyed 409, the
+  funnel-ranking `unrankable`, the single-offer brand naming no offer anywhere, and a genuine outage
+  still 502-ing on both surfaces. Plus `src/lib/several-offers-refusal.test.ts` (the error type, its
+  subclassing, the three non-matching failures, the offer on the wire, and the identity's offer read off
+  its members). (Set 2026-09-15, features-service#971.)
+
 ## BOTH HALVES OF THE RUN-RATE ARE SUMS — the SaaS half is summed over the customers who were EARNING that day, the four conditions come from the services that RECORD them, and an approximated period says so on the wire
 
 The staff Revenue page states ONE committed MRR for the whole fleet, `Σ active daily budget × 30`. That

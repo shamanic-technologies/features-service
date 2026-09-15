@@ -44,8 +44,18 @@ import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
  * producer's own rule is that "answered, but sells through nothing" does not exist (brand-service
  * refuses to switch off an org's last active funnel), so an empty list is a gap, never an answer.
  */
-export async function fetchDeclaredFunnelKeys(brandId: string, orgId: string): Promise<SalesFunnelKey[]> {
-  const declared = await fetchDeclaredSalesFunnels(brandId, orgId);
+export async function fetchDeclaredFunnelKeys(
+  brandId: string,
+  orgId: string,
+  /**
+   * WHICH offer's funnels, when the caller knows one. A brand selling SEVERAL offers has several
+   * declared sets, and brand-service refuses (409 `SEVERAL_OFFERS`) to pick between them — so a FLEET
+   * sweep, which has no campaign to resolve an offer from, legitimately gets that refusal and must
+   * degrade rather than fail (both callers here already `.catch` it to `[]`, loudly).
+   */
+  offerId?: string | null,
+): Promise<SalesFunnelKey[]> {
+  const declared = await fetchDeclaredSalesFunnels(brandId, orgId, offerId);
   return declared.map((f) => f.funnelKey).sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
 }
 
