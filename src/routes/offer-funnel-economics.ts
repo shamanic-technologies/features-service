@@ -426,7 +426,9 @@ router.get("/offers/:offerId/funnels/:funnelKey/audience-stats", apiKeyAuth, asy
         econ,
       }),
       orgId: headers.orgId,
-      compute: () => computeAudienceStats(req, pricing, row.campaignIds, row.channels),
+      // Same rule as the offer grain one level up: the offer is named in the path, so it names the
+      // terms. Byte-unchanged for a brand selling one thing.
+      compute: () => computeAudienceStats(req, pricing, row.campaignIds, row.channels, offerId),
     });
     if (!result.ok) return res.status(result.status).json({ error: result.error });
     res.json({ offerId, funnelKey: row.funnelKey, channels: describeChannels(row), ...result.envelope });

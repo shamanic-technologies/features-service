@@ -4,7 +4,11 @@ import { computeAudienceStats, validateAudienceStatsQuery, type ComputeResult } 
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
-import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
+import {
+  fetchDeclaredSalesFunnels,
+  SalesFunnelsUnavailableError,
+  SeveralOffersDeclaredError,
+} from "../lib/sales-funnels-client.js";
 import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
@@ -80,21 +84,45 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
       : null;
     const campaignScopeIds = offerCampaignIds ?? identity?.campaignIds ?? (requestedCampaignId ? [requestedCampaignId] : undefined);
 
+    // ── WHICH OFFER'S TERMS THIS READ IS PRICED ON ──────────────────────────────────────────
+    //
+    // A declared funnel hangs off an OFFER: each one carries its own conversion rates, its own lifetime
+    // revenue and its own value proposition, so brand-service refuses (409 SEVERAL_OFFERS) to answer a
+    // brand-scoped read for a brand selling more than one rather than serve one proposition's economics
+    // under another's name. Until that offer is named, every read below turned the refusal into a 502
+    // and the customer's Audiences page went blank the day they declared a second offer.
+    //
+    // A campaign sells exactly ONE offer, so a request naming a campaign names the offer transitively —
+    // and that is the ONLY path available here, since `?offerId=` beside `?campaignId=` is a 400 by
+    // design (the guard a few lines up). The identity read has already happened for the campaign scope,
+    // so this costs NO extra call. Absent → today's brand-scoped read, which brand-service answers for
+    // every brand selling one thing, so a single-offer brand is byte-unchanged.
+    const scopeOfferId = offerId ?? identity?.offerId ?? null;
+
     // A funnel the brand never declared has no cost to serve — "we could not estimate this" and "it
     // costs zero" are different statements, and only the first is true. 404 with the reason rather than
     // pricing a funnel the org never said it sells through. Fires ONLY on `?funnel=`, so every existing
     // goal-keyed request takes no extra read.
     if (validated.funnelKey) {
-      let declared: string[];
+      let declared: string[] | null;
       try {
-        declared = (await fetchDeclaredSalesFunnels(validated.brandId, orgId)).map((f) => f.funnelKey);
+        declared = (await fetchDeclaredSalesFunnels(validated.brandId, orgId, scopeOfferId)).map(
+          (f) => f.funnelKey,
+        );
       } catch (err) {
-        if (err instanceof SalesFunnelsUnavailableError) {
+        // SEVERAL OFFERS, none named: there is no single declared set to check the funnel against, so
+        // this gate cannot fire at all. Skipping it is the honest move — 404-ing "not declared" would
+        // assert something nobody told us, and 502-ing is the blank page this fixes. The compute below
+        // degrades the projected columns and states the reason on the body.
+        if (err instanceof SeveralOffersDeclaredError) {
+          declared = null;
+        } else if (err instanceof SalesFunnelsUnavailableError) {
           return res.status(502).json({ error: err.message, reason: "declared_funnels_unavailable" });
+        } else {
+          throw err;
         }
-        throw err;
       }
-      if (!declared.includes(validated.funnelKey)) {
+      if (declared && !declared.includes(validated.funnelKey)) {
         return res.status(404).json({
           error: `this brand has not declared the ${validated.funnelKey} funnel, so there is no cost to estimate for it`,
           reason: "funnel_not_declared",
@@ -124,11 +152,15 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     let decl: string | undefined;
     if (!validated.funnelKey && validated.goal === null) {
       try {
-        decl = (await fetchDeclaredSalesFunnels(validated.brandId, orgId))
+        decl = (await fetchDeclaredSalesFunnels(validated.brandId, orgId, scopeOfferId))
           .map((f) => f.funnelKey)
           .sort()
           .join(",");
       } catch (err) {
+        // A brand whose declaration could not be resolved to one offer's set serves a DIFFERENT body
+        // (the degraded projection), so it must land on its own cell rather than share the resolved
+        // one — and it must stop sharing it again the moment an offer becomes nameable.
+        if (err instanceof SeveralOffersDeclaredError) decl = "several-offers";
         console.warn(
           `[features-service] audience-stats declared-funnel key unavailable (keying without it): ${(err as Error).message}`,
         );
@@ -170,13 +202,15 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
       // instead of the dashboard paying a full fan-out per stopped ancestor it renders.
       campaignId: identity?.key ?? requestedCampaignId,
       // Same rule one grain up: an offer-scoped body and the brand-wide one must never share a cell.
+      // The offer a CAMPAIGN sells needs no key of its own — it is a function of the identity, which
+      // is already keyed above — so a single-offer brand's key is byte-unchanged.
       offerId,
     });
     const result = await servedCached<ComputeResult>({
       view: "audience-stats",
       scopeKey,
       orgId,
-      compute: () => computeAudienceStats(req, pricing, campaignScopeIds),
+      compute: () => computeAudienceStats(req, pricing, campaignScopeIds, undefined, scopeOfferId),
     });
     if (!result.ok) {
       return res.status(result.status).json({ error: result.error });
