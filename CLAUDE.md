@@ -2591,14 +2591,29 @@ from what we actually charge and actually measured.
   catalogue. The step vocabulary rides the payload under `steps` (renamed from `producibleSteps` when it
   widened past the entry subset; the gateway does not proxy `/public/*`, so it had no outside consumer)
   so nothing hardcodes it.
-- **THE `conversation` STEP IS LABELLED "Conversation", AND "Sales interest" IS NOT ITS NAME.** Sales
-  interest is the CATEGORY every entry signal belongs to — a positive reply, a website visit, a form
-  filled inside an ad are all a buyer showing interest — so putting that phrase on ONE step names the
-  category as if it were the member, and leaves its siblings unreadable beside it. The label is the
-  specific thing that happened: the buyer answered. Shipped as "Sales interest" in #879 on a brief that
-  said the product used that wording everywhere, and reverted the same day
-  (Kevin: *"SalesInterest is something else than conversation. It can be any interest, like positive
-  reply, website visit, etc"*). The wire token was never touched. (Set 2026-09-02.)
+- **THE `conversation` STEP IS LABELLED "Positive reply" — the funnels' OWN wording — AND "Sales
+  interest" IS STILL NOT ITS NAME (supersedes the "Conversation" label of #879/#885).** These strings
+  are CUSTOMER COPY: the onboarding's first screen renders one card per producible step to a SIGNED-OUT
+  visitor, titled with the label and explained with the description. Two reasons the label moved, and
+  the first is not cosmetic. **The join was broken.** `FUNNEL_STEP_LABEL_TO_KEY` maps brand-service's
+  own rung wording onto our key, and every funnel that starts on this step publishes **"Positive
+  reply"** while the step itself published "Conversation" — so a consumer joining a channel's produced
+  step to a funnel's first rung BY LABEL matched nothing, for the one step the two services disagreed
+  about. **And the word is banned fleet-wide** (owner, 2026-09-17: *"Les outcomes / steps sont PR | WV.
+  Un Sales Interest SI = PR | WV. Conversations est a bannir."*), so the banned word was the title of a
+  pre-signup card. brand-service had already conformed; this catalogue had not. "Sales interest" stays
+  wrong for the reason #885 gave and the owner restates: it is the CATEGORY both entry outcomes belong
+  to (PR **and** WV), so putting it on ONE of them names the category as if it were the member.
+  **THE KEY IS UNTOUCHED** — `conversation`, every `start_to_conversation` leg, every stored row and
+  every consumer join by key resolve exactly as before; only what a person reads moved. **Ordinary
+  English about a MEDIUM is a different sense and was deliberately left alone** — a phone channel still
+  describes opening the conversation on a call, and a blanket replace across the ~79 occurrences in the
+  published payload yields sentences nobody wrote. Guards: the `what a VISITOR reads on a step` suite in
+  `acquisition-channels.test.ts` pins the label against the funnels' own first rung (so the two can
+  never drift apart again), asserts the SAME mirror invariant for ALL EIGHT steps, bans the word from
+  every step label and description, and pins the key list — a suite that only checked "a label came
+  back" would pass on the spelling this replaces. (Set 2026-09-02, relabelled 2026-09-17,
+  features-service#996.)
 - **`/public/channel-funnel-economics`** serves ONE ROW PER PAIR — the grain the marketing site prints.
   A customer buys a PAIR, and the same funnel costs a very different amount through a phone channel than
   through paid search, so a brand-level or channel-level aggregate cannot answer it. `?channelSlug=`
