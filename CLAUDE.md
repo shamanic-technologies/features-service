@@ -2614,6 +2614,24 @@ from what we actually charge and actually measured.
   every step label and description, and pins the key list — a suite that only checked "a label came
   back" would pass on the spelling this replaces. (Set 2026-09-02, relabelled 2026-09-17,
   features-service#996.)
+- **THE AD-HOSTED FORM STEP READS "Form submitted", AND THE DESCRIPTION IS WHAT KEEPS IT APART FROM
+  "Form filled".** Same surface and same reason as the bullet above: the onboarding's first screen
+  titles a pre-signup card with this label, the owner read brand-service's "Lead form submitted" there
+  and asked for the shorter wording. So this is the ONE step whose published label deliberately DIVERGES
+  from brand-service's own rung wording, and the divergence is safe in a way the general mirror rule is
+  not: nothing matches brand-service's step STRINGS at run time for this funnel (`RATE_FOR_STEP_PAIR`
+  names neither of its two steps, and `lead_forms_from_ads` has no brand declaration in production), so
+  no declared rate can be lost to it. **The KEY is untouched** — `lead_form_submitted`, every
+  `start_to_lead_form_submitted` leg, every stored row and every consumer join by key resolve exactly as
+  before. `SALES_FUNNELS.lead_forms_from_ads.steps[0]` and `FUNNEL_MILESTONE_STEP` moved WITH the label,
+  which is what keeps `FUNNEL_STEP_LABEL_TO_KEY` a lookup rather than a translation table. **Do NOT
+  collapse it onto `form_filled`**: that form is filled on the brand's OWN site, this one is hosted by
+  the ad platform and the buyer never reaches the brand at all — two steps, two descriptions, and the
+  description is the only place a reader can tell them apart now that both labels say "Form". Guard: the
+  `names the ad-hosted form step "Form submitted"` case in `acquisition-channels.test.ts`, where every
+  assertion states the DIVERGENCE between the two form steps — a suite that only checked "a label came
+  back" would pass on an implementation that gave them one name. (Set 2026-09-17,
+  features-service#999.)
 - **`/public/channel-funnel-economics`** serves ONE ROW PER PAIR — the grain the marketing site prints.
   A customer buys a PAIR, and the same funnel costs a very different amount through a phone channel than
   through paid search, so a brand-level or channel-level aggregate cannot answer it. `?channelSlug=`
