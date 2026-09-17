@@ -30,7 +30,7 @@ import {
 } from "./acquisition-channels.js";
 import { legKeyFor, FUNNEL_LEGS, type FunnelLegDef } from "./funnel-legs.js";
 import { SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
-import { minimumCommitmentDaysFor } from "./funnel-commercial-terms.js";
+import { composeMinimumCommitment, minimumCommitmentDaysFor, type ComposedMinimumCommitment } from "./funnel-commercial-terms.js";
 
 /** A feature row, narrowed to what the catalogue reads. */
 export interface CatalogueFeatureRow {
@@ -85,16 +85,16 @@ export interface PublicChannel {
   /** The steps this channel produces FROM NOTHING — the `to` of its entry legs. DERIVED; a channel that
    *  only performs internal legs of a funnel legitimately produces none. */
   producibleSteps: ChannelStepDefWire[];
-  /** The sales funnels this channel may be sold through — every funnel one of its legs belongs to. */
+  /** The sales funnels this channel may be sold through — every funnel one of its legs belongs to.
+   *  Each carries the pair's MINIMUM RUN LENGTH already composed against this channel's own
+   *  `terms.minimumCommitmentDays`: a consumer renders `effectiveMinimumCommitmentDays` and never
+   *  combines two of our fields. Note the same funnel legitimately reads a DIFFERENT effective figure
+   *  under a different channel — the figure is a property of the pair, not of the funnel. */
   salesFunnels: Array<{
     key: SalesFunnelKey;
     name: string;
     steps: readonly string[];
-    /** The FUNNEL's own minimum commitment, in whole days. `null` = none — a written statement,
-     *  never a gap. A buyer is bound by BOTH this and the channel's `terms.minimumCommitmentDays`;
-     *  the stricter of the two governs the booking. */
-    minimumCommitmentDays: number | null;
-  }>;
+  } & ComposedMinimumCommitment>;
 }
 
 /**
@@ -227,7 +227,7 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
         key,
         name: SALES_FUNNELS[key].name,
         steps: SALES_FUNNELS[key].steps,
-        minimumCommitmentDays: minimumCommitmentDaysFor(key),
+        ...composeMinimumCommitment(channel.terms.minimumCommitmentDays, minimumCommitmentDaysFor(key)),
       })),
     });
   }
