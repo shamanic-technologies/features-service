@@ -180,11 +180,27 @@ const prefillResponseSchema = z.object({
 
 registry.register("PrefillResponse", prefillResponseSchema);
 
+const prefillRequestSchema = z.object({
+  offerId: z.string().uuid().optional().describe(
+    "WHICH offer this channel is being started for — the offer whose confirmed fields ground the extraction. The user-facing inputs describe ONE value proposition, so a brand selling two things has two right answers and only the caller knows which it means. OPTIONAL: omit it and a brand with a single offer behaves exactly as before, while a brand holding SEVERAL answers 409 `several_offers` (carrying the offers) until one is named. An id naming no offer of this brand is a 404. Never defaulted here, and never resolved to 'the first offer'.",
+  ),
+});
+
+registry.register("PrefillRequest", prefillRequestSchema);
+
+const severalOffersResponse = z.object({
+  error: z.string(),
+  code: z.literal("several_offers"),
+  offers: z.array(z.object({ offerId: z.string(), name: z.string().nullable() })),
+});
+
+registry.register("PrefillSeveralOffersResponse", severalOffersResponse);
+
 registry.registerPath({
   method: "post",
   path: "/features/{featureSlug}/prefill",
   summary: "Pre-fill feature inputs from brand data",
-  description: "Calls brand-service to extract field values for the feature's inputs. Returns pre-filled values keyed by input key. Requires x-brand-id header. Use ?format=text for flattened strings, ?format=full for structured values with per-brand breakdown.",
+  description: "Calls brand-service to extract field values for the feature's inputs. Returns pre-filled values keyed by input key. Requires x-brand-id header. Use ?format=text for flattened strings, ?format=full for structured values with per-brand breakdown. Send `offerId` in the BODY to say which offer the channel is being started for — required only for a brand holding SEVERAL offers, which otherwise answers 409 `several_offers` listing them.",
   tags: ["Features"],
   request: {
     headers: identityHeaders,
@@ -192,11 +208,13 @@ registry.registerPath({
     query: z.object({
       format: z.enum(["text", "full"]).optional().describe("Response format: 'text' returns flattened strings, 'full' returns structured values with per-brand breakdown. Defaults to 'full'."),
     }),
+    body: { required: false, content: { "application/json": { schema: prefillRequestSchema } } },
   },
   responses: {
     200: { description: "Pre-filled input values", content: { "application/json": { schema: prefillResponseSchema } } },
-    400: { description: "Missing x-brand-id or invalid format", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing x-brand-id, invalid format, or malformed offerId", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found, or the named offer is not an offer of this brand", content: { "application/json": { schema: errorResponse } } },
+    409: { description: "The brand sells SEVERAL offers and the request named none. Not a fault: name one of the returned `offers` and retry.", content: { "application/json": { schema: severalOffersResponse } } },
     502: { description: "Brand service error", content: { "application/json": { schema: errorResponse } } },
   },
 });
