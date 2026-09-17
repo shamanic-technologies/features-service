@@ -205,7 +205,7 @@ export interface LearningCell {
 }
 
 /** The terms a campaign's leg is counted and priced on, or null when it states no usable leg. */
-interface ResolvedLeg {
+export interface ResolvedLeg {
   legKey: string;
   funnelKey: SalesFunnelKey;
   outcomeStep: ChannelStepDef;
