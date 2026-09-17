@@ -21,6 +21,7 @@ import {
   producibleStepsOf,
   sellableFunnelsFor,
 } from "../lib/acquisition-channels.js";
+import { salesFunnelCatalogue } from "../lib/channel-catalogue.js";
 import { coldEmailOutreachSlugs } from "../lib/send-forecast-compute.js";
 
 const bySlug = (slug: string) => SEED_FEATURES.find((f) => f.slug === slug);
@@ -295,11 +296,54 @@ describe("what each channel can produce, and what follows from it", () => {
     }
   });
 
-  it("all four PRODUCED kinds are in play — including the two produced inside an ad unit", () => {
+  it("all four PRODUCED kinds are in play — including the two an ad DELIVERS", () => {
     const produced = new Set(channels.flatMap((c) => producibleStepsOf(c.acquisitionChannel!.stepTransitions)));
-    for (const key of ["conversation", "website_visit", "in_ad_form_submission", "in_ad_booked_meeting"]) {
+    for (const key of ["conversation", "website_visit", "lead_form_submitted", "meeting_booked"]) {
       expect([...produced], key).toContain(key);
     }
+  });
+
+  it("NO PUBLISHED CHANNEL PRODUCES A STEP THAT LEADS NOWHERE — every production starts a funnel it sells", () => {
+    // AC, asserted against the real seed: a channel publishing a produced step that no funnel it sells
+    // starts on is publishing a capability nobody can buy. That is exactly what the eight in-ad form
+    // channels and the two in-ad meeting channels did until brand-service shipped the ad funnels.
+    const funnels = salesFunnelCatalogue();
+    for (const channel of channels) {
+      const sold = new Set(channel.salesFunnels);
+      for (const produced of producibleStepsOf(channel.acquisitionChannel!.stepTransitions)) {
+        const started = funnels.filter((f) => f.entryStep.key === produced);
+        expect(started.length, `${channel.slug} produces ${produced}, which starts no funnel`).toBeGreaterThan(0);
+        expect(
+          started.some((f) => sold.has(f.key)),
+          `${channel.slug} produces ${produced} but sells none of the funnels it starts`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("THE TEN AD CHANNELS EACH GAINED A FUNNEL THEY COULD NOT SELL BEFORE", () => {
+    // AC, named channel by channel so a regression cannot hide behind an aggregate. The eight that host
+    // a form sell `lead_forms_from_ads`; the two that also take a booking sell `sales_meetings_from_ads`.
+    const FORM_CHANNELS = [
+      "google-ads",
+      "meta-ads",
+      "linkedin-ads",
+      "tiktok-ads",
+      "youtube-ads",
+      "reddit-ads",
+      "bing-ads",
+      "quora-ads",
+    ];
+    for (const slug of FORM_CHANNELS) {
+      expect(bySlug(slug)!.salesFunnels, slug).toContain("lead_forms_from_ads");
+    }
+    for (const slug of ["meta-ads", "linkedin-ads"]) {
+      expect(bySlug(slug)!.salesFunnels, slug).toContain("sales_meetings_from_ads");
+    }
+    // …and an ad channel that hosts neither sells neither — the join is a token match, not a family rule.
+    expect(bySlug("x-ads")!.salesFunnels).not.toContain("lead_forms_from_ads");
+    expect(bySlug("x-ads")!.salesFunnels).not.toContain("sales_meetings_from_ads");
+    expect(bySlug("google-ads")!.salesFunnels).not.toContain("sales_meetings_from_ads");
   });
 
   it("`salesFunnels` is DERIVED from the legs the channel performs — one fact, never two lists", () => {
@@ -315,24 +359,29 @@ describe("what each channel can produce, and what follows from it", () => {
     expect(bySlug("cold-call-outreach")!.acquisitionChannel!.stepTransitions).toEqual([
       { from: null, to: "conversation" },
     ]);
-    expect(bySlug("cold-call-outreach")!.salesFunnels).toEqual(["sales_meetings_from_conversation"]);
+    expect(bySlug("cold-call-outreach")!.salesFunnels).toEqual([
+      "sales_meetings_from_conversation",
+      "sales_from_conversation",
+    ]);
   });
 
   it("the three live email channels keep the exact answer they shipped with", () => {
-    expect(bySlug("sales-cold-email-outreach")!.salesFunnels).toEqual([
+    // They produce a conversation and a website visit, so they keep every funnel those two enter — the
+    // original four UNCHANGED, plus the two single-step funnels brand-service added, which are entered
+    // by exactly the same signals. Neither AD funnel is here: an email delivers neither of their steps.
+    const CONVERSATION_AND_VISIT_FUNNELS = [
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
       "website_purchases",
       "form_magnet",
-    ]);
-    expect(bySlug("sales-crm-email-outreach")!.salesFunnels).toEqual([
-      "sales_meetings_from_conversation",
-      "sales_meetings_from_website",
-      "website_purchases",
-      "form_magnet",
-    ]);
+      "sales_from_conversation",
+      "sales_from_website",
+    ];
+    expect(bySlug("sales-cold-email-outreach")!.salesFunnels).toEqual(CONVERSATION_AND_VISIT_FUNNELS);
+    expect(bySlug("sales-crm-email-outreach")!.salesFunnels).toEqual(CONVERSATION_AND_VISIT_FUNNELS);
     expect(bySlug("feedback-request-cold-email-outreach")!.salesFunnels).toEqual([
       "sales_meetings_from_conversation",
+      "sales_from_conversation",
     ]);
   });
 });
@@ -364,14 +413,17 @@ describe("A FUNNEL IS SOLD LEG BY LEG — a channel states where it picks a lead
       { from: "meeting_attended", to: "paid_client" },
     ]);
 
-    // Both meeting funnels share every leg after the meeting is booked, so those two sell both.
+    // All THREE meeting funnels share every leg after the meeting is booked, so those two sell all of
+    // them — the ad funnel included, even though nothing about these channels changed.
     expect(bySlug("agency-meeting-attendance")!.salesFunnels).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
+      "sales_meetings_from_ads",
     ]);
     expect(bySlug("agency-closing-calls")!.salesFunnels).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
+      "sales_meetings_from_ads",
     ]);
   });
 

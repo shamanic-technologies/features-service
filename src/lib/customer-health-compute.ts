@@ -357,7 +357,15 @@ const REAL_DEPS: CustomerHealthDeps = {
 
 /** Sales funnels whose funnel passes through a conversion on the CLIENT's own site, so they need a
  * tracker installed there. A meeting funnel does not: the meeting is booked and qualified on our side. */
-const TRACKER_NEEDED_FUNNELS: ReadonlySet<SalesFunnelKey> = new Set<SalesFunnelKey>(["website_purchases", "form_magnet"]);
+const TRACKER_NEEDED_FUNNELS: ReadonlySet<SalesFunnelKey> = new Set<SalesFunnelKey>([
+  "website_purchases",
+  "form_magnet",
+  // The buyer lands on the client's own site and pays there, so the sale is only visible to us through
+  // their tracker. The ad funnels are NOT here: their conversion happens inside the ad platform, so a
+  // tracker on the client's site would never see it and asking for one would be asking for the wrong
+  // thing. The reply funnels are not here for the reason the meeting funnels are not: we see the reply.
+  "sales_from_website",
+]);
 
 /** Map a sales funnel to the observed conversion-count of the event its funnel converts on
  * (lead-service tracker). null when the brand has declared no funnel. */
@@ -370,7 +378,15 @@ function observedConversionsForFunnel(funnel: SalesFunnelKey | null, counts: Con
       return counts.form_submission;
     case "sales_meetings_from_conversation":
     case "sales_meetings_from_website":
+    case "sales_meetings_from_ads":
       return counts.meeting_booked;
+    // These three convert on a step the conversion tracker does not count — a sale closed inside a
+    // conversation, a purchase made straight off the site, a form filled inside an ad unit. `null` is
+    // "no count applies", which is a different statement from a measured 0 and never a fabricated one.
+    case "sales_from_conversation":
+    case "sales_from_website":
+    case "lead_forms_from_ads":
+      return null;
     default:
       // No declared funnel → no funnel, so no count applies. Never a fabricated 0.
       return null;

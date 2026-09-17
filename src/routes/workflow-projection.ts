@@ -10,7 +10,7 @@ import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { type CostBasis } from "../lib/cost-basis.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type SingleStepGoal, type Goal } from "../lib/goals.js";
-import { SALES_FUNNELS, matchSalesFunnelKey, salesFunnelIndex, type MeetingChannel, type SalesFunnelKey } from "../lib/sales-funnels.js";
+import { SALES_FUNNELS, matchSalesFunnelKey, salesFunnelIndex, type PricingChannel, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import {
   describeSeveralOffers,
   fetchDeclaredSalesFunnels,
@@ -487,7 +487,7 @@ export function funnelToProjectionInputs(key: SalesFunnelKey): {
   goalEcho: GoalEcho;
   singleStepGoal: SingleStepGoal | null;
   formSubmissionGoal: boolean;
-  meetingChannel: MeetingChannel | null;
+  meetingChannel: PricingChannel;
 } {
   switch (key) {
     case "sales_meetings_from_conversation":
@@ -498,6 +498,22 @@ export function funnelToProjectionInputs(key: SalesFunnelKey): {
       return { objective: "signup", goalEcho: "signup", singleStepGoal: null, formSubmissionGoal: false, meetingChannel: null };
     case "form_magnet":
       return { objective: "form_submissions", goalEcho: "formSubmission", singleStepGoal: null, formSubmissionGoal: true, meetingChannel: null };
+    // The two SINGLE-STEP funnels are EXACTLY the two single-step goals this service already prices —
+    // `replyUsd / replyToPaidClientPct` and `clickUsd / visitToPaidClientPct` — so they route onto
+    // those rather than onto a new word that would price the same thing a second way.
+    case "sales_from_conversation":
+      return { objective: "positive_replies", goalEcho: "positiveReply", singleStepGoal: "positiveReply", formSubmissionGoal: false, meetingChannel: "reply" };
+    case "sales_from_website":
+      return { objective: "website_visits", goalEcho: "websiteVisit", singleStepGoal: "websiteVisit", formSubmissionGoal: false, meetingChannel: "click" };
+    // The two AD funnels: the advertising platform DELIVERS their first step and no counted signal
+    // observes it, so `"none"` masks BOTH unit costs away and every projected figure reads null. That is
+    // the honest answer — a projection built on click or reply evidence would price an ad-delivered
+    // step against evidence the funnel never buys. The goal echoes stay the nearest existing words, and
+    // are lossy exactly as every other echo here is.
+    case "sales_meetings_from_ads":
+      return { objective: "meeting-booked", goalEcho: "meetingBooked", singleStepGoal: null, formSubmissionGoal: false, meetingChannel: "none" };
+    case "lead_forms_from_ads":
+      return { objective: "form_submissions", goalEcho: "formSubmission", singleStepGoal: null, formSubmissionGoal: true, meetingChannel: "none" };
   }
 }
 
@@ -511,10 +527,13 @@ export function funnelToProjectionInputs(key: SalesFunnelKey): {
  */
 function maskUnitCostsForChannel<T extends { clickUsd: number | null; replyUsd: number | null }>(
   unitCosts: T,
-  channel: MeetingChannel | null,
+  channel: PricingChannel,
 ): { clickUsd: number | null; replyUsd: number | null } {
   if (channel === "click") return { clickUsd: unitCosts.clickUsd, replyUsd: null };
   if (channel === "reply") return { clickUsd: null, replyUsd: unitCosts.replyUsd };
+  // NEITHER channel buys the funnel's entry step (an ad delivers it), so nothing may price it and
+  // every projected figure downstream reads null rather than a number off the wrong evidence.
+  if (channel === "none") return { clickUsd: null, replyUsd: null };
   return { clickUsd: unitCosts.clickUsd, replyUsd: unitCosts.replyUsd };
 }
 
@@ -563,7 +582,7 @@ export function paidClientCostForGoal(
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
-  meetingChannel: MeetingChannel | null = null,
+  meetingChannel: PricingChannel = null,
 ): number | null {
   const p = projectOutcomeCosts(econ, maskUnitCostsForChannel(unitCosts, meetingChannel));
   // whatsapp_conversations has NO paid-client rate (brand-service exposes none) → null, null-safe. The
@@ -602,7 +621,7 @@ export function outcomeCostForGoal(
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
-  meetingChannel: MeetingChannel | null = null,
+  meetingChannel: PricingChannel = null,
 ): number | null {
   const p = projectOutcomeCosts(econ, maskUnitCostsForChannel(unitCosts, meetingChannel));
   // whatsapp_conversations: the click on the WhatsApp link IS the outcome (a started conversation) →
@@ -651,7 +670,7 @@ function resolvedOutcomeCountForGoal(
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
-  meetingChannel: MeetingChannel | null = null,
+  meetingChannel: PricingChannel = null,
 ): number {
   // A channel-scoped funnel counts outcomes on the channel it buys through and ONLY that one — the same
   // masking the cost side applies, so `spentUsd / count == that grain's cost-per-outcome` still holds.
@@ -690,7 +709,7 @@ function buildGrainBlock(
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
   parentUnitCosts: GrainUnitCosts | null = null,
-  meetingChannel: MeetingChannel | null = null,
+  meetingChannel: PricingChannel = null,
   // Present ⟺ the caller named a `?leg=`: the grain's cost-per-outcome and outcome COUNT are then
   // denominated in the LEG's own step rather than in the step its basis funnel is named after.
   legTerms: LegOutcomeTerms | null = null,
@@ -777,7 +796,7 @@ export function grainHasObservedOutcome(
   ev: GrainBlock["evidence"],
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
-  meetingChannel: MeetingChannel | null = null,
+  meetingChannel: PricingChannel = null,
 ): boolean {
   // A channel-scoped meeting funnel is MEASURED only on the channel it buys through: a brand with clicks
   // and no replies has observed nothing about `sales_meetings_from_conversation`, so labelling that row
@@ -838,7 +857,7 @@ function resolvePick(
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
-  meetingChannel: MeetingChannel | null = null,
+  meetingChannel: PricingChannel = null,
   legTerms: LegOutcomeTerms | null = null,
 ): ResolvedBlock {
   const measured = (g: GrainName): boolean =>
@@ -948,7 +967,7 @@ function exploreResolved(
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
-  meetingChannel: MeetingChannel | null,
+  meetingChannel: PricingChannel,
   legTerms: LegOutcomeTerms | null = null,
 ): ResolvedBlock {
   const unitCosts = { clickUsd: outreachUsd, replyUsd: outreachUsd };
@@ -1072,7 +1091,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     ? inputsForFunnel(funnelKey)
     : legKey
       ? inputsForFunnel(funnelsContainingLeg(legKey)[0])
-      : { ...(resolved as { ok: true } & GoalInputs), meetingChannel: null as MeetingChannel | null };
+      : { ...(resolved as { ok: true } & GoalInputs), meetingChannel: null as PricingChannel };
   let { objective, goal, singleStepGoal, formSubmissionGoal, meetingChannel } = inputs;
   const budgetUsd = budgetRaw != null && budgetRaw !== "" ? Number(budgetRaw) : null;
 
@@ -1521,7 +1540,7 @@ export async function computeWorkflowProjection(input: {
   goal: GoalEcho;
   singleStepGoal: SingleStepGoal | null;
   formSubmissionGoal: boolean;
-  meetingChannel?: MeetingChannel | null;
+  meetingChannel?: PricingChannel;
   funnelKey?: SalesFunnelKey;
   identity: Identity;
   pricing: Pricing;
@@ -1558,7 +1577,7 @@ export function projectFromEvidence(input: {
   singleStepGoal: SingleStepGoal | null;
   formSubmissionGoal: boolean;
   /** Set ONLY on a funnel-keyed projection; narrows every cost + every observed count to that channel. */
-  meetingChannel?: MeetingChannel | null;
+  meetingChannel?: PricingChannel;
   /** Echoed on the response when the caller named a funnel. Never shapes the math on its own. */
   funnelKey?: SalesFunnelKey;
   /**

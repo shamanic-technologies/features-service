@@ -55,12 +55,22 @@ describe("per-feature sales funnels", () => {
     const all = bySlug(SALES_SLUG)!.salesFunnels;
 
     expect(none).toEqual([]);
-    expect(all).toEqual([...SALES_FUNNEL_KEYS]);
+    // "ALL" means every funnel the channel's own production can enter, not the whole catalogue: since
+    // brand-service added two funnels an AD delivers the first step of, no email channel can sell those
+    // — an email produces neither a booked meeting nor a lead form inside an ad unit.
+    expect(all).toEqual([
+      "sales_meetings_from_conversation",
+      "sales_meetings_from_website",
+      "website_purchases",
+      "form_magnet",
+      "sales_from_conversation",
+      "sales_from_website",
+    ]);
     expect(none).not.toEqual(all);
     // The distinction a consumer actually makes: an empty list offers nothing, a full one offers
-    // everything, and neither is expressed by leaving the field out.
+    // everything that channel can reach, and neither is expressed by leaving the field out.
     expect(none.length).toBe(0);
-    expect(all.length).toBe(SALES_FUNNEL_KEYS.length);
+    expect(all.length).toBeGreaterThan(0);
   });
 
   it("every feature that is NOT an acquisition channel sells through no sales funnel", () => {
@@ -88,12 +98,16 @@ describe("per-feature sales funnels", () => {
         "sales_meetings_from_website",
         "website_purchases",
         "form_magnet",
+        "sales_from_website",
       ]);
     }
   });
 
-  it("the feedback request sells through the reply-to-meeting funnel ALONE", () => {
-    expect(bySlug(FEEDBACK_SLUG)!.salesFunnels).toEqual(["sales_meetings_from_conversation"]);
+  it("the feedback request sells the REPLY-entered funnels alone — it has no website step to sell", () => {
+    expect(bySlug(FEEDBACK_SLUG)!.salesFunnels).toEqual([
+      "sales_meetings_from_conversation",
+      "sales_from_conversation",
+    ]);
   });
 
   it("a restriction is not a gap — the feedback request states FEWER funnels than the pitch, on purpose", () => {
@@ -104,8 +118,11 @@ describe("per-feature sales funnels", () => {
     for (const key of feedback) expect(pitch).toContain(key);
   });
 
-  it("no existing feature's answer changed the pitch's own: sales cold email still sells through all four", () => {
-    expect(bySlug(SALES_SLUG)!.salesFunnels).toEqual([
+  it("THE FOUR ORIGINAL FUNNELS ARE UNCHANGED for the pitch — the widening only ADDED", () => {
+    const pitch = bySlug(SALES_SLUG)!.salesFunnels;
+    // Byte-for-byte the answer it shipped with, still first and still in order. Anything after it is
+    // new reach, never a substitution.
+    expect(pitch.slice(0, 4)).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
       "website_purchases",

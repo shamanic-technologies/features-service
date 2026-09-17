@@ -113,6 +113,56 @@ describe("restrictPathsToDeclaredLegs — only a declared funnel's legs carry va
   it("NO declaration ⇒ every conversion leg is priced (we do not know the funnel, and never invent one)", () => {
     expect(tagsFor([])).toEqual(["visit", "reply", "meeting", "meetingAttended", "closeWin"]);
   });
+
+  it("A SINGLE-STEP funnel prices its entry on the DIRECT rate, never through a meeting it has no step for", () => {
+    // The fixture states replyToPaidClient 10% and visitToPaidClient 6%, against a reply→meeting→paid
+    // route of 40% × 30% = 12% and a visit route of 3.35%. So a SUBSTITUTION would be visible to the
+    // cent in both directions — which is exactly what this asserts against.
+    const withDirect = getFunnel("sales-cold-email-outreach")!.resolvePaths({
+      economics: { ...ECONOMICS, replyToPaidClientPct: 10, visitToPaidClientPct: 6 },
+      pricedFunnelKeys: ["sales_from_conversation"],
+    });
+    expect(withDirect.map((p) => p.tag)).toEqual(["reply", "closeWin"]);
+    expect(withDirect[0]!.expectedRevenueUsd).toBeCloseTo(100, 6); // 1000 × 0.10, NOT 1000 × 0.40 × 0.30
+    expect(withDirect[0]!.expectedRevenueUsd).not.toBeCloseTo(120, 6);
+
+    const website = getFunnel("sales-cold-email-outreach")!.resolvePaths({
+      economics: { ...ECONOMICS, replyToPaidClientPct: 10, visitToPaidClientPct: 6 },
+      pricedFunnelKeys: ["sales_from_website"],
+    });
+    expect(website.map((p) => p.tag)).toEqual(["visit", "closeWin"]);
+    // `sales_from_website`'s own leg is brand-service's `visitToClosePct` (2% here) — the DIRECT
+    // self-serve close — not the composed click route the other website funnels price on (3.35%).
+    expect(website[0]!.expectedRevenueUsd).toBeCloseTo(20, 6);
+    expect(website[0]!.expectedRevenueUsd).not.toBeCloseTo(34.7, 1);
+  });
+
+  it("AN AD FUNNEL prices no engagement route — nothing counted buys the step the platform delivers", () => {
+    // Its rungs start where the ad drops the lead, so neither a click nor a reply earns anything on it.
+    expect(tagsFor(["sales_meetings_from_ads"])).toEqual(["meeting", "meetingAttended", "closeWin"]);
+    expect(tagsFor(["sales_meetings_from_ads"])).not.toContain("visit");
+    expect(tagsFor(["sales_meetings_from_ads"])).not.toContain("reply");
+    // And the lead-form funnel's own middle step has no signal anywhere in the fleet — a form filled
+    // inside an ad unit is not the website `formSubmission`. So it prices the sale and nothing before.
+    expect(tagsFor(["lead_forms_from_ads"])).toEqual(["closeWin"]);
+  });
+
+  it("A RATE THE BRAND NEVER DECLARED LEAVES THE RUNG ABSENT, never at 0", () => {
+    // `ECONOMICS` states no reply→paid rate, so the reply-led single-step funnel prices only its
+    // terminal — dropped, not zeroed, so nothing reads as "a reply is worth nothing".
+    const undeclared = getFunnel("sales-cold-email-outreach")!.resolvePaths({
+      economics: ECONOMICS,
+      pricedFunnelKeys: ["sales_from_conversation"],
+    });
+    expect(undeclared.map((p) => p.tag)).toEqual(["closeWin"]);
+
+    // `visitToClosePct` IS stated, so the website one keeps its visit — an absence, not a blanket rule.
+    const declared = getFunnel("sales-cold-email-outreach")!.resolvePaths({
+      economics: ECONOMICS,
+      pricedFunnelKeys: ["sales_from_website"],
+    });
+    expect(declared.map((p) => p.tag)).toEqual(["visit", "closeWin"]);
+  });
 });
 
 describe("projectOutcomeCosts — expected cost per purchase / meeting", () => {

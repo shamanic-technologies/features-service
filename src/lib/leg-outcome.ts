@@ -41,12 +41,24 @@ import type { ProjectionEconomics } from "./funnel-registry.js";
 /** The counted signal a funnel is entered through — the only two a grain observes. */
 export type LegDriver = "click" | "reply";
 
-/** Which signal a funnel is entered through. A meeting funnel's whole identity is this one thing. */
-export const FUNNEL_DRIVER: Record<SalesFunnelKey, LegDriver> = {
+/**
+ * Which signal a funnel is entered through. A meeting funnel's whole identity is this one thing.
+ *
+ * `null` = NEITHER, and it is a written statement rather than a gap: an ad funnel's first step is
+ * DELIVERED by the channel (a meeting booked inside the ad, a lead form filled inside it) and no
+ * counted signal observes it, so there is nothing to walk a price forward FROM. Every leg of such a
+ * funnel is therefore unpriceable here, which is the honest answer — walking it off a click or a reply
+ * would price an ad-delivered step against evidence the funnel never buys.
+ */
+export const FUNNEL_DRIVER: Record<SalesFunnelKey, LegDriver | null> = {
   sales_meetings_from_conversation: "reply",
   sales_meetings_from_website: "click",
   website_purchases: "click",
   form_magnet: "click",
+  sales_from_conversation: "reply",
+  sales_from_website: "click",
+  sales_meetings_from_ads: null,
+  lead_forms_from_ads: null,
 };
 
 export interface LegOutcomeTerms {
@@ -98,6 +110,10 @@ export function legOutcomeTerms(
   const steps = funnelStepKeys(funnelKey);
   if (!steps.includes(outcomeStep)) return null;
   const driver = FUNNEL_DRIVER[funnelKey];
+  // No counted signal enters this funnel, so there is no observation to walk a price forward from and
+  // the caller has no leg to price. Stated as "we cannot answer", never as a figure borrowed from the
+  // other funnels that happen to share this leg.
+  if (driver == null) return null;
   const entryStep = steps[0]!;
   const outcomeObserved = outcomeStep === entryStep;
 
@@ -121,6 +137,20 @@ export function legOutcomeTerms(
       case "form_magnet":
         if (outcomeStep === "form_filled") return chain(econ.v2fs);
         if (outcomeStep === "paid_client") return chain(econ.v2fs, econ.fs2pc);
+        return null;
+      // Both single-step funnels: the entry leg is handled above (`outcomeObserved`), so the only step
+      // left is the sale, priced on the brand's own DIRECT rate rather than through a meeting these
+      // funnels do not contain.
+      case "sales_from_conversation":
+        if (outcomeStep === "paid_client") return chain(econ.r2pc);
+        return null;
+      case "sales_from_website":
+        if (outcomeStep === "paid_client") return chain(econ.v2pc);
+        return null;
+      // Unreachable: both answer `null` on `FUNNEL_DRIVER` and the walk returns before it gets here.
+      // Written out anyway so a future driver for an ad-delivered step cannot land on a silent default.
+      case "sales_meetings_from_ads":
+      case "lead_forms_from_ads":
         return null;
     }
   })();

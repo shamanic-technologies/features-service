@@ -199,10 +199,85 @@ describe("a measured pair prices every step of its own funnel", () => {
 });
 
 describe("which channel a funnel is bought through", () => {
-  it("only the conversation funnel buys with a reply", () => {
-    expect(funnelEntryChannel("sales_meetings_from_conversation")).toBe("reply");
-    for (const key of ["sales_meetings_from_website", "website_purchases", "form_magnet"] as const) {
+  it("a funnel entered by a positive reply buys with a reply; one entered by a visit, with a click", () => {
+    for (const key of ["sales_meetings_from_conversation", "sales_from_conversation"] as const) {
+      expect(funnelEntryChannel(key), key).toBe("reply");
+    }
+    for (const key of ["sales_meetings_from_website", "website_purchases", "form_magnet", "sales_from_website"] as const) {
       expect(funnelEntryChannel(key), key).toBe("click");
+    }
+  });
+
+  it("an AD funnel buys with NEITHER — its first step is delivered, not observed", () => {
+    for (const key of ["sales_meetings_from_ads", "lead_forms_from_ads"] as const) {
+      expect(funnelEntryChannel(key), key).toBeNull();
+    }
+  });
+});
+
+describe("the funnels brand-service added when the ad channels opened", () => {
+  it("an AD funnel is UNMEASURED with its own named reason, not priced off click or reply evidence", () => {
+    // Its first step is DELIVERED by the advertising platform, so the two signals this fleet counts say
+    // nothing about it. A figure here would be the price of a click or a reply under an ad's name.
+    for (const key of ["sales_meetings_from_ads", "lead_forms_from_ads"] as const) {
+      expect(pricePair(input({ funnelKey: key })), key).toEqual({
+        measured: false,
+        reason: "entry_step_not_measured",
+      });
+    }
+    // DISTINCT from `no_entry_step_produced`, which says the channel never made the step — these
+    // channels may well be making it; we have no unit cost for it. Same fixture, both answers.
+    expect(pricePair(input({ unitCosts: { clickUsd: 2, replyUsd: null } }))).toEqual({
+      measured: false,
+      reason: "no_entry_step_produced",
+    });
+  });
+
+  it("a SINGLE-STEP funnel prices its sale on the brand's own DIRECT rate, never through a meeting", () => {
+    // Website visit → paid client, with nothing in between: $2 a visit at a 1% direct close = $200.
+    // The meeting route (v2m 10% × m2c 40% = 4%) would have read $50 — four times cheaper, through a
+    // step this funnel does not contain.
+    const web = pricePair(input({ funnelKey: "sales_from_website" }));
+    if (!web.measured) throw new Error("unreachable");
+    expect(web.economics.steps.map((x) => x.step)).toEqual(["Website visit", "Paid client"]);
+    expect(web.economics.steps[0].costPerStepUsd).toBe(2);
+    expect(web.economics.costPerSaleUsd).toBeCloseTo(200, 6);
+    expect(web.economics.costPerSaleUsd).not.toBeCloseTo(50, 6);
+    expect(web.economics.returnPerDollar).toBeCloseTo(5000 / 200, 6);
+
+    // Positive reply → paid client: $10 a conversation at a 5% direct close = $200. The meeting route
+    // (r2m 50% × m2c 40% = 20%) would have read $50.
+    const reply = pricePair(input({ funnelKey: "sales_from_conversation" }));
+    if (!reply.measured) throw new Error("unreachable");
+    expect(reply.economics.steps.map((x) => x.step)).toEqual(["Positive reply", "Paid client"]);
+    expect(reply.economics.steps[0].costPerStepUsd).toBe(10);
+    expect(reply.economics.costPerSaleUsd).toBeCloseTo(200, 6);
+    expect(reply.economics.costPerSaleUsd).not.toBeCloseTo(50, 6);
+  });
+
+  it("a single-step funnel names the SALE as its milestone — that is the only stage it has", () => {
+    expect(FUNNEL_MILESTONE_STEP.sales_from_website).toBe("Paid client");
+    expect(FUNNEL_MILESTONE_STEP.sales_from_conversation).toBe("Paid client");
+    const web = pricePair(input({ funnelKey: "sales_from_website" }));
+    if (!web.measured) throw new Error("unreachable");
+    expect(web.economics.steps.map((x) => x.milestone)).toEqual([false, true]);
+  });
+
+  it("the FOUR ORIGINAL funnels price exactly as they did — the widening only ADDED", () => {
+    // Pinned to the cent against the numbers this fixture produced before the catalogue widened, so a
+    // change to the shared pricing path cannot move a live brand's figures unnoticed.
+    const expected: Array<[string, number]> = [
+      ["sales_meetings_from_conversation", 50],
+      ["sales_meetings_from_website", 50],
+      ["website_purchases", 40],
+      ["form_magnet", 100],
+    ];
+    for (const [key, costPerSaleUsd] of expected) {
+      const result = pricePair(input({ funnelKey: key as never }));
+      if (!result.measured) throw new Error(`${key} unexpectedly unmeasured`);
+      expect(result.economics.costPerSaleUsd, key).toBeCloseTo(costPerSaleUsd, 6);
+      expect(result.economics.returnPerDollar, key).toBeCloseTo(5000 / costPerSaleUsd, 6);
+      expect(result.economics.steps[0].costPerStepUsd, key).toBe(key === "sales_meetings_from_conversation" ? 10 : 2);
     }
   });
 });

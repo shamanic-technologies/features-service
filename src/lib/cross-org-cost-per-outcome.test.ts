@@ -382,7 +382,7 @@ import {
   buildCostPerOutcomeDistribution,
   type BucketedBrand,
 } from "./cross-org-cost-per-outcome.js";
-import type { SalesFunnelKey } from "./sales-funnels.js";
+import { SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
 
 function brand(brandId: string, funnels: SalesFunnelKey[], spend: number, clicks: number, replies: number): BucketedBrand {
   return {
@@ -400,23 +400,37 @@ describe("OBJECTIVE_FUNNEL_BUCKET", () => {
       "sales_meetings_from_website",
       "website_purchases",
       "form_magnet",
+      "sales_from_website",
     ]);
     expect(OBJECTIVE_FUNNEL_BUCKET.websiteVisit).not.toContain("sales_meetings_from_conversation");
+    // The two AD funnels buy neither a click nor a reply — the platform DELIVERS their first step — so
+    // they are in no engagement bucket at all. Including them would put spend in the denominator with
+    // no matching outcome to divide it by.
+    expect(OBJECTIVE_FUNNEL_BUCKET.websiteVisit).not.toContain("sales_meetings_from_ads");
+    expect(OBJECTIVE_FUNNEL_BUCKET.websiteVisit).not.toContain("lead_forms_from_ads");
+    expect(OBJECTIVE_FUNNEL_BUCKET.positiveReply).not.toContain("sales_meetings_from_ads");
+    expect(OBJECTIVE_FUNNEL_BUCKET.positiveReply).not.toContain("lead_forms_from_ads");
   });
   it("each single-outcome objective takes the funnel that step belongs to", () => {
-    expect(OBJECTIVE_FUNNEL_BUCKET.positiveReply).toEqual(["sales_meetings_from_conversation"]);
+    expect(OBJECTIVE_FUNNEL_BUCKET.positiveReply).toEqual([
+      "sales_meetings_from_conversation",
+      "sales_from_conversation",
+    ]);
     expect(OBJECTIVE_FUNNEL_BUCKET.signup).toEqual(["website_purchases"]);
+    // `lead_forms_from_ads` is NOT here: its form is hosted by the ad platform and is never the WEBSITE
+    // form submission this outcome counts, so a brand selling it would add spend and no outcome.
     expect(OBJECTIVE_FUNNEL_BUCKET.formSubmission).toEqual(["form_magnet"]);
-    expect(OBJECTIVE_FUNNEL_BUCKET.websitePurchase).toEqual(["website_purchases"]);
+    expect(OBJECTIVE_FUNNEL_BUCKET.websitePurchase).toEqual(["website_purchases", "sales_from_website"]);
   });
-  it("meeting bucket = BOTH meeting funnels — each priced apart elsewhere, both bought meetings here", () => {
+  it("meeting bucket = every funnel that buys a meeting, the ad-delivered one included", () => {
     expect(OBJECTIVE_FUNNEL_BUCKET.meetingBooked).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
+      "sales_meetings_from_ads",
     ]);
   });
   it("sales = every funnel (each terminates in a paying client); whatsapp = EMPTY, no funnel expresses it", () => {
-    expect(OBJECTIVE_FUNNEL_BUCKET.sales).toHaveLength(4);
+    expect([...OBJECTIVE_FUNNEL_BUCKET.sales].sort()).toEqual([...SALES_FUNNEL_KEYS].sort());
     expect(OBJECTIVE_FUNNEL_BUCKET.whatsappConversation).toEqual([]);
   });
   it("funnelsInObjectiveBucket agrees with the table, and a multi-funnel brand matches on ANY funnel", () => {

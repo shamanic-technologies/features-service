@@ -70,29 +70,34 @@ import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-f
 // ── The steps a channel can move a lead between ─────────────────────────────────────────────────────
 
 /**
- * Every step a channel can move a lead FROM or TO. Seven of them are steps of a deployed funnel, and the
- * remaining two are produced INSIDE AN AD UNIT and start no funnel we sell yet.
+ * Every step a channel can move a lead FROM or TO. EVERY one of them is a step of a deployed funnel —
+ * the vocabulary is the union of every step in brand-service's catalogue, not the subset that happens
+ * to come first, because a channel performing an internal leg has to name the step it moves a lead OUT
+ * of and those are steps a funnel reaches rather than starts from.
  *
- * This list used to hold four keys, because a channel could only ever say what it PRODUCED and only
- * four steps can start a funnel. A channel that performs an internal leg needs to name the step it moves
- * a lead OUT OF as well, and those are steps a funnel reaches rather than starts from — so the
- * vocabulary is the union of every step in the catalogue, not the subset that happens to come first.
+ * ── THE `in_ad_` PREFIX IS GONE, BECAUSE THE FUNNELS IT GUARDED AGAINST NOW EXIST ────────────────
  *
- * ── WHY THE `in_ad_` PREFIX, AND WHY NEITHER SHORTER NAME WORKS ───────────────────────────────────
+ * Two keys used to be spelled `in_ad_form_submission` and `in_ad_booked_meeting`. The prefix existed
+ * for one reason: no funnel in the catalogue started on what an ad delivers, so naming those steps
+ * after the funnel steps they resemble ("Form filled", "Meeting booked") would have read as a claim
+ * they could START `form_magnet` or a meeting funnel, which they cannot.
  *
- * The prefix is LOAD-BEARING and must not be dropped. "Form filled" and "Meeting booked" ALREADY exist
- * in the deployed funnel catalogue as INTERMEDIATE steps (`form_magnet` step 2, both meeting funnels'
- * milestone), reached through a click or a reply onto the brand's own site — and they are now in this
- * very list under `form_filled` and `meeting_booked`. What an ad produces is an ENTRY step reached
- * without ever getting there. Naming ours `form_submission` / `booked_meeting` would collide with those
- * two outright, which is the clearest possible statement of why the prefix exists.
+ * brand-service has since decided the opposite way round, and it owns this vocabulary: an ad CLICK is
+ * not a rung anybody buys, so the step the channel DELIVERS *is* the funnel's first step.
+ * `sales_meetings_from_ads` starts on `Meeting booked` — the same step, with nothing before it — and
+ * `lead_forms_from_ads` starts on `Lead form submitted`, a step of its own distinct from a form filled
+ * on the brand's own site. So the two keys are now `meeting_booked` (the step already in this list) and
+ * `lead_form_submitted` (brand-service's own label).
  *
- * `platform_` was the first spelling and is WRONG here: `platform` is this fleet's word for OUR OWN
- * platform (platform runs, `/internal/platform-complete`, platform prices, `PLATFORM_SCOPE_ORG_ID`), so
- * it reads as "a form filled on distribute.you". `ad_` alone is no better — `ad_form_submission` reads
- * as "a form submission ATTRIBUTED to an ad", i.e. one filled on the brand's site after the click,
- * which is the very reading the prefix exists to block. `in_ad_` says the literal thing: it happened
- * inside the ad unit. Do not shorten it back.
+ * THAT IS WHAT MAKES THE JOIN WORK, and it is the whole point. A consumer answers "which funnels does
+ * this producible step lead into" by matching a channel's produced step against a funnel's FIRST step.
+ * While the two were spelled differently the match found nothing and the consumer needed a translation
+ * table of its own — a local copy that goes stale the day brand-service moves. Now the tokens are equal
+ * and the join is a lookup in the payload.
+ *
+ * It creates NO false pairing: an ad channel states `{ from: null, to: "meeting_booked" }`, which is
+ * the ENTRY leg of `sales_meetings_from_ads` and is not any leg of the two other meeting funnels (whose
+ * meeting is reached FROM a conversation or a website visit, never from nothing).
  */
 export const CHANNEL_STEP_KEYS = [
   "conversation",
@@ -101,9 +106,8 @@ export const CHANNEL_STEP_KEYS = [
   "meeting_attended",
   "signup",
   "form_filled",
+  "lead_form_submitted",
   "paid_client",
-  "in_ad_form_submission",
-  "in_ad_booked_meeting",
 ] as const;
 
 export type ChannelStepKey = (typeof CHANNEL_STEP_KEYS)[number];
@@ -151,20 +155,19 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
     label: "Form filled",
     description: "A buyer fills a form on the brand's own site and hands over their details.",
   },
+  lead_form_submitted: {
+    key: "lead_form_submitted",
+    // brand-service's own label, and deliberately NOT "Form filled": this form is hosted by the
+    // advertising platform (Meta Lead Ads, LinkedIn Lead Gen Forms, TikTok lead forms) and the buyer
+    // never reaches the brand's site, so it is a step of its own rather than the same one under a
+    // second name.
+    label: "Lead form submitted",
+    description: "A buyer fills a form hosted by the ad platform, without ever reaching the brand's site.",
+  },
   paid_client: {
     key: "paid_client",
     label: "Paid client",
     description: "A buyer pays. This is the SALE every funnel terminates in.",
-  },
-  in_ad_form_submission: {
-    key: "in_ad_form_submission",
-    label: "Form filled in the ad",
-    description: "A buyer fills a form inside the ad itself, without ever reaching the brand's site.",
-  },
-  in_ad_booked_meeting: {
-    key: "in_ad_booked_meeting",
-    label: "Meeting booked from an ad",
-    description: "A buyer books a meeting straight from the ad, without ever reaching the brand's site.",
   },
 };
 
@@ -218,6 +221,7 @@ export const FUNNEL_STEP_LABEL_TO_KEY: Record<string, ChannelStepKey> = {
   "Meeting attended": "meeting_attended",
   Signup: "signup",
   "Form filled": "form_filled",
+  "Lead form submitted": "lead_form_submitted",
   "Paid client": "paid_client",
 };
 
