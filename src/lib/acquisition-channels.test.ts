@@ -239,3 +239,52 @@ describe("which pairings are possible", () => {
     expect([...CHANNEL_OPERATORS]).toEqual(["platform", "customer"]);
   });
 });
+
+describe("what a VISITOR reads on a step", () => {
+  // The onboarding's first screen renders one card per producible step, titled with the step's label
+  // and explained with its description, to somebody who has not signed up. So these are customer copy.
+
+  it("names the step a buyer's ANSWER produces the way every funnel that starts on it names it", () => {
+    // The case that shipped wrong. `conversation` published "Conversation" while the funnels it opens
+    // published "Positive reply", so a consumer joining a produced step to a funnel's first rung BY
+    // LABEL matched nothing at all — and the banned word was the title of a pre-signup card.
+    expect(CHANNEL_STEPS.conversation.label).toBe("Positive reply");
+    expect(SALES_FUNNELS.sales_meetings_from_conversation.steps[0]).toBe(CHANNEL_STEPS.conversation.label);
+    expect(SALES_FUNNELS.sales_from_conversation.steps[0]).toBe(CHANNEL_STEPS.conversation.label);
+  });
+
+  it("states EVERY step in the funnels' own wording, so the join by LABEL is a lookup", () => {
+    // The general invariant behind the case above: a step's published label IS the string
+    // brand-service's funnels use for that rung, for all eight. A step whose label drifts off the
+    // mirror silently breaks the join for its own funnels and nothing else notices.
+    for (const key of CHANNEL_STEP_KEYS) {
+      expect(FUNNEL_STEP_LABEL_TO_KEY[CHANNEL_STEPS[key].label]).toBe(key);
+    }
+  });
+
+  it("carries the banned word in NO step label and NO step description", () => {
+    // The owner banned it fleet-wide: the two entry outcomes are a positive reply and a website visit.
+    // This is the STEP vocabulary only — a channel legitimately describes a phone call in plain English.
+    for (const key of CHANNEL_STEP_KEYS) {
+      expect(CHANNEL_STEPS[key].label.toLowerCase()).not.toContain("conversation");
+      expect(CHANNEL_STEPS[key].description.toLowerCase()).not.toContain("conversation");
+    }
+  });
+
+  it("keeps every step KEY exactly where it was, so no consumer join by key breaks", () => {
+    // Only what a person reads moved. The keys are referenced by stored rows, by every leg identifier
+    // and by every consumer that already joined on them.
+    expect([...CHANNEL_STEP_KEYS]).toEqual([
+      "conversation",
+      "website_visit",
+      "meeting_booked",
+      "meeting_attended",
+      "signup",
+      "form_filled",
+      "lead_form_submitted",
+      "paid_client",
+    ]);
+    expect(matchChannelStepKey("conversation")).toBe("conversation");
+    expect(CHANNEL_STEPS.conversation.key).toBe("conversation");
+  });
+});

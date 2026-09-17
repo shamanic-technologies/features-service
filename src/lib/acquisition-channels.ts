@@ -123,12 +123,23 @@ export interface ChannelStepDef {
 export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
   conversation: {
     key: "conversation",
-    // "Conversation", NOT "Sales interest". Sales interest is the CATEGORY every entry signal belongs
-    // to — a positive reply, a website visit, a form filled in an ad are all a buyer showing interest —
-    // so putting it on ONE of them names the category as if it were the member, and leaves the siblings
-    // unreadable beside it. This step is the specific thing that happened: the buyer answered.
-    label: "Conversation",
-    description: "A buyer answers and a conversation opens, on whatever medium the channel runs on.",
+    // "Positive reply" — brand-service's OWN wording for this rung, and the word every funnel that
+    // starts on it already publishes. Two things ride on it, and the first is not cosmetic:
+    // FUNNEL_STEP_LABEL_TO_KEY below maps that exact string onto this key, so while the two spellings
+    // differed a consumer joining a channel's produced step to a funnel's first rung BY LABEL found
+    // nothing and had to keep a translation table of its own.
+    //
+    // The second is that this string is CUSTOMER COPY: the onboarding's first screen renders one card
+    // per producible step, titled with this label and explained with this description, to a visitor who
+    // has not signed up. It shipped as "Conversation", which the owner has banned from every
+    // customer-facing surface in the fleet — the two entry outcomes a buyer can produce are a POSITIVE
+    // REPLY and a WEBSITE VISIT, and "sales interest" is the CATEGORY both belong to rather than the
+    // name of either. So this is not "Sales interest" either: it is the specific thing that happened.
+    //
+    // The KEY stays `conversation`. Consumers, stored rows and every `start_to_conversation` leg
+    // reference it; only what a person READS moved.
+    label: "Positive reply",
+    description: "A buyer answers with interest, on whatever medium the channel runs on.",
   },
   website_visit: {
     key: "website_visit",

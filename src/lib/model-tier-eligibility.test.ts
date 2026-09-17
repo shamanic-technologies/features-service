@@ -124,7 +124,7 @@ describe("an unknowable tier is ELIGIBLE, and says which gap it is", () => {
 
   it("tells a failed WORKFLOW read apart from a workflow that states no model", () => {
     const unavailable = modelEligibilityFor({
-      stepLabel: "Conversation",
+      stepLabel: "Positive reply",
       restriction: eligibleTiersForStep("conversation"),
       modelAlias: null,
       modelsUnavailable: true,
@@ -142,7 +142,7 @@ describe("the reason a human reads", () => {
     expect(v.eligible).toBe(false);
     expect(v.ineligibleReason).toContain('"flash"');
     expect(v.ineligibleReason).toContain("cheap-tier");
-    expect(v.ineligibleReason).toContain("Conversation");
+    expect(v.ineligibleReason).toContain("Positive reply");
     expect(v.ineligibleReason).toContain("strong and frontier");
   });
 
