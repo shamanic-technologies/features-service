@@ -71,6 +71,53 @@ minute `audience-stats` and both `workflow-projection` reads 502'd on every poll
   subclassing, the three non-matching failures, the offer on the wire, and the identity's offer read off
   its members). (Set 2026-09-15, features-service#971.)
 
+## A PREFILL DESCRIBES ONE VALUE PROPOSITION — `offerId` travels in the prefill BODY, it is OPTIONAL at every hop, and brand-service's REFUSALS reach the caller as refusals
+
+A brand selling two offers could not start an acquisition channel AT ALL. The dashboard's Start control
+calls `POST /features/:slug/prefill`; this service asked brand-service to extract the feature's input
+fields brand-wide; brand-service refuses a brand-scoped extraction for a brand selling several offers
+(`409 SEVERAL_OFFERS`) because the seven user-facing fields describe ONE value proposition and it cannot
+know which one was meant. The refusal surfaced here as a bare `502` and the campaign was never created.
+
+Measured in prod 2026-09-17: brand `f4d73dab…` (offers "Product-led" and "Sales-led") failed three Start
+attempts at 11:02:28, 11:02:36 and 11:16:01 UTC, all three on `code SEVERAL_OFFERS`. Fleet-wide **21 of
+144 brands** carry two or more offers and none of them could start a channel. It went unnoticed because
+onboarding creates a brand's FIRST offer, so every path that ever exercised this had exactly one.
+
+- **THE OFFER TRAVELS IN THE BODY, UNDER brand-service's OWN FIELD NAME.** The api-service gateway
+  forwards this route's request body verbatim while whitelisting only `format` on the QUERY STRING, so
+  the body reaches this service with **no gateway change** — the query would have needed an api-service
+  PR. `offerId`, the same spelling brand-service deploys, so one vocabulary spans the two services and
+  the consumer. **Do NOT "fix" this by moving it to the query string.**
+- **OMITTED IS THE UNCHANGED PATH AND MUST STAY SO.** A caller naming no offer sends a request body
+  BYTE-IDENTICAL to before (`{fields}` alone, the key absent rather than null), so brand-service resolves
+  a single-offer brand's sole offer exactly as it always did and the onboarding launch is untouched.
+  Guarded on the request SHAPE, not only on the answer. It is **never defaulted, never required, and
+  NEVER resolved to "the first offer"** — substituting a proposition is the fabrication brand-service's
+  refusal exists to prevent, and it would price a channel on a thing the customer is not selling through
+  it.
+- **A REFUSAL IS AN ANSWER, AND IT REACHES THE CALLER AS ONE.** `BrandFieldExtractionError`
+  (`lib/brand-client.ts`) carries brand-service's status, its machine-readable code and — for the
+  several-offers case — the OFFERS it declined to choose between, parsed DEFENSIVELY (a body that is not
+  JSON, or carries no `code`, is an ordinary failure). The route serves **409 `several_offers` carrying
+  `offers[]`**, which is exactly what a consumer needs to let someone pick one and retry, and **404**
+  with brand-service's own sentence for an id naming no offer of that brand. Every other status stays a
+  **502**, byte-unchanged. Do NOT collapse the three: "the brand sells several things", "that is not one
+  of its offers" and "the read failed" are different statements and a consumer acts differently on each.
+- **A MALFORMED `offerId` IS A 400, NOT A QUIET DROP** (`offer_id_unrecognised`). Ignoring it would send
+  a several-offer brand straight back into the 409 this closes, with nothing telling the caller it was
+  its own value that was discarded.
+- **NOTHING ELSE MOVED.** The 200 body, the `?format=` selector, the identity headers and the
+  brand-service request for a single-offer brand are all as they were.
+- Guards: `src/lib/brand-client.test.ts` (the offer on the wire, the key ABSENT when none is named,
+  null/empty treated as naming none, both refusals parsed with their codes and offers, an ordinary
+  failure carrying neither) + the `offerId` block in `src/routes/features.test.ts` (the forwarded offer,
+  the unchanged single-offer path, the 409 with its offers, the 404, the surviving 502, and the three
+  malformed values refused before any brand-service call). Every case asserts the DIVERGENCE between
+  naming an offer and naming none, so a suite that only checked "a 200 came back" would pass on an
+  implementation that ignored the parameter — which is what shipped before. (Set 2026-09-17,
+  features-service#988.)
+
 ## BOTH HALVES OF THE RUN-RATE ARE SUMS — the SaaS half is summed over the customers who were EARNING that day, the four conditions come from the services that RECORD them, and an approximated period says so on the wire
 
 The staff Revenue page states ONE committed MRR for the whole fleet, `Σ active daily budget × 30`. That
@@ -4525,6 +4572,15 @@ caller has to be TOLD WHICH INPUT — not handed a gateway-shaped error that rea
   over-reporting, and a fleet sweep flagged three "violations" — all were stale cells, and every one
   cleared on re-read (one brand's figure was even seen mid-flight at 7,177 vs 7,180 while the brand
   kept contacting people). Nothing was wrong; the reads were.
+  **TWO BACK-TO-BACK READS ARE NOT ENOUGH, and the wording above invites exactly that mistake.** A
+  stale hit serves the snapshot and refreshes BEHIND the response, so a second read issued
+  milliseconds later lands while that refresh is still in flight and returns the SAME pre-deploy body
+  — two identical wrong numbers, which reads as a confirmed result rather than as a cache. POLL UNTIL
+  THE VALUE SETTLES against the thing it must agree with (`until |curve.last − committedCostUsd| ≤
+  0.05`, up to ~N tries with a real gap between them), and make the probe SAY which read it reported.
+  Cost 2026-09-17 (features-service#983): a post-deploy probe that warmed once and read once printed
+  three FAILs against a fix that was live and correct in the running `dist`; the very next read, 20
+  seconds later, was right and stayed right for eleven more.
 
 ## `pipeline-activity` accepts `?pricing=gross|net` — a COUNT can be money-derived, and this one is
 
