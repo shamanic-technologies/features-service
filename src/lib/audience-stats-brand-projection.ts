@@ -75,7 +75,7 @@ import {
 } from "./funnel-registry.js";
 import { projectedCostPerOutcome } from "./cost-engine.js";
 import { goalToProjectionInputs, funnelToProjectionInputs, outcomeCostForGoal, paidClientCostForGoal, grainHasObservedOutcome } from "../routes/workflow-projection.js";
-import type { MeetingChannel, SalesFunnelKey } from "./sales-funnels.js";
+import type { PricingChannel, SalesFunnelKey } from "./sales-funnels.js";
 import { mergeFunnelEconomics } from "./declared-funnels.js";
 import {
   fetchBrandWorkflowEvidence,
@@ -420,7 +420,7 @@ export function projectBrandParents(
   // while its own row is priced on one channel is the same two-prices-for-one-thing split this module
   // exists to close, reappearing one grain down.
   const funnelInputs = funnelKey ? funnelToProjectionInputs(funnelKey) : null;
-  const meetingChannel: MeetingChannel | null = funnelInputs?.meetingChannel ?? null;
+  const meetingChannel: PricingChannel = funnelInputs?.meetingChannel ?? null;
   const pricedGoal: Goal = funnelInputs ? (funnelInputs.goalEcho as Goal) : goal;
 
   const economics = mergeFunnelEconomics(effective.economics, funnelEconomics ?? null);

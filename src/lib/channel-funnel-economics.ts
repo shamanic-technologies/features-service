@@ -34,7 +34,7 @@
  */
 
 import { projectOutcomeCosts, type ProjectionEconomics, type ProjectionUnitCosts } from "./funnel-registry.js";
-import { SALES_FUNNELS, type SalesFunnelKey, type MeetingChannel } from "./sales-funnels.js";
+import { SALES_FUNNELS, type SalesFunnelKey, type MeetingChannel, type PricingChannel } from "./sales-funnels.js";
 
 /** Why a pair has no measured economics. Every value names a MISSING INGREDIENT, so a consumer can say
  *  which one we still owe them rather than printing a blank. */
@@ -43,6 +43,12 @@ export type PairUnmeasuredReason =
   | "no_spend_recorded"
   /** Spent, but the funnel's own entry step (a conversation / a website visit) was never produced. */
   | "no_entry_step_produced"
+  /** The funnel's entry step is DELIVERED by the channel (a meeting booked inside an ad, a lead form
+   *  filled inside one) and no signal this fleet counts observes it, so there is no unit cost to carry
+   *  down the funnel. Distinct from `no_entry_step_produced`: the channel may well be producing the
+   *  step — we simply do not measure it yet, and saying so beats pricing it off click or reply evidence
+   *  the funnel never buys. */
+  | "entry_step_not_measured"
   /** No brand running this channel has declared the economics the funnel is made of. */
   | "no_economics_declared";
 
@@ -100,19 +106,37 @@ export const FUNNEL_MILESTONE_STEP: Record<SalesFunnelKey, string> = {
   sales_meetings_from_website: "Meeting booked",
   website_purchases: "Signup",
   form_magnet: "Form filled",
+  sales_meetings_from_ads: "Meeting booked",
+  lead_forms_from_ads: "Lead form submitted",
+  // A funnel whose ONLY stage is the sale names the sale — that genuinely is the moment it is named
+  // after, not a stand-in for a missing step. Mirrored from brand-service's own `milestoneStep`.
+  sales_from_conversation: "Paid client",
+  sales_from_website: "Paid client",
 };
 
 /** A funnel is bought through ONE channel; the other one's evidence is masked away so it cannot dilute
  *  the price. Byte-identical to `workflow-projection`'s own mask, for the same reason. */
-function maskUnitCostsForChannel(unitCosts: ProjectionUnitCosts, channel: MeetingChannel | null): ProjectionUnitCosts {
+function maskUnitCostsForChannel(unitCosts: ProjectionUnitCosts, channel: PricingChannel): ProjectionUnitCosts {
   if (channel === "click") return { clickUsd: unitCosts.clickUsd, replyUsd: null };
   if (channel === "reply") return { clickUsd: null, replyUsd: unitCosts.replyUsd };
+  // NEITHER channel buys this funnel's entry — an ad delivers it. Masking both away leaves every
+  // projected cost null, which is what "we do not measure this" looks like in this math.
+  if (channel === "none") return { clickUsd: null, replyUsd: null };
   return unitCosts;
 }
 
-/** Which unit cost a funnel's ENTRY step is bought with, and therefore which produced step it needs. */
-export function funnelEntryChannel(key: SalesFunnelKey): MeetingChannel {
-  return key === "sales_meetings_from_conversation" ? "reply" : "click";
+/**
+ * Which unit cost a funnel's ENTRY step is bought with, and therefore which produced step it needs.
+ *
+ * `null` = NEITHER, for the funnels whose first step the advertising platform DELIVERS. Read off the
+ * funnel's own first step rather than a second list, so a funnel gaining or changing a first step
+ * cannot leave this behind.
+ */
+export function funnelEntryChannel(key: SalesFunnelKey): MeetingChannel | null {
+  const firstStep = SALES_FUNNELS[key].steps[0];
+  if (firstStep === "Positive reply") return "reply";
+  if (firstStep === "Website visit") return "click";
+  return null;
 }
 
 const priced = (step: string, milestone: boolean, cost: number | null, reason: StepUnpricedReason): PricedStep => ({
@@ -146,6 +170,9 @@ export function pricePair(input: PricePairInput): PairResult {
   if (evidence.totalSpentUsd <= 0) return { measured: false, reason: "no_spend_recorded" };
 
   const entryChannel = funnelEntryChannel(funnelKey);
+  // The advertising platform delivers this funnel's first step and nothing we count observes it, so
+  // there is no unit cost to carry down the funnel. A NAMED reason, never a figure.
+  if (entryChannel === null) return { measured: false, reason: "entry_step_not_measured" };
   const entryUnitCost = entryChannel === "reply" ? unitCosts.replyUsd : unitCosts.clickUsd;
   if (entryUnitCost == null) return { measured: false, reason: "no_entry_step_produced" };
 
@@ -180,12 +207,22 @@ export function pricePair(input: PricePairInput): PairResult {
       priced(def.steps[1], isMilestone(def.steps[1]), p.costPerSignupUsd, "rate_is_zero"),
       priced(def.steps[2], isMilestone(def.steps[2]), costPerSaleUsd, "rate_is_zero"),
     ];
-  } else {
+  } else if (funnelKey === "form_magnet") {
     costPerSaleUsd = p.costPerFormSubmissionPaidClientUsd;
     steps = [
       priced(def.steps[0], isMilestone(def.steps[0]), entryUnitCost, "rate_is_zero"),
       priced(def.steps[1], isMilestone(def.steps[1]), p.costPerFormSubmissionUsd, "rate_is_zero"),
       priced(def.steps[2], isMilestone(def.steps[2]), costPerSaleUsd, "rate_is_zero"),
+    ];
+  } else {
+    // The two SINGLE-STEP funnels: the entry step IS the produced step and the sale is one arrow away,
+    // priced on the brand's own DIRECT rate (`visitToPaidClientPct` / `replyToPaidClientPct`) rather
+    // than through a meeting these funnels do not contain. The two ad funnels never reach here — they
+    // short-circuit on `entry_step_not_measured` above.
+    costPerSaleUsd = entryChannel === "reply" ? p.costPerReplyPaidClientUsd : p.costPerVisitPaidClientUsd;
+    steps = [
+      priced(def.steps[0], isMilestone(def.steps[0]), entryUnitCost, "rate_is_zero"),
+      priced(def.steps[1], isMilestone(def.steps[1]), costPerSaleUsd, "rate_not_declared"),
     ];
   }
 

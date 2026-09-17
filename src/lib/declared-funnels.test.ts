@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { declaredFunnelsToRank } from "./declared-funnels.js";
 import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
-import { matchSalesFunnelKey, SALES_FUNNEL_KEYS } from "./sales-funnels.js";
+import { matchSalesFunnelKey, SALES_FUNNELS, SALES_FUNNEL_KEYS } from "./sales-funnels.js";
 
 // Shaped exactly like brand-service's deployed `GET /internal/brands/:brandId/sales-funnels` items —
 // which carry NO `goal` and NO `currentGoal` since the retirement (brand-service #434).
@@ -20,13 +20,55 @@ function funnel(over: Partial<DeclaredSalesFunnel>): DeclaredSalesFunnel {
 }
 
 describe("the funnel key is the whole vocabulary", () => {
-  it("is exactly brand-service's catalogue of four — no more, no fewer", () => {
+  it("is exactly brand-service's deployed catalogue — no more, no fewer, in its own order", () => {
+    // Pinned against what brand-service deploys (v0.79.1, verified in prod 2026-09-17). The first four
+    // are the original catalogue and their KEYS are frozen — live declarations and billing ceilings
+    // reference them; the last four were ADDED when roughly thirty acquisition channels opened.
     expect([...SALES_FUNNEL_KEYS]).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
       "website_purchases",
       "form_magnet",
+      "sales_from_conversation",
+      "sales_meetings_from_ads",
+      "lead_forms_from_ads",
+      "sales_from_website",
     ]);
+  });
+
+  it("carries brand-service's OWN names and chains — nothing here is authored locally", () => {
+    // Mirrored byte-for-byte from brand-service's `SALES_FUNNELS`. Two of the original four had their
+    // NAME moved (never their key): the reply-led meeting funnel no longer says "Conversation", which is
+    // banned from every customer-facing name in the fleet, and `website_purchases` reads "Signups"
+    // because its middle rung IS a signup — that name now belongs to `sales_from_website`.
+    expect(SALES_FUNNELS.sales_meetings_from_conversation.name).toBe("Sales Meeting from Positive Reply");
+    expect(SALES_FUNNELS.website_purchases.name).toBe("Signups");
+    expect(SALES_FUNNELS.sales_from_website.name).toBe("Website Purchase");
+    expect(SALES_FUNNELS.sales_from_conversation.name).toBe("Sale from Positive Reply");
+    expect(SALES_FUNNELS.sales_meetings_from_ads.name).toBe("Sales Meeting from Ads");
+    expect(SALES_FUNNELS.lead_forms_from_ads.name).toBe("Lead Form from Ads");
+
+    expect(SALES_FUNNELS.sales_from_conversation.steps).toEqual(["Positive reply", "Paid client"]);
+    expect(SALES_FUNNELS.sales_meetings_from_ads.steps).toEqual(["Meeting booked", "Meeting attended", "Paid client"]);
+    expect(SALES_FUNNELS.lead_forms_from_ads.steps).toEqual(["Lead form submitted", "Paid client"]);
+    expect(SALES_FUNNELS.sales_from_website.steps).toEqual(["Website visit", "Paid client"]);
+
+    // The four originals are UNCHANGED in chain — only two names moved.
+    expect(SALES_FUNNELS.sales_meetings_from_conversation.steps).toEqual(["Positive reply", "Meeting booked", "Meeting attended", "Paid client"]);
+    expect(SALES_FUNNELS.sales_meetings_from_website.steps).toEqual(["Website visit", "Meeting booked", "Meeting attended", "Paid client"]);
+    expect(SALES_FUNNELS.website_purchases.steps).toEqual(["Website visit", "Signup", "Paid client"]);
+    expect(SALES_FUNNELS.form_magnet.steps).toEqual(["Website visit", "Form filled", "Paid client"]);
+
+    // Every funnel terminates in the SALE, under the one label the fleet renders for it.
+    for (const key of SALES_FUNNEL_KEYS) {
+      expect(SALES_FUNNELS[key].steps.at(-1), key).toBe("Paid client");
+    }
+  });
+
+  it("ships NO customer-facing name carrying the word 'conversation'", () => {
+    for (const key of SALES_FUNNEL_KEYS) {
+      expect(SALES_FUNNELS[key].name.toLowerCase(), key).not.toContain("conversation");
+    }
   });
 
   it("keeps accepting every pre-retirement spelling, so a caller sending yesterday's word still works", () => {
