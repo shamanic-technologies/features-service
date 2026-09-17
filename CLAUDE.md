@@ -548,6 +548,76 @@ directly above it. One screen, two numbers for one statistic.
   all-null learning series, both named degrades, the lens and grouped shapes, and the rest of the
   body BYTE-EQUAL with the block stripped. (Set 2026-09-17, features-service#980.)
 
+## A RATE NOBODY COULD PLOT — `conversionRateHistory`, the dated twin of the conversion figure, CUMULATIVE on both legs, and it costs NO producer read
+
+The campaign Overview could state what share of a campaign's outreach converts RIGHT NOW and nothing
+about whether it is getting better. Both ingredients were already on the body — `recipientsContacted`
+carries the dated population and the per-signal series carry the dated driver counts — and what no
+consumer could obtain is the two joined. The ban on dividing two served figures in the browser is not
+a style objection here: a lead carrying NO timestamp on either leg is in the scope's totals while
+sitting on no day, so a browser-side cumulative sum divides two differently-sized populations and the
+curve's last point stops agreeing with the rate printed inches above it.
+
+- **BOTH LEGS ARE CUMULATIVE, for the reason `roiHistory` states one section up.** Outreach on a day
+  earns conversions days or weeks later, so `that day's outcomes ÷ that day's contacted` oscillates
+  between 0 and absurd and describes nothing — on the reported campaign, 2026-09-14 alone reads
+  **16.9%** against a cumulative **6.4%**, and 2026-09-12 reads **0%** on 52 people nobody had asked
+  about yet. The cumulative form is the one that converges.
+- **THE OUTCOME IS THE SCOPE'S OWN LEG'S STEP, AND THIS SERVICE NAMES IT.** The byte-same
+  `ScopeOutcomeTerms` (renamed from `CostPerOutcomeTerms` when a second curve started reading it) that
+  `costPerOutcomeHistory` is denominated in, resolved ONCE by the leader resolution `learningPhase`
+  uses — so the three curves a consumer stacks on one screen can never be measuring different steps.
+  An ENTRY leg's count is a raw OBSERVATION (rate 1); a deeper leg's is that observation walked
+  forward through the funnel's own declared rates, so it is fractional, and `outcomeObserved` says
+  which a consumer is reading.
+- **THE DENOMINATOR IS REACH, the identical base `funnelSteps.contactedRecipients` states**, bounces
+  and unsubscribes INCLUDED and for the identical reason: a bounce is a real loss at the very first
+  rung and it was paid for, so a rate that quietly divided by the survivors would hide the people the
+  campaign bought and never reached.
+- **IT RECONCILES THREE WAYS ROUND, EXACTLY.** `scopeConversionRatePct` is the whole scope's rate —
+  every outcome over everybody reached, dated or not — and it IS
+  `100 × rateFromDriver × outcomes.recipientsClicked ÷ outcomes.recipientsContacted` for the same
+  body, one deduped person set counted once, AND on an entry leg it is the `funnelSteps` rung for that
+  same leg, which converts from `Contacted`. Measured in prod 2026-09-17, brand `6e21bb6c…` / campaign
+  `9e28ba26…` / leg `start_to_website_visit`: **143 visits on 2,808 reached = 5.0925925925%**, byte-equal
+  to the served rung, with **no residual at all** — unlike the sibling spend curve, whose two legs come
+  from different groupings and therefore round twice. Nothing here is corrected onto anything.
+- **THE CURVE'S LAST POINT COVERS THE DATED POPULATION ALONE, and the difference is STATED rather than
+  hidden.** `undatedContacted` and `undatedOutcomes` ride the block, the same treatment
+  `roiHistory.undatedPipelineUsd` gets, so `dated + undated` is the scope's whole reach and its whole
+  count. **Do NOT "fix" the gap by flooring one leg onto the other** — that would be a correction
+  dressed as a reconciliation.
+- **A MEASURED 0 IS NOT A MISSING ANSWER, AND THIS NULL RULE IS THE OPPOSITE OF THE COST CURVE'S.**
+  `conversionRatePct` is NULL only when the cumulative population is still 0 — no denominator, no
+  rate. A day with people reached and nobody converted is a **measured `0`**, because "nobody
+  converted" is a real answer and nulling it would hide the exact period a customer is asking about.
+  `costPerOutcomeHistory` nulls at 0 OUTCOMES because a cost per nothing cannot be divided at all. The
+  two rules look inconsistent side by side and are not; **do NOT harmonise them.**
+- **IT COSTS NO PRODUCER READ, and that is what makes its SCOPE correct by construction.** Both legs
+  are the `leads[]` rows already in hand off the SAME campaign-scoped snapshot — there is nothing to
+  re-ask and nothing to narrow — so a campaign-scoped read can never divide its brand's population.
+  That is the defect `costPerOutcomeHistory`'s spend leg shipped with and needed a follow-up fan-out to
+  fix; here it is unreachable. It also survives a degraded dated-spend read that nulls both sibling
+  curves, so a consumer never has to explain one blank chart beside two populated ones.
+- **NULL when the scope names no priceable outcome step** (no campaign, no leg stated, a rate the brand
+  never declared). No reason vocabulary is duplicated on the block: `learningPhase.unmeasuredReason`
+  sits beside it and already names which ingredient is missing.
+- **OVERVIEW ONLY, the same gate `roiHistory` and `spend` ride** — absent from the lean `?groupBy=`
+  groups, and null on the lensed `?lens=` read for a reason of its own: both of this curve's legs WOULD
+  be the lensed subset, but the lens short-circuits before the leg is ever resolved, so there is no
+  step to denominate it in. A lens is a lead filter, not a leg. **ONE request, no second read**: it
+  rides the body a consumer already polls.
+- Guards: `src/lib/conversion-rate-history.test.ts` + `src/routes/conversion-rate-history.test.ts` —
+  ONE fixture carrying the reported campaign's own 70 reach days and 39 click days verbatim, beside a
+  SECOND campaign of the same brand on another funnel (500 reached, 5 visits) so every scoping case
+  asserts a DIVERGENCE rather than a tautology: the campaign reads **143/2,808** where its brand reads
+  **148/3,308**, and an implementation dividing the brand's population under the campaign's name prints
+  the second number for both. Every other case asserts a divergence too — the cumulative curve against
+  the per-day rate it must not chart, a deeper leg a fifth as often on IDENTICAL evidence, the served
+  scalar against the dated last point when part of the population is undated, the measured 0 beside the
+  cost curve's null on the same fixture, and the rest of the body BYTE-EQUAL with the block stripped.
+  (Set 2026-09-17, features-service#992.)
+
 ## THE TIER OF THE MODEL WRITING THE EMAIL IS A PROPERTY OF THE LEG, NOT OF THE WORKFLOW — `modelEligibility`, stated on every row and acted on by nobody here
 
 We measured, fleet-wide, that the CAPABILITY TIER of the model a workflow writes its content with
