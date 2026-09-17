@@ -87,7 +87,7 @@ import {
   type PublicChannel,
 } from "../lib/channel-catalogue.js";
 import { pricePair, type PairResult } from "../lib/channel-funnel-economics.js";
-import { minimumCommitmentDaysFor } from "../lib/funnel-commercial-terms.js";
+import type { ComposedMinimumCommitment } from "../lib/funnel-commercial-terms.js";
 import {
   buildFleetReturnOnSpend,
   parseMinSpendUsd,
@@ -2724,17 +2724,16 @@ export async function handlePublicChannels(res: import("express").Response): Pro
   res.json(payload);
 }
 
-interface ChannelFunnelPairRow {
+/** One (channel × funnel) pair. It carries the pair's MINIMUM RUN LENGTH already composed
+ *  (`ComposedMinimumCommitment`), read straight off the catalogue entry this row was built from, so a
+ *  pair row and the `/public/channels` entry for the same pair can never state two answers. */
+interface ChannelFunnelPairRow extends ComposedMinimumCommitment {
   channelSlug: string;
   channelName: string;
   funnelKey: SalesFunnelKey;
   funnelName: string;
   /** The funnel's steps in order, so a row renders without the consumer knowing the catalogue. */
   funnelSteps: readonly string[];
-  /** The FUNNEL's own minimum commitment, in whole days. `null` = none — a written statement, never
-   *  a gap (most funnels carry none today). A buyer is bound by BOTH this and the channel's
-   *  `terms.minimumCommitmentDays`; the stricter of the two governs the booking. */
-  minimumCommitmentDays: number | null;
   result: PairResult;
 }
 
@@ -2783,7 +2782,9 @@ async function buildChannelFunnelEconomics(channels: readonly PublicChannel[]): 
       funnelKey: funnel.key,
       funnelName: funnel.name,
       funnelSteps: funnel.steps,
-      minimumCommitmentDays: minimumCommitmentDaysFor(funnel.key),
+      funnelMinimumCommitmentDays: funnel.funnelMinimumCommitmentDays,
+      effectiveMinimumCommitmentDays: funnel.effectiveMinimumCommitmentDays,
+      governedBy: funnel.governedBy,
       result: pricePair({ funnelKey: funnel.key, unitCosts, economics, lifetimeRevenueUsd, evidence }),
     }));
   });

@@ -122,15 +122,19 @@ describe("building the public catalogue", () => {
       "Meeting attended",
       "Paid client",
     ]);
-    // Each funnel entry carries the FUNNEL's own minimum commitment, per (channel × funnel) — the term
-    // a payment screen states before checkout. NULL = none, and it is per funnel, never the channel's.
-    expect(channel.salesFunnels.map((f) => [f.key, f.minimumCommitmentDays])).toEqual([
-      ["sales_meetings_from_conversation", 30],
-      ["sales_meetings_from_website", null],
-      ["website_purchases", null],
-      ["form_magnet", null],
+    // Each funnel entry carries the pair's MINIMUM RUN LENGTH already COMPOSED against this channel's
+    // own term — one figure to render, never two halves for a consumer to `max()`.
+    expect(
+      channel.salesFunnels.map((f) => [f.key, f.funnelMinimumCommitmentDays, f.effectiveMinimumCommitmentDays, f.governedBy]),
+    ).toEqual([
+      ["sales_meetings_from_conversation", null, 30, "channel"],
+      ["sales_meetings_from_website", null, 30, "channel"],
+      ["website_purchases", null, 30, "channel"],
+      ["form_magnet", null, 30, "channel"],
     ]);
-    // The CHANNEL's own terms are unchanged and stand beside it — a buyer is bound by both.
+    // The bare field is GONE — two grains under one word on one payload is what it cost to remove.
+    expect(channel.salesFunnels.every((f) => !("minimumCommitmentDays" in f))).toBe(true);
+    // The CHANNEL's own terms are unchanged and stand beside it — the admin's only reader.
     expect(channel.terms.minimumCommitmentDays).toBe(CHANNEL.terms.minimumCommitmentDays);
   });
 

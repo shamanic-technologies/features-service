@@ -2346,6 +2346,62 @@ from what we actually charge and actually measured.
   `src/lib/channel-funnel-economics.test.ts` (the three unmeasured reasons, per-funnel pricing, the
   permanently-unpriced attended step, no false $0). (Set 2026-08-19.)
 
+## A MINIMUM COMMITMENT IS A RUN LENGTH, NOT A LOCK-IN — and the pair publishes ONE composed figure, never two halves a browser has to `max()`
+
+`minimumCommitmentDays` reads like a contract period and is not one. **Nothing in the product binds
+anybody**: there is no cancellation penalty, nothing anywhere in the fleet ENFORCES the figure, and the
+ONLY thing a buyer commits to is the channel's `terms.dailyOperatingCostCents` — already published
+beside it. A channel stating 90 days is saying *SEO takes three months to show you anything*, not *you
+owe us three months*. The absence of enforcement is therefore CORRECT rather than a gap: there is no
+lock-in to enforce, so do NOT open a billing request for one, and do NOT let a consumer render it as a
+contractual commitment. Owner, on the apparent clash with the signup copy's "no commitment": *"ce n'est
+pas une contradiction. La sub daily/weekly/monthly n'est pas un commitment. Tous les SaaS font ça."*
+
+- **ONE NUMBER IS PUBLISHED AND IT IS THE PAIR'S.** A funnel is bought THROUGH a channel, so two
+  figures are in play. `composeMinimumCommitment` (`lib/funnel-commercial-terms.ts`) resolves them
+  ONCE into `effectiveMinimumCommitmentDays` (the longer of the two, NEVER null — a channel always
+  states one) plus `governedBy: "channel" | "funnel"`. Both ride the `salesFunnels[]` entries of
+  `/public/channels` AND every `/public/channel-funnel-economics` pair row, and the pair row reads them
+  straight off the catalogue entry it was built from — one implementation, so the two reads cannot come
+  to publish two answers. **Do NOT publish the two halves and leave the consumer to combine them**:
+  a browser recombining two of our fields is how two surfaces print two numbers for one statistic, the
+  same reason `costOfAcquisitionPct` is SERVED beside the return it is the reciprocal of.
+- **THE FUNNEL GOVERNS ONLY WHEN IT STATES STRICTLY MORE, AND A TIE READS AS THE CHANNEL.** A funnel
+  restating (or undercutting) its channel adds nothing, so the channel is what answers. Which means a
+  funnel value at or below its channel's is a term that **can never govern** — a number that reads as a
+  decision and changes nothing. That is exactly what shipped in #975: `sales_meetings_from_conversation`
+  carried 30 days against a fleet whose 43 channels state 30 (×32), 60 (×4) and 90 (×7), so `max` picked
+  the channel on **100% of pairs**. A `grep -oE 'terms\([0-9]+, *[0-9]+'` over the seed, at plan time,
+  would have shown it in ten seconds — the repo's own degenerate-order rule, one grain over.
+- **EVERY FUNNEL IS `null` TODAY, AND THAT IS MEASURED RATHER THAN ASSUMED.** `null` = this funnel adds
+  nothing to its channel. The shortest channel states 30 days and the conversation funnel — the one that
+  would need longest — is judgeable in 30 (owner, 2026-09-17). So nothing exceeds its channel and
+  nothing is stated. It is written out per funnel rather than left to a missing key: a consumer probing
+  for a field cannot tell "adds nothing" from "not stated". **Never fabricate a value to make the shape
+  observable** — the shape is observable through `effectiveMinimumCommitmentDays`, which every pair
+  carries.
+- **THE FIGURE IS A PROPERTY OF THE PAIR, NOT OF THE FUNNEL.** The same funnel legitimately reads a
+  different effective figure under a different channel (30 on cold email, 90 on SEO). A consumer that
+  caches it per funnel key is caching the wrong grain.
+- **THE BARE `minimumCommitmentDays` IS GONE FROM THE FUNNEL ENTRY.** It sat on the SAME payload as the
+  channel's `terms.minimumCommitmentDays` — two grains under one word, which is the second-vocabulary
+  smell this file bans for "chain". The channel's own field keeps its name and its meaning untouched;
+  it is what `apps/admin`'s model page renders and the only fleet reader either ever had.
+- **THE first-production INVARIANT HOLDS BY CONSTRUCTION.** The composition only ever RAISES the
+  channel's figure, and the seed already guards `maxDaysToFirstProduction ≤ minimumCommitmentDays` per
+  channel, so no pair can promise an answer before its channel can produce one. Pinned at the pair grain
+  anyway, so a future composition that could LOWER it (a `min`, an override) cannot ship quietly.
+- Guards: `src/lib/funnel-commercial-terms.test.ts` (each case asserts the DIVERGENCE between the two
+  sides — channel-governs, funnel-governs, funnel-below, the tie, and one funnel reading two answers
+  under two channels; a suite checking only "a number came back" would pass on an implementation that
+  returned the channel's figure unconditionally, which is what every pair reads today) and
+  `src/routes/channel-funnel-minimum-commitment.test.ts` — ONE fixture of two channels (30 and 90 days)
+  selling the same four funnels, with a conversation funnel stating 60: the SAME funnel governs on one
+  channel and not the other, the bare field absent from every entry, every pair row byte-equal to its
+  catalogue entry, the unmeasured pair still stating the term, and the first-production invariant over
+  every published pair. (Set 2026-09-17, features-service#976; supersedes the
+  "a buyer is bound by BOTH" framing of #975.)
+
 
 ## A FREE-TEXT ICP INPUT CONTRADICTS THE AUDIENCE BANDIT — it is GONE from every bandit-fed channel, and KEPT on the two features where nothing else answers the question
 
