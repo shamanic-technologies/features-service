@@ -253,6 +253,26 @@ describe("what a VISITOR reads on a step", () => {
     expect(SALES_FUNNELS.sales_from_conversation.steps[0]).toBe(CHANNEL_STEPS.conversation.label);
   });
 
+  it("names the ad-hosted form step \"Form submitted\", and keeps it apart from a form on the brand's own site", () => {
+    // The owner read "Lead form submitted" as a pre-signup card title and asked for the shorter
+    // wording. Every case here asserts the DIVERGENCE between the two form steps, so a suite that only
+    // checked "a label came back" would pass on an implementation that collapsed them into one name.
+    expect(CHANNEL_STEPS.lead_form_submitted.label).toBe("Form submitted");
+    expect(CHANNEL_STEPS.form_filled.label).toBe("Form filled");
+    expect(CHANNEL_STEPS.lead_form_submitted.label).not.toBe(CHANNEL_STEPS.form_filled.label);
+    // The description is what tells a reader which form is which, so it must still name the host.
+    expect(CHANNEL_STEPS.lead_form_submitted.description).toContain("ad platform");
+    expect(CHANNEL_STEPS.form_filled.description).toContain("brand's own site");
+    // The funnel's first rung moved WITH the label — that is what keeps the label -> key join a lookup.
+    expect(SALES_FUNNELS.lead_forms_from_ads.steps[0]).toBe("Form submitted");
+    expect(FUNNEL_STEP_LABEL_TO_KEY["Form submitted"]).toBe("lead_form_submitted");
+    expect(FUNNEL_STEP_LABEL_TO_KEY["Lead form submitted"]).toBeUndefined();
+    // Only the words moved: the key, the leg identifier and the funnel's own name are untouched.
+    expect(CHANNEL_STEPS.lead_form_submitted.key).toBe("lead_form_submitted");
+    expect(funnelStepKeys("lead_forms_from_ads")[0]).toBe("lead_form_submitted");
+    expect(SALES_FUNNELS.lead_forms_from_ads.name).toBe("Lead Form from Ads");
+  });
+
   it("states EVERY step in the funnels' own wording, so the join by LABEL is a lookup", () => {
     // The general invariant behind the case above: a step's published label IS the string
     // brand-service's funnels use for that rung, for all eight. A step whose label drifts off the
