@@ -32,9 +32,37 @@ import {
   type LearningCampaignInput,
   type LearningCell,
   type LearningPhase,
+  type ResolvedLeg,
 } from "./learning-phase.js";
+import type { CostPerOutcomeTerms } from "./cost-per-outcome-history.js";
 import type { SalesEconomics } from "./funnel-registry.js";
 import type { Pricing } from "./pricing.js";
+
+/**
+ * The verdict, and the TERMS the scope's outcome is counted and priced on.
+ *
+ * The terms ride along because the leader resolution that produces them costs a campaign-service read
+ * and is already paid here — and because the dated cost-per-outcome curve the route builds beside
+ * this verdict MUST be denominated in the same step, by the same rate, or one body would state two
+ * different things about one outcome. `null` whenever the scope has no usable leg (no leader, no leg
+ * stated, or a rate the brand never declared): a curve is never drawn on a step nobody named.
+ */
+export interface LearningPhaseResult {
+  phase: LearningPhase;
+  outcomeTerms: CostPerOutcomeTerms | null;
+}
+
+/** The leader's resolved leg, as the curve needs it. Null when it carries no declared rate. */
+function outcomeTermsOf(leg: ResolvedLeg | null): CostPerOutcomeTerms | null {
+  if (!leg || leg.rateFromDriver == null || leg.rateFromDriver <= 0) return null;
+  return {
+    legKey: leg.legKey,
+    outcomeStep: leg.outcomeStep,
+    driver: leg.driver,
+    rateFromDriver: leg.rateFromDriver,
+    outcomeObserved: leg.outcomeObserved,
+  };
+}
 
 export interface LearningPhaseScope {
   brandId: string;
@@ -54,7 +82,7 @@ function inScope(row: CampaignIdentityRow, slugs: Set<string>, scopeIds: Set<str
   return row.featureSlug != null && slugs.has(row.featureSlug);
 }
 
-export async function computeLearningPhase(scope: LearningPhaseScope): Promise<LearningPhase> {
+export async function computeLearningPhase(scope: LearningPhaseScope): Promise<LearningPhaseResult> {
   const { brandId, featureScope, headers, economics, pricing } = scope;
   const identity: Identity = {
     orgId: headers.orgId,
@@ -156,30 +184,38 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
     dailyCeilingUsd = ceiling;
   }
 
-  return buildLearningPhase({
-    campaigns,
-    economics,
-    leadingCells,
-    leadingCommittedSpentUsd,
-    dailyCeilingUsd,
-  });
+  return {
+    phase: buildLearningPhase({
+      campaigns,
+      economics,
+      leadingCells,
+      leadingCommittedSpentUsd,
+      dailyCeilingUsd,
+    }),
+    outcomeTerms: outcomeTermsOf(leader?.leg ?? null),
+  };
 }
 
 /**
  * The fail-soft wrapper every revenue grain uses. A read that could not run at all lands on the
  * `campaigns_unreadable` verdict — a stated reason, never a missing block and never a zero.
  */
-export async function computeLearningPhaseSoft(scope: LearningPhaseScope): Promise<LearningPhase> {
+export async function computeLearningPhaseSoft(scope: LearningPhaseScope): Promise<LearningPhaseResult> {
   try {
     return await computeLearningPhase(scope);
   } catch (error) {
     console.warn(`[features-service] learning phase unavailable: ${(error as Error).message}`);
-    return buildLearningPhase({
-      campaigns: null,
-      economics: scope.economics,
-      leadingCells: null,
-      leadingCommittedSpentUsd: null,
-      dailyCeilingUsd: null,
-    });
+    return {
+      phase: buildLearningPhase({
+        campaigns: null,
+        economics: scope.economics,
+        leadingCells: null,
+        leadingCommittedSpentUsd: null,
+        dailyCeilingUsd: null,
+      }),
+      // No campaigns read means no leg named, so the curve has no step to be denominated in. A
+      // fabricated one would put a number on the wire about an outcome nobody stated.
+      outcomeTerms: null,
+    };
   }
 }

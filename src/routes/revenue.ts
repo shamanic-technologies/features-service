@@ -60,11 +60,15 @@ import { declaredEconomicsForFunnel, mergeFunnelEconomics } from "../lib/declare
 import { primaryDeclaredFunnel } from "../lib/brand-funnels.js";
 import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { campaignScopeIds, singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js";
-import { computeLearningPhaseSoft } from "../lib/learning-phase-compute.js";
+import { computeLearningPhaseSoft, type LearningPhaseResult } from "../lib/learning-phase-compute.js";
 import type { LearningPhase } from "../lib/learning-phase.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
 import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
+import {
+  buildCostPerOutcomeHistory,
+  type CostPerOutcomeHistory,
+} from "../lib/cost-per-outcome-history.js";
 import { fetchBrandCommittedSpendByDay } from "../lib/brand-spend-by-day-client.js";
 import { buildCostEconomics, type CostEconomics } from "../lib/cost-economics.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
@@ -520,6 +524,37 @@ interface RevenueResponse {
    * other number is correct. Null means "we could not measure this", never "the return was zero".
    */
   roiHistory: RoiHistory | null;
+  /**
+   * WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome
+   * `outcomes` states as a scalar, and the curve a customer reads to answer "is this getting
+   * cheaper, and how fast".
+   *
+   * BOTH legs are CUMULATIVE since the scope's first day, for the reason {@link buildRoiHistory}
+   * gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates
+   * and describes nothing. The outcome is the scope's OWN leg's step — the byte-same step and rate
+   * `learningPhase` counts with, resolved ONCE by the same leader — so the curve and the verdict
+   * beside it can never be denominated in two different things.
+   *
+   * MEASURED on both legs and divided by nobody downstream: the spend is runs' dated COMMITTED
+   * buckets (the basis `outcomes.committedSpentCents` rides) and the outcomes are the same deduped
+   * leads `outcomes.recipientsClicked` / `recipientsRepliesPositive` count, so the final point IS
+   * that block's `cpcCents`/`cpprCents` divided by the leg's rate — to the sub-cent rounding
+   * documented in {@link buildCostPerOutcomeHistory}, the same one `roiHistory`'s terminal ROI
+   * carries. An outcome whose signal carries no timestamp sits on no day and is stated as
+   * `undatedOutcomes` rather than dated or dropped.
+   *
+   * NOT `learningPhase.expectedCostPerOutcomeUsd`, which answers a different question: that one is
+   * pooled over the cells that OBSERVED an outcome, because its job is to found a spend target and
+   * exploration spend must not price into it. This is the OBSERVED accounting figure — every dollar
+   * the scope spent over every outcome it produced.
+   *
+   * OVERVIEW ONLY, the same gate `roiHistory` and `spend` ride: null on the lensed `?lens=` read and
+   * absent on the lean `?groupBy=` groups. NULL also whenever the scope names no priceable outcome
+   * step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read
+   * degraded — `learningPhase.unmeasuredReason` beside it names which, so no reason vocabulary is
+   * duplicated here. Null means "we could not measure this", never "it cost nothing".
+   */
+  costPerOutcomeHistory: CostPerOutcomeHistory | null;
   organizations: OrganizationRow[];
   leads: LeadRow[];
   /**
@@ -710,6 +745,9 @@ function emptyBody(
     }),
     timeSeries: [],
     roiHistory,
+    // Neither path that reaches here names a leg: the no-funnel short-circuit never read the leads
+    // and the cold-start path holds no rate ladder to walk one through.
+    costPerOutcomeHistory: null,
     organizations: [],
     leads: [],
     attributedOutcomes,
@@ -997,6 +1035,9 @@ function buildLensBody(
     // The lens describes a SUBSET of the brand's leads; its spend leg would be the brand's whole
     // spend, so the curve belongs to the un-lensed Overview alone.
     roiHistory: null,
+    // Same gate, same reason: a cost-per-outcome curve counted over a lensed subset and divided by
+    // the brand's whole dated spend would belong to neither scope.
+    costPerOutcomeHistory: null,
     organizations: [],
     leads,
     // The lens short-circuits before the Wave B overlays, so the only outcomes this body could
@@ -1280,7 +1321,7 @@ export async function computeFeatureRevenue(
   // declared funnels are several chains, so no chain is stated rather than one being picked. Resolved
   // HERE because it decides whether the customer's statements are worth reading at all.
   const stepsFunnel = funnelForSteps(requestedFunnel, priced.pricedFunnelKeys);
-  const [timestamps, observed, quals, stepCosts, learningPhase] = await Promise.all([
+  const [timestamps, observed, quals, stepCosts, learning] = await Promise.all([
     fetchEventTimestamps(brandId, campaignId, emails, headers).catch((err) => {
       console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
       return null;
@@ -1319,7 +1360,7 @@ export async function computeFeatureRevenue(
           economics,
           pricing,
         })
-      : Promise.resolve<LearningPhase | null>(null),
+      : Promise.resolve<LearningPhaseResult | null>(null),
   ]);
 
   // The identical merge the per-workflow grain applies (`lib/signal-overlays.ts`) — one copy, so the
@@ -1358,6 +1399,19 @@ export async function computeFeatureRevenue(
   // reply) as independent probabilities of one close (`undefined` keeps the wall-clock `now`).
   const result = computeRevenue(paths, persons, economics.lifetimeRevenueUsd, funnel.milestones);
 
+  // The per-signal ACTUAL series, built ONCE: the body spreads them, and the cost-per-outcome curve
+  // takes its driver leg from the SAME object, so the curve's denominator and the series a consumer
+  // charts beside it are the same people by construction.
+  const outcomeSeries = buildOutcomeSeries(result.leads);
+  // WHICH signal the scope's leg is entered through — the byte-same terms `learningPhase` counted its
+  // outcomes with. Absent ⟺ the scope names no priceable step, which is when there is no curve to draw.
+  const outcomeTerms = learning?.outcomeTerms ?? null;
+  const driverSeries = outcomeTerms
+    ? outcomeTerms.driver === "click"
+      ? outcomeSeries.recipientsClicked
+      : outcomeSeries.recipientsRepliesPositive
+    : null;
+
   return {
     headline: { ...result.headline, economicsSource },
     costEconomics: buildCostEconomics({
@@ -1373,6 +1427,13 @@ export async function computeFeatureRevenue(
     roiHistory: spendByDay
       ? buildRoiHistory(spendByDay, result.timeSeries, result.headline.totalPipelineUsd)
       : null,
+    // The SAME dated committed buckets, against the scope's own dated count of the step its leg
+    // closes. Null when either ingredient is missing — the dated-spend read degraded, or the scope
+    // names no priceable outcome step — and `learningPhase.unmeasuredReason` beside it says which.
+    costPerOutcomeHistory:
+      spendByDay && outcomeTerms && driverSeries
+        ? buildCostPerOutcomeHistory(spendByDay, driverSeries, outcomeTerms)
+        : null,
     organizations: result.organizations,
     leads: result.leads,
     // The SAME evidence the funnel walk reports its rungs on — one implementation, so an unmeasured
@@ -1380,7 +1441,7 @@ export async function computeFeatureRevenue(
     attributedOutcomes: attributedOutcomesFor(stepEvidence),
     events: result.events,
     recipientsContacted: buildContactedSeries(result.leads),
-    ...buildOutcomeSeries(result.leads),
+    ...outcomeSeries,
     sequences,
     spend: breakdown ? buildSpend(breakdown, result.leads, counts, parents) : null,
     // The VOLUME half — how much real outcome evidence every money figure above rests on. Built from
@@ -1397,7 +1458,7 @@ export async function computeFeatureRevenue(
     // the REQUEST and is always stated, so a consumer can never be looking at a figure whose basis it
     // cannot name; `counts` is a fact about the DATA and is null when the statements could not be read.
     outcomeCauses: { counted: [...causes], counts: observed?.causeCounts ?? null },
-    learningPhase,
+    learningPhase: learning?.phase ?? null,
   };
 }
 
