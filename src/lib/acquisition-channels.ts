@@ -85,9 +85,9 @@ import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-f
  * brand-service has since decided the opposite way round, and it owns this vocabulary: an ad CLICK is
  * not a rung anybody buys, so the step the channel DELIVERS *is* the funnel's first step.
  * `sales_meetings_from_ads` starts on `Meeting booked` — the same step, with nothing before it — and
- * `lead_forms_from_ads` starts on `Lead form submitted`, a step of its own distinct from a form filled
- * on the brand's own site. So the two keys are now `meeting_booked` (the step already in this list) and
- * `lead_form_submitted` (brand-service's own label).
+ * `lead_forms_from_ads` starts on its own form step, distinct from a form filled on the brand's own
+ * site. So the two keys are now `meeting_booked` (the step already in this list) and
+ * `lead_form_submitted`.
  *
  * THAT IS WHAT MAKES THE JOIN WORK, and it is the whole point. A consumer answers "which funnels does
  * this producible step lead into" by matching a channel's produced step against a funnel's FIRST step.
@@ -168,11 +168,18 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
   },
   lead_form_submitted: {
     key: "lead_form_submitted",
-    // brand-service's own label, and deliberately NOT "Form filled": this form is hosted by the
-    // advertising platform (Meta Lead Ads, LinkedIn Lead Gen Forms, TikTok lead forms) and the buyer
-    // never reaches the brand's site, so it is a step of its own rather than the same one under a
-    // second name.
-    label: "Lead form submitted",
+    // "Form submitted", and deliberately NOT "Form filled": this form is hosted by the advertising
+    // platform (Meta Lead Ads, LinkedIn Lead Gen Forms, TikTok lead forms) and the buyer never reaches
+    // the brand's site, so it is a step of its own rather than the same one under a second name. The
+    // DESCRIPTION is what keeps the two apart for a reader, which is why it names the host explicitly.
+    //
+    // brand-service spells this rung "Lead form submitted"; the owner read that on the onboarding's
+    // first screen — a pre-signup card titled with this label — and asked for the shorter wording. The
+    // KEY is untouched (`lead_form_submitted`), and the funnel's own `steps[0]` moved with the label so
+    // the label→key join below stays a lookup. This funnel has no brand declaration in production and
+    // no leg rate is keyed on its steps (`RATE_FOR_STEP_PAIR` names neither of them), so nothing is
+    // matched against brand-service's wording at run time.
+    label: "Form submitted",
     description: "A buyer fills a form hosted by the ad platform, without ever reaching the brand's site.",
   },
   paid_client: {
@@ -232,7 +239,7 @@ export const FUNNEL_STEP_LABEL_TO_KEY: Record<string, ChannelStepKey> = {
   "Meeting attended": "meeting_attended",
   Signup: "signup",
   "Form filled": "form_filled",
-  "Lead form submitted": "lead_form_submitted",
+  "Form submitted": "lead_form_submitted",
   "Paid client": "paid_client",
 };
 

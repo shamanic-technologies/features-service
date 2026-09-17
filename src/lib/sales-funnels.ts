@@ -153,7 +153,7 @@ export const SALES_FUNNELS: Record<SalesFunnelKey, SalesFunnelDef> = {
   lead_forms_from_ads: {
     key: "lead_forms_from_ads",
     name: "Lead Form from Ads",
-    steps: ["Lead form submitted", "Paid client"],
+    steps: ["Form submitted", "Paid client"],
     // Same as the ad meeting funnel: the form is filled inside the ad unit, so the step is delivered
     // rather than observed.
     meetingChannel: "none",

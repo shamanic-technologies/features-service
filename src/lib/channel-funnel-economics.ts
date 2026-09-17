@@ -107,7 +107,7 @@ export const FUNNEL_MILESTONE_STEP: Record<SalesFunnelKey, string> = {
   website_purchases: "Signup",
   form_magnet: "Form filled",
   sales_meetings_from_ads: "Meeting booked",
-  lead_forms_from_ads: "Lead form submitted",
+  lead_forms_from_ads: "Form submitted",
   // A funnel whose ONLY stage is the sale names the sale — that genuinely is the moment it is named
   // after, not a stand-in for a missing step. Mirrored from brand-service's own `milestoneStep`.
   sales_from_conversation: "Paid client",
