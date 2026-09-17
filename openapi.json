@@ -2205,6 +2205,100 @@
             ],
             "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."
           },
+          "costPerOutcomeHistory": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "outcomeStep": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "enum": [
+                      "conversation",
+                      "website_visit",
+                      "meeting_booked",
+                      "meeting_attended",
+                      "signup",
+                      "form_filled",
+                      "paid_client",
+                      "in_ad_form_submission",
+                      "in_ad_booked_meeting"
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description"
+                ],
+                "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step learningPhase.outcomeStep reports (one leader resolution serves both, so the curve and the verdict beside it can never be denominated in two different things). A consumer labels the chart with it."
+              },
+              "legKey": {
+                "type": "string",
+                "description": "The leg that step closes, canonical."
+              },
+              "outcomeObserved": {
+                "type": "boolean",
+                "description": "TRUE ⟺ the counts are raw OBSERVATIONS (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ each day's count is the observed driver walked forward through the funnel's declared rates, so it is fractional."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) this point describes."
+                    },
+                    "cumulativeSpendUsd": {
+                      "type": "number",
+                      "description": "COMMITTED — every dollar of committed spend (billed + open holds) from the scope's first spend up to and including this day, the SAME basis outcomes.committedSpentCents and costEconomics.committedCostUsd ride. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                    },
+                    "cumulativeOutcomes": {
+                      "type": "number",
+                      "description": "Every outcome of this leg's step DATED up to and including this day. Fractional on a deeper leg, where the count is the observed driver signal walked forward through the funnel's own declared rates (outcomeObserved says which you are reading)."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "cumulativeSpendUsd / cumulativeOutcomes. NULL — never 0 — on any day whose cumulative outcomes OR cumulative spend is still 0: a scope that has spent with nothing to show has no price yet, and a scope with outcomes and no attributed spend did not get them for free. Null means 'we could not measure this', a 0 would mean 'this cost nothing'."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "cumulativeSpendUsd",
+                    "cumulativeOutcomes",
+                    "costPerOutcomeUsd"
+                  ]
+                },
+                "description": "One point per UTC day that has spend or a dated outcome, ascending, spanning the SAME days roiHistory spans. Days with neither are absent (never fabricated). Empty when the scope has neither spend nor a dated outcome — a scope still learning answers with an empty or all-null series rather than with nothing."
+              },
+              "datedOutcomes": {
+                "type": "number",
+                "description": "The curve's final cumulative outcome count — the part of the scope's whole count this curve describes."
+              },
+              "undatedOutcomes": {
+                "type": "number",
+                "description": "Outcomes in the scope's total whose signal carries NO timestamp, so they sit on no day. Reported rather than dated or dropped (the same treatment roiHistory.undatedPipelineUsd gets): datedOutcomes + undatedOutcomes is the scope's whole count, so a consumer can always tell how much of it the curve describes."
+              }
+            },
+            "required": [
+              "outcomeStep",
+              "legKey",
+              "outcomeObserved",
+              "daily",
+              "datedOutcomes",
+              "undatedOutcomes"
+            ],
+            "description": "WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome the `outcomes` block states as a scalar, so a customer can see whether it is getting cheaper and how fast. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase uses. MEASURED on both legs and divided by nobody downstream — the spend is runs' dated COMMITTED buckets (the basis outcomes.committedSpentCents rides) and the outcomes are the same deduped leads outcomes.recipientsClicked / recipientsRepliesPositive count, so the FINAL point IS that block's cpcCents/cpprCents divided by the leg's own rate, to the sub-cent rounding roiHistory's terminal ROI also carries (runs returns fractional cents per group and each grouping rounds once: measured in prod 2026-09-17, $7.9740 against a served $7.9735, both rendering $7.97). NOT learningPhase.expectedCostPerOutcomeUsd, which answers a different question — that one is pooled over the cells that OBSERVED an outcome because its job is to found a spend target and exploration spend must not price into it; this is the OBSERVED accounting figure, every dollar spent over every outcome produced. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read degraded — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. Null means 'we could not measure this', never 'it cost nothing'. (features-service#980)"
+          },
           "learningPhase": {
             "type": "object",
             "nullable": true,
@@ -2485,6 +2579,7 @@
           "outcomes",
           "outcomeCauses",
           "funnelSteps",
+          "costPerOutcomeHistory",
           "learningPhase"
         ]
       },
@@ -7537,6 +7632,100 @@
             ],
             "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."
           },
+          "costPerOutcomeHistory": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "outcomeStep": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "enum": [
+                      "conversation",
+                      "website_visit",
+                      "meeting_booked",
+                      "meeting_attended",
+                      "signup",
+                      "form_filled",
+                      "paid_client",
+                      "in_ad_form_submission",
+                      "in_ad_booked_meeting"
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description"
+                ],
+                "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step learningPhase.outcomeStep reports (one leader resolution serves both, so the curve and the verdict beside it can never be denominated in two different things). A consumer labels the chart with it."
+              },
+              "legKey": {
+                "type": "string",
+                "description": "The leg that step closes, canonical."
+              },
+              "outcomeObserved": {
+                "type": "boolean",
+                "description": "TRUE ⟺ the counts are raw OBSERVATIONS (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ each day's count is the observed driver walked forward through the funnel's declared rates, so it is fractional."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) this point describes."
+                    },
+                    "cumulativeSpendUsd": {
+                      "type": "number",
+                      "description": "COMMITTED — every dollar of committed spend (billed + open holds) from the scope's first spend up to and including this day, the SAME basis outcomes.committedSpentCents and costEconomics.committedCostUsd ride. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                    },
+                    "cumulativeOutcomes": {
+                      "type": "number",
+                      "description": "Every outcome of this leg's step DATED up to and including this day. Fractional on a deeper leg, where the count is the observed driver signal walked forward through the funnel's own declared rates (outcomeObserved says which you are reading)."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "cumulativeSpendUsd / cumulativeOutcomes. NULL — never 0 — on any day whose cumulative outcomes OR cumulative spend is still 0: a scope that has spent with nothing to show has no price yet, and a scope with outcomes and no attributed spend did not get them for free. Null means 'we could not measure this', a 0 would mean 'this cost nothing'."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "cumulativeSpendUsd",
+                    "cumulativeOutcomes",
+                    "costPerOutcomeUsd"
+                  ]
+                },
+                "description": "One point per UTC day that has spend or a dated outcome, ascending, spanning the SAME days roiHistory spans. Days with neither are absent (never fabricated). Empty when the scope has neither spend nor a dated outcome — a scope still learning answers with an empty or all-null series rather than with nothing."
+              },
+              "datedOutcomes": {
+                "type": "number",
+                "description": "The curve's final cumulative outcome count — the part of the scope's whole count this curve describes."
+              },
+              "undatedOutcomes": {
+                "type": "number",
+                "description": "Outcomes in the scope's total whose signal carries NO timestamp, so they sit on no day. Reported rather than dated or dropped (the same treatment roiHistory.undatedPipelineUsd gets): datedOutcomes + undatedOutcomes is the scope's whole count, so a consumer can always tell how much of it the curve describes."
+              }
+            },
+            "required": [
+              "outcomeStep",
+              "legKey",
+              "outcomeObserved",
+              "daily",
+              "datedOutcomes",
+              "undatedOutcomes"
+            ],
+            "description": "WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome the `outcomes` block states as a scalar, so a customer can see whether it is getting cheaper and how fast. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase uses. MEASURED on both legs and divided by nobody downstream — the spend is runs' dated COMMITTED buckets (the basis outcomes.committedSpentCents rides) and the outcomes are the same deduped leads outcomes.recipientsClicked / recipientsRepliesPositive count, so the FINAL point IS that block's cpcCents/cpprCents divided by the leg's own rate, to the sub-cent rounding roiHistory's terminal ROI also carries (runs returns fractional cents per group and each grouping rounds once: measured in prod 2026-09-17, $7.9740 against a served $7.9735, both rendering $7.97). NOT learningPhase.expectedCostPerOutcomeUsd, which answers a different question — that one is pooled over the cells that OBSERVED an outcome because its job is to found a spend target and exploration spend must not price into it; this is the OBSERVED accounting figure, every dollar spent over every outcome produced. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read degraded — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. Null means 'we could not measure this', never 'it cost nothing'. (features-service#980)"
+          },
           "learningPhase": {
             "type": "object",
             "nullable": true,
@@ -7916,6 +8105,7 @@
           "outcomes",
           "outcomeCauses",
           "funnelSteps",
+          "costPerOutcomeHistory",
           "learningPhase",
           "offerId",
           "brandId",
@@ -10524,6 +10714,100 @@
             ],
             "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."
           },
+          "costPerOutcomeHistory": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "outcomeStep": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "enum": [
+                      "conversation",
+                      "website_visit",
+                      "meeting_booked",
+                      "meeting_attended",
+                      "signup",
+                      "form_filled",
+                      "paid_client",
+                      "in_ad_form_submission",
+                      "in_ad_booked_meeting"
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description"
+                ],
+                "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step learningPhase.outcomeStep reports (one leader resolution serves both, so the curve and the verdict beside it can never be denominated in two different things). A consumer labels the chart with it."
+              },
+              "legKey": {
+                "type": "string",
+                "description": "The leg that step closes, canonical."
+              },
+              "outcomeObserved": {
+                "type": "boolean",
+                "description": "TRUE ⟺ the counts are raw OBSERVATIONS (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ each day's count is the observed driver walked forward through the funnel's declared rates, so it is fractional."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) this point describes."
+                    },
+                    "cumulativeSpendUsd": {
+                      "type": "number",
+                      "description": "COMMITTED — every dollar of committed spend (billed + open holds) from the scope's first spend up to and including this day, the SAME basis outcomes.committedSpentCents and costEconomics.committedCostUsd ride. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                    },
+                    "cumulativeOutcomes": {
+                      "type": "number",
+                      "description": "Every outcome of this leg's step DATED up to and including this day. Fractional on a deeper leg, where the count is the observed driver signal walked forward through the funnel's own declared rates (outcomeObserved says which you are reading)."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "cumulativeSpendUsd / cumulativeOutcomes. NULL — never 0 — on any day whose cumulative outcomes OR cumulative spend is still 0: a scope that has spent with nothing to show has no price yet, and a scope with outcomes and no attributed spend did not get them for free. Null means 'we could not measure this', a 0 would mean 'this cost nothing'."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "cumulativeSpendUsd",
+                    "cumulativeOutcomes",
+                    "costPerOutcomeUsd"
+                  ]
+                },
+                "description": "One point per UTC day that has spend or a dated outcome, ascending, spanning the SAME days roiHistory spans. Days with neither are absent (never fabricated). Empty when the scope has neither spend nor a dated outcome — a scope still learning answers with an empty or all-null series rather than with nothing."
+              },
+              "datedOutcomes": {
+                "type": "number",
+                "description": "The curve's final cumulative outcome count — the part of the scope's whole count this curve describes."
+              },
+              "undatedOutcomes": {
+                "type": "number",
+                "description": "Outcomes in the scope's total whose signal carries NO timestamp, so they sit on no day. Reported rather than dated or dropped (the same treatment roiHistory.undatedPipelineUsd gets): datedOutcomes + undatedOutcomes is the scope's whole count, so a consumer can always tell how much of it the curve describes."
+              }
+            },
+            "required": [
+              "outcomeStep",
+              "legKey",
+              "outcomeObserved",
+              "daily",
+              "datedOutcomes",
+              "undatedOutcomes"
+            ],
+            "description": "WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome the `outcomes` block states as a scalar, so a customer can see whether it is getting cheaper and how fast. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase uses. MEASURED on both legs and divided by nobody downstream — the spend is runs' dated COMMITTED buckets (the basis outcomes.committedSpentCents rides) and the outcomes are the same deduped leads outcomes.recipientsClicked / recipientsRepliesPositive count, so the FINAL point IS that block's cpcCents/cpprCents divided by the leg's own rate, to the sub-cent rounding roiHistory's terminal ROI also carries (runs returns fractional cents per group and each grouping rounds once: measured in prod 2026-09-17, $7.9740 against a served $7.9735, both rendering $7.97). NOT learningPhase.expectedCostPerOutcomeUsd, which answers a different question — that one is pooled over the cells that OBSERVED an outcome because its job is to found a spend target and exploration spend must not price into it; this is the OBSERVED accounting figure, every dollar spent over every outcome produced. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read degraded — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. Null means 'we could not measure this', never 'it cost nothing'. (features-service#980)"
+          },
           "learningPhase": {
             "type": "object",
             "nullable": true,
@@ -11072,6 +11356,7 @@
           "outcomes",
           "outcomeCauses",
           "funnelSteps",
+          "costPerOutcomeHistory",
           "learningPhase",
           "offerId",
           "brandId",
@@ -13301,6 +13586,100 @@
             ],
             "description": "THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."
           },
+          "costPerOutcomeHistory": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "outcomeStep": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "enum": [
+                      "conversation",
+                      "website_visit",
+                      "meeting_booked",
+                      "meeting_attended",
+                      "signup",
+                      "form_filled",
+                      "paid_client",
+                      "in_ad_form_submission",
+                      "in_ad_booked_meeting"
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description"
+                ],
+                "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step learningPhase.outcomeStep reports (one leader resolution serves both, so the curve and the verdict beside it can never be denominated in two different things). A consumer labels the chart with it."
+              },
+              "legKey": {
+                "type": "string",
+                "description": "The leg that step closes, canonical."
+              },
+              "outcomeObserved": {
+                "type": "boolean",
+                "description": "TRUE ⟺ the counts are raw OBSERVATIONS (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ each day's count is the observed driver walked forward through the funnel's declared rates, so it is fractional."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) this point describes."
+                    },
+                    "cumulativeSpendUsd": {
+                      "type": "number",
+                      "description": "COMMITTED — every dollar of committed spend (billed + open holds) from the scope's first spend up to and including this day, the SAME basis outcomes.committedSpentCents and costEconomics.committedCostUsd ride. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                    },
+                    "cumulativeOutcomes": {
+                      "type": "number",
+                      "description": "Every outcome of this leg's step DATED up to and including this day. Fractional on a deeper leg, where the count is the observed driver signal walked forward through the funnel's own declared rates (outcomeObserved says which you are reading)."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "cumulativeSpendUsd / cumulativeOutcomes. NULL — never 0 — on any day whose cumulative outcomes OR cumulative spend is still 0: a scope that has spent with nothing to show has no price yet, and a scope with outcomes and no attributed spend did not get them for free. Null means 'we could not measure this', a 0 would mean 'this cost nothing'."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "cumulativeSpendUsd",
+                    "cumulativeOutcomes",
+                    "costPerOutcomeUsd"
+                  ]
+                },
+                "description": "One point per UTC day that has spend or a dated outcome, ascending, spanning the SAME days roiHistory spans. Days with neither are absent (never fabricated). Empty when the scope has neither spend nor a dated outcome — a scope still learning answers with an empty or all-null series rather than with nothing."
+              },
+              "datedOutcomes": {
+                "type": "number",
+                "description": "The curve's final cumulative outcome count — the part of the scope's whole count this curve describes."
+              },
+              "undatedOutcomes": {
+                "type": "number",
+                "description": "Outcomes in the scope's total whose signal carries NO timestamp, so they sit on no day. Reported rather than dated or dropped (the same treatment roiHistory.undatedPipelineUsd gets): datedOutcomes + undatedOutcomes is the scope's whole count, so a consumer can always tell how much of it the curve describes."
+              }
+            },
+            "required": [
+              "outcomeStep",
+              "legKey",
+              "outcomeObserved",
+              "daily",
+              "datedOutcomes",
+              "undatedOutcomes"
+            ],
+            "description": "WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome the `outcomes` block states as a scalar, so a customer can see whether it is getting cheaper and how fast. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase uses. MEASURED on both legs and divided by nobody downstream — the spend is runs' dated COMMITTED buckets (the basis outcomes.committedSpentCents rides) and the outcomes are the same deduped leads outcomes.recipientsClicked / recipientsRepliesPositive count, so the FINAL point IS that block's cpcCents/cpprCents divided by the leg's own rate, to the sub-cent rounding roiHistory's terminal ROI also carries (runs returns fractional cents per group and each grouping rounds once: measured in prod 2026-09-17, $7.9740 against a served $7.9735, both rendering $7.97). NOT learningPhase.expectedCostPerOutcomeUsd, which answers a different question — that one is pooled over the cells that OBSERVED an outcome because its job is to found a spend target and exploration spend must not price into it; this is the OBSERVED accounting figure, every dollar spent over every outcome produced. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read degraded — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. Null means 'we could not measure this', never 'it cost nothing'. (features-service#980)"
+          },
           "learningPhase": {
             "type": "object",
             "nullable": true,
@@ -13677,6 +14056,7 @@
           "outcomes",
           "outcomeCauses",
           "funnelSteps",
+          "costPerOutcomeHistory",
           "learningPhase",
           "brandId",
           "channels"

@@ -399,6 +399,72 @@ arrive", so an overrun rendered as a countdown that had finished.
   body identical with the verdict and without it.
   (Set 2026-09-14, features-service#938.)
 
+## A CURVE NOBODY COULD DIVIDE — `costPerOutcomeHistory`, the dated twin of the cost per outcome, cumulative on both legs, and the UNDATED share is why a browser could not build it
+
+The campaign Overview could state what ONE outcome costs right now and nothing about its trajectory.
+Both ingredients were already on the body: `roiHistory` carries the dated committed spend, and the
+per-signal series carry the dated driver counts. What no consumer could obtain is the two joined, and
+the ban on dividing two served figures in the browser is not a style objection here — an outcome
+carrying NO timestamp is in the scope's total while sitting on NO day, so a browser-side cumulative
+sum under-counts the denominator and the curve's last point stops agreeing with the figure printed
+directly above it. One screen, two numbers for one statistic.
+
+- **BOTH LEGS ARE CUMULATIVE, for the reason `roiHistory` states one section up.** Spend on a day
+  buys outcomes that land days or weeks later, so `that day's spend ÷ that day's outcomes` oscillates
+  between 0 and absurd and describes nothing. Measured on the reported campaign: **2026-09-16 spent
+  $1.53 against 9 clicks — $0.17 on a per-day ratio, against a cumulative $7.97**. The cumulative
+  form is the one that converges, and its last point is the scope's own price rather than a second
+  opinion about it.
+- **THE OUTCOME IS THE SCOPE'S OWN LEG'S STEP, AND THIS SERVICE NAMES IT.** Never the driver signal
+  under another name. The terms are resolved ONCE, by the byte-same leader resolution `learningPhase`
+  counts its outcomes with (`computeLearningPhase` now returns them beside the verdict, at zero extra
+  IO — the campaign-service read that produces them is already paid), so the curve and the verdict
+  beside it can never be denominated in two different things. An ENTRY leg's count is a raw
+  OBSERVATION (rate 1); a deeper leg's is that observation walked forward through the funnel's own
+  declared rates, so it is fractional, and `outcomeObserved` says which a consumer is reading.
+- **IT RECONCILES BY CONSTRUCTION, AND THE RESIDUAL IS MEASURED RATHER THAN CAVEATED.** Both legs are
+  the scope's OWN totals — the spend is runs' dated COMMITTED buckets (the basis
+  `outcomes.committedSpentCents` rides) and the outcomes are the same deduped leads
+  `outcomes.recipientsClicked` / `recipientsRepliesPositive` count — so the final point IS that
+  block's `cpcCents`/`cpprCents` divided by the leg's rate. Prod 2026-09-17, brand `9546c4b2…` /
+  campaign `31df7683…` / leg `start_to_website_visit`: the dated buckets sum to **$247.193125**
+  against the untimed total's **$247.18** (runs returns fractional cents per group and each grouping
+  rounds once), so the last point reads **$7.9740** against a served **$7.9735** — a 0.006% gap, both
+  rendering `$7.97`. That is the IDENTICAL sub-cent property `roiHistory`'s terminal ROI carries
+  against `costEconomics.roiMultiple`. **Do NOT "fix" it by flooring one leg onto the other's
+  rounding** — that would be a correction dressed as a reconciliation.
+- **`undatedOutcomes` IS STATED, NEVER DATED AND NEVER DROPPED** — the same treatment
+  `roiHistory.undatedPipelineUsd` gets, and the whole reason the join had to happen here.
+  `datedOutcomes + undatedOutcomes` is the scope's whole count, so a consumer can always tell how
+  much of the scope the curve describes; with an undated share the last point is legitimately DEARER
+  than the served scalar and only that field explains the gap.
+- **`costPerOutcomeUsd` IS NULL, NEVER 0**, on any day whose cumulative outcomes OR cumulative spend
+  is still 0. A scope that has spent with nothing to show has no price yet, and one with outcomes and
+  no attributed spend did not get them for free. So a campaign still LEARNING answers with an
+  all-null series rather than with nothing — a real answer, distinct from the block being absent.
+- **IT IS NOT `learningPhase.expectedCostPerOutcomeUsd`, and the two must never be relabelled as each
+  other.** That one is pooled over the (campaign × workflow) cells that OBSERVED an outcome, because
+  its job is to found a spend target and exploration spend must not price into it. This is the
+  OBSERVED accounting figure — every dollar the scope spent over every outcome it produced. Same
+  observed-vs-projected axis `cost-engine.ts` already states; they share a label and not a basis, so
+  both are documented on the wire.
+- **NULL when the scope names no priceable outcome step** (no campaign, no leg stated, a rate the
+  brand never declared) **or the dated-spend read degraded** — fail-soft like `roiHistory`, never a
+  502 on a page whose every other figure is right. No reason vocabulary is duplicated on the block:
+  `learningPhase.unmeasuredReason` sits beside it and already names which ingredient is missing.
+- **OVERVIEW ONLY, the same gate `roiHistory` and `spend` ride** — null on the lensed `?lens=` read
+  (a lens is a lead SUBSET while its spend leg is the brand's whole spend) and absent from the lean
+  `?groupBy=` groups. **ONE request, no second read**: it rides the body a consumer already polls.
+- Guards: `src/lib/cost-per-outcome-history.test.ts` + `src/routes/cost-per-outcome-history.test.ts`
+  — ONE fixture carrying the reported campaign's real shape (31 clicks over five days, $247.19 of
+  dated committed spend, a served `cpcCents` of 797.35). Every case asserts the DIVERGENCE, so a
+  suite that only checked "points came back" would pass on an implementation that charted a
+  per-day ratio or the driver signal under the outcome's name: the last point against the served
+  scalar to the cent, the $0.17 day the cumulative form refuses to print, a deeper leg five times
+  dearer on IDENTICAL evidence, the undated share making the last point dearer than the scalar, the
+  all-null learning series, both named degrades, the lens and grouped shapes, and the rest of the
+  body BYTE-EQUAL with the block stripped. (Set 2026-09-17, features-service#980.)
+
 ## THE TIER OF THE MODEL WRITING THE EMAIL IS A PROPERTY OF THE LEG, NOT OF THE WORKFLOW — `modelEligibility`, stated on every row and acted on by nobody here
 
 We measured, fleet-wide, that the CAPABILITY TIER of the model a workflow writes its content with
