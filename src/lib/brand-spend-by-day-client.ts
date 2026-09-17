@@ -144,6 +144,17 @@ async function fetchDatedSpendForCampaign(
  * The /revenue Overview wraps the whole read fail-SOFT, so a failure nulls the curves rather than
  * 502-ing a page whose every other figure is right.
  *
+ * ── WHAT THE FAN-OUT COSTS IN PRECISION: NOTHING ─────────────────────────────────────────────────
+ *
+ * Measured against prod on the reported identity (2026-09-17, 51 members, 59 cost groups): these 51
+ * dated reads sum to 36,946.3540 cents and runs' untimed `groupBy=workflowSlug,campaignId` sums to
+ * 36,946.3540 cents — the SAME figure to ten decimals, so the fan-out loses nothing and runs'
+ * sum-equals-untimed-total invariant holds across it. The few cents by which the curve's last point
+ * can differ from `costEconomics.committedCostUsd` are this service's own per-group rounding on the
+ * OTHER leg (`fetchSpendBreakdown` rounds once per cost name), not a gap introduced here — the same
+ * property the workflow and offer grains already document. The curve is the more accurate of the
+ * two, so do NOT round it onto the other.
+ *
  * (features-service#983.)
  *
  * @returns Map<YYYY-MM-DD, committed spend in USD for that day>. Days with no runs are ABSENT (runs
