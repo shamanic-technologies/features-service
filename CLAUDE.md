@@ -433,6 +433,28 @@ directly above it. One screen, two numbers for one statistic.
   rendering `$7.97`. That is the IDENTICAL sub-cent property `roiHistory`'s terminal ROI carries
   against `costEconomics.roiMultiple`. **Do NOT "fix" it by flooring one leg onto the other's
   rounding** — that would be a correction dressed as a reconciliation.
+- **THE SPEND LEG NARROWS BY THE SAME CAMPAIGNS EVERY OTHER MONEY FIGURE ON THE BODY NARROWS BY, AND
+  A FAMILY IS READ MEMBER BY MEMBER TO GET THERE.** The reconciliation above only holds if both legs
+  describe ONE scope, and until 2026-09-17 they did not: runs' cost TIMESERIES takes ONE `campaignId`
+  with no `groupBy`, so the untimed read's trick of co-grouping `campaignId` and summing locally was
+  unavailable and a multi-member campaign IDENTITY fell back to the BRAND's curve. Measured in prod,
+  brand `f4d73dab…` / campaign `647572d9…` / org `f0420eb5…` (51 stored members): one body stated
+  **$369.32** as `costEconomics.committedCostUsd`, `outcomes.committedSpentCents` AND
+  `spend.totalSpentCents`, while its curves divided **$1,342.38** — the other identities' spend under
+  this campaign's name — so a campaign page drew **$16.57** an outcome beneath a stat row reading
+  **$4.56** for the same outcome on the same campaign. The fix is a fan-out: one timeseries read per
+  member, capped at `SPEND_BY_DAY_MEMBER_CONCURRENCY` (6), merged day by day. Summing members is
+  EXACT rather than approximate — a cost row belongs to exactly ONE campaign, so the union
+  double-counts nobody, the byte-same additivity `/audience-stats` relies on when it reads
+  email-gateway once per member; what is NOT additive is people, and no count is read there. A
+  brand-wide or one-member scope issues the IDENTICAL single request it always did, so every figure
+  it serves is byte-unchanged, and a family whose members recorded nothing answers an EMPTY map — a
+  measured "this scope has spent nothing", **never a fall back to the brand's wider curve**. FAIL-LOUD
+  per member: a partial sum would under-state the spend leg and make the curve read cheaper than the
+  scope is. **A brand running ONE identity cannot tell the fix from the bug** — which is why this
+  survived every suite and every probe until a multi-identity brand was read. The honest cleanup is a
+  `groupBy=campaignId` on runs' timeseries, which would make the whole fan-out one call; it does not
+  exist today, and the fan-out ships meanwhile.
 - **`undatedOutcomes` IS STATED, NEVER DATED AND NEVER DROPPED** — the same treatment
   `roiHistory.undatedPipelineUsd` gets, and the whole reason the join had to happen here.
   `datedOutcomes + undatedOutcomes` is the scope's whole count, so a consumer can always tell how
@@ -4874,6 +4896,11 @@ a dash beside real numbers — which reads as a broken card, not a scoping decis
     onto it. Pipeline is the engine's OWN `timeSeries` (each org steps the total up at its
     most-advanced event date). **Do NOT spread spend evenly over time** — that invents the shape of the
     thing the chart claims to show.
+  - **A CAMPAIGN-SCOPED read narrows the spend leg to that campaign's IDENTITY, member by member**
+    (`SPEND_BY_DAY_MEMBER_CONCURRENCY`) — see the `costPerOutcomeHistory` section above for the
+    measured prod case and the reasoning. Before 2026-09-17 it silently served the BRAND's curve, so
+    the "terminal point IS `costEconomics.roiMultiple`" claim one line up was true only for a brand
+    running a single identity. Brand-wide and one-member reads are byte-unchanged.
   - **The stale "dated columns are deferred until per-event timestamps exist" note is GONE from the
     OpenAPI description** — the timestamps have been there since #377; only dated SPEND was missing.
   - An org with no event timestamp sits on no day: reported as `undatedPipelineUsd`, never dropped and
