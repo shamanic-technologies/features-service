@@ -59,8 +59,13 @@ import type { ChannelStepDef } from "./acquisition-channels.js";
 import type { LegDriver } from "./leg-outcome.js";
 import type { SignalSeries } from "./revenue-engine.js";
 
-/** The terms one outcome of this scope is counted and priced on. Resolved once, by the leader. */
-export interface CostPerOutcomeTerms {
+/**
+ * The terms one outcome of this scope is counted and priced on. Resolved ONCE, by the leader
+ * resolution `learningPhase` uses, and shared by every dated curve denominated in that outcome — the
+ * cost-per-outcome curve here and the conversion-rate curve in `conversion-rate-history.ts`. One
+ * resolution, so two curves on one screen can never be denominated in two different steps.
+ */
+export interface ScopeOutcomeTerms {
   /** The leg the scope is bought for, canonical. */
   legKey: string;
   /** The step the counts below are denominated in — the leg's OWN `toStep`. */
@@ -119,7 +124,7 @@ export interface CostPerOutcomeHistory {
 export function buildCostPerOutcomeHistory(
   spendByDayUsd: Map<string, number>,
   driver: SignalSeries,
-  terms: CostPerOutcomeTerms,
+  terms: ScopeOutcomeTerms,
 ): CostPerOutcomeHistory {
   const outcomesByDay = new Map<string, number>();
   for (const point of driver.daily) {

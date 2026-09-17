@@ -69,6 +69,10 @@ import {
   buildCostPerOutcomeHistory,
   type CostPerOutcomeHistory,
 } from "../lib/cost-per-outcome-history.js";
+import {
+  buildConversionRateHistory,
+  type ConversionRateHistory,
+} from "../lib/conversion-rate-history.js";
 import { fetchBrandCommittedSpendByDay } from "../lib/brand-spend-by-day-client.js";
 import { buildCostEconomics, type CostEconomics } from "../lib/cost-economics.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
@@ -555,6 +559,34 @@ interface RevenueResponse {
    * duplicated here. Null means "we could not measure this", never "it cost nothing".
    */
   costPerOutcomeHistory: CostPerOutcomeHistory | null;
+  /**
+   * WHAT SHARE OF THE PEOPLE THIS SCOPE REACHED HAVE CONVERTED, DAY BY DAY — the dated twin of the
+   * conversion rate the `outcomes` block states as a scalar, and the curve a customer reads to answer
+   * "is this converting BETTER than it was".
+   *
+   * BOTH legs are CUMULATIVE since the scope's first day, for the reason {@link buildRoiHistory}
+   * gives. The outcome is the scope's OWN leg's step — the byte-same `outcomeTerms` the
+   * cost-per-outcome curve is denominated in, resolved ONCE by the same leader — so the three curves
+   * a consumer draws side by side can never be measuring different steps.
+   *
+   * The denominator is REACH: every distinct lead this scope emailed, bounces and unsubscribes
+   * included, exactly as `funnelSteps.contactedRecipients` states it. BOTH legs come off the SAME
+   * `leads[]` rows of the SAME campaign-scoped snapshot, so a campaign-scoped read divides that
+   * campaign's own population by construction — there is no producer to re-ask and nothing to narrow.
+   *
+   * `scopeConversionRatePct` is the whole scope's rate including the undated, so it IS
+   * `100 × rate × outcomes.recipientsClicked / outcomes.recipientsContacted` for the same body; the
+   * curve's LAST point covers the DATED population alone and `undatedContacted` / `undatedOutcomes`
+   * state the difference rather than hiding it. A point's rate is null ONLY when nobody has been
+   * reached yet — a measured `0` means people were reached and nobody converted, which is the
+   * opposite of {@link buildCostPerOutcomeHistory}'s null rule and must not be harmonised with it.
+   *
+   * OVERVIEW ONLY, the same gate `roiHistory` and `spend` ride: null on the lensed `?lens=` read and
+   * absent on the lean `?groupBy=` groups. NULL also whenever the scope names no priceable outcome
+   * step (no campaign, no leg stated, a rate the brand never declared) —
+   * `learningPhase.unmeasuredReason` beside it names which, so no reason vocabulary is duplicated.
+   */
+  conversionRateHistory: ConversionRateHistory | null;
   organizations: OrganizationRow[];
   leads: LeadRow[];
   /**
@@ -748,6 +780,7 @@ function emptyBody(
     // Neither path that reaches here names a leg: the no-funnel short-circuit never read the leads
     // and the cold-start path holds no rate ladder to walk one through.
     costPerOutcomeHistory: null,
+    conversionRateHistory: null,
     organizations: [],
     leads: [],
     attributedOutcomes,
@@ -1038,6 +1071,10 @@ function buildLensBody(
     // Same gate, same reason: a cost-per-outcome curve counted over a lensed subset and divided by
     // the brand's whole dated spend would belong to neither scope.
     costPerOutcomeHistory: null,
+    // Same gate, different reason: both of this curve's legs WOULD be the lensed subset, but the lens
+    // short-circuits before the leg is ever resolved, so there is no step to denominate it in. A lens
+    // is a lead filter, not a leg — naming one here would be this service picking the noun.
+    conversionRateHistory: null,
     organizations: [],
     leads,
     // The lens short-circuits before the Wave B overlays, so the only outcomes this body could
@@ -1411,6 +1448,10 @@ export async function computeFeatureRevenue(
       ? outcomeSeries.recipientsClicked
       : outcomeSeries.recipientsRepliesPositive
     : null;
+  // The scope's own dated REACH, built ONCE: the body serves it as `recipientsContacted` and the
+  // conversion curve divides by the SAME object, so the denominator a consumer charts and the one we
+  // divided by are the same people by construction.
+  const contactedSeries = buildContactedSeries(result.leads);
 
   return {
     headline: { ...result.headline, economicsSource },
@@ -1434,13 +1475,18 @@ export async function computeFeatureRevenue(
       spendByDay && outcomeTerms && driverSeries
         ? buildCostPerOutcomeHistory(spendByDay, driverSeries, outcomeTerms)
         : null,
+    // The scope's own dated count of the step its leg closes, over the people it reached. Needs NO
+    // producer read — both legs are the leads already in hand — so it is null only when the scope
+    // names no priceable outcome step, and `learningPhase.unmeasuredReason` says which.
+    conversionRateHistory:
+      outcomeTerms && driverSeries ? buildConversionRateHistory(contactedSeries, driverSeries, outcomeTerms) : null,
     organizations: result.organizations,
     leads: result.leads,
     // The SAME evidence the funnel walk reports its rungs on — one implementation, so an unmeasured
     // rung and a hidden outcome surface can never name different producers.
     attributedOutcomes: attributedOutcomesFor(stepEvidence),
     events: result.events,
-    recipientsContacted: buildContactedSeries(result.leads),
+    recipientsContacted: contactedSeries,
     ...outcomeSeries,
     sequences,
     spend: breakdown ? buildSpend(breakdown, result.leads, counts, parents) : null,

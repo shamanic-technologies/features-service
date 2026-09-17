@@ -338,7 +338,7 @@ describe("what one outcome has cost, day by day", () => {
     expect(unstated.learningPhase.unmeasuredReason).toBe("no_leg_stated");
     // Every figure a consumer reads today is byte-identical with the block and without it.
     const strip = (b: Record<string, any>) => {
-      const { costPerOutcomeHistory, learningPhase, ...rest } = b;
+      const { costPerOutcomeHistory, conversionRateHistory, learningPhase, ...rest } = b;
       return rest;
     };
     expect(strip(unstated)).toEqual(strip(priced));
