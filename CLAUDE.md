@@ -4572,6 +4572,15 @@ caller has to be TOLD WHICH INPUT — not handed a gateway-shaped error that rea
   over-reporting, and a fleet sweep flagged three "violations" — all were stale cells, and every one
   cleared on re-read (one brand's figure was even seen mid-flight at 7,177 vs 7,180 while the brand
   kept contacting people). Nothing was wrong; the reads were.
+  **TWO BACK-TO-BACK READS ARE NOT ENOUGH, and the wording above invites exactly that mistake.** A
+  stale hit serves the snapshot and refreshes BEHIND the response, so a second read issued
+  milliseconds later lands while that refresh is still in flight and returns the SAME pre-deploy body
+  — two identical wrong numbers, which reads as a confirmed result rather than as a cache. POLL UNTIL
+  THE VALUE SETTLES against the thing it must agree with (`until |curve.last − committedCostUsd| ≤
+  0.05`, up to ~N tries with a real gap between them), and make the probe SAY which read it reported.
+  Cost 2026-09-17 (features-service#983): a post-deploy probe that warmed once and read once printed
+  three FAILs against a fix that was live and correct in the running `dist`; the very next read, 20
+  seconds later, was right and stayed right for eleven more.
 
 ## `pipeline-activity` accepts `?pricing=gross|net` — a COUNT can be money-derived, and this one is
 
